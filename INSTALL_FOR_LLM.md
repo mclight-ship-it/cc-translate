@@ -5,9 +5,18 @@
 ## 前提
 
 - 操作系统：Windows 10/11
-- 本仓库已 clone 到本地，当前工作目录是仓库根目录（含 `translator.pyw`）
+- 已安装 git（`git --version` 可用）
 
 ## 步骤
+
+### 0. 获取项目代码（若尚未 clone）
+
+```bash
+git clone https://github.com/mclight-ship-it/cc-translate.git
+cd cc-translate
+```
+
+之后所有命令都在项目根目录（含 `translator.pyw`）下执行。
 
 ### 1. 安装 Node.js 和 Python（若已安装则跳过）
 

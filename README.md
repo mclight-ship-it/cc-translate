@@ -26,18 +26,22 @@
 ## 安装（人工步骤）
 
 ```bash
-# 1. 安装 Node.js 和 Python（若已装可跳过）
+# 1. 获取项目代码
+git clone https://github.com/mclight-ship-it/cc-translate.git
+cd cc-translate
+
+# 2. 安装 Node.js 和 Python（若已装可跳过）
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.12
 
-# 2. 安装 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
+# 3. 安装 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
 npm install -g @anthropic-ai/claude-code
 claude   # 首次运行按提示在浏览器登录，然后 Ctrl+C 退出交互模式
 
-# 3. 安装 Python 依赖
+# 4. 安装 Python 依赖
 pip install pynput pyperclip pystray Pillow
 
-# 4. 运行
+# 5. 运行（确保当前目录是项目根目录 cc-translate）
 pythonw translator.pyw
 ```
 
