@@ -1,0 +1,12 @@
+# Runtime / user data — never commit
+config.json
+history.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+Thumbs.db
+desktop.ini
