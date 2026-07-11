@@ -11,3 +11,6 @@ __pycache__/
 # OS
 Thumbs.db
 desktop.ini
+
+# Local-only VS Code protection (not synced to other machines)
+.vscode/
