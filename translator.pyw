@@ -1538,6 +1538,77 @@ class TranslatorApp:
     def open_settings(self):
         self.root.after(0, self._open_settings)
 
+    def _setup_form_style(self):
+        """Flat, theme-aware styling for the settings comboboxes / spinboxes.
+        Native ttk themes ignore colours, so we base these on 'clam' and set
+        field/border/arrow colours from the active palette for a modern look."""
+        t = self.theme
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        field_bg = t["list_bg"]
+        fg = t["settings_fg"]
+        border = t["popup_border"]
+        accent = t["accent"]
+        hint = t["popup_hint"]
+        sel = t["sel_bg"]
+
+        for name in ("CC.TCombobox", "CC.TSpinbox"):
+            style.configure(
+                name,
+                fieldbackground=field_bg, background=field_bg,
+                foreground=fg, arrowcolor=hint,
+                bordercolor=border, lightcolor=border, darkcolor=border,
+                relief="flat", borderwidth=1, padding=6, arrowsize=13,
+            )
+            style.map(
+                name,
+                fieldbackground=[("readonly", field_bg), ("disabled", field_bg)],
+                foreground=[("disabled", hint)],
+                bordercolor=[("focus", accent), ("hover", accent)],
+                lightcolor=[("focus", accent)], darkcolor=[("focus", accent)],
+                arrowcolor=[("active", accent)],
+            )
+        # Dropdown listbox colours (only settable via the option database).
+        self.root.option_add("*TCombobox*Listbox.background", field_bg)
+        self.root.option_add("*TCombobox*Listbox.foreground", fg)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", sel)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", fg)
+        self.root.option_add("*TCombobox*Listbox.borderWidth", 0)
+
+    def _make_toggle(self, parent, initial, bg):
+        """A modern pill toggle switch. Returns the Canvas widget; call
+        widget.get() to read the current on/off state."""
+        t = self.theme
+        accent = t["accent"]
+        off = t["popup_border"]
+        knob = "#ffffff"
+        W, H = 42, 22
+        c = tk.Canvas(parent, width=W, height=H, bg=bg,
+                      highlightthickness=0, bd=0, cursor="hand2")
+        st = {"on": bool(initial)}
+
+        def draw():
+            c.delete("all")
+            track = accent if st["on"] else off
+            # Pill = rectangle capped with two circles.
+            c.create_oval(2, 2, 20, H - 2, fill=track, outline=track)
+            c.create_oval(W - 20, 2, W - 2, H - 2, fill=track, outline=track)
+            c.create_rectangle(11, 2, W - 11, H - 2, fill=track, outline=track)
+            kx = W - 12 if st["on"] else 12
+            c.create_oval(kx - 8, 3, kx + 8, H - 3, fill=knob, outline=knob)
+
+        def toggle(_e=None):
+            st["on"] = not st["on"]
+            draw()
+
+        c.bind("<Button-1>", toggle)
+        draw()
+        c.get = lambda: st["on"]
+        return c
+
     def _open_settings(self):
         if self.settings_win and tk.Toplevel.winfo_exists(self.settings_win):
             self.settings_win.lift()
@@ -1547,92 +1618,140 @@ class TranslatorApp:
         t = self.theme
         bg = t["settings_bg"]
         fg = t["settings_fg"]
+        border = t["popup_border"]
+        hint = t["popup_hint"]
+        accent = t["accent"]
+        self._setup_form_style()
 
         win = tk.Toplevel(self.root)
-        win.withdraw()          # hide until positioned to avoid a visible jump
-        win.title(f"{APP_NAME} 设置")
-        win.configure(bg=bg)
-        win.resizable(False, False)
-        try:
-            win.iconbitmap(ICON_PATH)
-        except Exception:
-            pass
+        win.attributes("-alpha", 0.0)   # reveal at final geometry (no flash/jump)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
         self.settings_win = win
 
-        pad = {"padx": 12, "pady": 6}
+        FONT = "Microsoft YaHei UI"
+        shell = tk.Frame(win, bg=border, bd=0, highlightthickness=0)
+        shell.pack(fill="both", expand=True)
+        outer = tk.Frame(shell, bg=bg, bd=0, highlightthickness=0)
+        outer.pack(fill="both", expand=True, padx=1, pady=1)
+
+        # ---- Title bar (draggable, with close button) ----
+        bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=16, pady=(12, 8))
+        title_lbl = tk.Label(bar, text="⚙  " + f"{APP_NAME} 设置", bg=bg,
+                             fg=accent, font=(FONT, 11, "bold"))
+        title_lbl.pack(side="left")
+        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                             font=(FONT, 11), cursor="hand2", padx=6)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: win.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+
+        # Drag the bar (but not the close button) to move the borderless window.
+        drag = {"x": 0, "y": 0}
+
+        def dstart(e):
+            drag["x"], drag["y"] = e.x, e.y
+
+        def dmove(e):
+            win.geometry(f"+{win.winfo_x() + e.x - drag['x']}"
+                         f"+{win.winfo_y() + e.y - drag['y']}")
+
+        for _w in (bar, title_lbl):
+            _w.bind("<Button-1>", dstart)
+            _w.bind("<B1-Motion>", dmove)
+
+        tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
+
+        body = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=20, pady=(14, 6))
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, minsize=190)
         row = 0
 
-        def label(text_):
-            return tk.Label(win, text=text_, bg=bg, fg=fg)
+        def section(text_):
+            nonlocal row
+            lbl = tk.Label(body, text=text_, bg=bg, fg=accent,
+                           font=(FONT, 9, "bold"))
+            pady = (14, 6) if row else (0, 6)
+            lbl.grid(row=row, column=0, columnspan=2, sticky="w", pady=pady)
+            row += 1
 
-        label("翻译模型").grid(row=row, column=0, sticky="w", **pad)
+        def field(text_, widget):
+            nonlocal row
+            tk.Label(body, text=text_, bg=bg, fg=fg, font=(FONT, 10)).grid(
+                row=row, column=0, sticky="w", pady=6)
+            widget.grid(row=row, column=1, sticky="e", pady=6)
+            row += 1
+
+        def toggle_row(text_, initial):
+            nonlocal row
+            tk.Label(body, text=text_, bg=bg, fg=fg, font=(FONT, 10)).grid(
+                row=row, column=0, sticky="w", pady=8)
+            sw = self._make_toggle(body, initial, bg)
+            sw.grid(row=row, column=1, sticky="e", pady=8)
+            row += 1
+            return sw
+
+        # ---- Section: 翻译 ----
+        section("翻译")
         model_var = tk.StringVar(value=self.cfg["model"])
-        ttk.Combobox(win, textvariable=model_var, state="readonly", width=22,
-                     values=["haiku", "sonnet", "opus"]).grid(
-            row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("翻译模型", ttk.Combobox(
+            body, textvariable=model_var, state="readonly", width=20,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=["haiku", "sonnet", "opus"]))
 
-        label("翻译方向").grid(row=row, column=0, sticky="w", **pad)
         dir_var = tk.StringVar(
             value=DIRECTION_LABELS.get(self.cfg["direction"],
                                        DIRECTION_LABELS["auto"]))
-        ttk.Combobox(win, textvariable=dir_var, state="readonly", width=22,
-                     values=list(DIRECTION_LABELS.values())).grid(
-            row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("翻译方向", ttk.Combobox(
+            body, textvariable=dir_var, state="readonly", width=20,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=list(DIRECTION_LABELS.values())))
 
-        label("主题").grid(row=row, column=0, sticky="w", **pad)
+        # ---- Section: 外观 ----
+        section("外观")
         theme_var = tk.StringVar(
             value=THEME_LABELS.get(self.cfg.get("theme", "system")))
-        ttk.Combobox(win, textvariable=theme_var, state="readonly", width=22,
-                     values=list(THEME_LABELS.values())).grid(
-            row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("主题", ttk.Combobox(
+            body, textvariable=theme_var, state="readonly", width=20,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=list(THEME_LABELS.values())))
 
-        label("双击间隔 (秒)").grid(row=row, column=0, sticky="w", **pad)
-        gap_var = tk.DoubleVar(value=self.cfg["double_press_window"])
-        tk.Spinbox(win, textvariable=gap_var, from_=0.2, to=1.5, increment=0.1,
-                   width=22, format="%.1f").grid(
-            row=row, column=1, sticky="w", **pad)
-        row += 1
-
-        label("字体大小").grid(row=row, column=0, sticky="w", **pad)
         font_var = tk.IntVar(value=self.cfg["font_size"])
-        tk.Spinbox(win, textvariable=font_var, from_=9, to=24, increment=1,
-                   width=22).grid(row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("字体大小", ttk.Spinbox(
+            body, textvariable=font_var, from_=9, to=24, increment=1,
+            width=18, style="CC.TSpinbox", font=(FONT, 10)))
 
-        label("最大字符数").grid(row=row, column=0, sticky="w", **pad)
+        # ---- Section: 行为 ----
+        section("行为")
+        gap_var = tk.DoubleVar(value=self.cfg["double_press_window"])
+        field("双击间隔 (秒)", ttk.Spinbox(
+            body, textvariable=gap_var, from_=0.2, to=1.5, increment=0.1,
+            width=18, style="CC.TSpinbox", format="%.1f", font=(FONT, 10)))
+
         max_var = tk.IntVar(value=self.cfg["max_chars"])
-        tk.Spinbox(win, textvariable=max_var, from_=500, to=20000, increment=500,
-                   width=22).grid(row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("最大字符数", ttk.Spinbox(
+            body, textvariable=max_var, from_=500, to=20000, increment=500,
+            width=18, style="CC.TSpinbox", font=(FONT, 10)))
 
-        label("历史保留条数").grid(row=row, column=0, sticky="w", **pad)
         hist_limit_var = tk.IntVar(value=self.cfg.get("history_limit", 100))
-        tk.Spinbox(win, textvariable=hist_limit_var, from_=20, to=500,
-                   increment=20, width=22).grid(
-            row=row, column=1, sticky="w", **pad)
-        row += 1
+        field("历史保留条数", ttk.Spinbox(
+            body, textvariable=hist_limit_var, from_=20, to=500, increment=20,
+            width=18, style="CC.TSpinbox", font=(FONT, 10)))
 
-        history_var = tk.BooleanVar(value=self.cfg.get("history_enabled", True))
-        tk.Checkbutton(win, text="记录历史", variable=history_var,
-                       bg=bg, fg=fg, selectcolor=bg, activebackground=bg,
-                       activeforeground=fg, anchor="w").grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=6)
-        row += 1
+        history_sw = toggle_row("记录历史", self.cfg.get("history_enabled", True))
+        autostart_sw = toggle_row("开机自动启动", is_autostart_enabled())
 
+        # ---- Footer: status + action buttons ----
+        tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16, pady=(4, 0))
+        footer = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
+        footer.pack(fill="x", padx=20, pady=(10, 14))
 
-        autostart_var = tk.BooleanVar(value=is_autostart_enabled())
-        tk.Checkbutton(win, text="开机自动启动", variable=autostart_var,
-                       bg=bg, fg=fg, selectcolor=bg, activebackground=bg,
-                       activeforeground=fg, anchor="w").grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=6)
-        row += 1
-
-        status = tk.Label(win, text="", bg=bg, fg=t["status_ok"])
-        status.grid(row=row, column=0, columnspan=2, **pad)
-        row += 1
+        status = tk.Label(footer, text="", bg=bg, fg=t["status_ok"],
+                          font=(FONT, 9))
+        status.pack(side="left")
 
         label_to_dir = {v: k for k, v in DIRECTION_LABELS.items()}
         label_to_theme = {v: k for k, v in THEME_LABELS.items()}
@@ -1646,10 +1765,10 @@ class TranslatorApp:
                 self.cfg["font_size"] = int(font_var.get())
                 self.cfg["max_chars"] = int(max_var.get())
                 self.cfg["history_limit"] = int(hist_limit_var.get())
-                self.cfg["history_enabled"] = bool(history_var.get())
+                self.cfg["history_enabled"] = bool(history_sw.get())
                 save_config(self.cfg)
-                if autostart_var.get() != is_autostart_enabled():
-                    set_autostart(autostart_var.get())
+                if autostart_sw.get() != is_autostart_enabled():
+                    set_autostart(autostart_sw.get())
                 # Re-resolve theme so new popups pick it up immediately.
                 self.theme = resolve_theme(self.cfg)
                 self._setup_scrollbar_style()
@@ -1658,15 +1777,34 @@ class TranslatorApp:
             except Exception as e:
                 status.config(text=f"保存失败: {e}", fg=t["status_err"])
 
-        btns = tk.Frame(win, bg=bg)
-        btns.grid(row=row, column=0, columnspan=2, pady=(4, 12))
-        tk.Button(btns, text="保存", command=apply_settings, width=10).pack(
-            side="left", padx=6)
-        tk.Button(btns, text="关闭", command=win.destroy, width=10).pack(
-            side="left", padx=6)
+        def mk_btn(parent, text_, cmd, primary=False):
+            b = tk.Button(
+                parent, text=text_, command=cmd,
+                bg=(accent if primary else t["list_bg"]),
+                fg=("#ffffff" if primary else fg),
+                activebackground=(accent if primary else t["list_sel"]),
+                activeforeground="#ffffff" if primary else fg,
+                relief="flat", bd=0, highlightthickness=0,
+                font=(FONT, 10), cursor="hand2", padx=20, pady=7,
+            )
+            hover_bg = (t["list_sel"] if not primary else accent)
+            base_bg = b.cget("bg")
+            b.bind("<Enter>", lambda e: b.config(
+                bg=(t["btn_active"] if not primary else accent)))
+            b.bind("<Leave>", lambda e: b.config(bg=base_bg))
+            return b
 
+        save_btn = mk_btn(footer, "保存", apply_settings, primary=True)
+        save_btn.pack(side="right")
+        close2 = mk_btn(footer, "关闭", win.destroy)
+        close2.pack(side="right", padx=(0, 8))
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        # ---- Size & center on the active monitor, then reveal ----
         win.update_idletasks()
-        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        w = max(win.winfo_reqwidth(), 380)
+        h = win.winfo_reqheight()
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
@@ -1675,8 +1813,10 @@ class TranslatorApp:
         else:
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
             x, y = (sw - w) // 2, (sh - h) // 2
-        win.geometry(f"+{x}+{y}")
-        win.deiconify()         # now show, already at final position
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        self._setup_rounded_window(win, POPUP_CORNER_RADIUS)
+        win.update_idletasks()
+        win.attributes("-alpha", 1.0)
         win.lift()
         win.focus_force()
 
