@@ -114,6 +114,18 @@ TRIGGER_SETTLE_MS = 120
 # on Windows; the animation cycles through them for a modern indeterminate look.
 LOADING_SPINNER = "◐◓◑◒"
 
+# ---- Warm process pool (speed-up) -----------------------------------------
+# A single Claude CLI process is spawned ahead of time in stream-json mode with
+# the current translate system prompt already loaded, so node + the CLI finish
+# initialising while the user is idle. When a translation fires we send one
+# message down the warm process (hot API round-trip ~1.2s) instead of paying
+# the ~1s cold process-startup cost every time. Each warm process is used for
+# exactly ONE translation (no context accumulation) and then replaced.
+WARM_POOL_ENABLED = True
+WARM_UP_MS = 2000          # give the CLI this long to initialise before it's "ready"
+WARM_MAX_AGE_S = 480       # recycle a warm process older than this (stale-session guard)
+WARM_SEND_TIMEOUT_S = 60   # hard cap on a single warm translation
+
 
 def _npm_global_prefix():
     """Return npm's configured global prefix dir (where global .cmd shims live),
@@ -550,6 +562,153 @@ def attach_rounded_corners(win, radius):
     win.bind("<Destroy>", _cleanup, add="+")
 
 
+class WarmClaude:
+    """A single pre-warmed Claude CLI process running in stream-json mode.
+
+    Spawned ahead of a translation with a fixed model + system prompt so the
+    expensive node/CLI startup finishes while the user is idle. When a
+    translation fires we push exactly one user message and stream the reply,
+    then discard the process (a resident process accumulates conversation
+    context, so we never reuse it). If anything goes wrong the caller falls
+    back to the normal cold path, so this is always safe.
+    """
+
+    def __init__(self, model, system_prompt, key):
+        self.model = model
+        self.system_prompt = system_prompt
+        self.key = key                       # (model, direction) — matched at use time
+        self.proc = None
+        self.ready = False                   # True once warmup elapsed
+        self.spent = False                   # True once a message has been sent
+        self.born = time.monotonic()
+        self._lock = threading.Lock()
+
+    def start(self):
+        """Spawn the process and arm the readiness timer (non-blocking)."""
+        try:
+            cmd = [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.model,
+                   "--system-prompt", self.system_prompt,
+                   "--input-format", "stream-json",
+                   "--output-format", "stream-json",
+                   "--include-partial-messages", "--verbose",
+                   "--tools", "",
+                   "--exclude-dynamic-system-prompt-sections",
+                   "--no-session-persistence"]
+            self.proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            self.born = time.monotonic()
+
+            def _arm():
+                time.sleep(WARM_UP_MS / 1000.0)
+                self.ready = True
+            threading.Thread(target=_arm, daemon=True).start()
+            return True
+        except Exception as e:
+            log_perf("warm_spawn_error", {"err": str(e)[:160]})
+            self.proc = None
+            return False
+
+    def usable(self, key):
+        """True if this process is alive, warmed, unused and matches key."""
+        if self.spent or not self.ready or self.key != key:
+            return False
+        if self.proc is None or self.proc.poll() is not None:
+            return False
+        if time.monotonic() - self.born > WARM_MAX_AGE_S:
+            return False
+        return True
+
+    def send_and_stream(self, text, on_delta):
+        """Send one user message and stream the reply. Calls on_delta(str) for
+        each text delta. Returns the final translated string, or None on
+        failure (caller then falls back to the cold path). The process is
+        consumed regardless of outcome."""
+        with self._lock:
+            if self.spent:
+                return None
+            self.spent = True
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return None
+
+        # Watchdog: kill the process if the round-trip runs away, so the read
+        # loop below can't block the translation thread forever.
+        killed = {"v": False}
+
+        def _watchdog():
+            killed["v"] = True
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        timer = threading.Timer(WARM_SEND_TIMEOUT_S, _watchdog)
+        timer.daemon = True
+        timer.start()
+
+        acc = []
+        result_text = None
+        try:
+            msg = {"type": "user",
+                   "message": {"role": "user",
+                               "content": f"<text>\n{text}\n</text>"}}
+            proc.stdin.write(json.dumps(msg) + "\n")
+            proc.stdin.flush()
+
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                typ = obj.get("type")
+                if typ == "stream_event":
+                    ev = obj.get("event", {})
+                    if ev.get("type") == "content_block_delta":
+                        txt = ev.get("delta", {}).get("text", "")
+                        if txt:
+                            acc.append(txt)
+                            try:
+                                on_delta(txt)
+                            except Exception:
+                                pass
+                elif typ == "result":
+                    if not obj.get("is_error"):
+                        r = (obj.get("result") or "").strip()
+                        if r:
+                            result_text = r
+                    break
+        except Exception as e:
+            log_perf("warm_stream_error", {"err": str(e)[:160]})
+        finally:
+            timer.cancel()
+
+        if killed["v"]:
+            return None
+        final = (result_text or "".join(acc)).strip()
+        return final or None
+
+    def close(self):
+        """Terminate the process. Safe to call multiple times / concurrently."""
+        p = self.proc
+        self.proc = None
+        if p is None:
+            return
+        try:
+            if p.stdin and not p.stdin.closed:
+                p.stdin.close()
+        except Exception:
+            pass
+        try:
+            if p.poll() is None:
+                p.kill()
+        except Exception:
+            pass
+
+
 class TranslatorApp:
     def __init__(self):
         self.cfg = load_config()
@@ -577,6 +736,11 @@ class TranslatorApp:
         self._resize_mode = None
         self._resize_start = None
 
+        # Warm process pool state (speed-up). Guarded by _warm_lock.
+        self._warm_lock = threading.Lock()
+        self._warm = None            # the next pre-warmed WarmClaude (or None)
+        self._warm_enabled = WARM_POOL_ENABLED
+
         self.root = tk.Tk()
         self.root.withdraw()
 
@@ -598,9 +762,79 @@ class TranslatorApp:
         self._start_listener()
         self._start_tray()
 
+        # Pre-warm the first Claude process so the very first translation is
+        # fast too. Done in the background so startup stays responsive.
+        self._spawn_warm_async()
+
         # Run shortcut/migration work in background so startup stays responsive
         # and the first hotkey trigger is not blocked by PowerShell startup.
         threading.Thread(target=self._run_startup_tasks, daemon=True).start()
+
+    # ---------- Warm process pool ----------
+    def _warm_key(self):
+        return (self.cfg.get("model"), self.cfg.get("direction"))
+
+    def _warm_system_prompt(self):
+        return DIRECTION_MODES[self.cfg["direction"]] + SYSTEM_SUFFIX
+
+    def _spawn_warm_async(self):
+        """Create and start a replacement warm process for the current config,
+        retiring any previous one. Non-blocking (spawn happens in a thread)."""
+        if not self._warm_enabled:
+            return
+
+        def _work():
+            try:
+                key = self._warm_key()
+                w = WarmClaude(key[0], self._warm_system_prompt(), key)
+                if not w.start():
+                    return
+                with self._warm_lock:
+                    old, self._warm = self._warm, w
+                if old is not None:
+                    old.close()
+            except Exception as e:
+                log_perf("warm_refill_error", {"err": str(e)[:160]})
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _take_warm(self):
+        """Return a ready warm process matching the current config and remove it
+        from the pool, or None if none is ready. Triggers a refill when the held
+        process is unusable (dead / stale / wrong config)."""
+        if not self._warm_enabled:
+            return None
+        key = self._warm_key()
+        with self._warm_lock:
+            w = self._warm
+            if w is None:
+                return None
+            if w.usable(key):
+                self._warm = None      # take it; refill happens after use
+                return w
+            # Present but not usable (still warming, wrong key, dead, stale).
+            if w.ready and w.key != key:
+                # Config changed: discard and rebuild for the new config.
+                self._warm = None
+            else:
+                return None
+        # Fell through the "discard" branch: retire it and refill.
+        try:
+            w.close()
+        except Exception:
+            pass
+        self._spawn_warm_async()
+        return None
+
+    def close_warm_pool(self):
+        """Terminate any warm process. Called on quit."""
+        self._warm_enabled = False
+        with self._warm_lock:
+            w, self._warm = self._warm, None
+        if w is not None:
+            try:
+                w.close()
+            except Exception:
+                pass
 
     def _run_startup_tasks(self):
         try:
@@ -758,9 +992,26 @@ class TranslatorApp:
         # Long, non-dictionary text streams so the translation appears
         # progressively; short text uses the simpler one-shot path.
         t0 = time.perf_counter()
+        dictionary = is_single_word(text)
+
+        # Fast path: a pre-warmed process already has the CLI initialised and
+        # the translate system prompt loaded, so we skip cold startup. Only for
+        # non-dictionary text (dictionary uses a different system prompt that
+        # the warm process wasn't spawned with). Any failure falls through to
+        # the normal cold path below, so this is always safe.
+        if not dictionary:
+            if self._warm_translate(text):
+                log_perf("translate_done", {
+                    "mode": "warm",
+                    "chars": len(text),
+                    "wall_ms": int((time.perf_counter() - t0) * 1000),
+                    "ok": True,
+                })
+                return
+
         mode = "oneshot"
         try:
-            if len(text) > 320 and not is_single_word(text):
+            if len(text) > 320 and not dictionary:
                 mode = "stream"
                 if self._stream_claude(text):
                     log_perf("translate_done", {
@@ -780,6 +1031,44 @@ class TranslatorApp:
             "ok": bool(ok),
         })
         self.root.after(0, lambda: self._show_result(ok, result))
+
+    def _warm_translate(self, text):
+        """Translate using a pre-warmed process, streaming deltas through the
+        same display pipeline as _stream_claude. Returns True on success, or
+        False to fall back to the cold path. The warm process is consumed and a
+        replacement is spawned afterwards."""
+        warm = self._take_warm()
+        if warm is None:
+            return False
+        self._stream_popup_ready = False
+        t0 = time.perf_counter()
+        try:
+            def on_delta(txt):
+                self._stream_queue.put(txt)
+                self.root.after(0, self._stream_flush)
+
+            final = warm.send_and_stream(text, on_delta)
+            if not final:
+                return False
+            self.root.after(0, lambda: self._stream_finalize(final))
+            if self.cfg.get("history_enabled", True) and self._last_input:
+                add_history(self._last_input, final,
+                            is_single_word(self._last_input),
+                            self.cfg.get("history_limit", 100))
+            log_perf("warm_cli_done", {
+                "chars": len(text),
+                "wall_ms": int((time.perf_counter() - t0) * 1000),
+            })
+            return True
+        except Exception as e:
+            log_perf("warm_cli_error", {"chars": len(text), "err": str(e)[:160]})
+            return False
+        finally:
+            try:
+                warm.close()
+            except Exception:
+                pass
+            self._spawn_warm_async()   # keep one warm process ready
 
     def _stream_claude(self, text):
         """Stream a long translation via stream-json, updating the popup as
@@ -1834,6 +2123,7 @@ class TranslatorApp:
 
         def apply_settings():
             try:
+                prev_warm_key = self._warm_key()
                 self.cfg["model"] = model_var.get()
                 self.cfg["direction"] = label_to_dir[dir_var.get()]
                 self.cfg["theme"] = label_to_theme[theme_var.get()]
@@ -1848,6 +2138,10 @@ class TranslatorApp:
                 # Re-resolve theme so new popups pick it up immediately.
                 self.theme = resolve_theme(self.cfg)
                 self._setup_scrollbar_style()
+                # Model/direction feed the warm process's fixed system prompt;
+                # rebuild the pool so the next translation uses the new config.
+                if self._warm_key() != prev_warm_key:
+                    self._spawn_warm_async()
                 status.config(text="已保存 ✓（主题下次弹窗生效）",
                               fg=t["status_ok"])
             except Exception as e:
@@ -2005,6 +2299,7 @@ class TranslatorApp:
 
         def on_quit(icon, item):
             icon.stop()
+            self.close_warm_pool()
             self.root.after(0, self.root.destroy)
 
         menu = pystray.Menu(
