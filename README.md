@@ -22,6 +22,7 @@
 - Python 3.12+
 - Node.js（用于安装 Claude Code CLI）
 - 一个可登录的 Claude 订阅（Pro/Max）
+- 先将 Claude Code CLI 升级到最新版本（避免参数不兼容）
 
 ## 安装（人工步骤）
 
@@ -34,19 +35,24 @@ cd cc-translate
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.12
 
-# 3. 安装 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
-npm install -g @anthropic-ai/claude-code
+# 3. 安装/升级 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
+npm install -g @anthropic-ai/claude-code@latest
+claude --version
 claude   # 首次运行按提示在浏览器登录，然后 Ctrl+C 退出交互模式
 
 # 4. 安装 Python 依赖
 pip install pynput pyperclip pystray Pillow
 
-# 5. 运行（确保当前目录是项目根目录 cc-translate）
-pythonw translator.pyw
+# 5. 首次运行（确保当前目录是项目根目录 cc-translate）
+pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Translate”图标
 ```
 
 > 提示：`translator.pyw` 会自动探测 `claude` CLI 的位置（先查 PATH，再查 npm 全局目录）。
 > 若找不到，请确保 `claude` 在 PATH 中，或 npm 全局 bin 目录已加入 PATH。
+
+## 启动方式
+
+首次运行后会自动在开始菜单创建 **CC Translate** 图标，后续可直接在开始菜单启动（无需命令行）。
 
 ## 开机自启（可选）
 

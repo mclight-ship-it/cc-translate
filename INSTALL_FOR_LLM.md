@@ -31,10 +31,11 @@ winget install Python.Python.3.12 --accept-source-agreements --accept-package-ag
 > Python 通常在 `%LOCALAPPDATA%\Programs\Python\Python312\`，Node 在 `%ProgramFiles%\nodejs\`。
 > 用绝对路径调用，或让用户重开终端。
 
-### 2. 安装并登录 Claude Code CLI
+### 2. 安装并登录 Claude Code CLI（先升级到最新）
 
 ```bash
-npm install -g @anthropic-ai/claude-code
+npm install -g @anthropic-ai/claude-code@latest
+claude --version
 ```
 
 然后**让用户运行 `claude` 并在浏览器完成登录**（OAuth，用其 Claude 订阅，不额外收费）。
@@ -53,13 +54,14 @@ python -m pip install --upgrade pip pynput pyperclip pystray Pillow
 
 验证：`python -c "import pynput, pyperclip, pystray, PIL, tkinter; print('ok')"`
 
-### 4. 启动
+### 4. 首次启动
 
 ```bash
 pythonw translator.pyw
 ```
 
 `pythonw` 无控制台，程序会常驻后台并在系统托盘出现一个“CC”图标。
+首次运行会自动创建开始菜单图标 **CC Translate**，后续用户可直接从开始菜单启动（无需命令行）。
 提示用户：选中任意文字，快速**双击 Ctrl+C**，鼠标旁应弹出译文。
 
 ### 5.（可选）设置开机自启

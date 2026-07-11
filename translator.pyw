@@ -13,8 +13,12 @@ import os
 import sys
 import json
 import time
+import queue
 import threading
 import subprocess
+import urllib.error
+import urllib.request
+import ctypes
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
@@ -84,6 +88,25 @@ APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
+SERVICE_URL = "http://127.0.0.1:18765"
+SERVICE_SCRIPT_PATH = os.path.join(APP_DIR, "translator_service.py")
+PERF_LOG_PATH = os.path.join(APP_DIR, "perf.log")
+MIN_POPUP_HEIGHT = 150
+MIN_STREAM_VISIBLE_HEIGHT = 220
+MIN_RESIZE_WIDTH = 280
+MIN_RESIZE_HEIGHT = 150
+RESIZE_HIT = 18
+POPUP_SHELL_PAD = 2
+POPUP_BAR_PAD_X = 10
+POPUP_BAR_PAD_TOP = 8
+POPUP_BAR_PAD_BOTTOM = 4
+POPUP_BODY_PAD_X = 8
+POPUP_BODY_PAD_BOTTOM = 8
+POPUP_TEXT_PAD_X = 16
+POPUP_TEXT_PAD_Y = 12
+POPUP_CORNER_RADIUS = 14
+LOADING_CORNER_RADIUS = 12
+USE_LOCAL_SERVICE = False
 
 
 def find_claude_cmd():
@@ -131,7 +154,7 @@ for _code, (_zh_name, _en_name) in LANGUAGES.items():
     DIRECTION_LABELS[f"to_{_code}"] = f"总是译成{_zh_name}"
 
 DEFAULT_CONFIG = {
-    "model": "sonnet",
+    "model": "haiku",
     "double_press_window": 0.5,
     "font_size": 12,
     "direction": "auto",
@@ -145,25 +168,29 @@ DEFAULT_CONFIG = {
 # whole app (popup, loading hint, scrollbar, settings, history) stays coherent.
 THEMES = {
     "dark": {
-        "bg": "#1e1e1e", "fg": "#e8e8e8",
-        "bar_bg": "#1e1e1e", "btn_bg": "#2d2d2d",
-        "btn_active": "#3d3d3d", "btn_close_active": "#c0392b",
-        "border": "#555555", "sel_bg": "#3d5a80",
-        "scroll_thumb": "#3a3a3a", "scroll_thumb_active": "#555555",
-        "trough": "#1e1e1e", "hint_fg": "#bdbdbd",
-        "settings_bg": "#2b2b2b", "settings_fg": "#e8e8e8",
-        "list_bg": "#252526", "list_sel": "#37373d",
+        "bg": "#23262d", "fg": "#edf0f7",
+        "bar_bg": "#2f3541", "btn_bg": "#3a4351",
+        "btn_active": "#4c586a", "btn_close_active": "#c65959",
+        "border": "#3e4654", "sel_bg": "#3f5f8f",
+        "popup_bg": "#2a303b", "popup_border": "#495468",
+        "popup_hint": "#9eabc0",
+        "scroll_thumb": "#4a5363", "scroll_thumb_active": "#647086",
+        "trough": "#252a33", "hint_fg": "#aeb7c8",
+        "settings_bg": "#2b2f36", "settings_fg": "#edf0f7",
+        "list_bg": "#252a33", "list_sel": "#3a4250",
         "status_ok": "#6ac06a", "status_err": "#e57373",
     },
     "light": {
-        "bg": "#ffffff", "fg": "#1a1a1a",
-        "bar_bg": "#f2f2f2", "btn_bg": "#e6e6e6",
-        "btn_active": "#d6d6d6", "btn_close_active": "#e57373",
-        "border": "#c0c0c0", "sel_bg": "#cfe2ff",
-        "scroll_thumb": "#c4c4c4", "scroll_thumb_active": "#a8a8a8",
-        "trough": "#ffffff", "hint_fg": "#666666",
-        "settings_bg": "#f0f0f0", "settings_fg": "#1a1a1a",
-        "list_bg": "#ffffff", "list_sel": "#cfe2ff",
+        "bg": "#fbfcfe", "fg": "#1b2430",
+        "bar_bg": "#eef3fb", "btn_bg": "#e6edf8",
+        "btn_active": "#d7e2f3", "btn_close_active": "#d66c6c",
+        "border": "#cfd7e6", "sel_bg": "#d9e6ff",
+        "popup_bg": "#f9fbff", "popup_border": "#c8d4e8",
+        "popup_hint": "#687990",
+        "scroll_thumb": "#bcc7da", "scroll_thumb_active": "#9fb0cc",
+        "trough": "#fbfcfe", "hint_fg": "#5f6f86",
+        "settings_bg": "#f4f6fb", "settings_fg": "#1b2430",
+        "list_bg": "#ffffff", "list_sel": "#e3ebfa",
         "status_ok": "#2e7d32", "status_err": "#c62828",
     },
 }
@@ -284,14 +311,44 @@ def clear_history():
         pass
 
 
-STARTUP_DIR = os.path.join(
+PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
-    r"Microsoft\Windows\Start Menu\Programs\Startup")
+    r"Microsoft\Windows\Start Menu\Programs")
+STARTUP_DIR = os.path.join(PROGRAMS_DIR, "Startup")
 STARTUP_LNK = os.path.join(STARTUP_DIR, f"{APP_NAME}.lnk")
+STARTMENU_LNK = os.path.join(PROGRAMS_DIR, f"{APP_NAME}.lnk")
 # Legacy launcher from earlier versions; removed when managing startup here.
 LEGACY_STARTUP_VBS = os.path.join(STARTUP_DIR, "QuickTranslate.vbs")
 SCRIPT_PATH = os.path.abspath(__file__)
 PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
+
+
+def _create_shortcut(link_path):
+    """Create or update a .lnk pointing to this app's pythonw launcher."""
+    try:
+        import pythoncom  # noqa: F401
+    except Exception:
+        pass
+    ps = (
+        "$ErrorActionPreference = 'Stop'; "
+        "$ws = New-Object -ComObject WScript.Shell; "
+        f"$l = $ws.CreateShortcut('{link_path}'); "
+        f"$l.TargetPath = '{PYTHONW}'; "
+        f"$l.Arguments = '\"{SCRIPT_PATH}\"'; "
+        f"$l.WorkingDirectory = '{APP_DIR}'; "
+        f"$l.IconLocation = '{ICON_PATH}'; "
+        "$l.Save()"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                   creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+
+
+def ensure_startmenu_shortcut():
+    """Ensure Start Menu has a launch entry for this app."""
+    try:
+        _create_shortcut(STARTMENU_LNK)
+    except Exception:
+        pass
 
 
 def is_autostart_enabled():
@@ -307,21 +364,7 @@ def set_autostart(enable):
         pass
     if enable:
         try:
-            import pythoncom  # noqa: F401
-        except Exception:
-            pass
-        ps = (
-            "$ws = New-Object -ComObject WScript.Shell; "
-            f"$l = $ws.CreateShortcut('{STARTUP_LNK}'); "
-            f"$l.TargetPath = '{PYTHONW}'; "
-            f"$l.Arguments = '\"{SCRIPT_PATH}\"'; "
-            f"$l.WorkingDirectory = '{APP_DIR}'; "
-            f"$l.IconLocation = '{ICON_PATH}'; "
-            "$l.Save()"
-        )
-        try:
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+            _create_shortcut(STARTUP_LNK)
         except Exception:
             pass
     else:
@@ -330,6 +373,69 @@ def set_autostart(enable):
                 os.remove(STARTUP_LNK)
         except Exception:
             pass
+
+
+def log_perf(stage, extra=None):
+    """Append lightweight timing markers for latency analysis."""
+    try:
+        rec = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "stage": stage,
+            "extra": extra or {},
+        }
+        with open(PERF_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _service_json(path, payload, timeout=30):
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        SERVICE_URL + path,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+    return json.loads(body)
+
+
+def _service_health(timeout=1.2):
+    req = urllib.request.Request(SERVICE_URL + "/health", method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+    obj = json.loads(body)
+    return bool(obj.get("ok"))
+
+
+def ensure_local_service_started():
+    """Try to ensure local translator service is available."""
+    try:
+        if _service_health(timeout=0.6):
+            return True
+    except Exception:
+        pass
+    try:
+        if os.path.exists(SERVICE_SCRIPT_PATH):
+            subprocess.Popen(
+                [sys.executable, SERVICE_SCRIPT_PATH],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=APP_DIR,
+            )
+            for _ in range(8):
+                time.sleep(0.15)
+                try:
+                    if _service_health(timeout=0.6):
+                        return True
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return False
 
 
 class TranslatorApp:
@@ -346,6 +452,17 @@ class TranslatorApp:
         self._anim_job = None
         self._last_input = None
         self._stream_popup_ready = False
+        self._stream_queue = queue.Queue()
+        self._stream_accum = ""
+        self._stream_flush_job = None
+        self._stream_cols = 0
+        self._stream_fixed_w = 0
+        self._stream_max_h = 0
+        self._stream_origin_x = None
+        self._stream_origin_y = None
+        self._stream_monitor_rect = None
+        self._resize_mode = None
+        self._resize_start = None
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -360,13 +477,26 @@ class TranslatorApp:
 
         self._setup_scrollbar_style()
 
+        if USE_LOCAL_SERVICE:
+            threading.Thread(target=ensure_local_service_started,
+                             daemon=True).start()
+
         self._start_listener()
         self._start_tray()
 
-        # One-time migration: earlier versions auto-started via QuickTranslate.vbs.
-        # Convert that into the new managed .lnk so the setting stays in sync.
-        if os.path.exists(LEGACY_STARTUP_VBS) and not is_autostart_enabled():
-            set_autostart(True)
+        # Run shortcut/migration work in background so startup stays responsive
+        # and the first hotkey trigger is not blocked by PowerShell startup.
+        threading.Thread(target=self._run_startup_tasks, daemon=True).start()
+
+    def _run_startup_tasks(self):
+        try:
+            ensure_startmenu_shortcut()
+            # One-time migration: earlier versions auto-started via QuickTranslate.vbs.
+            # Convert that into the new managed .lnk so the setting stays in sync.
+            if os.path.exists(LEGACY_STARTUP_VBS) and not is_autostart_enabled():
+                set_autostart(True)
+        except Exception:
+            pass
 
     def _setup_scrollbar_style(self):
         """A minimal capsule scrollbar: just a thumb on the right, no arrow
@@ -445,6 +575,24 @@ class TranslatorApp:
     def _show_loading(self, text):
         self._destroy_popup()
         self._last_input = text
+        self._stream_popup_ready = False
+        self._stream_accum = ""
+        self._stream_queue = queue.Queue()
+        self._stream_cols = 0
+        self._stream_fixed_w = 0
+        self._stream_max_h = 0
+        self._stream_origin_x = None
+        self._stream_origin_y = None
+        self._stream_monitor_rect = None
+        self._stream_origin_x = None
+        self._stream_origin_y = None
+        self._stream_monitor_rect = None
+        if self._stream_flush_job:
+            try:
+                self.root.after_cancel(self._stream_flush_job)
+            except Exception:
+                pass
+            self._stream_flush_job = None
         self.popup = self._make_loading_popup()
         self._animate_loading(0)
         threading.Thread(target=self._do_translate, args=(text,),
@@ -480,13 +628,28 @@ class TranslatorApp:
     def _do_translate(self, text):
         # Long, non-dictionary text streams so the translation appears
         # progressively; short text uses the simpler one-shot path.
+        t0 = time.perf_counter()
+        mode = "oneshot"
         try:
-            if len(text) > 80 and not is_single_word(text):
+            if len(text) > 320 and not is_single_word(text):
+                mode = "stream"
                 if self._stream_claude(text):
+                    log_perf("translate_done", {
+                        "mode": mode,
+                        "chars": len(text),
+                        "wall_ms": int((time.perf_counter() - t0) * 1000),
+                        "ok": True,
+                    })
                     return   # streaming handled display + history
             ok, result = self._call_claude(text)
         except Exception as e:
             ok, result = False, f"出错了：{e}"
+        log_perf("translate_done", {
+            "mode": mode,
+            "chars": len(text),
+            "wall_ms": int((time.perf_counter() - t0) * 1000),
+            "ok": bool(ok),
+        })
         self.root.after(0, lambda: self._show_result(ok, result))
 
     def _stream_claude(self, text):
@@ -495,14 +658,16 @@ class TranslatorApp:
         system_prompt = DIRECTION_MODES[self.cfg["direction"]] + SYSTEM_SUFFIX
         payload = f"<text>\n{text}\n</text>"
         self._stream_popup_ready = False
+        t0 = time.perf_counter()
         try:
             proc = subprocess.Popen(
-                [CLAUDE_CMD, "-p", "--model", self.cfg["model"],
+                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg["model"],
                  "--system-prompt", system_prompt,
                  "--output-format", "stream-json",
                  "--include-partial-messages", "--verbose",
                  "--tools", "",   # no tools needed → smaller prompt, faster API
-                 "--exclude-dynamic-system-prompt-sections"],
+                 "--exclude-dynamic-system-prompt-sections",
+                 "--no-session-persistence"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                 creationflags=subprocess.CREATE_NO_WINDOW,
@@ -511,10 +676,6 @@ class TranslatorApp:
             proc.stdin.close()
 
             acc = []
-
-            def push():
-                current = "".join(acc)
-                self.root.after(0, lambda: self._stream_update(current))
 
             for line in proc.stdout:
                 line = line.strip()
@@ -531,42 +692,104 @@ class TranslatorApp:
                         txt = delta.get("text", "")
                         if txt:
                             acc.append(txt)
-                            push()
+                            self._stream_queue.put(txt)
+                            self.root.after(0, self._stream_flush)
             proc.wait()
 
             final = "".join(acc).strip()
             if not final:
+                log_perf("stream_cli_empty", {"chars": len(text)})
                 return False   # nothing streamed → fall back to one-shot
             self.root.after(0, lambda: self._stream_finalize(final))
             if self.cfg.get("history_enabled", True) and self._last_input:
                 add_history(self._last_input, final, False,
                             self.cfg.get("history_limit", 100))
+            log_perf("stream_cli_done", {
+                "chars": len(text),
+                "wall_ms": int((time.perf_counter() - t0) * 1000),
+            })
             return True
-        except Exception:
+        except Exception as e:
+            log_perf("stream_cli_error", {"chars": len(text), "err": str(e)[:160]})
             return False
+
+    def _stream_flush(self):
+        """Batch stream chunks on the UI thread to reduce redraw churn/crashes."""
+        if self._stream_flush_job:
+            return
+
+        def do_flush():
+            self._stream_flush_job = None
+            appended = []
+            try:
+                while True:
+                    appended.append(self._stream_queue.get_nowait())
+            except queue.Empty:
+                pass
+            if not appended:
+                return
+            self._stream_accum += "".join(appended)
+            try:
+                self._stream_update(self._stream_accum)
+            except Exception:
+                # If UI update races with close/destroy, ignore this frame.
+                return
+
+        self._stream_flush_job = self.root.after(50, do_flush)
 
     def _stream_update(self, current):
         """Called on the UI thread as streamed text grows. The first call swaps
         the loading hint for a result popup; later calls only update its text.
         Uses an explicit flag (set synchronously here on the UI thread) so
         queued callbacks can't each re-create the popup."""
-        if not self._stream_popup_ready:
-            self._stream_popup_ready = True
-            self._stop_animation()
+        try:
+            if not self._stream_popup_ready:
+                self._stream_popup_ready = True
+                self._stop_animation()
+                anchor = None
+                if self.popup:
+                    try:
+                        anchor = (self.popup.winfo_x(), self.popup.winfo_y())
+                    except Exception:
+                        anchor = None
+                self._destroy_popup()
+                self.popup = self._make_popup(current, anchor=anchor)
+                # First stream frame: lock width and initialize grow-only height.
+                self._set_popup_text(current, stream_grow=True)
+            else:
+                self._set_popup_text(current, stream_grow=True)
+        except Exception:
+            # UI can be destroyed while stream callbacks are in flight.
+            return
+
+    def _stream_finalize(self, final):
+        if self._stream_flush_job:
+            try:
+                self.root.after_cancel(self._stream_flush_job)
+            except Exception:
+                pass
+            self._stream_flush_job = None
+        self._stream_accum = final
+        try:
+            if self.popup and getattr(self.popup, "_text", None):
+                # Final frame keeps stable stream geometry (no shrink/reposition jump).
+                self._set_popup_text(final, stream_grow=True)
+                return
+
             anchor = None
             if self.popup:
                 try:
                     anchor = (self.popup.winfo_x(), self.popup.winfo_y())
                 except Exception:
                     anchor = None
+            self._stop_animation()
             self._destroy_popup()
-            self.popup = self._make_popup(current, anchor=anchor)
-        else:
-            self._set_popup_text(current)
-
-    def _stream_finalize(self, final):
-        if self.popup and getattr(self.popup, "_text", None):
-            self._set_popup_text(final)
+            self.popup = self._make_popup(final, anchor=anchor)
+            self._stream_popup_ready = True
+            self._set_popup_text(final, stream_grow=True)
+            log_perf("stream_finalize_popup_created", {"chars": len(final)})
+        except Exception as e:
+            log_perf("stream_finalize_error", {"err": str(e)[:160]})
 
     def _call_claude(self, text):
         if is_single_word(text):
@@ -576,16 +799,45 @@ class TranslatorApp:
         # Wrap the selection in tags so a bare word isn't mistaken for an
         # instruction (fixes short inputs returning "请提供要翻译的文本").
         payload = f"<text>\n{text}\n</text>"
+        t0 = time.perf_counter()
+
+        if USE_LOCAL_SERVICE:
+            try:
+                if ensure_local_service_started():
+                    resp = _service_json("/translate", {
+                        "text": text,
+                        "model": self.cfg["model"],
+                        "direction": self.cfg["direction"],
+                        "dictionary": bool(is_single_word(text)),
+                    }, timeout=65)
+                    if resp.get("ok"):
+                        log_perf("oneshot_service_done", {
+                            "chars": len(text),
+                            "wall_ms": int((time.perf_counter() - t0) * 1000),
+                        })
+                        return True, (resp.get("result") or "").strip()
+                    log_perf("oneshot_service_fail", {
+                        "chars": len(text),
+                        "err": str(resp.get("error", ""))[:160],
+                    })
+                else:
+                    log_perf("service_unavailable", {"chars": len(text)})
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+                log_perf("service_http_error", {"chars": len(text), "err": str(e)[:160]})
+            except Exception as e:
+                log_perf("service_error", {"chars": len(text), "err": str(e)[:160]})
+
         try:
             # Pass the text via stdin, NOT as a CLI argument: claude -p treats a
             # newline in an argument as end-of-input and would translate only the
             # first line/paragraph. stdin delivers the whole selection intact.
             proc = subprocess.run(
-                [CLAUDE_CMD, "-p", "--model", self.cfg["model"],
+                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg["model"],
                  "--system-prompt", system_prompt,
                  "--output-format", "json",
                  "--tools", "",   # no tools needed → smaller prompt, faster API
-                 "--exclude-dynamic-system-prompt-sections"],
+                 "--exclude-dynamic-system-prompt-sections",
+                 "--no-session-persistence"],
                 input=payload,
                 capture_output=True, text=True, encoding="utf-8",
                 timeout=60,
@@ -598,14 +850,28 @@ class TranslatorApp:
                 try:
                     result = json.loads(out).get("result", "").strip()
                     if result:
+                        log_perf("oneshot_cli_done", {
+                            "chars": len(text),
+                            "wall_ms": int((time.perf_counter() - t0) * 1000),
+                        })
                         return True, result
                 except json.JSONDecodeError:
                     if out:
+                        log_perf("oneshot_cli_plain", {
+                            "chars": len(text),
+                            "wall_ms": int((time.perf_counter() - t0) * 1000),
+                        })
                         return True, out
+            log_perf("oneshot_cli_fail", {
+                "chars": len(text),
+                "wall_ms": int((time.perf_counter() - t0) * 1000),
+            })
             return False, self._humanize_error(proc.stderr or "")
         except subprocess.TimeoutExpired:
+            log_perf("oneshot_timeout", {"chars": len(text)})
             return False, "翻译超时，请重试。"
         except Exception as e:
+            log_perf("oneshot_error", {"chars": len(text), "err": str(e)[:160]})
             return False, f"出错了：{e}"
 
     def _humanize_error(self, stderr):
@@ -641,17 +907,26 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        try:
-            win.attributes("-alpha", 0.95)
-        except Exception:
-            pass
-        frame = tk.Frame(win, bg=self.theme["bg"], bd=1, relief="solid",
-                         highlightbackground=self.theme["border"],
-                         highlightthickness=1)
-        frame.pack(fill="both", expand=True)
-        hint = tk.Label(frame, text="翻译中", bg=self.theme["bg"],
-                        fg=self.theme["hint_fg"],
-                        font=("Microsoft YaHei UI", 10), padx=16, pady=8)
+
+        popup_bg = self.theme.get("popup_bg", self.theme["bg"])
+        popup_border = self.theme.get("popup_border", self.theme["border"])
+        popup_hint = self.theme.get("popup_hint", self.theme["hint_fg"])
+
+        shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
+        shell.pack(fill="both", expand=True)
+        frame = tk.Frame(shell, bg=popup_bg, bd=0, highlightthickness=0)
+        frame.pack(fill="both", expand=True,
+                   padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
+
+        hint = tk.Label(
+            frame,
+            text="翻译中",
+            bg=popup_bg,
+            fg=popup_hint,
+            font=("Microsoft YaHei UI", 11),
+            padx=24,
+            pady=14,
+        )
         hint.pack()
         win._hint_label = hint
 
@@ -661,67 +936,113 @@ class TranslatorApp:
         y = self.root.winfo_pointery() + 18
         x, y = self._clamp_to_monitor(x, y, w, h)
         win.geometry(f"{w}x{h}+{x}+{y}")
-        # Clicking anywhere outside dismisses the loading hint.
-        win.bind("<FocusOut>", lambda e: self._destroy_popup())
+        self._setup_rounded_window(win, LOADING_CORNER_RADIUS)
+        # Clicking anywhere outside dismisses only the loading hint.
+        win.bind("<FocusOut>", lambda e: self._dismiss_loading_popup())
         win.focus_force()
         return win
 
     def _make_popup(self, message, anchor=None, is_error=False):
         win = tk.Toplevel(self.root)
+        win.withdraw()          # avoid a visible jump before final geometry
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        try:
-            win.attributes("-alpha", 0.97)
-        except Exception:
-            pass
 
-        frame = tk.Frame(win, bg=self.theme["bg"], bd=1, relief="solid",
-                         highlightbackground=self.theme["border"],
-                         highlightthickness=1)
-        frame.pack(fill="both", expand=True)
+        popup_bg = self.theme.get("popup_bg", self.theme["bg"])
+        popup_border = self.theme.get("popup_border", self.theme["border"])
 
-        bar = tk.Frame(frame, bg=self.theme["bar_bg"])
-        bar.pack(fill="x", padx=8, pady=(6, 0))
+        shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
+        shell.pack(fill="both", expand=True)
+
+        frame = tk.Frame(shell, bg=popup_bg, bd=0, highlightthickness=0)
+        frame.pack(fill="both", expand=True,
+                   padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
+
+        bar = tk.Frame(frame, bg=self.theme["bar_bg"], bd=0, highlightthickness=0)
+        bar.pack(fill="x",
+                 padx=POPUP_BAR_PAD_X,
+                 pady=(POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM))
         win._bar = bar
+
+        btn_style = {
+            "bg": self.theme["btn_bg"],
+            "fg": self.theme["fg"],
+            "activebackground": self.theme["btn_active"],
+            "activeforeground": self.theme["fg"],
+            "relief": "flat",
+            "bd": 0,
+            "highlightthickness": 0,
+            "font": ("Microsoft YaHei UI", 9),
+            "cursor": "hand2",
+            "padx": 10,
+            "pady": 2,
+        }
+
         copy_btn = tk.Button(
-            bar, text="复制", command=self._copy_result,
-            bg=self.theme["btn_bg"], fg=self.theme["fg"],
-            activebackground=self.theme["btn_active"],
-            activeforeground=self.theme["fg"], relief="flat", padx=10, pady=1,
-            font=("Microsoft YaHei UI", 9), cursor="hand2")
+            bar,
+            text="复制",
+            command=self._copy_result,
+            **btn_style,
+        )
         copy_btn.pack(side="left")
         win._copy_btn = copy_btn
+
         if is_error:
             retry_btn = tk.Button(
-                bar, text="重试", command=self._retry,
-                bg=self.theme["btn_bg"], fg=self.theme["fg"],
-                activebackground=self.theme["btn_active"],
-                activeforeground=self.theme["fg"], relief="flat",
-                padx=10, pady=1, font=("Microsoft YaHei UI", 9), cursor="hand2")
+                bar,
+                text="重试",
+                command=self._retry,
+                **btn_style,
+            )
             retry_btn.pack(side="left", padx=(6, 0))
+
         close_btn = tk.Button(
-            bar, text="✕", command=self._destroy_popup,
-            bg=self.theme["btn_bg"], fg=self.theme["fg"],
+            bar,
+            text="✕",
+            command=self._destroy_popup,
+            bg=self.theme["btn_bg"],
+            fg=self.theme["fg"],
             activebackground=self.theme["btn_close_active"],
-            activeforeground="#ffffff", relief="flat", padx=8, pady=1,
-            font=("Microsoft YaHei UI", 9), cursor="hand2")
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            font=("Microsoft YaHei UI", 9),
+            cursor="hand2",
+            padx=8,
+            pady=2,
+        )
         close_btn.pack(side="right")
 
         bar.bind("<Button-1>", self._drag_start)
         bar.bind("<B1-Motion>", self._drag_move)
 
-        body = tk.Frame(frame, bg=self.theme["bg"])
-        body.pack(fill="both", expand=True)
+        body = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True,
+                  padx=POPUP_BODY_PAD_X, pady=(0, POPUP_BODY_PAD_BOTTOM))
 
         scroll = ttk.Scrollbar(body, orient="vertical",
                                style="CC.Vertical.TScrollbar")
         text = tk.Text(
-            body, bg=self.theme["bg"], fg=self.theme["fg"],
+            body,
+            bg=popup_bg,
+            fg=self.theme["fg"],
             font=("Microsoft YaHei UI", self.cfg["font_size"]),
-            wrap="word", relief="flat", padx=14, pady=10, insertwidth=0,
-            selectbackground=self.theme["sel_bg"], highlightthickness=0,
-            spacing1=3, spacing2=5, spacing3=3,   # roomier line spacing
-            width=1, height=1, yscrollcommand=scroll.set)
+            wrap="word",
+            relief="flat",
+            bd=0,
+            padx=POPUP_TEXT_PAD_X,
+            pady=POPUP_TEXT_PAD_Y,
+            insertwidth=0,
+            selectbackground=self.theme["sel_bg"],
+            highlightthickness=0,
+            spacing1=3,
+            spacing2=5,
+            spacing3=3,
+            width=1,
+            height=1,
+            yscrollcommand=scroll.set,
+        )
         scroll.config(command=text.yview)
         text.pack(side="left", fill="both", expand=True)
         win._text = text
@@ -738,7 +1059,13 @@ class TranslatorApp:
         x, y = self._clamp_to_monitor(x, y, w, h, ref=anchor)
         win.geometry(f"{w}x{h}+{x}+{y}")
 
+        win.bind("<Motion>", self._popup_motion)
+        win.bind("<ButtonPress-1>", self._popup_press)
+        win.bind("<B1-Motion>", self._popup_drag)
+        win.bind("<ButtonRelease-1>", self._popup_release)
         win.bind("<Escape>", lambda e: self._destroy_popup())
+        self._setup_rounded_window(win, POPUP_CORNER_RADIUS)
+        win.deiconify()         # now show at final geometry (no flash at default origin)
         win.focus_force()
         return win
 
@@ -750,8 +1077,7 @@ class TranslatorApp:
         a max; tkinter then reports the precise pixel reqwidth/reqheight, and
         we read the true wrapped line count for the height."""
         text = win._text
-        pad_x, pad_y = 14, 10
-        border = 2
+        shell_pad = POPUP_SHELL_PAD
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
@@ -779,7 +1105,7 @@ class TranslatorApp:
         # wrapped lines. When reusing a popup (streaming), the window is still
         # at its old narrow size, which squeezes the Text and miscounts a
         # 1-line string as several — leaving the final window too tall.
-        req_w = text.winfo_reqwidth() + border
+        req_w = text.winfo_reqwidth() + (shell_pad * 2)
         win.geometry(f"{req_w}x1000")
         text.update_idletasks()
         text.update()
@@ -801,17 +1127,165 @@ class TranslatorApp:
             win._scroll.pack_forget()
         text.update()
 
-        w = text.winfo_reqwidth() + border
+        w = text.winfo_reqwidth() + (shell_pad * 2)
         if true_lines > max_lines:
             w += win._scroll.winfo_reqwidth()
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
-        h = text.winfo_reqheight() + bar_h + border + 4
+        h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
+        h = max(int(h), MIN_POPUP_HEIGHT)
         return int(w), int(h)
+
+    def _size_popup_stream_grow(self, win, message):
+        """Streaming mode: keep width fixed, only allow height to grow."""
+        text = win._text
+        shell_pad = POPUP_SHELL_PAD
+
+        rect = get_monitor_rect()
+        if rect:
+            left, top, right, bottom = rect
+        else:
+            left, top = 0, 0
+            right = self.root.winfo_screenwidth()
+            bottom = self.root.winfo_screenheight()
+        mon_w = right - left
+        mon_h = bottom - top
+
+        avg_char_px = max(win._text_font.measure("0"), 7)
+        screen_cap = max(24, int((mon_w * 0.9) / avg_char_px))
+        # Keep stream width stable and reasonably wide from the first frame.
+        preferred_cols = min(max(36, int(screen_cap * 0.7)), 48)
+        cols = self._stream_cols or preferred_cols
+        self._stream_cols = cols
+
+        self._fill_text(text, message)
+        text.config(width=cols, height=1)
+        text.update_idletasks()
+        text.update()
+        try:
+            true_lines = int(text.count("1.0", "end", "displaylines")[0])
+        except Exception:
+            true_lines = message.count("\n") + 1
+        true_lines = max(true_lines, 1)
+
+        bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
+        if self._stream_origin_y is not None:
+            # Once the stream anchor is fixed, height may only grow downward
+            # until the bottom edge is reached; never move the window upward.
+            max_popup_h = max(1, int(bottom - self._stream_origin_y - 8))
+        else:
+            max_popup_h = max(MIN_POPUP_HEIGHT, int(mon_h - 20))
+        available_text_h = max(24, max_popup_h - bar_h - (shell_pad * 2))
+        line_px = max(win._text_font.metrics("linespace") + 6, 14)
+        max_lines_by_height = max(4, int(available_text_h / line_px))
+
+        display_lines = min(true_lines, max_lines_by_height)
+        text.config(height=display_lines)
+
+        if true_lines > max_lines_by_height:
+            win._scroll.pack(side="right", fill="y")
+            win._text.bind("<MouseWheel>", self._on_mousewheel)
+            win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
+        else:
+            win._scroll.pack_forget()
+        text.update()
+
+        w = text.winfo_reqwidth() + (shell_pad * 2)
+        if true_lines > max_lines_by_height:
+            w += win._scroll.winfo_reqwidth()
+        h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
+
+        if not self._stream_fixed_w:
+            self._stream_fixed_w = int(w)
+        if self._stream_max_h:
+            h = max(int(h), self._stream_max_h)
+
+        h = min(int(h), max_popup_h)
+        self._stream_max_h = int(h)
+
+        if self._stream_monitor_rect is None:
+            try:
+                cx, cy = win.winfo_x(), win.winfo_y()
+            except Exception:
+                cx, cy = left + 12, top + 12
+            rect0 = get_monitor_rect((cx, cy))
+            self._stream_monitor_rect = rect0 if rect0 else (left, top, right, bottom)
+
+        return int(self._stream_fixed_w), int(h)
 
     def _on_mousewheel(self, event):
         if self.popup and getattr(self.popup, "_text", None):
             self.popup._text.yview_scroll(int(-event.delta / 120), "units")
         return "break"
+
+    def _setup_rounded_window(self, win, radius):
+        """Bind window lifecycle events so rounding is stable from first paint."""
+        win._corner_radius = max(0, int(radius))
+        win._rounding_job = None
+
+        def _schedule_rounding(delay_ms=0):
+            job = getattr(win, "_rounding_job", None)
+            if job:
+                try:
+                    win.after_cancel(job)
+                except Exception:
+                    pass
+            try:
+                win._rounding_job = win.after(delay_ms, lambda: self._apply_window_rounding(win))
+            except Exception:
+                pass
+
+        def _on_configure(_event=None):
+            _schedule_rounding(8)
+
+        def _on_map(_event=None):
+            _schedule_rounding(0)
+            _schedule_rounding(16)
+
+        win.bind("<Configure>", _on_configure, add="+")
+        win.bind("<Map>", _on_map, add="+")
+        _schedule_rounding(0)
+
+    def _apply_window_rounding(self, win):
+        """Apply Win32 rounded corners to a borderless popup window."""
+        try:
+            hwnd = int(win.winfo_id())
+            w = max(1, int(win.winfo_width()))
+            h = max(1, int(win.winfo_height()))
+            radius = max(0, int(getattr(win, "_corner_radius", POPUP_CORNER_RADIUS)))
+
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+
+            # Set explicit signatures so 64-bit handles are passed correctly.
+            user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
+            user32.SetWindowRgn.restype = ctypes.c_int
+            gdi32.CreateRoundRectRgn.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int,
+            ]
+            gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+
+            # Region clips the real window shape for rounded corners.
+            rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
+            if rgn:
+                user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn), True)
+
+            # Hint Windows 11 to prefer rounded non-client corner style.
+            try:
+                dwmapi = ctypes.windll.dwmapi
+                DWMWA_WINDOW_CORNER_PREFERENCE = 33
+                DWMWCP_ROUND = 2
+                pref = ctypes.c_int(DWMWCP_ROUND)
+                dwmapi.DwmSetWindowAttribute(
+                    ctypes.c_void_p(hwnd),
+                    DWMWA_WINDOW_CORNER_PREFERENCE,
+                    ctypes.byref(pref),
+                    ctypes.sizeof(pref),
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _clamp_to_monitor(self, x, y, w, h, ref=None):
         """Keep a w×h window fully inside a monitor. The monitor is chosen by
@@ -827,11 +1301,130 @@ class TranslatorApp:
         y = max(top + 4, min(y, bottom - h - 4))
         return x, y
 
+    def _resize_hit(self, win, x, y):
+        w, h = win.winfo_width(), win.winfo_height()
+        # Overrideredirect windows can report slightly off local coordinates,
+        # especially near the bottom edge; widen and normalize hit bands.
+        hit = RESIZE_HIT
+        edge_x = "w" if x <= hit else ("e" if x >= w - hit else "")
+        edge_y = "n" if y <= hit else ("s" if y >= h - hit else "")
+        if not edge_y and y >= h - (hit * 2):
+            edge_y = "s"
+        return edge_y + edge_x
+
+    def _resize_cursor(self, mode):
+        return {
+            "n": "sb_v_double_arrow",
+            "s": "sb_v_double_arrow",
+            "e": "sb_h_double_arrow",
+            "w": "sb_h_double_arrow",
+            "nw": "size_nw_se",
+            "se": "size_nw_se",
+            "ne": "size_ne_sw",
+            "sw": "size_ne_sw",
+        }.get(mode, "arrow")
+
+    def _popup_motion(self, event):
+        win = self.popup
+        if not win:
+            return
+        if self._resize_mode:
+            return
+        lx = event.x_root - win.winfo_rootx()
+        ly = event.y_root - win.winfo_rooty()
+        mode = self._resize_hit(win, lx, ly)
+        try:
+            win.configure(cursor=self._resize_cursor(mode))
+        except Exception:
+            pass
+
+    def _popup_press(self, event):
+        win = self.popup
+        if not win:
+            return
+        lx = event.x_root - win.winfo_rootx()
+        ly = event.y_root - win.winfo_rooty()
+        mode = self._resize_hit(win, lx, ly)
+        if not mode:
+            self._resize_mode = None
+            self._resize_start = None
+            return
+        self._resize_mode = mode
+        self._resize_start = (
+            event.x_root, event.y_root,
+            win.winfo_x(), win.winfo_y(),
+            win.winfo_width(), win.winfo_height(),
+        )
+
+    def _popup_drag(self, event):
+        win = self.popup
+        if not (win and self._resize_mode and self._resize_start):
+            return
+        sx, sy, ox, oy, ow, oh = self._resize_start
+        dx, dy = event.x_root - sx, event.y_root - sy
+        x, y, w, h = ox, oy, ow, oh
+
+        mode = self._resize_mode
+        if "e" in mode:
+            w = ow + dx
+        if "s" in mode:
+            h = oh + dy
+        if "w" in mode:
+            x = ox + dx
+            w = ow - dx
+        if "n" in mode:
+            y = oy + dy
+            h = oh - dy
+
+        w = max(MIN_RESIZE_WIDTH, int(w))
+        h = max(MIN_RESIZE_HEIGHT, int(h))
+
+        rect = get_monitor_rect((ox, oy))
+        if rect:
+            left, top, right, bottom = rect
+        else:
+            left, top = 0, 0
+            right = self.root.winfo_screenwidth()
+            bottom = self.root.winfo_screenheight()
+
+        if x < left + 4:
+            if "w" in mode:
+                w -= (left + 4 - x)
+            x = left + 4
+        if y < top + 4:
+            if "n" in mode:
+                h -= (top + 4 - y)
+            y = top + 4
+
+        if x + w > right - 4:
+            if "e" in mode:
+                w = right - 4 - x
+            else:
+                x = max(left + 4, right - 4 - w)
+        if y + h > bottom - 4:
+            if "s" in mode:
+                h = bottom - 4 - y
+            else:
+                y = max(top + 4, bottom - 4 - h)
+
+        w = max(MIN_RESIZE_WIDTH, int(w))
+        h = max(MIN_RESIZE_HEIGHT, int(h))
+        win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        self._apply_window_rounding(win)
+
+    def _popup_release(self, _event):
+        self._resize_mode = None
+        self._resize_start = None
+
     def _drag_start(self, event):
+        if self._resize_mode:
+            return
         self._drag_off_x = event.x
         self._drag_off_y = event.y
 
     def _drag_move(self, event):
+        if self._resize_mode:
+            return
         if self.popup:
             x = self.popup.winfo_x() + event.x - self._drag_off_x
             y = self.popup.winfo_y() + event.y - self._drag_off_y
@@ -855,17 +1448,91 @@ class TranslatorApp:
             except Exception:
                 pass
 
-    def _set_popup_text(self, message):
+    def _set_popup_text(self, message, resize=True, stream_grow=False):
         win = self.popup
         if not (win and getattr(win, "_text", None)):
+            return
+        if stream_grow:
+            w, h = self._size_popup_stream_grow(win, message)
+
+            if self._stream_monitor_rect is None:
+                try:
+                    cx0, cy0 = win.winfo_x(), win.winfo_y()
+                except Exception:
+                    cx0, cy0 = 0, 0
+                rect0 = get_monitor_rect((cx0, cy0))
+                self._stream_monitor_rect = rect0 if rect0 else (
+                    0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+
+            left, top, right, bottom = self._stream_monitor_rect
+            min_top = top + 12
+            max_y = max(min_top, bottom - h - 8)
+
+            if self._stream_origin_x is None or self._stream_origin_y is None:
+                try:
+                    cx, cy = win.winfo_x(), win.winfo_y()
+                except Exception:
+                    cx, cy = left + 12, min_top
+                nx = max(left + 4, min(cx, right - w - 4))
+                min_visible = min(MIN_STREAM_VISIBLE_HEIGHT, max(80, bottom - top - 20))
+                max_origin_y = max(min_top, bottom - min_visible - 8)
+                ny = min(max(cy, min_top), max_origin_y)
+                self._stream_origin_x, self._stream_origin_y = nx, ny
+            else:
+                nx = max(left + 4, min(self._stream_origin_x, right - w - 4))
+                ny = self._stream_origin_y
+
+            if (bottom - ny - 8) < MIN_POPUP_HEIGHT:
+                ny = max(min_top, bottom - MIN_POPUP_HEIGHT - 8)
+                if self._stream_origin_y is not None:
+                    self._stream_origin_y = ny
+
+            win.geometry(f"{w}x{h}+{nx}+{ny}")
+            self._apply_window_rounding(win)
+            return
+        if not resize:
+            self._fill_text(win._text, message)
+            try:
+                win._text.see("end-1c")
+            except Exception:
+                pass
             return
         w, h = self._size_popup(win, message)
         cx, cy = win.winfo_x(), win.winfo_y()
         x, y = self._clamp_to_monitor(cx, cy, w, h, ref=(cx, cy))
         win.geometry(f"{w}x{h}+{x}+{y}")
+        self._apply_window_rounding(win)
+
+    def _dismiss_loading_popup(self):
+        """Close only the temporary loading hint; keep translation pipeline alive."""
+        win = self.popup
+        if not (win and getattr(win, "_hint_label", None)):
+            return
+        self._stop_animation()
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        if self.popup is win:
+            self.popup = None
+        log_perf("loading_dismissed", {"has_stream_data": bool(self._stream_accum)})
 
     def _destroy_popup(self):
         self._stop_animation()
+        if self._stream_flush_job:
+            try:
+                self.root.after_cancel(self._stream_flush_job)
+            except Exception:
+                pass
+            self._stream_flush_job = None
+        self._stream_cols = 0
+        self._stream_fixed_w = 0
+        self._stream_max_h = 0
+        self._stream_origin_x = None
+        self._stream_origin_y = None
+        self._stream_monitor_rect = None
+        self._resize_mode = None
+        self._resize_start = None
         if self.popup:
             try:
                 self.popup.destroy()
@@ -961,6 +1628,7 @@ class TranslatorApp:
             row=row, column=0, columnspan=2, sticky="w", padx=8, pady=6)
         row += 1
 
+
         autostart_var = tk.BooleanVar(value=is_autostart_enabled())
         tk.Checkbutton(win, text="开机自动启动", variable=autostart_var,
                        bg=bg, fg=fg, selectcolor=bg, activebackground=bg,
@@ -986,6 +1654,9 @@ class TranslatorApp:
                 self.cfg["history_limit"] = int(hist_limit_var.get())
                 self.cfg["history_enabled"] = bool(history_var.get())
                 save_config(self.cfg)
+                if USE_LOCAL_SERVICE:
+                    threading.Thread(target=ensure_local_service_started,
+                                     daemon=True).start()
                 if autostart_var.get() != is_autostart_enabled():
                     set_autostart(autostart_var.get())
                 # Re-resolve theme so new popups pick it up immediately.
@@ -1156,5 +1827,32 @@ class TranslatorApp:
         self.root.mainloop()
 
 
+def _acquire_single_instance_mutex():
+    """Return a process-lifetime Win32 mutex handle, or None if another instance exists."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.GetLastError.restype = wintypes.DWORD
+
+        handle = kernel32.CreateMutexW(None, False, "Local\\CCTranslate.SingleInstance")
+        if not handle:
+            return object()
+        # ERROR_ALREADY_EXISTS = 183
+        if kernel32.GetLastError() == 183:
+            kernel32.CloseHandle(handle)
+            return None
+        return handle
+    except Exception:
+        # If mutex API is unavailable, fail open rather than block startup.
+        return object()
+
+
 if __name__ == "__main__":
+    _single_instance_handle = _acquire_single_instance_mutex()
+    if _single_instance_handle is None:
+        sys.exit(0)
     TranslatorApp().run()
