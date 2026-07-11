@@ -17,6 +17,7 @@ import queue
 import threading
 import subprocess
 import ctypes
+from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
@@ -421,6 +422,132 @@ def log_perf(stage, extra=None):
     """Perf logging disabled — kept as a no-op so existing call sites are
     unchanged. Re-enable here if latency profiling is ever needed again."""
     return
+
+
+# ---------------------------------------------------------------------------
+# Reliable rounded corners for borderless (overrideredirect) windows.
+#
+# Previous approach applied a rounded region from Tk's <Configure>/<Map>
+# handlers using winfo_width()/height(). During a live drag-resize those
+# values lag the requested geometry, so a stale (too-large) region could get
+# cached — its rounded corners then fall *outside* the shrunk window and it
+# renders square. The fix: subclass the window procedure and re-apply the
+# region on WM_WINDOWPOSCHANGED / WM_SIZE, which Windows sends *after* the
+# window has actually been resized. GetWindowRect then reports the true final
+# size every time, regardless of who triggered the resize (Tk geometry, a
+# drag, or a DPI change). This removes all Tk timing/caching races.
+# ---------------------------------------------------------------------------
+_ROUND_GWLP_WNDPROC = -4
+_ROUND_WM_SIZE = 0x0005
+_ROUND_WM_WINDOWPOSCHANGED = 0x0047
+_ROUND_WM_DPICHANGED = 0x02E0
+_ROUND_LRESULT = ctypes.c_ssize_t
+_ROUND_WNDPROC = ctypes.WINFUNCTYPE(
+    _ROUND_LRESULT, wintypes.HWND, ctypes.c_uint,
+    ctypes.c_size_t, ctypes.c_ssize_t)
+
+# hwnd -> {"cb": <WNDPROC>, "old": <old proc ptr>, "radius": int}
+# Keeps the ctypes callback alive for the window's whole lifetime (GC of the
+# callback while Windows still holds the pointer would crash).
+_ROUND_REGISTRY = {}
+
+
+def _round_apply_region(hwnd, radius):
+    """Clip the window to a rounded rectangle matching its *current* real size."""
+    try:
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        w = rect.right - rect.left
+        h = rect.bottom - rect.top
+        if w <= 0 or h <= 0:
+            return
+        r = max(0, int(radius))
+        user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                        ctypes.c_bool]
+        user32.SetWindowRgn.restype = ctypes.c_int
+        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+        rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2)
+        if rgn:
+            # SetWindowRgn takes ownership of the region handle.
+            user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn),
+                                True)
+    except Exception:
+        pass
+
+
+def _round_prefer_dwm(hwnd):
+    """Ask Windows 11's DWM to prefer rounded corners too (harmless elsewhere)."""
+    try:
+        dwmapi = ctypes.windll.dwmapi
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2
+        pref = ctypes.c_int(DWMWCP_ROUND)
+        dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(pref), ctypes.sizeof(pref))
+    except Exception:
+        pass
+
+
+def attach_rounded_corners(win, radius):
+    """Subclass a Tk Toplevel's window proc so its rounded region is refreshed
+    on every real resize. Returns nothing; safe to call once per window."""
+    try:
+        hwnd = int(win.winfo_id())
+    except Exception:
+        return
+    if hwnd in _ROUND_REGISTRY:
+        _ROUND_REGISTRY[hwnd]["radius"] = int(radius)
+        _round_apply_region(hwnd, radius)
+        return
+
+    user32 = ctypes.windll.user32
+    set_ptr = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+    call_proc = user32.CallWindowProcW
+    set_ptr.restype = ctypes.c_void_p
+    set_ptr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+    call_proc.restype = _ROUND_LRESULT
+    call_proc.argtypes = [ctypes.c_void_p, wintypes.HWND, ctypes.c_uint,
+                          ctypes.c_size_t, ctypes.c_ssize_t]
+
+    entry = {"cb": None, "old": None, "radius": int(radius)}
+
+    def _wndproc(h, msg, wparam, lparam):
+        old = entry["old"]
+        res = call_proc(old, h, msg, wparam, lparam) if old else 0
+        if msg in (_ROUND_WM_WINDOWPOSCHANGED, _ROUND_WM_SIZE,
+                   _ROUND_WM_DPICHANGED):
+            _round_apply_region(h, entry["radius"])
+        return res
+
+    cb = _ROUND_WNDPROC(_wndproc)
+    entry["cb"] = cb
+    old_proc = set_ptr(hwnd, _ROUND_GWLP_WNDPROC,
+                       ctypes.cast(cb, ctypes.c_void_p))
+    entry["old"] = old_proc
+    _ROUND_REGISTRY[hwnd] = entry
+
+    _round_prefer_dwm(hwnd)
+    _round_apply_region(hwnd, radius)
+
+    def _cleanup(event=None):
+        # Only react to the Toplevel's own destruction, not child widgets.
+        if event is not None and event.widget is not win:
+            return
+        # The HWND is gone after destroy; just drop our references so the
+        # ctypes callback can be collected. Defer so any in-flight messages
+        # during teardown still have a live callback.
+        def _drop():
+            _ROUND_REGISTRY.pop(hwnd, None)
+        try:
+            win.after(0, _drop)
+        except Exception:
+            _ROUND_REGISTRY.pop(hwnd, None)
+
+    win.bind("<Destroy>", _cleanup, add="+")
 
 
 class TranslatorApp:
@@ -1213,71 +1340,19 @@ class TranslatorApp:
         return "break"
 
     def _setup_rounded_window(self, win, radius):
-        """Apply rounded corners synchronously on every geometry change. Doing
-        it inline on <Configure>/<Map> (instead of via a delayed `after`, which
-        could run before the final size or get cancelled) is what keeps the
-        corners from flickering off or getting stuck at a stale size on resize."""
+        """Attach reliable rounded corners via window-proc subclassing. Windows
+        re-applies the region on every real resize (WM_WINDOWPOSCHANGED), so the
+        corners can no longer flicker off or get stuck square after a shrink."""
         win._corner_radius = max(0, int(radius))
-        win._rgn_size = None
-
-        def _on_event(event=None):
-            # Only react to the Toplevel's own geometry, not child widgets.
-            if event is not None and event.widget is not win:
-                return
-            self._apply_window_rounding(win)
-
-        win.bind("<Configure>", _on_event, add="+")
-        win.bind("<Map>", _on_event, add="+")
-        self._apply_window_rounding(win)
+        attach_rounded_corners(win, win._corner_radius)
 
     def _apply_window_rounding(self, win):
-        """Clip a borderless popup to a rounded rectangle via Win32 regions.
-        Skips work when the size hasn't changed so the frequent <Configure>
-        events during a drag-resize stay cheap."""
+        """Force an immediate region refresh at the window's current real size.
+        Rarely needed now that the subclass handles resizes, but kept so any
+        direct caller (e.g. an explicit post-geometry nudge) stays valid."""
+        radius = int(getattr(win, "_corner_radius", POPUP_CORNER_RADIUS))
         try:
-            w = max(1, int(win.winfo_width()))
-            h = max(1, int(win.winfo_height()))
-            # Nothing to do if the region already matches the current size.
-            if getattr(win, "_rgn_size", None) == (w, h):
-                return
-            win._rgn_size = (w, h)
-
-            hwnd = int(win.winfo_id())
-            radius = max(0, int(getattr(win, "_corner_radius",
-                                       POPUP_CORNER_RADIUS)))
-
-            user32 = ctypes.windll.user32
-            gdi32 = ctypes.windll.gdi32
-
-            # Set explicit signatures so 64-bit handles are passed correctly.
-            user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
-            user32.SetWindowRgn.restype = ctypes.c_int
-            gdi32.CreateRoundRectRgn.argtypes = [
-                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                ctypes.c_int, ctypes.c_int,
-            ]
-            gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
-
-            # Region clips the real window shape for rounded corners.
-            rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
-            if rgn:
-                # SetWindowRgn takes ownership of the region handle.
-                user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn), True)
-
-            # Hint Windows 11 to prefer rounded non-client corner style.
-            try:
-                dwmapi = ctypes.windll.dwmapi
-                DWMWA_WINDOW_CORNER_PREFERENCE = 33
-                DWMWCP_ROUND = 2
-                pref = ctypes.c_int(DWMWCP_ROUND)
-                dwmapi.DwmSetWindowAttribute(
-                    ctypes.c_void_p(hwnd),
-                    DWMWA_WINDOW_CORNER_PREFERENCE,
-                    ctypes.byref(pref),
-                    ctypes.sizeof(pref),
-                )
-            except Exception:
-                pass
+            _round_apply_region(int(win.winfo_id()), radius)
         except Exception:
             pass
 
@@ -1404,7 +1479,8 @@ class TranslatorApp:
         w = max(MIN_RESIZE_WIDTH, int(w))
         h = max(MIN_RESIZE_HEIGHT, int(h))
         win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
-        self._apply_window_rounding(win)
+        # Rounded region is refreshed automatically by the window-proc subclass
+        # on WM_WINDOWPOSCHANGED, so no manual (potentially stale) call here.
 
     def _popup_release(self, _event):
         self._resize_mode = None
