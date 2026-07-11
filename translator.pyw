@@ -1920,13 +1920,23 @@ class TranslatorApp:
         hint = t["popup_hint"]
         sel = t["sel_bg"]
 
+        # The combobox/spinbox arrows are drawn at a raw pixel size that does
+        # NOT follow tk's DPI scaling, so on a high-DPI display they end up tiny
+        # next to the (scaled) tall field. Scale the arrow to match the display
+        # so it stays proportional everywhere (≈13px @96dpi, ≈26px @192dpi).
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            scale = 1.0
+        arrow = max(13, int(round(13 * scale)))
+
         for name in ("CC.TCombobox", "CC.TSpinbox"):
             style.configure(
                 name,
                 fieldbackground=field_bg, background=field_bg,
                 foreground=fg, arrowcolor=hint,
                 bordercolor=border, lightcolor=border, darkcolor=border,
-                relief="flat", borderwidth=1, padding=6, arrowsize=13,
+                relief="flat", borderwidth=1, padding=6, arrowsize=arrow,
             )
             style.map(
                 name,
