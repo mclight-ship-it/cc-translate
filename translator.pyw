@@ -16,8 +16,6 @@ import time
 import queue
 import threading
 import subprocess
-import urllib.error
-import urllib.request
 import ctypes
 import tkinter as tk
 from tkinter import ttk
@@ -88,30 +86,58 @@ APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
-SERVICE_URL = "http://127.0.0.1:18765"
-SERVICE_SCRIPT_PATH = os.path.join(APP_DIR, "translator_service.py")
-PERF_LOG_PATH = os.path.join(APP_DIR, "perf.log")
 MIN_POPUP_HEIGHT = 150
 MIN_STREAM_VISIBLE_HEIGHT = 220
 MIN_RESIZE_WIDTH = 280
 MIN_RESIZE_HEIGHT = 150
 RESIZE_HIT = 18
-POPUP_SHELL_PAD = 2
-POPUP_BAR_PAD_X = 10
-POPUP_BAR_PAD_TOP = 8
-POPUP_BAR_PAD_BOTTOM = 4
+POPUP_SHELL_PAD = 1
+POPUP_BAR_PAD_X = 12
+POPUP_BAR_PAD_TOP = 9
+POPUP_BAR_PAD_BOTTOM = 7
 POPUP_BODY_PAD_X = 8
-POPUP_BODY_PAD_BOTTOM = 8
+POPUP_BODY_PAD_BOTTOM = 10
 POPUP_TEXT_PAD_X = 16
 POPUP_TEXT_PAD_Y = 12
-POPUP_CORNER_RADIUS = 14
-LOADING_CORNER_RADIUS = 12
-USE_LOCAL_SERVICE = False
+POPUP_CORNER_RADIUS = 11
+LOADING_CORNER_RADIUS = 11
+
+# Hotkey handoff: the global keyboard listener runs on its own thread and must
+# never touch Tcl/Tk directly. It drops trigger requests into a queue that the
+# main thread drains on a timer, which fixes the "no response then a burst of
+# translations" races seen right after startup.
+TRIGGER_POLL_MS = 40
+TRIGGER_SETTLE_MS = 120
+
+# Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
+# on Windows; the animation cycles through them for a modern indeterminate look.
+LOADING_SPINNER = "◐◓◑◒"
+
+
+def _npm_global_prefix():
+    """Return npm's configured global prefix dir (where global .cmd shims live),
+    or None. This is where `npm install -g` puts binaries; it is NOT always
+    %APPDATA%\\npm — users can set a custom prefix (e.g. via npm config or a
+    corp-managed toolchain), so we ask npm itself rather than guessing."""
+    for npm in ("npm.cmd", "npm"):
+        try:
+            out = subprocess.run(
+                [npm, "config", "get", "prefix"],
+                capture_output=True, text=True, timeout=6,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            prefix = (out.stdout or "").strip()
+            if prefix and prefix.lower() != "undefined" and os.path.isdir(prefix):
+                return prefix
+        except Exception:
+            continue
+    return None
 
 
 def find_claude_cmd():
     """Locate the Claude Code CLI without hardcoding a machine-specific path.
-    Checks PATH first, then the usual npm global install locations."""
+    Checks PATH first, then the usual npm global install locations, then npm's
+    actual configured prefix (covers custom npm prefixes)."""
     import shutil
     for name in ("claude.cmd", "claude"):
         found = shutil.which(name)
@@ -122,6 +148,14 @@ def find_claude_cmd():
         os.path.join(os.environ.get("APPDATA", ""), "npm", "claude"),
         os.path.join(os.environ.get("ProgramFiles", ""), "nodejs", "claude.cmd"),
     ]
+    # Fall back to npm's real global prefix (handles custom install locations
+    # that aren't on PATH and aren't the default %APPDATA%\npm).
+    prefix = _npm_global_prefix()
+    if prefix:
+        candidates += [
+            os.path.join(prefix, "claude.cmd"),
+            os.path.join(prefix, "claude"),
+        ]
     for c in candidates:
         if c and os.path.exists(c):
             return c
@@ -168,30 +202,30 @@ DEFAULT_CONFIG = {
 # whole app (popup, loading hint, scrollbar, settings, history) stays coherent.
 THEMES = {
     "dark": {
-        "bg": "#23262d", "fg": "#edf0f7",
-        "bar_bg": "#2f3541", "btn_bg": "#3a4351",
-        "btn_active": "#4c586a", "btn_close_active": "#c65959",
-        "border": "#3e4654", "sel_bg": "#3f5f8f",
-        "popup_bg": "#2a303b", "popup_border": "#495468",
-        "popup_hint": "#9eabc0",
-        "scroll_thumb": "#4a5363", "scroll_thumb_active": "#647086",
-        "trough": "#252a33", "hint_fg": "#aeb7c8",
-        "settings_bg": "#2b2f36", "settings_fg": "#edf0f7",
-        "list_bg": "#252a33", "list_sel": "#3a4250",
-        "status_ok": "#6ac06a", "status_err": "#e57373",
+        "bg": "#1e2128", "fg": "#e6e9f0",
+        "bar_bg": "#242832", "btn_bg": "#242832",
+        "btn_active": "#2f3542", "btn_close_active": "#e5534b",
+        "border": "#363c47", "sel_bg": "#3b5b8c",
+        "popup_bg": "#22262e", "popup_border": "#374050",
+        "popup_hint": "#8b93a7", "accent": "#7aa2f7",
+        "scroll_thumb": "#3c4453", "scroll_thumb_active": "#586074",
+        "trough": "#22262e", "hint_fg": "#8b93a7",
+        "settings_bg": "#22262e", "settings_fg": "#e6e9f0",
+        "list_bg": "#1b1f27", "list_sel": "#2f3542",
+        "status_ok": "#7bd88f", "status_err": "#f07178",
     },
     "light": {
-        "bg": "#fbfcfe", "fg": "#1b2430",
-        "bar_bg": "#eef3fb", "btn_bg": "#e6edf8",
-        "btn_active": "#d7e2f3", "btn_close_active": "#d66c6c",
-        "border": "#cfd7e6", "sel_bg": "#d9e6ff",
-        "popup_bg": "#f9fbff", "popup_border": "#c8d4e8",
-        "popup_hint": "#687990",
-        "scroll_thumb": "#bcc7da", "scroll_thumb_active": "#9fb0cc",
-        "trough": "#fbfcfe", "hint_fg": "#5f6f86",
-        "settings_bg": "#f4f6fb", "settings_fg": "#1b2430",
-        "list_bg": "#ffffff", "list_sel": "#e3ebfa",
-        "status_ok": "#2e7d32", "status_err": "#c62828",
+        "bg": "#ffffff", "fg": "#1f2430",
+        "bar_bg": "#ffffff", "btn_bg": "#ffffff",
+        "btn_active": "#eef2f9", "btn_close_active": "#ef4444",
+        "border": "#e2e6ee", "sel_bg": "#d3e3ff",
+        "popup_bg": "#ffffff", "popup_border": "#e2e6ee",
+        "popup_hint": "#7a8296", "accent": "#3b82f6",
+        "scroll_thumb": "#cdd5e2", "scroll_thumb_active": "#aeb8ca",
+        "trough": "#ffffff", "hint_fg": "#7a8296",
+        "settings_bg": "#f6f8fc", "settings_fg": "#1f2430",
+        "list_bg": "#ffffff", "list_sel": "#e6eefb",
+        "status_ok": "#16a34a", "status_err": "#dc2626",
     },
 }
 
@@ -241,20 +275,28 @@ DICTIONARY_PROMPT = (
 
 
 def is_single_word(text):
-    """True if the selection looks like a single word/term worth a dictionary
-    entry rather than a sentence translation: no line breaks, at most a couple
-    of tokens, and short. Handles English (space-separated) and CJK (a short
-    run of characters with no spaces)."""
+    """True if the selection is a word or short term worth a dictionary entry
+    rather than a sentence translation. Allows short multi-word terms (e.g.
+    "machine learning", "New York") but rejects anything that looks like a
+    sentence (line breaks, trailing sentence punctuation, or too long/too many
+    tokens)."""
     t = text.strip()
     if not t or "\n" in t:
         return False
+    # A trailing sentence terminator means it's a sentence, not a lookup term.
+    if t[-1] in ".!?…。！？，,;；:：":
+        return False
     has_cjk = any(ord(c) > 0x2E7F for c in t)
     if has_cjk:
-        # A short CJK term with no spaces (e.g. 青提, 冻).
+        # A short CJK term with no spaces (words/idioms up to 4 chars, e.g. 青提,
+        # 一丝不苟). Longer or spaced runs are treated as sentences.
         return " " not in t and len(t) <= 4
-    # English/latin: 1 token (allow an internal hyphen/apostrophe), reasonable length.
+    # Latin: 1–2 alphabetic tokens forming a term (hyphen/apostrophe allowed
+    # inside a token), of reasonable length. Digits or a 3rd token → sentence.
     parts = t.split()
-    return len(parts) == 1 and len(t) <= 24
+    if not (1 <= len(parts) <= 2) or len(t) > 30:
+        return False
+    return all(p and all(c.isalpha() or c in "-'" for c in p) for p in parts)
 
 
 def load_config():
@@ -376,66 +418,9 @@ def set_autostart(enable):
 
 
 def log_perf(stage, extra=None):
-    """Append lightweight timing markers for latency analysis."""
-    try:
-        rec = {
-            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "stage": stage,
-            "extra": extra or {},
-        }
-        with open(PERF_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-def _service_json(path, payload, timeout=30):
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        SERVICE_URL + path,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-    return json.loads(body)
-
-
-def _service_health(timeout=1.2):
-    req = urllib.request.Request(SERVICE_URL + "/health", method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-    obj = json.loads(body)
-    return bool(obj.get("ok"))
-
-
-def ensure_local_service_started():
-    """Try to ensure local translator service is available."""
-    try:
-        if _service_health(timeout=0.6):
-            return True
-    except Exception:
-        pass
-    try:
-        if os.path.exists(SERVICE_SCRIPT_PATH):
-            subprocess.Popen(
-                [sys.executable, SERVICE_SCRIPT_PATH],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                cwd=APP_DIR,
-            )
-            for _ in range(8):
-                time.sleep(0.15)
-                try:
-                    if _service_health(timeout=0.6):
-                        return True
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    return False
+    """Perf logging disabled — kept as a no-op so existing call sites are
+    unchanged. Re-enable here if latency profiling is ever needed again."""
+    return
 
 
 class TranslatorApp:
@@ -451,6 +436,7 @@ class TranslatorApp:
         self.tray = None
         self._anim_job = None
         self._last_input = None
+        self._trigger_queue = queue.Queue()
         self._stream_popup_ready = False
         self._stream_queue = queue.Queue()
         self._stream_accum = ""
@@ -477,9 +463,10 @@ class TranslatorApp:
 
         self._setup_scrollbar_style()
 
-        if USE_LOCAL_SERVICE:
-            threading.Thread(target=ensure_local_service_started,
-                             daemon=True).start()
+        # Start draining hotkey triggers on the main (Tk) thread. This must be
+        # running before the listener so early double-presses are handled in
+        # order instead of piling up and firing in a burst.
+        self.root.after(TRIGGER_POLL_MS, self._pump_triggers)
 
         self._start_listener()
         self._start_tray()
@@ -545,7 +532,8 @@ class TranslatorApp:
                     now = time.time()
                     if now - self.last_c_time <= self.cfg["double_press_window"]:
                         self.last_c_time = 0.0
-                        threading.Timer(0.12, self._trigger).start()
+                        # Hand off to the main thread; never touch Tk from here.
+                        self._trigger_queue.put(now)
                     else:
                         self.last_c_time = now
             except Exception:
@@ -560,7 +548,25 @@ class TranslatorApp:
         listener.start()
 
     # ---------- Trigger ----------
+    def _pump_triggers(self):
+        """Runs on the Tk main thread. Drains hotkey requests queued by the
+        listener thread and coalesces a rapid burst into a single translation
+        (the last one wins), then reschedules itself."""
+        fired = False
+        try:
+            while True:
+                self._trigger_queue.get_nowait()
+                fired = True
+        except queue.Empty:
+            pass
+        if fired and not self.paused:
+            # Small settle delay so the Ctrl+C copy lands on the clipboard
+            # before we read it.
+            self.root.after(TRIGGER_SETTLE_MS, self._trigger)
+        self.root.after(TRIGGER_POLL_MS, self._pump_triggers)
+
     def _trigger(self):
+        # Always invoked on the main thread (via _pump_triggers → after).
         try:
             text = pyperclip.paste()
         except Exception:
@@ -569,7 +575,7 @@ class TranslatorApp:
         if not text:
             return
         text = text[: self.cfg["max_chars"]]
-        self.root.after(0, lambda: self._show_loading(text))
+        self._show_loading(text)
 
     # ---------- Translation ----------
     def _show_loading(self, text):
@@ -581,9 +587,6 @@ class TranslatorApp:
         self._stream_cols = 0
         self._stream_fixed_w = 0
         self._stream_max_h = 0
-        self._stream_origin_x = None
-        self._stream_origin_y = None
-        self._stream_monitor_rect = None
         self._stream_origin_x = None
         self._stream_origin_y = None
         self._stream_monitor_rect = None
@@ -599,19 +602,18 @@ class TranslatorApp:
                          daemon=True).start()
 
     def _animate_loading(self, step):
-        """Cycle '翻译中' + . / .. / ... while waiting."""
+        """Spin the accent indicator through LOADING_SPINNER frames."""
         win = self.popup
-        if not (win and getattr(win, "_hint_label", None)):
+        if not (win and getattr(win, "_spinner", None)):
             return
         try:
-            if not win._hint_label.winfo_exists():
+            if not win._spinner.winfo_exists():
                 return
-            dots = "." * (step % 4)
-            win._hint_label.config(text="翻译中" + dots)
+            win._spinner.config(text=LOADING_SPINNER[step % len(LOADING_SPINNER)])
         except Exception:
             return
         self._anim_job = self.root.after(
-            400, lambda: self._animate_loading(step + 1))
+            120, lambda: self._animate_loading(step + 1))
 
     def _stop_animation(self):
         if self._anim_job:
@@ -801,32 +803,6 @@ class TranslatorApp:
         payload = f"<text>\n{text}\n</text>"
         t0 = time.perf_counter()
 
-        if USE_LOCAL_SERVICE:
-            try:
-                if ensure_local_service_started():
-                    resp = _service_json("/translate", {
-                        "text": text,
-                        "model": self.cfg["model"],
-                        "direction": self.cfg["direction"],
-                        "dictionary": bool(is_single_word(text)),
-                    }, timeout=65)
-                    if resp.get("ok"):
-                        log_perf("oneshot_service_done", {
-                            "chars": len(text),
-                            "wall_ms": int((time.perf_counter() - t0) * 1000),
-                        })
-                        return True, (resp.get("result") or "").strip()
-                    log_perf("oneshot_service_fail", {
-                        "chars": len(text),
-                        "err": str(resp.get("error", ""))[:160],
-                    })
-                else:
-                    log_perf("service_unavailable", {"chars": len(text)})
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-                log_perf("service_http_error", {"chars": len(text), "err": str(e)[:160]})
-            except Exception as e:
-                log_perf("service_error", {"chars": len(text), "err": str(e)[:160]})
-
         try:
             # Pass the text via stdin, NOT as a CLI argument: claude -p treats a
             # newline in an argument as end-of-input and would translate only the
@@ -895,7 +871,14 @@ class TranslatorApp:
             except Exception:
                 anchor = None
         self._destroy_popup()
-        self.popup = self._make_popup(result, anchor=anchor, is_error=not ok)
+        if not ok:
+            title = "翻译失败"
+        elif self._last_input and is_single_word(self._last_input):
+            title = "词典"
+        else:
+            title = "译文"
+        self.popup = self._make_popup(result, anchor=anchor, is_error=not ok,
+                                      title=title)
         if ok and self.cfg.get("history_enabled", True) and self._last_input:
             add_history(self._last_input, result,
                         is_single_word(self._last_input),
@@ -903,7 +886,8 @@ class TranslatorApp:
 
     # ---------- Popup ----------
     def _make_loading_popup(self):
-        """A minimal borderless '翻译中…' hint — no toolbar, no scrollbar."""
+        """A compact, modern 'translating' card: an accent-coloured spinner
+        next to a muted label. Borderless, rounded, no toolbar/scrollbar."""
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
@@ -911,6 +895,7 @@ class TranslatorApp:
         popup_bg = self.theme.get("popup_bg", self.theme["bg"])
         popup_border = self.theme.get("popup_border", self.theme["border"])
         popup_hint = self.theme.get("popup_hint", self.theme["hint_fg"])
+        accent = self.theme.get("accent", "#7aa2f7")
 
         shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
         shell.pack(fill="both", expand=True)
@@ -918,16 +903,27 @@ class TranslatorApp:
         frame.pack(fill="both", expand=True,
                    padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
 
+        row = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
+        row.pack(padx=20, pady=14)
+
+        spinner = tk.Label(
+            row,
+            text=LOADING_SPINNER[0],
+            bg=popup_bg,
+            fg=accent,
+            font=("Segoe UI Symbol", 13),
+        )
+        spinner.pack(side="left", padx=(0, 9))
+        win._spinner = spinner
+
         hint = tk.Label(
-            frame,
+            row,
             text="翻译中",
             bg=popup_bg,
             fg=popup_hint,
-            font=("Microsoft YaHei UI", 11),
-            padx=24,
-            pady=14,
+            font=("Microsoft YaHei UI", 10),
         )
-        hint.pack()
+        hint.pack(side="left")
         win._hint_label = hint
 
         win.update_idletasks()
@@ -942,14 +938,20 @@ class TranslatorApp:
         win.focus_force()
         return win
 
-    def _make_popup(self, message, anchor=None, is_error=False):
+    def _make_popup(self, message, anchor=None, is_error=False, title="译文"):
+        t = self.theme
         win = tk.Toplevel(self.root)
-        win.withdraw()          # avoid a visible jump before final geometry
+        # Map the window fully transparent instead of withdrawn: the text must
+        # be laid out (mapped) for displayline measurement in _size_popup to be
+        # correct. Withdrawn windows mis-measure and produce huge popups.
+        win.attributes("-alpha", 0.0)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
 
-        popup_bg = self.theme.get("popup_bg", self.theme["bg"])
-        popup_border = self.theme.get("popup_border", self.theme["border"])
+        popup_bg = t.get("popup_bg", t["bg"])
+        popup_border = t.get("popup_border", t["border"])
+        hint = t.get("popup_hint", t["hint_fg"])
+        accent = t.get("accent", "#7aa2f7")
 
         shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
         shell.pack(fill="both", expand=True)
@@ -958,64 +960,51 @@ class TranslatorApp:
         frame.pack(fill="both", expand=True,
                    padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
 
-        bar = tk.Frame(frame, bg=self.theme["bar_bg"], bd=0, highlightthickness=0)
-        bar.pack(fill="x",
-                 padx=POPUP_BAR_PAD_X,
+        # Header = title bar + hairline separator, measured as one unit so the
+        # geometry math (which reads win._bar height) accounts for both.
+        header = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
+        header.pack(fill="x")
+        win._bar = header
+
+        bar = tk.Frame(header, bg=popup_bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=POPUP_BAR_PAD_X,
                  pady=(POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM))
-        win._bar = bar
 
-        btn_style = {
-            "bg": self.theme["btn_bg"],
-            "fg": self.theme["fg"],
-            "activebackground": self.theme["btn_active"],
-            "activeforeground": self.theme["fg"],
-            "relief": "flat",
-            "bd": 0,
-            "highlightthickness": 0,
-            "font": ("Microsoft YaHei UI", 9),
-            "cursor": "hand2",
-            "padx": 10,
-            "pady": 2,
-        }
+        title_color = t["status_err"] if is_error else accent
+        title_lbl = tk.Label(bar, text="●  " + title, bg=popup_bg,
+                             fg=title_color,
+                             font=("Microsoft YaHei UI", 9, "bold"))
+        title_lbl.pack(side="left")
 
-        copy_btn = tk.Button(
-            bar,
-            text="复制",
-            command=self._copy_result,
-            **btn_style,
-        )
-        copy_btn.pack(side="left")
-        win._copy_btn = copy_btn
-
-        if is_error:
-            retry_btn = tk.Button(
-                bar,
-                text="重试",
-                command=self._retry,
-                **btn_style,
+        def _mk_btn(txt, cmd, danger=False):
+            return tk.Button(
+                bar, text=txt, command=cmd,
+                bg=popup_bg, fg=hint,
+                activebackground=(t["btn_close_active"] if danger
+                                  else t["btn_active"]),
+                activeforeground=("#ffffff" if danger else t["fg"]),
+                relief="flat", bd=0, highlightthickness=0,
+                font=("Microsoft YaHei UI", 9), cursor="hand2",
+                padx=9, pady=1,
             )
-            retry_btn.pack(side="left", padx=(6, 0))
 
-        close_btn = tk.Button(
-            bar,
-            text="✕",
-            command=self._destroy_popup,
-            bg=self.theme["btn_bg"],
-            fg=self.theme["fg"],
-            activebackground=self.theme["btn_close_active"],
-            activeforeground="#ffffff",
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
-            font=("Microsoft YaHei UI", 9),
-            cursor="hand2",
-            padx=8,
-            pady=2,
-        )
+        close_btn = _mk_btn("✕", self._destroy_popup, danger=True)
         close_btn.pack(side="right")
+        copy_btn = _mk_btn("复制", self._copy_result)
+        copy_btn.pack(side="right", padx=(0, 4))
+        win._copy_btn = copy_btn
+        if is_error:
+            retry_btn = _mk_btn("重试", self._retry)
+            retry_btn.pack(side="right", padx=(0, 4))
 
-        bar.bind("<Button-1>", self._drag_start)
-        bar.bind("<B1-Motion>", self._drag_move)
+        sep = tk.Frame(header, bg=popup_border, height=1,
+                       bd=0, highlightthickness=0)
+        sep.pack(fill="x", padx=POPUP_BAR_PAD_X)
+
+        # Dragging the header (but not the buttons) moves the window.
+        for _w in (bar, title_lbl):
+            _w.bind("<Button-1>", self._drag_start)
+            _w.bind("<B1-Motion>", self._drag_move)
 
         body = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True,
@@ -1050,6 +1039,11 @@ class TranslatorApp:
         win._scroll_body = body
         win._text_font = tkfont.Font(font=text.cget("font"))
 
+        # Ensure the window is mapped (still invisible via alpha) so the text
+        # widget is laid out and _size_popup can measure wrapped lines correctly.
+        win.deiconify()
+        win.update_idletasks()
+
         w, h = self._size_popup(win, message)
         if anchor is not None:
             x, y = anchor           # appear where the loading hint was
@@ -1065,7 +1059,8 @@ class TranslatorApp:
         win.bind("<ButtonRelease-1>", self._popup_release)
         win.bind("<Escape>", lambda e: self._destroy_popup())
         self._setup_rounded_window(win, POPUP_CORNER_RADIUS)
-        win.deiconify()         # now show at final geometry (no flash at default origin)
+        win.update_idletasks()
+        win.attributes("-alpha", 1.0)   # reveal at final geometry (no flash)
         win.focus_force()
         return win
 
@@ -1218,40 +1213,38 @@ class TranslatorApp:
         return "break"
 
     def _setup_rounded_window(self, win, radius):
-        """Bind window lifecycle events so rounding is stable from first paint."""
+        """Apply rounded corners synchronously on every geometry change. Doing
+        it inline on <Configure>/<Map> (instead of via a delayed `after`, which
+        could run before the final size or get cancelled) is what keeps the
+        corners from flickering off or getting stuck at a stale size on resize."""
         win._corner_radius = max(0, int(radius))
-        win._rounding_job = None
+        win._rgn_size = None
 
-        def _schedule_rounding(delay_ms=0):
-            job = getattr(win, "_rounding_job", None)
-            if job:
-                try:
-                    win.after_cancel(job)
-                except Exception:
-                    pass
-            try:
-                win._rounding_job = win.after(delay_ms, lambda: self._apply_window_rounding(win))
-            except Exception:
-                pass
+        def _on_event(event=None):
+            # Only react to the Toplevel's own geometry, not child widgets.
+            if event is not None and event.widget is not win:
+                return
+            self._apply_window_rounding(win)
 
-        def _on_configure(_event=None):
-            _schedule_rounding(8)
-
-        def _on_map(_event=None):
-            _schedule_rounding(0)
-            _schedule_rounding(16)
-
-        win.bind("<Configure>", _on_configure, add="+")
-        win.bind("<Map>", _on_map, add="+")
-        _schedule_rounding(0)
+        win.bind("<Configure>", _on_event, add="+")
+        win.bind("<Map>", _on_event, add="+")
+        self._apply_window_rounding(win)
 
     def _apply_window_rounding(self, win):
-        """Apply Win32 rounded corners to a borderless popup window."""
+        """Clip a borderless popup to a rounded rectangle via Win32 regions.
+        Skips work when the size hasn't changed so the frequent <Configure>
+        events during a drag-resize stay cheap."""
         try:
-            hwnd = int(win.winfo_id())
             w = max(1, int(win.winfo_width()))
             h = max(1, int(win.winfo_height()))
-            radius = max(0, int(getattr(win, "_corner_radius", POPUP_CORNER_RADIUS)))
+            # Nothing to do if the region already matches the current size.
+            if getattr(win, "_rgn_size", None) == (w, h):
+                return
+            win._rgn_size = (w, h)
+
+            hwnd = int(win.winfo_id())
+            radius = max(0, int(getattr(win, "_corner_radius",
+                                       POPUP_CORNER_RADIUS)))
 
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
@@ -1268,6 +1261,7 @@ class TranslatorApp:
             # Region clips the real window shape for rounded corners.
             rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
             if rgn:
+                # SetWindowRgn takes ownership of the region handle.
                 user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn), True)
 
             # Hint Windows 11 to prefer rounded non-client corner style.
@@ -1654,9 +1648,6 @@ class TranslatorApp:
                 self.cfg["history_limit"] = int(hist_limit_var.get())
                 self.cfg["history_enabled"] = bool(history_var.get())
                 save_config(self.cfg)
-                if USE_LOCAL_SERVICE:
-                    threading.Thread(target=ensure_local_service_started,
-                                     daemon=True).start()
                 if autostart_var.get() != is_autostart_enabled():
                     set_autostart(autostart_var.get())
                 # Re-resolve theme so new popups pick it up immediately.

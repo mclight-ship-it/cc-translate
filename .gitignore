@@ -1,6 +1,7 @@
 # Runtime / user data — never commit
 config.json
 history.json
+perf.log
 
 # Python
 __pycache__/
