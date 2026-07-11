@@ -1903,10 +1903,72 @@ class TranslatorApp:
     def open_settings(self):
         self.root.after(0, self._open_settings)
 
+    def _make_chevron_image(self, color_hex, scale):
+        """Draw a thin, modern downward chevron as a PhotoImage for the combobox
+        dropdown indicator. Supersampled then downscaled for smooth anti-aliased
+        edges. Returns None if PIL/ImageTk is unavailable (caller falls back)."""
+        try:
+            from PIL import Image, ImageDraw, ImageTk
+        except Exception:
+            return None
+        try:
+            h = color_hex.lstrip("#")
+            rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+            W = max(24, round(34 * scale))
+            H = max(16, round(22 * scale))
+            S = 3   # supersample factor for anti-aliasing
+            img = Image.new("RGBA", (W * S, H * S), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            w = max(2, round(2.2 * scale)) * S
+            cx = W * 0.42 * S              # shift left so a right margin remains
+            half = round(6.2 * scale) * S
+            top = H * 0.40 * S
+            bot = H * 0.60 * S
+            d.line([(cx - half, top), (cx, bot), (cx + half, top)],
+                   fill=rgb, width=w, joint="curve")
+            img = img.resize((W, H), Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def _install_combo_chevron(self, style, hint, accent, scale):
+        """Register a custom chevron image element and point the combobox layout
+        at it. Elements can only be created once per name, so we cache per
+        (colour, size). Returns True if the custom chevron is in use."""
+        # Keep image references alive for the whole app lifetime, or Tk blanks
+        # them once they're garbage collected.
+        if not hasattr(self, "_chev_imgs"):
+            self._chev_imgs = []
+            self._chev_cache = {}
+        key = (hint, accent, round(scale, 3))
+        elem = self._chev_cache.get(key)
+        if elem is None:
+            normal = self._make_chevron_image(hint, scale)
+            active = self._make_chevron_image(accent, scale)
+            if normal is None or active is None:
+                return False
+            elem = f"CC.cbarrow{len(self._chev_cache)}"
+            try:
+                style.element_create(elem, "image", normal,
+                                     ("active", active), ("focus", active),
+                                     border=0, sticky="")
+            except Exception:
+                return False
+            self._chev_imgs.extend([normal, active])
+            self._chev_cache[key] = elem
+        style.layout("CC.TCombobox", [
+            ("Combobox.field", {"sticky": "nswe", "children": [
+                (elem, {"side": "right", "sticky": ""}),
+                ("Combobox.padding", {"sticky": "nswe", "children": [
+                    ("Combobox.textarea", {"sticky": "nswe"})]})]})])
+        return True
+
     def _setup_form_style(self):
         """Flat, theme-aware styling for the settings comboboxes / spinboxes.
         Native ttk themes ignore colours, so we base these on 'clam' and set
-        field/border/arrow colours from the active palette for a modern look."""
+        field/border colours from the active palette. The combobox uses a
+        custom thin chevron indicator; the spinboxes drop their up/down arrows
+        entirely (values are edited by typing)."""
         t = self.theme
         style = ttk.Style(self.root)
         try:
@@ -1920,23 +1982,18 @@ class TranslatorApp:
         hint = t["popup_hint"]
         sel = t["sel_bg"]
 
-        # The combobox/spinbox arrows are drawn at a raw pixel size that does
-        # NOT follow tk's DPI scaling, so on a high-DPI display they end up tiny
-        # next to the (scaled) tall field. Scale the arrow to match the display
-        # so it stays proportional everywhere (≈13px @96dpi, ≈26px @192dpi).
         try:
             scale = self.root.winfo_fpixels("1i") / 96.0
         except Exception:
             scale = 1.0
-        arrow = max(13, int(round(13 * scale)))
 
         for name in ("CC.TCombobox", "CC.TSpinbox"):
             style.configure(
                 name,
                 fieldbackground=field_bg, background=field_bg,
-                foreground=fg, arrowcolor=hint,
+                foreground=fg,
                 bordercolor=border, lightcolor=border, darkcolor=border,
-                relief="flat", borderwidth=1, padding=6, arrowsize=arrow,
+                relief="flat", borderwidth=1, padding=6,
             )
             style.map(
                 name,
@@ -1944,8 +2001,21 @@ class TranslatorApp:
                 foreground=[("disabled", hint)],
                 bordercolor=[("focus", accent), ("hover", accent)],
                 lightcolor=[("focus", accent)], darkcolor=[("focus", accent)],
-                arrowcolor=[("active", accent)],
             )
+
+        # Modern chevron dropdown indicator (falls back to a scaled triangle if
+        # PIL is unavailable, so the form still works everywhere).
+        if not self._install_combo_chevron(style, hint, accent, scale):
+            arrow = max(13, int(round(13 * scale)))
+            style.configure("CC.TCombobox", arrowcolor=hint, arrowsize=arrow)
+            style.map("CC.TCombobox", arrowcolor=[("active", accent)])
+
+        # Strip the spinbox up/down arrows — leave a plain typeable field.
+        style.layout("CC.TSpinbox", [
+            ("Spinbox.field", {"sticky": "nswe", "children": [
+                ("Spinbox.padding", {"sticky": "nswe", "children": [
+                    ("Spinbox.textarea", {"sticky": "nswe"})]})]})])
+
         # Dropdown listbox colours (only settable via the option database).
         self.root.option_add("*TCombobox*Listbox.background", field_bg)
         self.root.option_add("*TCombobox*Listbox.foreground", fg)
