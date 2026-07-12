@@ -111,8 +111,8 @@ LOADING_CORNER_RADIUS = 11
 #               roughly 2x the dynamic popup's max width, at a ~4:3 ratio.
 # Sizes are LOGICAL pixels (DPI-scaled at runtime) so the card looks the same
 # physical size on any display.
-CENTERED_POPUP_W = 920
-CENTERED_POPUP_H = 690
+CENTERED_POPUP_W = 690
+CENTERED_POPUP_H = 518
 
 # Hotkey handoff: the global keyboard listener runs on its own thread and must
 # never touch Tcl/Tk directly. It drops trigger requests into a queue that the
@@ -1772,8 +1772,6 @@ class TranslatorApp:
         win = self.popup
         if not win:
             return
-        if self._is_centered_layout():
-            return          # fixed card: no edge-resize cursor
         if self._resize_mode:
             return
         lx = event.x_root - win.winfo_rootx()
@@ -1788,10 +1786,6 @@ class TranslatorApp:
         win = self.popup
         if not win:
             return
-        if self._is_centered_layout():
-            self._resize_mode = None
-            self._resize_start = None
-            return          # fixed card cannot be resized
         lx = event.x_root - win.winfo_rootx()
         ly = event.y_root - win.winfo_rooty()
         mode = self._resize_hit(win, lx, ly)
