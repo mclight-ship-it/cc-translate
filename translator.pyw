@@ -2437,6 +2437,28 @@ class TranslatorApp:
             row += 1
             return sw
 
+        def toggle_row_with_action(text_, initial, btn_text, btn_cmd):
+            """Like toggle_row, but the value cell holds a small pill button
+            (e.g. '打开') to the left of the toggle switch."""
+            nonlocal row
+            tk.Label(body, text=text_, bg=bg, fg=fg, font=(FONT, 10)).grid(
+                row=row, column=0, sticky="w", pady=8)
+            cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+            cell.grid(row=row, column=1, sticky="e", pady=8)
+            ab = tk.Button(
+                cell, text=btn_text, command=btn_cmd,
+                bg=t["list_bg"], fg=fg,
+                activebackground=t["list_sel"], activeforeground=fg,
+                relief="flat", bd=0, highlightthickness=0,
+                font=(FONT, 9), cursor="hand2", padx=14, pady=3)
+            ab.bind("<Enter>", lambda e: ab.config(bg=t["btn_active"]))
+            ab.bind("<Leave>", lambda e: ab.config(bg=t["list_bg"]))
+            ab.pack(side="left", padx=(0, 12))
+            sw = self._make_toggle(cell, initial, bg)
+            sw.pack(side="left")
+            row += 1
+            return sw
+
         # ---- Section: 翻译 ----
         section("翻译")
         model_var = tk.StringVar(value=self.cfg["model"])
@@ -2493,7 +2515,9 @@ class TranslatorApp:
             body, textvariable=hist_limit_var, from_=20, to=500, increment=20,
             width=18, style="CC.TSpinbox", font=(FONT, 10)))
 
-        history_sw = toggle_row("记录历史", self.cfg.get("history_enabled", True))
+        history_sw = toggle_row_with_action(
+            "记录历史", self.cfg.get("history_enabled", True),
+            "打开历史", self._open_history)
         autostart_sw = toggle_row("开机自动启动", is_autostart_enabled())
 
         # ---- Footer: status + action buttons ----
@@ -2597,13 +2621,29 @@ class TranslatorApp:
             win.iconbitmap(ICON_PATH)
         except Exception:
             pass
-        win.geometry("960x620")
+        # Same centred placement and size as the translation result popup, so
+        # the two windows feel like one family. Resizable via the title bar.
+        w, h, x, y = self._centered_box()
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.minsize(int(w * 0.7), int(h * 0.7))
         self.history_win = win
 
         entries = load_history()
 
-        # Left: fixed-width list of entries. Right: detail fills the rest.
-        left = tk.Frame(win, bg=t["settings_bg"], width=300)
+        # Bottom action bar — packed first so it always stays visible, with
+        # themed flat buttons matching the rest of the app.
+        tk.Frame(win, bg=t["popup_border"], height=1).pack(
+            side="bottom", fill="x")
+        bottom = tk.Frame(win, bg=t["settings_bg"])
+        bottom.pack(side="bottom", fill="x")
+
+        # Panes container fills everything above the bottom bar.
+        panes = tk.Frame(win, bg=t["settings_bg"])
+        panes.pack(side="top", fill="both", expand=True)
+
+        # Left: entry list (~40% of the window). Right: detail fills the rest.
+        list_w = max(150, int(w * 0.4))
+        left = tk.Frame(panes, bg=t["settings_bg"], width=list_w)
         left.pack(side="left", fill="y", expand=False)
         left.pack_propagate(False)
         listbox = tk.Listbox(
@@ -2618,7 +2658,7 @@ class TranslatorApp:
         listbox.config(yscrollcommand=lb_scroll.set)
         lb_scroll.pack(side="left", fill="y", pady=8)
 
-        right = tk.Frame(win, bg=t["settings_bg"])
+        right = tk.Frame(panes, bg=t["settings_bg"])
         right.pack(side="left", fill="both", expand=True)
         detail = tk.Text(
             right, bg=t["bg"], fg=t["fg"], wrap="word", relief="flat",
@@ -2628,8 +2668,9 @@ class TranslatorApp:
 
         for e in entries:
             tag = "词" if e.get("is_dict") else "译"
-            preview = e.get("input", "").replace("\n", " ")[:20]
-            listbox.insert("end", f"[{tag}] {e.get('ts','')}  {preview}")
+            # Preview the source text (dates aren't useful for browsing).
+            preview = " ".join(e.get("input", "").split())[:24]
+            listbox.insert("end", f"[{tag}] {preview}")
 
         def show_detail(_evt=None):
             sel = listbox.curselection()
@@ -2647,9 +2688,6 @@ class TranslatorApp:
             listbox.selection_set(0)
             show_detail()
 
-        bottom = tk.Frame(win, bg=t["settings_bg"])
-        bottom.pack(side="bottom", fill="x")
-
         def do_clear():
             clear_history()
             listbox.delete(0, "end")
@@ -2658,13 +2696,31 @@ class TranslatorApp:
             detail.config(state="disabled")
             entries.clear()
 
-        tk.Button(bottom, text="清空历史", command=do_clear, width=10).pack(
-            side="right", padx=8, pady=6)
-        tk.Button(bottom, text="关闭", command=win.destroy, width=10).pack(
-            side="right", pady=6)
+        def hist_btn(text_, cmd, danger=False):
+            hover = t["btn_close_active"] if danger else t["btn_active"]
+            hover_fg = "#ffffff" if danger else t["settings_fg"]
+            b = tk.Button(
+                bottom, text=text_, command=cmd,
+                bg=t["list_bg"], fg=t["settings_fg"],
+                activebackground=hover, activeforeground=hover_fg,
+                relief="flat", bd=0, highlightthickness=0,
+                font=("Microsoft YaHei UI", 10), cursor="hand2", padx=18, pady=6)
+            b.bind("<Enter>", lambda e: b.config(bg=hover, fg=hover_fg))
+            b.bind("<Leave>", lambda e: b.config(
+                bg=t["list_bg"], fg=t["settings_fg"]))
+            return b
+
+        hist_btn("清空历史", do_clear, danger=True).pack(
+            side="right", padx=(0, 12), pady=8)
+        hist_btn("关闭", win.destroy).pack(side="right", padx=(0, 8), pady=8)
 
         win.lift()
         win.focus_force()
+        # Pop above the (topmost) settings window when launched from there,
+        # then relinquish topmost so normal window stacking resumes.
+        win.attributes("-topmost", True)
+        win.after(250, lambda: win.winfo_exists() and
+                  win.attributes("-topmost", False))
 
     # ---------- Tray ----------
     def _start_tray(self):
