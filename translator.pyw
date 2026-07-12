@@ -111,8 +111,8 @@ LOADING_CORNER_RADIUS = 11
 #               roughly 2x the dynamic popup's max width, at a ~4:3 ratio.
 # Sizes are LOGICAL pixels (DPI-scaled at runtime) so the card looks the same
 # physical size on any display.
-CENTERED_POPUP_W = 690
-CENTERED_POPUP_H = 518
+CENTERED_POPUP_W = 552
+CENTERED_POPUP_H = 389
 
 # Hotkey handoff: the global keyboard listener runs on its own thread and must
 # never touch Tcl/Tk directly. It drops trigger requests into a queue that the
