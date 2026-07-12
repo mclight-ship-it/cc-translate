@@ -2175,7 +2175,7 @@ class TranslatorApp:
         # ---- Title bar (draggable, with close button) ----
         bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
-        title_lbl = tk.Label(bar, text="⚙  " + f"{APP_NAME} 设置", bg=bg,
+        title_lbl = tk.Label(bar, text=f"{APP_NAME} 设置", bg=bg,
                              fg=accent, font=(FONT, 11, "bold"))
         title_lbl.pack(side="left")
         close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
