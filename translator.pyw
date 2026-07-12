@@ -469,13 +469,14 @@ def load_history():
         return []
 
 
-def add_history(input_text, output_text, is_dict, limit):
+def add_history(input_text, output_text, is_dict, limit, is_code=False):
     entries = load_history()
     entries.insert(0, {
         "ts": time.strftime("%Y-%m-%d %H:%M"),
         "input": input_text,
         "output": output_text,
         "is_dict": bool(is_dict),
+        "is_code": bool(is_code),
     })
     del entries[max(1, int(limit)):]
     try:
@@ -687,6 +688,44 @@ def attach_rounded_corners(win, radius):
             _ROUND_REGISTRY.pop(hwnd, None)
 
     win.bind("<Destroy>", _cleanup, add="+")
+
+
+# ---------------------------------------------------------------------------
+# Rounded borderless windows via a transparent colour key.
+#
+# SetWindowRgn (above) clips the window to a rounded shape, but on some
+# compositors (notably remote-desktop / VM sessions) the clipped-out corners
+# render as opaque black instead of compositing through to the desktop. For
+# the larger chrome windows (settings, history) we instead paint a rounded
+# card on a Canvas and set a transparent colour key, so the corner pixels are
+# genuinely see-through. The key is a near-black sentinel so that even if a
+# session somehow ignored colour-key transparency, the corners would look the
+# same as the old behaviour (no regression).
+# ---------------------------------------------------------------------------
+ROUND_KEY_COLOR = "#010101"
+
+
+def _draw_round_rect(cv, x1, y1, x2, y2, r, **kwargs):
+    """Draw a filled rounded rectangle on a Canvas as two rectangles plus four
+    corner pie-slices. This gives a crisp, exact-radius arc (a smooth-spline
+    polygon collapses the radius and bulges the straight edges). All pieces
+    share the caller's ``tags`` so they can be cleared/lowered as one."""
+    r = max(0, min(int(r), (x2 - x1) // 2, (y2 - y1) // 2))
+    fill = kwargs.get("fill", "")
+    tags = kwargs.get("tags")
+    base = {"fill": fill, "outline": fill, "width": 0}
+    if tags:
+        base["tags"] = tags
+    cv.create_rectangle(x1 + r, y1, x2 - r, y2, **base)
+    cv.create_rectangle(x1, y1 + r, x2, y2 - r, **base)
+    d = 2 * r
+    arc = {"fill": fill, "outline": fill, "style": "pieslice"}
+    if tags:
+        arc["tags"] = tags
+    cv.create_arc(x1, y1, x1 + d, y1 + d, start=90, extent=90, **arc)
+    cv.create_arc(x2 - d, y1, x2, y1 + d, start=0, extent=90, **arc)
+    cv.create_arc(x1, y2 - d, x1 + d, y2, start=180, extent=90, **arc)
+    cv.create_arc(x2 - d, y2 - d, x2, y2, start=270, extent=90, **arc)
 
 
 class WarmClaude:
@@ -1204,7 +1243,8 @@ class TranslatorApp:
             if self.cfg.get("history_enabled", True) and self._last_input:
                 add_history(self._last_input, final,
                             is_single_word(self._last_input),
-                            self.cfg.get("history_limit", 100))
+                            self.cfg.get("history_limit", 100),
+                            is_code=(self._last_class == "code"))
             log_perf("warm_cli_done", {
                 "chars": len(text),
                 "wall_ms": int((time.perf_counter() - t0) * 1000),
@@ -1271,7 +1311,8 @@ class TranslatorApp:
             self.root.after(0, lambda: self._stream_finalize(final))
             if self.cfg.get("history_enabled", True) and self._last_input:
                 add_history(self._last_input, final, False,
-                            self.cfg.get("history_limit", 100))
+                            self.cfg.get("history_limit", 100),
+                            is_code=(self._last_class == "code"))
             log_perf("stream_cli_done", {
                 "chars": len(text),
                 "wall_ms": int((time.perf_counter() - t0) * 1000),
@@ -1445,7 +1486,8 @@ class TranslatorApp:
         if ok and self.cfg.get("history_enabled", True) and self._last_input:
             add_history(self._last_input, result,
                         is_single_word(self._last_input),
-                        self.cfg.get("history_limit", 100))
+                        self.cfg.get("history_limit", 100),
+                        is_code=(self._last_class == "code"))
 
     def _maybe_add_explain_button(self, win):
         """For a mixed prose+code selection, add a one-shot '解释代码' button to
@@ -1865,6 +1907,42 @@ class TranslatorApp:
         corners can no longer flicker off or get stuck square after a shrink."""
         win._corner_radius = max(0, int(radius))
         attach_rounded_corners(win, win._corner_radius)
+
+    def _rounded_shell(self, win, radius, card_bg, border):
+        """Turn a borderless Toplevel into a rounded card using a transparent
+        colour key, so its corners are genuinely transparent (verified to work
+        in this environment where SetWindowRgn cut-outs render opaque). Returns
+        the content Frame to fill; the window reveals via deiconify (colour-key
+        transparency is incompatible with -alpha, so don't mix them)."""
+        win.configure(bg=ROUND_KEY_COLOR)
+        try:
+            win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
+        except Exception:
+            pass
+        cv = tk.Canvas(win, bg=ROUND_KEY_COLOR, highlightthickness=0, bd=0,
+                       takefocus=0)
+        cv.pack(fill="both", expand=True)
+        card = tk.Frame(cv, bg=card_bg, bd=0, highlightthickness=0)
+        item = cv.create_window(radius, radius, anchor="nw", window=card)
+
+        def _redraw(event=None):
+            w = cv.winfo_width()
+            h = cv.winfo_height()
+            if w <= 2 or h <= 2:
+                return
+            cv.delete("cc_shell")
+            _draw_round_rect(cv, 0, 0, w, h, radius,
+                             fill=border, outline=border, tags="cc_shell")
+            _draw_round_rect(cv, 1, 1, w - 1, h - 1, radius,
+                             fill=card_bg, outline=card_bg, tags="cc_shell")
+            cv.tag_lower("cc_shell")
+            cv.coords(item, radius, radius)
+            cv.itemconfigure(item, width=w - 2 * radius, height=h - 2 * radius)
+
+        cv.bind("<Configure>", _redraw)
+        win._round_canvas = cv
+        win._round_redraw = _redraw
+        return card
 
     def _apply_window_rounding(self, win):
         """Force an immediate region refresh at the window's current real size.
@@ -2367,16 +2445,13 @@ class TranslatorApp:
         self._setup_form_style()
 
         win = tk.Toplevel(self.root)
-        win.attributes("-alpha", 0.0)   # reveal at final geometry (no flash/jump)
+        win.withdraw()   # reveal at final geometry (no flash/jump)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         self.settings_win = win
 
         FONT = "Microsoft YaHei UI"
-        shell = tk.Frame(win, bg=border, bd=0, highlightthickness=0)
-        shell.pack(fill="both", expand=True)
-        outer = tk.Frame(shell, bg=bg, bd=0, highlightthickness=0)
-        outer.pack(fill="both", expand=True, padx=1, pady=1)
+        outer = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
 
         # ---- Title bar (draggable, with close button) ----
         bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
@@ -2585,9 +2660,11 @@ class TranslatorApp:
         win.bind("<Escape>", lambda e: win.destroy())
 
         # ---- Size & center on the active monitor, then reveal ----
+        # The content lives inside a Canvas card inset by the corner radius, so
+        # measure the card and pad by the radius on every side.
         win.update_idletasks()
-        w = max(win.winfo_reqwidth(), 380)
-        h = win.winfo_reqheight()
+        w = max(outer.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS, 380)
+        h = outer.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
@@ -2597,9 +2674,9 @@ class TranslatorApp:
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
             x, y = (sw - w) // 2, (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
-        self._setup_rounded_window(win, POPUP_CORNER_RADIUS)
+        win.deiconify()
         win.update_idletasks()
-        win.attributes("-alpha", 1.0)
+        win._round_redraw()
         win.lift()
         win.focus_force()
 
@@ -2614,60 +2691,95 @@ class TranslatorApp:
             return
 
         t = self.theme
+        bg = t["settings_bg"]
+        border = t["popup_border"]
+        accent = t["accent"]
+        hint = t["popup_hint"]
+        FONT = "Microsoft YaHei UI"
+
         win = tk.Toplevel(self.root)
-        win.title(f"{APP_NAME} 历史记录")
-        win.configure(bg=t["settings_bg"])
-        try:
-            win.iconbitmap(ICON_PATH)
-        except Exception:
-            pass
-        # Same centred placement and size as the translation result popup, so
-        # the two windows feel like one family. Resizable via the title bar.
-        w, h, x, y = self._centered_box()
-        win.geometry(f"{w}x{h}+{x}+{y}")
-        win.minsize(int(w * 0.7), int(h * 0.7))
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
         self.history_win = win
+
+        # Same centred placement/size as the settings & result popups, and the
+        # same rounded borderless shell, so the windows feel like one family.
+        w, h, x, y = self._centered_box()
+        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+
+        # ---- Title bar (draggable, with close button) ----
+        bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=16, pady=(12, 8))
+        title_lbl = tk.Label(bar, text=f"{APP_NAME} 历史记录", bg=bg,
+                             fg=accent, font=(FONT, 11, "bold"))
+        title_lbl.pack(side="left")
+        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                             font=(FONT, 11), cursor="hand2", padx=6)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: win.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+
+        drag = {"x": 0, "y": 0}
+
+        def dstart(e):
+            drag["x"], drag["y"] = e.x, e.y
+
+        def dmove(e):
+            win.geometry(f"+{win.winfo_x() + e.x - drag['x']}"
+                         f"+{win.winfo_y() + e.y - drag['y']}")
+
+        for _w in (bar, title_lbl):
+            _w.bind("<Button-1>", dstart)
+            _w.bind("<B1-Motion>", dmove)
+
+        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
         entries = load_history()
 
         # Bottom action bar — packed first so it always stays visible, with
         # themed flat buttons matching the rest of the app.
-        tk.Frame(win, bg=t["popup_border"], height=1).pack(
-            side="bottom", fill="x")
-        bottom = tk.Frame(win, bg=t["settings_bg"])
+        tk.Frame(card, bg=border, height=1).pack(side="bottom", fill="x")
+        bottom = tk.Frame(card, bg=bg)
         bottom.pack(side="bottom", fill="x")
 
-        # Panes container fills everything above the bottom bar.
-        panes = tk.Frame(win, bg=t["settings_bg"])
+        # Panes container fills everything between the title bar and buttons.
+        panes = tk.Frame(card, bg=bg)
         panes.pack(side="top", fill="both", expand=True)
 
         # Left: entry list (~40% of the window). Right: detail fills the rest.
         list_w = max(150, int(w * 0.4))
-        left = tk.Frame(panes, bg=t["settings_bg"], width=list_w)
+        left = tk.Frame(panes, bg=bg, width=list_w)
         left.pack(side="left", fill="y", expand=False)
         left.pack_propagate(False)
         listbox = tk.Listbox(
             left, bg=t["list_bg"], fg=t["settings_fg"],
             selectbackground=t["list_sel"], selectforeground=t["settings_fg"],
             relief="flat", highlightthickness=0, activestyle="none",
-            font=("Microsoft YaHei UI", 10))
-        listbox.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+            font=(FONT, 10))
+        listbox.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=8)
         lb_scroll = ttk.Scrollbar(left, orient="vertical",
                                   style="CC.Vertical.TScrollbar",
                                   command=listbox.yview)
         listbox.config(yscrollcommand=lb_scroll.set)
         lb_scroll.pack(side="left", fill="y", pady=8)
 
-        right = tk.Frame(panes, bg=t["settings_bg"])
+        right = tk.Frame(panes, bg=bg)
         right.pack(side="left", fill="both", expand=True)
         detail = tk.Text(
             right, bg=t["bg"], fg=t["fg"], wrap="word", relief="flat",
-            padx=12, pady=10, font=("Microsoft YaHei UI", self.cfg["font_size"]),
+            padx=12, pady=10, font=(FONT, self.cfg["font_size"]),
             selectbackground=t["sel_bg"], highlightthickness=0)
-        detail.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        detail.pack(fill="both", expand=True, padx=(8, 12), pady=8)
 
         for e in entries:
-            tag = "词" if e.get("is_dict") else "译"
+            if e.get("is_code"):
+                tag = "码"
+            elif e.get("is_dict"):
+                tag = "词"
+            else:
+                tag = "译"
             # Preview the source text (dates aren't useful for browsing).
             preview = " ".join(e.get("input", "").split())[:24]
             listbox.insert("end", f"[{tag}] {preview}")
@@ -2704,23 +2816,25 @@ class TranslatorApp:
                 bg=t["list_bg"], fg=t["settings_fg"],
                 activebackground=hover, activeforeground=hover_fg,
                 relief="flat", bd=0, highlightthickness=0,
-                font=("Microsoft YaHei UI", 10), cursor="hand2", padx=18, pady=6)
+                font=(FONT, 10), cursor="hand2", padx=18, pady=6)
             b.bind("<Enter>", lambda e: b.config(bg=hover, fg=hover_fg))
             b.bind("<Leave>", lambda e: b.config(
                 bg=t["list_bg"], fg=t["settings_fg"]))
             return b
 
         hist_btn("清空历史", do_clear, danger=True).pack(
-            side="right", padx=(0, 12), pady=8)
-        hist_btn("关闭", win.destroy).pack(side="right", padx=(0, 8), pady=8)
+            side="right", padx=(0, 16), pady=(4, 12))
+        hist_btn("关闭", win.destroy).pack(side="right", padx=(0, 8), pady=(4, 12))
 
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        # ---- Reveal centred, staying above the (topmost) settings window ----
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.deiconify()
+        win.update_idletasks()
+        win._round_redraw()
         win.lift()
         win.focus_force()
-        # Pop above the (topmost) settings window when launched from there,
-        # then relinquish topmost so normal window stacking resumes.
-        win.attributes("-topmost", True)
-        win.after(250, lambda: win.winfo_exists() and
-                  win.attributes("-topmost", False))
 
     # ---------- Tray ----------
     def _start_tray(self):
