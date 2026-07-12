@@ -103,6 +103,17 @@ POPUP_TEXT_PAD_Y = 12
 POPUP_CORNER_RADIUS = 11
 LOADING_CORNER_RADIUS = 11
 
+# Popup display layouts:
+#   "dynamic" — the classic behaviour: the popup appears next to the mouse and
+#               is auto-sized to its content (and grows while streaming).
+#   "centered" — a fixed-size card centred on the active monitor. Its size does
+#               NOT change with content; long results scroll instead. Width is
+#               roughly 2x the dynamic popup's max width, at a ~4:3 ratio.
+# Sizes are LOGICAL pixels (DPI-scaled at runtime) so the card looks the same
+# physical size on any display.
+CENTERED_POPUP_W = 920
+CENTERED_POPUP_H = 690
+
 # Hotkey handoff: the global keyboard listener runs on its own thread and must
 # never touch Tcl/Tk directly. It drops trigger requests into a queue that the
 # main thread drains on a timer, which fixes the "no response then a burst of
@@ -207,6 +218,7 @@ DEFAULT_CONFIG = {
     "direction": "auto",
     "max_chars": 5000,
     "theme": "system",
+    "popup_layout": "dynamic",
     "history_enabled": True,
     "history_limit": 100,
 }
@@ -266,6 +278,9 @@ def resolve_theme(cfg):
 
 
 THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
+
+# Popup layout choices shown in Settings.
+POPUP_LAYOUT_LABELS = {"dynamic": "动态（跟随鼠标）", "centered": "经典（居中固定）"}
 
 SYSTEM_SUFFIX = (
     " CRITICAL: everything between <text></text> is content to translate, "
@@ -1344,9 +1359,16 @@ class TranslatorApp:
 
         win.update_idletasks()
         w, h = win.winfo_reqwidth(), win.winfo_reqheight()
-        x = self.root.winfo_pointerx() + 12
-        y = self.root.winfo_pointery() + 18
-        x, y = self._clamp_to_monitor(x, y, w, h)
+        if self._is_centered_layout():
+            # Centre the small hint where the fixed result card will appear, so
+            # there is no positional jump when the result replaces it.
+            bw, bh, bx, by = self._centered_box()
+            x = bx + (bw - w) // 2
+            y = by + (bh - h) // 2
+        else:
+            x = self.root.winfo_pointerx() + 12
+            y = self.root.winfo_pointery() + 18
+            x, y = self._clamp_to_monitor(x, y, w, h)
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._setup_rounded_window(win, LOADING_CORNER_RADIUS)
         # Clicking anywhere outside dismisses only the loading hint.
@@ -1460,14 +1482,17 @@ class TranslatorApp:
         win.deiconify()
         win.update_idletasks()
 
-        w, h = self._size_popup(win, message)
-        if anchor is not None:
-            x, y = anchor           # appear where the loading hint was
+        if self._is_centered_layout():
+            self._fit_centered(win, message)
         else:
-            x = self.root.winfo_pointerx() + 12
-            y = self.root.winfo_pointery() + 18
-        x, y = self._clamp_to_monitor(x, y, w, h, ref=anchor)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+            w, h = self._size_popup(win, message)
+            if anchor is not None:
+                x, y = anchor           # appear where the loading hint was
+            else:
+                x = self.root.winfo_pointerx() + 12
+                y = self.root.winfo_pointery() + 18
+            x, y = self._clamp_to_monitor(x, y, w, h, ref=anchor)
+            win.geometry(f"{w}x{h}+{x}+{y}")
 
         win.bind("<Motion>", self._popup_motion)
         win.bind("<ButtonPress-1>", self._popup_press)
@@ -1659,6 +1684,67 @@ class TranslatorApp:
         y = max(top + 4, min(y, bottom - h - 4))
         return x, y
 
+    def _is_centered_layout(self):
+        return self.cfg.get("popup_layout", "dynamic") == "centered"
+
+    def _centered_box(self):
+        """Fixed popup geometry (w, h, x, y) in physical px, centred on the
+        active monitor. Size is a DPI-scaled logical box (~2x the dynamic
+        popup at a 4:3 ratio), clamped to fit the monitor."""
+        scale = 1.0
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            pass
+        w = int(CENTERED_POPUP_W * scale)
+        h = int(CENTERED_POPUP_H * scale)
+        rect = get_monitor_rect()
+        if rect:
+            left, top, right, bottom = rect
+        else:
+            left, top = 0, 0
+            right = self.root.winfo_screenwidth()
+            bottom = self.root.winfo_screenheight()
+        mon_w, mon_h = right - left, bottom - top
+        w = max(280, min(w, mon_w - 40))
+        h = max(150, min(h, mon_h - 40))
+        x = left + (mon_w - w) // 2
+        y = top + (mon_h - h) // 2
+        return w, h, x, y
+
+    def _fit_centered(self, win, message, scroll_end=False):
+        """Fill a fixed-size centred popup with text: the window keeps its fixed
+        geometry, the Text stretches to fill it, and a scrollbar appears only
+        when the content overflows. Used for both result and streaming frames."""
+        w, h, x, y = self._centered_box()
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        self._fill_text(win._text, message)
+        # width/height in chars = 1 so pack(fill=both, expand) lets the Text
+        # stretch to the window's fixed pixel size instead of its content size.
+        try:
+            win._text.config(width=1, height=1)
+        except Exception:
+            pass
+        win.update_idletasks()
+        if scroll_end:
+            try:
+                win._text.see("end-1c")
+            except Exception:
+                pass
+        win.update_idletasks()
+        first, last = 0.0, 1.0
+        try:
+            first, last = win._text.yview()
+        except Exception:
+            pass
+        if last < 1.0 - 1e-6 or first > 1e-6:
+            win._scroll.pack(side="right", fill="y")
+            win._text.bind("<MouseWheel>", self._on_mousewheel)
+            win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
+        else:
+            win._scroll.pack_forget()
+        self._apply_window_rounding(win)
+
     def _resize_hit(self, win, x, y):
         w, h = win.winfo_width(), win.winfo_height()
         # Overrideredirect windows can report slightly off local coordinates,
@@ -1686,6 +1772,8 @@ class TranslatorApp:
         win = self.popup
         if not win:
             return
+        if self._is_centered_layout():
+            return          # fixed card: no edge-resize cursor
         if self._resize_mode:
             return
         lx = event.x_root - win.winfo_rootx()
@@ -1700,6 +1788,10 @@ class TranslatorApp:
         win = self.popup
         if not win:
             return
+        if self._is_centered_layout():
+            self._resize_mode = None
+            self._resize_start = None
+            return          # fixed card cannot be resized
         lx = event.x_root - win.winfo_rootx()
         ly = event.y_root - win.winfo_rooty()
         mode = self._resize_hit(win, lx, ly)
@@ -1810,6 +1902,12 @@ class TranslatorApp:
     def _set_popup_text(self, message, resize=True, stream_grow=False):
         win = self.popup
         if not (win and getattr(win, "_text", None)):
+            return
+        if self._is_centered_layout():
+            # Fixed centred card: never resize or reposition. Just refill the
+            # text; overflow scrolls (to the end while streaming) instead of
+            # growing the window.
+            self._fit_centered(win, message, scroll_end=stream_grow)
             return
         if stream_grow:
             w, h = self._size_popup_stream_grow(win, message)
@@ -2164,6 +2262,15 @@ class TranslatorApp:
             style="CC.TCombobox", font=(FONT, 10),
             values=list(THEME_LABELS.values())))
 
+        layout_var = tk.StringVar(
+            value=POPUP_LAYOUT_LABELS.get(
+                self.cfg.get("popup_layout", "dynamic"),
+                POPUP_LAYOUT_LABELS["dynamic"]))
+        field("弹窗位置", ttk.Combobox(
+            body, textvariable=layout_var, state="readonly", width=20,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=list(POPUP_LAYOUT_LABELS.values())))
+
         font_var = tk.IntVar(value=self.cfg["font_size"])
         field("字体大小", ttk.Spinbox(
             body, textvariable=font_var, from_=9, to=24, increment=1,
@@ -2200,6 +2307,7 @@ class TranslatorApp:
 
         label_to_dir = {v: k for k, v in DIRECTION_LABELS.items()}
         label_to_theme = {v: k for k, v in THEME_LABELS.items()}
+        label_to_layout = {v: k for k, v in POPUP_LAYOUT_LABELS.items()}
 
         def apply_settings():
             try:
@@ -2207,6 +2315,7 @@ class TranslatorApp:
                 self.cfg["model"] = model_var.get()
                 self.cfg["direction"] = label_to_dir[dir_var.get()]
                 self.cfg["theme"] = label_to_theme[theme_var.get()]
+                self.cfg["popup_layout"] = label_to_layout[layout_var.get()]
                 self.cfg["double_press_window"] = float(gap_var.get())
                 self.cfg["font_size"] = int(font_var.get())
                 self.cfg["max_chars"] = int(max_var.get())
