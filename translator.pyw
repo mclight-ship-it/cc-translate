@@ -137,6 +137,11 @@ def _user_data_path(name):
 
 
 CONFIG_PATH = _user_data_path("config.json")
+# Breadcrumb dropped just before an auto-update restart; the freshly launched
+# instance reads it to show a "已更新并重启" tray balloon (so the user gets
+# visible confirmation even when Windows tucks the new tray icon into overflow),
+# then deletes it.
+UPDATE_NOTICE_PATH = os.path.join(DATA_DIR, "update_notice.txt")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
 MIN_POPUP_HEIGHT = 150
 MIN_STREAM_VISIBLE_HEIGHT = 220
@@ -1341,6 +1346,10 @@ class TranslatorApp:
         # git deploy — the tick re-checks config each time it fires).
         self._schedule_nightly_update()
 
+        # If we just came back from an auto-update restart, confirm it with a
+        # tray balloon once the icon has had a moment to register.
+        self.root.after(2500, self._show_update_notice_if_any)
+
     # ---------- Warm process pool ----------
     def _warm_key(self):
         return (self.cfg.get("model"), self.cfg.get("direction"))
@@ -1538,6 +1547,15 @@ class TranslatorApp:
                 report("更新有误，已回滚", "err")
                 return
 
+            # Leave a breadcrumb so the relaunched instance can confirm success
+            # with a visible tray balloon (the new process's tray icon may land
+            # in Windows' overflow area, so a toast is the reliable signal).
+            try:
+                with open(UPDATE_NOTICE_PATH, "w", encoding="utf-8") as f:
+                    f.write(version_string())
+            except Exception as e:
+                log_error("update_write_notice", e)
+
             report("更新完成，正在重启…", "ok")
             restart = True
         except Exception as e:
@@ -1604,6 +1622,33 @@ class TranslatorApp:
         try:
             if self.tray is not None:
                 self.tray.notify(msg, APP_NAME)
+        except Exception:
+            pass
+
+    def _show_update_notice_if_any(self):
+        """On startup, if an update breadcrumb exists, show a tray balloon
+        confirming the restart (retrying briefly until the tray is ready), then
+        remove the breadcrumb so it only fires once."""
+        if not os.path.exists(UPDATE_NOTICE_PATH):
+            return
+        try:
+            with open(UPDATE_NOTICE_PATH, "r", encoding="utf-8") as f:
+                ver = f.read().strip()
+        except Exception:
+            ver = ""
+        # The tray thread may still be initialising; retry a few times.
+        if self.tray is None and getattr(self, "_notice_retries", 0) < 8:
+            self._notice_retries = getattr(self, "_notice_retries", 0) + 1
+            self.root.after(1000, self._show_update_notice_if_any)
+            return
+        try:
+            msg = f"已更新到 {ver} 并重启" if ver else "已更新并重启"
+            if self.tray is not None:
+                self.tray.notify(msg, APP_NAME)
+        except Exception as e:
+            log_error("update_notice_show", e)
+        try:
+            os.remove(UPDATE_NOTICE_PATH)
         except Exception:
             pass
 
