@@ -271,18 +271,34 @@ for _code, (_zh_name, _en_name) in LANGUAGES.items():
         f"Translate the user's text into natural {_en_name}.")
     DIRECTION_LABELS[f"to_{_code}"] = f"总是译成{_zh_name}"
 
+class CFG:
+    """String constants for every key in the user config dict.
+    Use these instead of bare string literals to catch typos at lint time."""
+    MODEL = "model"
+    DOUBLE_PRESS_WINDOW = "double_press_window"
+    FONT_SIZE = "font_size"
+    DIRECTION = "direction"
+    MAX_CHARS = "max_chars"
+    THEME = "theme"
+    POPUP_LAYOUT = "popup_layout"
+    HISTORY_ENABLED = "history_enabled"
+    HISTORY_LIMIT = "history_limit"
+    AUTO_UPDATE_ENABLED = "auto_update_enabled"
+    AUTO_UPDATE_HOUR = "auto_update_hour"
+
+
 DEFAULT_CONFIG = {
-    "model": "haiku",
-    "double_press_window": 0.5,
-    "font_size": 12,
-    "direction": "auto",
-    "max_chars": 5000,
-    "theme": "system",
-    "popup_layout": "centered",
-    "history_enabled": True,
-    "history_limit": 100,
-    "auto_update_enabled": True,
-    "auto_update_hour": 3,
+    CFG.MODEL: "haiku",
+    CFG.DOUBLE_PRESS_WINDOW: 0.5,
+    CFG.FONT_SIZE: 12,
+    CFG.DIRECTION: "auto",
+    CFG.MAX_CHARS: 5000,
+    CFG.THEME: "system",
+    CFG.POPUP_LAYOUT: "centered",
+    CFG.HISTORY_ENABLED: True,
+    CFG.HISTORY_LIMIT: 100,
+    CFG.AUTO_UPDATE_ENABLED: True,
+    CFG.AUTO_UPDATE_HOUR: 3,
 }
 
 # Two colour palettes. Every UI surface reads from the active theme so the
@@ -355,7 +371,7 @@ def detect_system_theme():
 
 def resolve_theme(cfg):
     """Pick the active palette dict based on config ('system'/'dark'/'light')."""
-    choice = cfg.get("theme", "system")
+    choice = cfg.get(CFG.THEME, "system")
     if choice not in ("dark", "light"):
         choice = detect_system_theme()
     return THEMES[choice]
@@ -1425,10 +1441,10 @@ class TranslatorApp:
 
     # ---------- Warm process pool ----------
     def _warm_key(self):
-        return (self.cfg.get("model"), self.cfg.get("direction"))
+        return (self.cfg.get(CFG.MODEL), self.cfg.get(CFG.DIRECTION))
 
     def _warm_system_prompt(self):
-        return DIRECTION_MODES[self.cfg["direction"]] + SYSTEM_SUFFIX
+        return DIRECTION_MODES[self.cfg[CFG.DIRECTION]] + SYSTEM_SUFFIX
 
     def _spawn_warm_async(self):
         """Create and start a replacement warm process for the current config,
@@ -1527,7 +1543,7 @@ class TranslatorApp:
                 except Exception:
                     pass
                 self._nightly_job = None
-            hour = int(self.cfg.get("auto_update_hour", 3))
+            hour = int(self.cfg.get(CFG.AUTO_UPDATE_HOUR, 3))
             hour = min(23, max(0, hour))
             now = datetime.datetime.now()
             target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
@@ -1545,7 +1561,7 @@ class TranslatorApp:
         """Fired at the nightly hour. Update silently when enabled and idle;
         retry shortly if the user is mid-translation, else reschedule."""
         try:
-            if self.cfg.get("auto_update_enabled", True):
+            if self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True):
                 if self._is_busy():
                     # Don't interrupt — try again soon, same night.
                     self._nightly_job = self.root.after(
@@ -1795,7 +1811,7 @@ class TranslatorApp:
                     self.ctrl_down = True
                 elif self.ctrl_down and getattr(key, "char", None) == "\x03":
                     now = time.time()
-                    if now - self.last_c_time <= self.cfg["double_press_window"]:
+                    if now - self.last_c_time <= self.cfg[CFG.DOUBLE_PRESS_WINDOW]:
                         self.last_c_time = 0.0
                         # Hand off to the main thread; never touch Tk from here.
                         self._trigger_queue.put(now)
@@ -1843,7 +1859,7 @@ class TranslatorApp:
         text = (text or "").strip()
         if not text:
             return
-        text = text[: self.cfg["max_chars"]]
+        text = text[: self.cfg[CFG.MAX_CHARS]]
         self._show_loading(text)
 
     def _restore_clipboard(self):
@@ -1915,7 +1931,7 @@ class TranslatorApp:
             return CODE_EXPLAIN_PROMPT
         if is_single_word(text):
             return DICTIONARY_PROMPT
-        return DIRECTION_MODES[self.cfg["direction"]] + SYSTEM_SUFFIX
+        return DIRECTION_MODES[self.cfg[CFG.DIRECTION]] + SYSTEM_SUFFIX
 
     def _result_title(self, ok=True):
         """Title for the result popup, reflecting the active mode."""
@@ -1992,10 +2008,10 @@ class TranslatorApp:
             if not final:
                 return False
             self.root.after(0, lambda: self._stream_finalize(final))
-            if self.cfg.get("history_enabled", True) and self._last_input:
+            if self.cfg.get(CFG.HISTORY_ENABLED, True) and self._last_input:
                 add_history(self._last_input, final,
                             is_single_word(self._last_input),
-                            self.cfg.get("history_limit", 100),
+                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
                             is_code=(self._last_class == "code"))
             log_perf("warm_cli_done", {
                 "chars": len(text),
@@ -2021,7 +2037,7 @@ class TranslatorApp:
         t0 = time.perf_counter()
         try:
             proc = subprocess.Popen(
-                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg["model"],
+                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg[CFG.MODEL],
                  "--system-prompt", system_prompt,
                  "--output-format", "stream-json",
                  "--include-partial-messages", "--verbose",
@@ -2061,9 +2077,9 @@ class TranslatorApp:
                 log_perf("stream_cli_empty", {"chars": len(text)})
                 return False   # nothing streamed → fall back to one-shot
             self.root.after(0, lambda: self._stream_finalize(final))
-            if self.cfg.get("history_enabled", True) and self._last_input:
+            if self.cfg.get(CFG.HISTORY_ENABLED, True) and self._last_input:
                 add_history(self._last_input, final, False,
-                            self.cfg.get("history_limit", 100),
+                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
                             is_code=(self._last_class == "code"))
             log_perf("stream_cli_done", {
                 "chars": len(text),
@@ -2170,7 +2186,7 @@ class TranslatorApp:
             # newline in an argument as end-of-input and would translate only the
             # first line/paragraph. stdin delivers the whole selection intact.
             proc = subprocess.run(
-                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg["model"],
+                [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg[CFG.MODEL],
                  "--system-prompt", system_prompt,
                  "--output-format", "json",
                  "--tools", "",   # no tools needed → smaller prompt, faster API
@@ -2239,10 +2255,10 @@ class TranslatorApp:
         self._maybe_add_explain_button(self.popup)
         if ok:
             self._maybe_add_retranslate_button(self.popup)
-        if ok and self.cfg.get("history_enabled", True) and self._last_input:
+        if ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and self._last_input:
             add_history(self._last_input, result,
                         is_single_word(self._last_input),
-                        self.cfg.get("history_limit", 100),
+                        self.cfg.get(CFG.HISTORY_LIMIT, 100),
                         is_code=(self._last_class == "code"))
 
     def _maybe_add_explain_button(self, win):
@@ -2349,9 +2365,9 @@ class TranslatorApp:
             if getattr(win._text, "_rich", False):
                 win._text._rich_highlight = True
             self._set_popup_text(result, resize=True)
-            if self.cfg.get("history_enabled", True) and self._last_input:
+            if self.cfg.get(CFG.HISTORY_ENABLED, True) and self._last_input:
                 add_history(self._last_input, result, False,
-                            self.cfg.get("history_limit", 100), is_code=False)
+                            self.cfg.get(CFG.HISTORY_LIMIT, 100), is_code=False)
         if btn is not None:
             try:
                 btn.config(text="重译 ▾", state="normal", cursor="hand2")
@@ -2532,7 +2548,7 @@ class TranslatorApp:
             body,
             bg=popup_bg,
             fg=self.theme["fg"],
-            font=("Microsoft YaHei UI", self.cfg["font_size"]),
+            font=("Microsoft YaHei UI", self.cfg[CFG.FONT_SIZE]),
             wrap="word",
             relief="flat",
             bd=0,
@@ -2842,7 +2858,7 @@ class TranslatorApp:
         return x, y
 
     def _is_centered_layout(self):
-        return self.cfg.get("popup_layout", "centered") == "centered"
+        return self.cfg.get(CFG.POPUP_LAYOUT, "centered") == "centered"
 
     def _centered_box(self):
         """Fixed popup geometry (w, h, x, y) in physical px, centred on the
@@ -3088,7 +3104,7 @@ class TranslatorApp:
         from the active theme. Heading fonts are only mildly larger so the
         dynamic-layout height math (which reads real reqheight) stays sane."""
         t = self.theme
-        base = int(self.cfg["font_size"])
+        base = int(self.cfg[CFG.FONT_SIZE])
         ui = "Microsoft YaHei UI"
         mono = self._mono_family()
         text_widget.tag_configure(
@@ -3491,7 +3507,7 @@ class TranslatorApp:
         # ---- Section: 翻译 ----
         self._settings_section(
             body, row_state, "翻译", bg=bg, accent=accent, font=FONT)
-        model_var = tk.StringVar(value=self.cfg["model"])
+        model_var = tk.StringVar(value=self.cfg[CFG.MODEL])
         self._settings_field(
             body, row_state, "翻译模型",
             ttk.Combobox(
@@ -3501,7 +3517,7 @@ class TranslatorApp:
             bg=bg, fg=fg, font=FONT)
 
         dir_var = tk.StringVar(
-            value=DIRECTION_LABELS.get(self.cfg["direction"],
+            value=DIRECTION_LABELS.get(self.cfg[CFG.DIRECTION],
                                        DIRECTION_LABELS["auto"]))
         self._settings_field(
             body, row_state, "翻译方向",
@@ -3515,7 +3531,7 @@ class TranslatorApp:
         self._settings_section(
             body, row_state, "外观", bg=bg, accent=accent, font=FONT)
         theme_var = tk.StringVar(
-            value=THEME_LABELS.get(self.cfg.get("theme", "system")))
+            value=THEME_LABELS.get(self.cfg.get(CFG.THEME, "system")))
         self._settings_field(
             body, row_state, "主题",
             ttk.Combobox(
@@ -3526,7 +3542,7 @@ class TranslatorApp:
 
         layout_var = tk.StringVar(
             value=POPUP_LAYOUT_LABELS.get(
-                self.cfg.get("popup_layout", "centered"),
+                self.cfg.get(CFG.POPUP_LAYOUT, "centered"),
                 POPUP_LAYOUT_LABELS["centered"]))
         self._settings_field(
             body, row_state, "弹窗位置",
@@ -3536,7 +3552,7 @@ class TranslatorApp:
                 values=list(POPUP_LAYOUT_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
 
-        font_var = tk.IntVar(value=self.cfg["font_size"])
+        font_var = tk.IntVar(value=self.cfg[CFG.FONT_SIZE])
         self._settings_field(
             body, row_state, "字体大小",
             ttk.Spinbox(
@@ -3547,7 +3563,7 @@ class TranslatorApp:
         # ---- Section: 行为 ----
         self._settings_section(
             body, row_state, "行为", bg=bg, accent=accent, font=FONT)
-        gap_var = tk.DoubleVar(value=self.cfg["double_press_window"])
+        gap_var = tk.DoubleVar(value=self.cfg[CFG.DOUBLE_PRESS_WINDOW])
         self._settings_field(
             body, row_state, "双击间隔 (秒)",
             ttk.Spinbox(
@@ -3556,7 +3572,7 @@ class TranslatorApp:
                 font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
-        max_var = tk.IntVar(value=self.cfg["max_chars"])
+        max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
         self._settings_field(
             body, row_state, "最大字符数",
             ttk.Spinbox(
@@ -3564,7 +3580,7 @@ class TranslatorApp:
                 width=18, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
-        hist_limit_var = tk.IntVar(value=self.cfg.get("history_limit", 100))
+        hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
         self._settings_field(
             body, row_state, "历史保留条数",
             ttk.Spinbox(
@@ -3575,7 +3591,7 @@ class TranslatorApp:
 
         history_sw = self._settings_toggle_row_with_action(
             body, row_state,
-            "记录历史", self.cfg.get("history_enabled", True),
+            "记录历史", self.cfg.get(CFG.HISTORY_ENABLED, True),
             "打开历史", self._open_history,
             bg=bg, fg=fg, font=FONT, theme=t)
         autostart_sw = self._settings_toggle_row(
@@ -3631,7 +3647,7 @@ class TranslatorApp:
 
         auto_update_sw = self._settings_toggle_row_with_action(
             body, row_state,
-            "夜间自动更新", self.cfg.get("auto_update_enabled", True),
+            "夜间自动更新", self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
             "检查更新", on_check_update_click,
             bg=bg, fg=fg, font=FONT, theme=t)
         upd_status.grid(row=row_state["value"], column=0, sticky="w",
@@ -3657,16 +3673,16 @@ class TranslatorApp:
         def apply_settings():
             try:
                 prev_warm_key = self._warm_key()
-                self.cfg["model"] = model_var.get()
-                self.cfg["direction"] = label_to_dir[dir_var.get()]
-                self.cfg["theme"] = label_to_theme[theme_var.get()]
-                self.cfg["popup_layout"] = label_to_layout[layout_var.get()]
-                self.cfg["double_press_window"] = float(gap_var.get())
-                self.cfg["font_size"] = int(font_var.get())
-                self.cfg["max_chars"] = int(max_var.get())
-                self.cfg["history_limit"] = int(hist_limit_var.get())
-                self.cfg["history_enabled"] = bool(history_sw.get())
-                self.cfg["auto_update_enabled"] = bool(auto_update_sw.get())
+                self.cfg[CFG.MODEL] = model_var.get()
+                self.cfg[CFG.DIRECTION] = label_to_dir[dir_var.get()]
+                self.cfg[CFG.THEME] = label_to_theme[theme_var.get()]
+                self.cfg[CFG.POPUP_LAYOUT] = label_to_layout[layout_var.get()]
+                self.cfg[CFG.DOUBLE_PRESS_WINDOW] = float(gap_var.get())
+                self.cfg[CFG.FONT_SIZE] = int(font_var.get())
+                self.cfg[CFG.MAX_CHARS] = int(max_var.get())
+                self.cfg[CFG.HISTORY_LIMIT] = int(hist_limit_var.get())
+                self.cfg[CFG.HISTORY_ENABLED] = bool(history_sw.get())
+                self.cfg[CFG.AUTO_UPDATE_ENABLED] = bool(auto_update_sw.get())
                 save_config(self.cfg)
                 if autostart_sw.get() != is_autostart_enabled():
                     set_autostart(autostart_sw.get())
@@ -3785,7 +3801,7 @@ class TranslatorApp:
         right.pack(side="left", fill="both", expand=True)
         detail = tk.Text(
             right, bg=theme["bg"], fg=theme["fg"], wrap="word", relief="flat",
-            padx=12, pady=10, font=(font, self.cfg["font_size"]),
+            padx=12, pady=10, font=(font, self.cfg[CFG.FONT_SIZE]),
             selectbackground=theme["sel_bg"], highlightthickness=0)
         detail.pack(fill="both", expand=True, padx=(8, 12), pady=8)
         # Reuse the main popup's markdown-lite renderer so history detail looks
@@ -3793,7 +3809,7 @@ class TranslatorApp:
         self._configure_rich_tags(detail)
         detail.tag_configure(
             "detail_head",
-            font=("Microsoft YaHei UI", int(self.cfg["font_size"]), "bold"),
+            font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
             foreground=theme["rich_heading_fg"], spacing1=2, spacing3=4)
         return bottom, listbox, detail
 
