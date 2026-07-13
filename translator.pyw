@@ -28,17 +28,20 @@ from tkinter import font as tkfont
 import pyperclip
 from pynput import keyboard
 
-# Pygments is an optional dependency used only to syntax-highlight fenced code
-# blocks in the *final* rendered result. If it's missing the renderer falls
-# back to the single-colour code style, so the app runs unchanged elsewhere.
-try:
-    from pygments import lex as _pyg_lex
-    from pygments.lexers import get_lexer_by_name as _pyg_get_lexer, guess_lexer as _pyg_guess
-    from pygments.token import Token as _PygToken
-    from pygments.util import ClassNotFound as _PygClassNotFound
-    _PYGMENTS_OK = True
-except Exception:
-    _PYGMENTS_OK = False
+from cc_rich import (iter_rich_segments, highlight_code, _PYGMENTS_OK,
+                     _iter_inline_segments, _flush_highlighted_fence,
+                     _pyg_token_tag, _PygToken)
+from cc_warm import (WarmClaude, CLAUDE_CMD, WARM_POOL_ENABLED,
+                     WARM_UP_MS, WARM_MAX_AGE_S, WARM_SEND_TIMEOUT_S)
+import cc_warm as _cc_warm
+from cc_update import (
+    is_git_deploy, local_head, remote_head, update_available, version_string,
+    _format_version,
+    is_autostart_enabled, set_autostart, ensure_startmenu_shortcut,
+    _spawn_relauncher, _git, GIT_REMOTE, GIT_BRANCH, UPDATE_NET_TIMEOUT,
+    LEGACY_STARTUP_VBS, SCRIPT_PATH, PYTHONW, STARTUP_LNK, STARTMENU_LNK,
+)
+import cc_update as _cc_update
 
 
 def _enable_dpi_awareness():
@@ -184,70 +187,6 @@ CLIP_RESTORE_MS = 250
 # Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
 # on Windows; the animation cycles through them for a modern indeterminate look.
 LOADING_SPINNER = "◐◓◑◒"
-
-# ---- Warm process pool (speed-up) -----------------------------------------
-# A single Claude CLI process is spawned ahead of time in stream-json mode with
-# the current translate system prompt already loaded, so node + the CLI finish
-# initialising while the user is idle. When a translation fires we send one
-# message down the warm process (hot API round-trip ~1.2s) instead of paying
-# the ~1s cold process-startup cost every time. Each warm process is used for
-# exactly ONE translation (no context accumulation) and then replaced.
-WARM_POOL_ENABLED = True
-WARM_UP_MS = 2000          # give the CLI this long to initialise before it's "ready"
-WARM_MAX_AGE_S = 480       # recycle a warm process older than this (stale-session guard)
-WARM_SEND_TIMEOUT_S = 60   # hard cap on a single warm translation
-
-
-def _npm_global_prefix():
-    """Return npm's configured global prefix dir (where global .cmd shims live),
-    or None. This is where `npm install -g` puts binaries; it is NOT always
-    %APPDATA%\\npm — users can set a custom prefix (e.g. via npm config or a
-    corp-managed toolchain), so we ask npm itself rather than guessing."""
-    for npm in ("npm.cmd", "npm"):
-        try:
-            out = subprocess.run(
-                [npm, "config", "get", "prefix"],
-                capture_output=True, text=True, timeout=6,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            prefix = (out.stdout or "").strip()
-            if prefix and prefix.lower() != "undefined" and os.path.isdir(prefix):
-                return prefix
-        except Exception:
-            continue
-    return None
-
-
-def find_claude_cmd():
-    """Locate the Claude Code CLI without hardcoding a machine-specific path.
-    Checks PATH first, then the usual npm global install locations, then npm's
-    actual configured prefix (covers custom npm prefixes)."""
-    import shutil
-    for name in ("claude.cmd", "claude"):
-        found = shutil.which(name)
-        if found:
-            return found
-    candidates = [
-        os.path.join(os.environ.get("APPDATA", ""), "npm", "claude.cmd"),
-        os.path.join(os.environ.get("APPDATA", ""), "npm", "claude"),
-        os.path.join(os.environ.get("ProgramFiles", ""), "nodejs", "claude.cmd"),
-    ]
-    # Fall back to npm's real global prefix (handles custom install locations
-    # that aren't on PATH and aren't the default %APPDATA%\npm).
-    prefix = _npm_global_prefix()
-    if prefix:
-        candidates += [
-            os.path.join(prefix, "claude.cmd"),
-            os.path.join(prefix, "claude"),
-        ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
-    # Last resort: bare name, relying on PATH at call time.
-    return "claude"
-
-
-CLAUDE_CMD = find_claude_cmd()
 
 # Target languages for "always translate to X" modes. Add/remove freely.
 LANGUAGES = {
@@ -439,176 +378,7 @@ CODE_EXPLAIN_APPEND_PROMPT = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Markdown-lite rich-text rendering.
-#
-# Translation output is plain text, but the model (in dictionary / code modes)
-# can be asked to emit light markdown, and even plain translations often carry
-# `inline code` or URLs. We parse a small, safe subset into (text, tag)
-# segments that a tk.Text renders with per-tag colour/font. The parser is
-# deliberately stream-safe: an unclosed marker (e.g. a half-streamed ``**`` or
-# a code fence with no closing ```) is left as literal text and simply resolves
-# to a styled span once the closing marker streams in and we re-parse.
-#
-# Markers are stripped from the emitted text, so Text.get() (used by copy and
-# history) yields clean, marker-free content.
-# ---------------------------------------------------------------------------
-_INLINE_RE = re.compile(
-    r"(?P<code>`[^`\n]+`)"
-    r"|(?P<bold>\*\*[^\n]+?\*\*)"
-    r"|(?P<italic>(?<![\w*])\*[^*\n]+?\*(?![\w*])"
-    r"|(?<![\w_])_[^_\n]+?_(?![\w_]))"
-    r"|(?P<url>https?://[^\s)\]}>]+)"
-)
-
-
-def _iter_inline_segments(text):
-    """Yield (text, tag) tuples for one line's inline markdown-lite spans."""
-    pos = 0
-    for m in _INLINE_RE.finditer(text):
-        if m.start() > pos:
-            yield (text[pos:m.start()], None)
-        kind = m.lastgroup
-        s = m.group()
-        if kind == "code":
-            yield (s[1:-1], "rich_code")
-        elif kind == "bold":
-            yield (s[2:-2], "rich_bold")
-        elif kind == "italic":
-            yield (s[1:-1], "rich_italic")
-        elif kind == "url":
-            yield (s, "rich_url")
-        pos = m.end()
-    if pos < len(text):
-        yield (text[pos:], None)
-
-
-def _pyg_token_tag(ttype):
-    """Map a Pygments token type to one of our tk.Text tag names."""
-    if ttype in _PygToken.Comment:
-        return "rich_tok_comment"
-    if ttype in _PygToken.Keyword:
-        return "rich_tok_keyword"
-    if ttype in _PygToken.Name.Function or ttype in _PygToken.Name.Class:
-        return "rich_tok_func"
-    if ttype in _PygToken.String:
-        return "rich_tok_string"
-    if ttype in _PygToken.Number:
-        return "rich_tok_number"
-    if ttype in _PygToken.Operator:
-        return "rich_tok_operator"
-    if ttype in _PygToken.Name:
-        return "rich_tok_ident"
-    return "rich_codeblock"
-
-
-def highlight_code(code, lang=None):
-    """Return [(text, tag)] segments for a code block using Pygments, or None if
-    Pygments is unavailable / can't lex it (caller then falls back to a single
-    colour). Called only on the final frame, never on the streaming hot path."""
-    if not _PYGMENTS_OK or not code:
-        return None
-    try:
-        lexer = None
-        if lang:
-            try:
-                lexer = _pyg_get_lexer(lang)
-            except _PygClassNotFound:
-                lexer = None
-        if lexer is None:
-            try:
-                lexer = _pyg_guess(code)
-            except Exception:
-                lexer = None
-        if lexer is None:
-            return None
-        out = []
-        for ttype, val in _pyg_lex(code, lexer):
-            if val:
-                out.append((val, _pyg_token_tag(ttype)))
-        return out or None
-    except Exception:
-        return None
-
-
-def _flush_highlighted_fence(segs, fence_lines, lang):
-    """Append a finished fenced code block to segs, syntax-highlighted when
-    possible, otherwise as literal single-colour code lines."""
-    code = "\n".join(fence_lines)
-    toks = highlight_code(code, lang)
-    if toks:
-        segs.extend(toks)
-        if not code.endswith("\n"):
-            segs.append(("\n", None))
-    else:
-        for ln in fence_lines:
-            segs.append((ln, "rich_codeblock"))
-            segs.append(("\n", None))
-
-
-def iter_rich_segments(message, highlight=False):
-    """Parse markdown-lite text into a flat list of (text, tag) segments,
-    including the newlines between lines. tag is a tk.Text tag name or None
-    (plain). Handles fenced code blocks, ATX headings, bullet/numbered lists,
-    and the inline spans from _iter_inline_segments.
-
-    When highlight=True (final frames only), closed fenced code blocks are
-    syntax-highlighted with Pygments. When highlight=False (streaming), code is
-    rendered line-by-line in a single colour so partial blocks appear instantly
-    and no lexer runs on the hot path."""
-    segs = []
-    lines = message.split("\n")
-    in_fence = False
-    fence_lang = None
-    fence_lines = []
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("```"):
-            if highlight:
-                if not in_fence:
-                    in_fence = True
-                    fence_lang = stripped[3:].strip() or None
-                    fence_lines = []
-                else:
-                    _flush_highlighted_fence(segs, fence_lines, fence_lang)
-                    in_fence = False
-                    fence_lang = None
-                    fence_lines = []
-            else:
-                # Toggle a fenced code block; the fence line isn't rendered.
-                in_fence = not in_fence
-            continue
-        if in_fence:
-            if highlight:
-                fence_lines.append(line)
-            else:
-                segs.append((line, "rich_codeblock"))
-                segs.append(("\n", None))
-            continue
-        m = re.match(r"^(#{1,6})\s+(.*)$", line)
-        if m:
-            level = min(len(m.group(1)), 3)
-            segs.append((m.group(2), f"rich_h{level}"))
-            segs.append(("\n", None))
-            continue
-        m = re.match(r"^(\s*)(?:[-*+]|\d+\.)\s+(.*)$", line)
-        if m:
-            segs.append((m.group(1) + "•  ", "rich_bullet"))
-            segs.extend(_iter_inline_segments(m.group(2)))
-            segs.append(("\n", None))
-            continue
-        segs.extend(_iter_inline_segments(line))
-        segs.append(("\n", None))
-    # An unterminated fence (still streaming, or malformed) renders literally.
-    if highlight and in_fence and fence_lines:
-        for ln in fence_lines:
-            segs.append((ln, "rich_codeblock"))
-            segs.append(("\n", None))
-    # Drop the trailing newline we always append after the last line.
-    if segs and segs[-1] == ("\n", None):
-        segs.pop()
-    return segs
-
+# (rich-text rendering: iter_rich_segments, highlight_code etc. live in cc_rich.py)
 
 def is_single_word(text):
     """True if the selection is a word or short term worth a dictionary entry
@@ -776,249 +546,7 @@ def clear_history():
         pass
 
 
-PROGRAMS_DIR = os.path.join(
-    os.environ.get("APPDATA", ""),
-    r"Microsoft\Windows\Start Menu\Programs")
-STARTUP_DIR = os.path.join(PROGRAMS_DIR, "Startup")
-STARTUP_LNK = os.path.join(STARTUP_DIR, f"{APP_NAME}.lnk")
-STARTMENU_LNK = os.path.join(PROGRAMS_DIR, f"{APP_NAME}.lnk")
-# Legacy launcher from earlier versions; removed when managing startup here.
-LEGACY_STARTUP_VBS = os.path.join(STARTUP_DIR, "QuickTranslate.vbs")
-SCRIPT_PATH = os.path.abspath(__file__)
-PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
-
-
-# ---------------------------------------------------------------------------
-# Self-update (git-based).
-#
-# The app is deployed as a plain ``git clone`` of the public repo, so "updating"
-# is simply a fast-forward pull of origin/master. Because user data now lives in
-# %APPDATA% (config/history/logs are all outside the working tree), a pull never
-# conflicts with anything the user owns.
-#
-# Every git call runs with a hidden window, a short timeout, and credential
-# prompts disabled (GIT_TERMINAL_PROMPT=0) so an unattended nightly check can
-# never hang waiting on a login dialog. The whole feature degrades gracefully
-# when git is missing or the folder is not a repo.
-# ---------------------------------------------------------------------------
-GIT_REMOTE = "origin"
-GIT_BRANCH = "master"
-UPDATE_NET_TIMEOUT = 25          # seconds for network git ops (fetch/ls-remote)
-
-
-def _git(args, timeout=15, cwd=None):
-    """Run a git command in the app dir. Returns ``(rc, stdout, stderr)`` with
-    both streams stripped. The window is hidden and credential prompts are
-    disabled so a call fails fast instead of blocking on interactive auth."""
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env.setdefault("GCM_INTERACTIVE", "never")
-    try:
-        p = subprocess.run(
-            ["git", *args], cwd=cwd or APP_DIR, env=env,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
-        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
-    except FileNotFoundError:
-        return 127, "", "git-not-found"
-    except subprocess.TimeoutExpired:
-        return 124, "", "timeout"
-    except Exception as e:
-        return 1, "", str(e)[:200]
-
-
-def is_git_deploy():
-    """True when the app folder is a git working tree and git is available."""
-    rc, out, _ = _git(["rev-parse", "--is-inside-work-tree"], timeout=8)
-    return rc == 0 and out == "true"
-
-
-def local_head():
-    rc, out, _ = _git(["rev-parse", "HEAD"], timeout=8)
-    return out if rc == 0 and out else None
-
-
-def _local_head_short():
-    rc, out, _ = _git(["rev-parse", "--short", "HEAD"], timeout=8)
-    return out if rc == 0 and out else None
-
-
-def _local_commit_date():
-    rc, out, _ = _git(
-        ["show", "-s", "--format=%cd", "--date=format:%Y-%m-%d", "HEAD"],
-        timeout=8)
-    return out if rc == 0 and out else None
-
-
-def remote_head():
-    """Latest commit SHA on the remote branch via ``ls-remote`` (cheap; touches
-    no local refs and writes no files). Returns None on any failure."""
-    rc, out, _ = _git(
-        ["ls-remote", GIT_REMOTE, f"refs/heads/{GIT_BRANCH}"],
-        timeout=UPDATE_NET_TIMEOUT)
-    if rc != 0 or not out:
-        return None
-    first = out.splitlines()[0].split()
-    return first[0].strip() if first else None
-
-
-def update_available(local_sha, remote_sha):
-    """Pure predicate: the remote points at a different commit than local.
-
-    This is a cheap heuristic; the actual updater still confirms a clean
-    fast-forward (via merge-base) before touching anything, so a local checkout
-    that happens to be *ahead* of the remote is handled there, not here."""
-    if not local_sha or not remote_sha:
-        return False
-    return local_sha.strip() != remote_sha.strip()
-
-
-def _format_version(short_sha, date):
-    """Human version label, e.g. ``9ef3615 · 2026-07-13``."""
-    if not short_sha:
-        return "未知版本"
-    return f"{short_sha} · {date}" if date else short_sha
-
-
-def version_string():
-    return _format_version(_local_head_short(), _local_commit_date())
-
-
-def _ps_squote(s):
-    """Quote a string as a PowerShell single-quoted literal (doubling any
-    embedded single quotes). Safe for paths with spaces/quotes."""
-    return "'" + str(s).replace("'", "''") + "'"
-
-
-def _spawn_relauncher(pid=None):
-    """Write a small detached PowerShell helper that waits for THIS process to
-    fully exit (which releases the single-instance mutex), then starts a fresh
-    instance — retrying if the first attempt dies immediately (which would mean
-    the mutex was still held). Every step is logged to relaunch.log so a failed
-    restart can be diagnosed. Running the waiter out-of-process, from a real
-    script file rather than a fragile inline string, is what makes an in-place
-    restart reliable despite the single-instance guard."""
-    if pid is None:
-        pid = os.getpid()
-    log = os.path.join(DATA_DIR, "relaunch.log")
-    script_path = os.path.join(DATA_DIR, "_relaunch.ps1")
-    ps = (
-        "$ErrorActionPreference = 'SilentlyContinue'\n"
-        f"$log = {_ps_squote(log)}\n"
-        "function W($m) { \"[$(Get-Date -Format HH:mm:ss.fff)] $m\" | "
-        "Out-File -FilePath $log -Append -Encoding utf8 }\n"
-        f"W 'relaunch start; waiting for pid {pid} to exit'\n"
-        # Wait (up to ~30s) for the old process to disappear; the mutex is
-        # released the instant the process terminates.
-        f"for ($i = 0; $i -lt 300; $i++) {{\n"
-        f"  if (-not (Get-Process -Id {pid} -ErrorAction SilentlyContinue)) "
-        "{ break }\n"
-        "  Start-Sleep -Milliseconds 100\n"
-        "}\n"
-        "W 'old process gone (or wait timed out)'\n"
-        "Start-Sleep -Milliseconds 600\n"
-        # Start the new instance, retrying if it dies within 2s (mutex not yet
-        # free / transient failure).
-        "for ($try = 1; $try -le 5; $try++) {\n"
-        f"  $p = Start-Process -FilePath {_ps_squote(PYTHONW)} "
-        f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
-        f"-WorkingDirectory {_ps_squote(APP_DIR)} -PassThru\n"
-        "  W \"started attempt $try pid=$($p.Id)\"\n"
-        "  Start-Sleep -Seconds 2\n"
-        "  if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) "
-        "{ W 'alive after 2s - success'; break }\n"
-        "  W 'new instance died within 2s — retrying'\n"
-        "  Start-Sleep -Milliseconds 800\n"
-        "}\n"
-        "W 'relaunch done'\n"
-    )
-    try:
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(ps)
-    except Exception:
-        # Fall back to a minimal inline command if the script can't be written.
-        script_path = None
-
-    if script_path:
-        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-               "-WindowStyle", "Hidden", "-File", script_path]
-    else:
-        inline = (
-            "$ErrorActionPreference='SilentlyContinue';"
-            f"for($i=0;$i -lt 300;$i++){{if(-not (Get-Process -Id {pid} "
-            "-ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 100};"
-            "Start-Sleep -Milliseconds 600;"
-            f"Start-Process -FilePath {_ps_squote(PYTHONW)} "
-            f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
-            f"-WorkingDirectory {_ps_squote(APP_DIR)}"
-        )
-        cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
-               "-Command", inline]
-    # IMPORTANT: use CREATE_NO_WINDOW *only*. DETACHED_PROCESS (even on its own,
-    # and especially combined with CREATE_NO_WINDOW) prevents the headless
-    # PowerShell helper from ever executing when spawned from our no-console
-    # pythonw host — the relaunch then silently fails. CREATE_NO_WINDOW keeps the
-    # helper hidden while still letting it run and outlive this process. stdio is
-    # redirected to DEVNULL because pythonw has no valid standard handles to
-    # inherit, which would otherwise break the child's startup.
-    subprocess.Popen(
-        cmd, creationflags=subprocess.CREATE_NO_WINDOW, close_fds=True,
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL)
-
-
-def _create_shortcut(link_path):
-    """Create or update a .lnk pointing to this app's pythonw launcher."""
-    try:
-        import pythoncom  # noqa: F401
-    except Exception:
-        pass
-    ps = (
-        "$ErrorActionPreference = 'Stop'; "
-        "$ws = New-Object -ComObject WScript.Shell; "
-        f"$l = $ws.CreateShortcut('{link_path}'); "
-        f"$l.TargetPath = '{PYTHONW}'; "
-        f"$l.Arguments = '\"{SCRIPT_PATH}\"'; "
-        f"$l.WorkingDirectory = '{APP_DIR}'; "
-        f"$l.IconLocation = '{ICON_PATH}'; "
-        "$l.Save()"
-    )
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                   creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
-
-
-def ensure_startmenu_shortcut():
-    """Ensure Start Menu has a launch entry for this app."""
-    try:
-        _create_shortcut(STARTMENU_LNK)
-    except Exception:
-        pass
-
-
-def is_autostart_enabled():
-    return os.path.exists(STARTUP_LNK)
-
-
-def set_autostart(enable):
-    """Create or remove a Startup-folder shortcut to launch this app silently."""
-    try:
-        if os.path.exists(LEGACY_STARTUP_VBS):
-            os.remove(LEGACY_STARTUP_VBS)
-    except Exception:
-        pass
-    if enable:
-        try:
-            _create_shortcut(STARTUP_LNK)
-        except Exception:
-            pass
-    else:
-        try:
-            if os.path.exists(STARTUP_LNK):
-                os.remove(STARTUP_LNK)
-        except Exception:
-            pass
-
+# (autostart / shortcut / git-update helpers live in cc_update.py)
 
 def log_perf(stage, extra=None):
     """Perf logging disabled — kept as a no-op so existing call sites are
@@ -1042,6 +570,13 @@ def log_error(where, exc):
             f.write(line)
     except Exception:
         pass
+
+
+# Wire log_error into the sub-modules that need it (cc_warm, cc_update).
+# Done here — after DATA_DIR is known — rather than at import time in those
+# modules, so the log file always resolves to the right user data directory.
+_cc_warm.set_log_error(log_error)
+_cc_update._log_error = log_error
 
 
 # ---------------------------------------------------------------------------
@@ -1208,152 +743,7 @@ def _draw_round_rect(cv, x1, y1, x2, y2, r, **kwargs):
     cv.create_arc(x2 - d, y2 - d, x2, y2, start=270, extent=90, **arc)
 
 
-class WarmClaude:
-    """A single pre-warmed Claude CLI process running in stream-json mode.
-
-    Spawned ahead of a translation with a fixed model + system prompt so the
-    expensive node/CLI startup finishes while the user is idle. When a
-    translation fires we push exactly one user message and stream the reply,
-    then discard the process (a resident process accumulates conversation
-    context, so we never reuse it). If anything goes wrong the caller falls
-    back to the normal cold path, so this is always safe.
-    """
-
-    def __init__(self, model, system_prompt, key):
-        self.model = model
-        self.system_prompt = system_prompt
-        self.key = key                       # (model, direction) — matched at use time
-        self.proc = None
-        self.ready = False                   # True once warmup elapsed
-        self.spent = False                   # True once a message has been sent
-        self.born = time.monotonic()
-        self._lock = threading.Lock()
-
-    def start(self):
-        """Spawn the process and arm the readiness timer (non-blocking)."""
-        try:
-            cmd = [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.model,
-                   "--system-prompt", self.system_prompt,
-                   "--input-format", "stream-json",
-                   "--output-format", "stream-json",
-                   "--include-partial-messages", "--verbose",
-                   "--tools", "",
-                   "--exclude-dynamic-system-prompt-sections",
-                   "--no-session-persistence"]
-            self.proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-                creationflags=subprocess.CREATE_NO_WINDOW)
-            self.born = time.monotonic()
-
-            def _arm():
-                time.sleep(WARM_UP_MS / 1000.0)
-                self.ready = True
-            threading.Thread(target=_arm, daemon=True).start()
-            return True
-        except Exception as e:
-            log_perf("warm_spawn_error", {"err": str(e)[:160]})
-            self.proc = None
-            return False
-
-    def usable(self, key):
-        """True if this process is alive, warmed, unused and matches key."""
-        if self.spent or not self.ready or self.key != key:
-            return False
-        if self.proc is None or self.proc.poll() is not None:
-            return False
-        if time.monotonic() - self.born > WARM_MAX_AGE_S:
-            return False
-        return True
-
-    def send_and_stream(self, text, on_delta):
-        """Send one user message and stream the reply. Calls on_delta(str) for
-        each text delta. Returns the final translated string, or None on
-        failure (caller then falls back to the cold path). The process is
-        consumed regardless of outcome."""
-        with self._lock:
-            if self.spent:
-                return None
-            self.spent = True
-        proc = self.proc
-        if proc is None or proc.poll() is not None:
-            return None
-
-        # Watchdog: kill the process if the round-trip runs away, so the read
-        # loop below can't block the translation thread forever.
-        killed = {"v": False}
-
-        def _watchdog():
-            killed["v"] = True
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        timer = threading.Timer(WARM_SEND_TIMEOUT_S, _watchdog)
-        timer.daemon = True
-        timer.start()
-
-        acc = []
-        result_text = None
-        try:
-            msg = {"type": "user",
-                   "message": {"role": "user",
-                               "content": f"<text>\n{text}\n</text>"}}
-            proc.stdin.write(json.dumps(msg) + "\n")
-            proc.stdin.flush()
-
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                typ = obj.get("type")
-                if typ == "stream_event":
-                    ev = obj.get("event", {})
-                    if ev.get("type") == "content_block_delta":
-                        txt = ev.get("delta", {}).get("text", "")
-                        if txt:
-                            acc.append(txt)
-                            try:
-                                on_delta(txt)
-                            except Exception:
-                                pass
-                elif typ == "result":
-                    if not obj.get("is_error"):
-                        r = (obj.get("result") or "").strip()
-                        if r:
-                            result_text = r
-                    break
-        except Exception as e:
-            log_error("warm_stream", e)
-        finally:
-            timer.cancel()
-
-        if killed["v"]:
-            return None
-        final = (result_text or "".join(acc)).strip()
-        return final or None
-
-    def close(self):
-        """Terminate the process. Safe to call multiple times / concurrently."""
-        p = self.proc
-        self.proc = None
-        if p is None:
-            return
-        try:
-            if p.stdin and not p.stdin.closed:
-                p.stdin.close()
-        except Exception:
-            pass
-        try:
-            if p.poll() is None:
-                p.kill()
-        except Exception:
-            pass
-
+# (WarmClaude class lives in cc_warm.py)
 
 @dataclasses.dataclass
 class StreamSession:
@@ -1701,7 +1091,7 @@ class TranslatorApp:
         not keep the old instance — and its single-instance mutex — alive, or
         the relauncher would wait and the new instance would collide)."""
         try:
-            _spawn_relauncher()
+            _spawn_relauncher(data_dir=DATA_DIR)
         except Exception as e:
             log_error("relaunch_spawn", e)
         try:
