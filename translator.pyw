@@ -2766,12 +2766,13 @@ class TranslatorApp:
                 ("Spinbox.padding", {"sticky": "nswe", "children": [
                     ("Spinbox.textarea", {"sticky": "nswe"})]})]})])
 
-        # Dropdown listbox colours (only settable via the option database).
+        # Dropdown listbox colours and font (only settable via the option database).
         self.root.option_add("*TCombobox*Listbox.background", field_bg)
         self.root.option_add("*TCombobox*Listbox.foreground", fg)
         self.root.option_add("*TCombobox*Listbox.selectBackground", sel)
         self.root.option_add("*TCombobox*Listbox.selectForeground", fg)
         self.root.option_add("*TCombobox*Listbox.borderWidth", 0)
+        self.root.option_add("*TCombobox*Listbox.font", "Microsoft YaHei UI 10")
 
     def _make_toggle(self, parent, initial, bg):
         """A modern pill toggle switch. Returns the Canvas widget; call
