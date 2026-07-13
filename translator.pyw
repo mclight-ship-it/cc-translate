@@ -386,6 +386,8 @@ def is_single_word(text):
     "machine learning", "New York") but rejects anything that looks like a
     sentence (line breaks, trailing sentence punctuation, or too long/too many
     tokens)."""
+    if not text:
+        return False
     t = text.strip()
     if not t or "\n" in t:
         return False
