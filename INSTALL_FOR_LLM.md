@@ -47,10 +47,10 @@ claude --version
 ### 3. 安装 Python 依赖
 
 ```bash
-python -m pip install --upgrade pip pynput pyperclip pystray Pillow
+python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments
 ```
 
-（`tkinter` 是 Python 自带的，无需安装。）
+（`tkinter` 是 Python 自带的，无需安装；`Pygments` 用于代码块语法高亮，可选，缺失时自动降级。）
 
 验证：`python -c "import pynput, pyperclip, pystray, PIL, tkinter; print('ok')"`
 

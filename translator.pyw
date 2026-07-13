@@ -17,6 +17,7 @@ import time
 import queue
 import threading
 import subprocess
+import shutil
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
@@ -25,6 +26,18 @@ from tkinter import font as tkfont
 
 import pyperclip
 from pynput import keyboard
+
+# Pygments is an optional dependency used only to syntax-highlight fenced code
+# blocks in the *final* rendered result. If it's missing the renderer falls
+# back to the single-colour code style, so the app runs unchanged elsewhere.
+try:
+    from pygments import lex as _pyg_lex
+    from pygments.lexers import get_lexer_by_name as _pyg_get_lexer, guess_lexer as _pyg_guess
+    from pygments.token import Token as _PygToken
+    from pygments.util import ClassNotFound as _PygClassNotFound
+    _PYGMENTS_OK = True
+except Exception:
+    _PYGMENTS_OK = False
 
 
 def _enable_dpi_awareness():
@@ -86,7 +99,44 @@ def get_monitor_rect(point=None):
 
 APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+
+
+def _resolve_data_dir():
+    """User data lives in %APPDATA%\\CC Translate so config/history survive
+    reinstalls and moving the program folder. Falls back to APP_DIR if the
+    per-user location can't be created (e.g. APPDATA unset)."""
+    base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+    if not base:
+        return APP_DIR
+    d = os.path.join(base, APP_NAME)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        return APP_DIR
+    return d
+
+
+DATA_DIR = _resolve_data_dir()
+
+
+def _user_data_path(name):
+    """Resolve a user data file in DATA_DIR, migrating any legacy copy that
+    still sits next to the program (APP_DIR) on first run after the move."""
+    new = os.path.join(DATA_DIR, name)
+    if DATA_DIR != APP_DIR and not os.path.exists(new):
+        old = os.path.join(APP_DIR, name)
+        if os.path.exists(old):
+            try:
+                shutil.move(old, new)
+            except Exception:
+                try:
+                    shutil.copy2(old, new)
+                except Exception:
+                    pass
+    return new
+
+
+CONFIG_PATH = _user_data_path("config.json")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
 MIN_POPUP_HEIGHT = 150
 MIN_STREAM_VISIBLE_HEIGHT = 220
@@ -121,6 +171,9 @@ CENTERED_POPUP_H = 389
 # translations" races seen right after startup.
 TRIGGER_POLL_MS = 40
 TRIGGER_SETTLE_MS = 120
+# After a translate trigger, restore the clipboard the user had *before* their
+# Ctrl+C, so triggering a translation doesn't clobber their copy/paste workflow.
+CLIP_RESTORE_MS = 250
 
 # Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
 # on Windows; the animation cycles through them for a modern indeterminate look.
@@ -245,6 +298,11 @@ THEMES = {
         "rich_url_fg": "#6cb6ff", "rich_bullet_fg": "#7aa2f7",
         "rich_ident_fg": "#c8a2f7", "rich_string_fg": "#9ece6a",
         "rich_number_fg": "#e6b673",
+        # Pygments token colours (Tokyo-Night-ish) for highlighted code blocks.
+        "rich_tok_keyword": "#bb9af7", "rich_tok_string": "#9ece6a",
+        "rich_tok_comment": "#565f89", "rich_tok_number": "#ff9e64",
+        "rich_tok_func": "#7aa2f7", "rich_tok_operator": "#89ddff",
+        "rich_tok_ident": "#c0caf5",
     },
     "light": {
         "bg": "#ffffff", "fg": "#1f2430",
@@ -264,6 +322,11 @@ THEMES = {
         "rich_url_fg": "#0969da", "rich_bullet_fg": "#2f6feb",
         "rich_ident_fg": "#8250df", "rich_string_fg": "#0a7d33",
         "rich_number_fg": "#b5610a",
+        # Pygments token colours (GitHub-light-ish) for highlighted code blocks.
+        "rich_tok_keyword": "#cf222e", "rich_tok_string": "#0a3069",
+        "rich_tok_comment": "#6e7781", "rich_tok_number": "#0550ae",
+        "rich_tok_func": "#8250df", "rich_tok_operator": "#0550ae",
+        "rich_tok_ident": "#24292f",
     },
 }
 
@@ -396,23 +459,107 @@ def _iter_inline_segments(text):
         yield (text[pos:], None)
 
 
-def iter_rich_segments(message):
+def _pyg_token_tag(ttype):
+    """Map a Pygments token type to one of our tk.Text tag names."""
+    if ttype in _PygToken.Comment:
+        return "rich_tok_comment"
+    if ttype in _PygToken.Keyword:
+        return "rich_tok_keyword"
+    if ttype in _PygToken.Name.Function or ttype in _PygToken.Name.Class:
+        return "rich_tok_func"
+    if ttype in _PygToken.String:
+        return "rich_tok_string"
+    if ttype in _PygToken.Number:
+        return "rich_tok_number"
+    if ttype in _PygToken.Operator:
+        return "rich_tok_operator"
+    if ttype in _PygToken.Name:
+        return "rich_tok_ident"
+    return "rich_codeblock"
+
+
+def highlight_code(code, lang=None):
+    """Return [(text, tag)] segments for a code block using Pygments, or None if
+    Pygments is unavailable / can't lex it (caller then falls back to a single
+    colour). Called only on the final frame, never on the streaming hot path."""
+    if not _PYGMENTS_OK or not code:
+        return None
+    try:
+        lexer = None
+        if lang:
+            try:
+                lexer = _pyg_get_lexer(lang)
+            except _PygClassNotFound:
+                lexer = None
+        if lexer is None:
+            try:
+                lexer = _pyg_guess(code)
+            except Exception:
+                lexer = None
+        if lexer is None:
+            return None
+        out = []
+        for ttype, val in _pyg_lex(code, lexer):
+            if val:
+                out.append((val, _pyg_token_tag(ttype)))
+        return out or None
+    except Exception:
+        return None
+
+
+def _flush_highlighted_fence(segs, fence_lines, lang):
+    """Append a finished fenced code block to segs, syntax-highlighted when
+    possible, otherwise as literal single-colour code lines."""
+    code = "\n".join(fence_lines)
+    toks = highlight_code(code, lang)
+    if toks:
+        segs.extend(toks)
+        if not code.endswith("\n"):
+            segs.append(("\n", None))
+    else:
+        for ln in fence_lines:
+            segs.append((ln, "rich_codeblock"))
+            segs.append(("\n", None))
+
+
+def iter_rich_segments(message, highlight=False):
     """Parse markdown-lite text into a flat list of (text, tag) segments,
     including the newlines between lines. tag is a tk.Text tag name or None
     (plain). Handles fenced code blocks, ATX headings, bullet/numbered lists,
-    and the inline spans from _iter_inline_segments."""
+    and the inline spans from _iter_inline_segments.
+
+    When highlight=True (final frames only), closed fenced code blocks are
+    syntax-highlighted with Pygments. When highlight=False (streaming), code is
+    rendered line-by-line in a single colour so partial blocks appear instantly
+    and no lexer runs on the hot path."""
     segs = []
     lines = message.split("\n")
     in_fence = False
+    fence_lang = None
+    fence_lines = []
     for line in lines:
         stripped = line.lstrip()
         if stripped.startswith("```"):
-            # Toggle a fenced code block; the fence line itself isn't rendered.
-            in_fence = not in_fence
+            if highlight:
+                if not in_fence:
+                    in_fence = True
+                    fence_lang = stripped[3:].strip() or None
+                    fence_lines = []
+                else:
+                    _flush_highlighted_fence(segs, fence_lines, fence_lang)
+                    in_fence = False
+                    fence_lang = None
+                    fence_lines = []
+            else:
+                # Toggle a fenced code block; the fence line isn't rendered.
+                in_fence = not in_fence
             continue
         if in_fence:
-            segs.append((line, "rich_codeblock"))
-            segs.append(("\n", None))
+            if highlight:
+                fence_lines.append(line)
+            else:
+                segs.append((line, "rich_codeblock"))
+                segs.append(("\n", None))
             continue
         m = re.match(r"^(#{1,6})\s+(.*)$", line)
         if m:
@@ -428,6 +575,11 @@ def iter_rich_segments(message):
             continue
         segs.extend(_iter_inline_segments(line))
         segs.append(("\n", None))
+    # An unterminated fence (still streaming, or malformed) renders literally.
+    if highlight and in_fence and fence_lines:
+        for ln in fence_lines:
+            segs.append((ln, "rich_codeblock"))
+            segs.append(("\n", None))
     # Drop the trailing newline we always append after the last line.
     if segs and segs[-1] == ("\n", None):
         segs.pop()
@@ -545,8 +697,10 @@ def load_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg.update(json.load(f))
-    except Exception:
+    except FileNotFoundError:
         pass
+    except Exception as e:
+        log_error("load_config", e)
     return cfg
 
 
@@ -554,11 +708,11 @@ def save_config(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        log_error("save_config", e)
 
 
-HISTORY_PATH = os.path.join(APP_DIR, "history.json")
+HISTORY_PATH = _user_data_path("history.json")
 
 
 def load_history():
@@ -566,7 +720,10 @@ def load_history():
         with open(HISTORY_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
-    except Exception:
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        log_error("load_history", e)
         return []
 
 
@@ -583,8 +740,8 @@ def add_history(input_text, output_text, is_dict, limit, is_code=False):
     try:
         with open(HISTORY_PATH, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        log_error("add_history", e)
 
 
 def clear_history():
@@ -663,6 +820,24 @@ def log_perf(stage, extra=None):
     """Perf logging disabled — kept as a no-op so existing call sites are
     unchanged. Re-enable here if latency profiling is ever needed again."""
     return
+
+
+def log_error(where, exc):
+    """Append a one-line record of a swallowed exception to error.log in the
+    user data dir. Called only from except blocks, so it never touches the hot
+    path; failures to log are themselves ignored to preserve the no-crash
+    guarantee."""
+    try:
+        line = "%s [%s] %s: %s\n" % (
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            where,
+            type(exc).__name__,
+            exc,
+        )
+        with open(os.path.join(DATA_DIR, "error.log"), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -982,6 +1157,7 @@ class TranslatorApp:
         self.theme = resolve_theme(self.cfg)
         self.last_c_time = 0.0
         self.ctrl_down = False
+        self._clip_saved = None       # clipboard snapshot taken when Ctrl went down
         self.popup = None
         self.settings_win = None
         self.history_win = None
@@ -1156,6 +1332,16 @@ class TranslatorApp:
                 if self.paused:
                     return
                 if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                    if not self.ctrl_down:
+                        # Ctrl just went down and no C has been pressed yet, so
+                        # the clipboard still holds the user's own content.
+                        # Snapshot it now; if a translate trigger follows, we
+                        # restore this instead of leaving the selection behind.
+                        try:
+                            self._clip_saved = pyperclip.paste()
+                        except Exception as e:
+                            self._clip_saved = None
+                            log_error("clip_snapshot", e)
                     self.ctrl_down = True
                 elif self.ctrl_down and getattr(key, "char", None) == "\x03":
                     now = time.time()
@@ -1198,13 +1384,31 @@ class TranslatorApp:
         # Always invoked on the main thread (via _pump_triggers → after).
         try:
             text = pyperclip.paste()
-        except Exception:
+        except Exception as e:
             text = ""
+            log_error("trigger_paste", e)
+        # The selection is now on the clipboard; put back what the user had
+        # before their Ctrl+C so we don't disturb their copy/paste workflow.
+        self.root.after(CLIP_RESTORE_MS, self._restore_clipboard)
         text = (text or "").strip()
         if not text:
             return
         text = text[: self.cfg["max_chars"]]
         self._show_loading(text)
+
+    def _restore_clipboard(self):
+        """Restore the pre-Ctrl+C clipboard snapshot. Skips when there was no
+        snapshot or it was empty/non-text (pyperclip can't round-trip images or
+        file lists, so we leave those rather than blanking the clipboard)."""
+        saved = self._clip_saved
+        self._clip_saved = None
+        if not saved:
+            return
+        try:
+            if pyperclip.paste() != saved:
+                pyperclip.copy(saved)
+        except Exception as e:
+            log_error("restore_clipboard", e)
 
     # ---------- Translation ----------
     def _show_loading(self, text):
@@ -1421,6 +1625,7 @@ class TranslatorApp:
             return True
         except Exception as e:
             log_perf("stream_cli_error", {"chars": len(text), "err": str(e)[:160]})
+            log_error("stream_claude", e)
             return False
 
     def _stream_flush(self):
@@ -1484,8 +1689,11 @@ class TranslatorApp:
         try:
             if self.popup and getattr(self.popup, "_text", None):
                 # Final frame keeps stable stream geometry (no shrink/reposition jump).
+                if getattr(self.popup._text, "_rich", False):
+                    self.popup._text._rich_highlight = True
                 self._set_popup_text(final, stream_grow=True)
                 self._maybe_add_explain_button(self.popup)
+                self._maybe_add_retranslate_button(self.popup)
                 return
 
             anchor = None
@@ -1497,10 +1705,12 @@ class TranslatorApp:
             self._stop_animation()
             self._destroy_popup()
             self.popup = self._make_popup(final, anchor=anchor,
-                                          title=self._result_title())
+                                          title=self._result_title(),
+                                          highlight=True)
             self._stream_popup_ready = True
             self._set_popup_text(final, stream_grow=True)
             self._maybe_add_explain_button(self.popup)
+            self._maybe_add_retranslate_button(self.popup)
             log_perf("stream_finalize_popup_created", {"chars": len(final)})
         except Exception as e:
             log_perf("stream_finalize_error", {"err": str(e)[:160]})
@@ -1558,6 +1768,7 @@ class TranslatorApp:
             return False, "翻译超时，请重试。"
         except Exception as e:
             log_perf("oneshot_error", {"chars": len(text), "err": str(e)[:160]})
+            log_error("call_claude", e)
             return False, f"出错了：{e}"
 
     def _humanize_error(self, stderr):
@@ -1582,8 +1793,10 @@ class TranslatorApp:
                 anchor = None
         self._destroy_popup()
         self.popup = self._make_popup(result, anchor=anchor, is_error=not ok,
-                                      title=self._result_title(ok))
+                                      title=self._result_title(ok), highlight=ok)
         self._maybe_add_explain_button(self.popup)
+        if ok:
+            self._maybe_add_retranslate_button(self.popup)
         if ok and self.cfg.get("history_enabled", True) and self._last_input:
             add_history(self._last_input, result,
                         is_single_word(self._last_input),
@@ -1611,6 +1824,97 @@ class TranslatorApp:
             win._has_explain_btn = True
         except Exception:
             pass
+
+    def _maybe_add_retranslate_button(self, win):
+        """For a normal translation (not code-explain, not a dictionary entry),
+        add a '重译 ▾' button whose menu re-runs the translation of the same
+        selection forced into a chosen target language, replacing the result.
+        User-initiated, so it never touches the translation hot path."""
+        if not win or getattr(win, "_has_retrans_btn", False):
+            return
+        if self._last_class == "code" or not self._last_input:
+            return
+        if is_single_word(self._last_input):
+            return
+        bar = getattr(win, "_btn_bar", None)
+        mk = getattr(win, "_mk_bar_btn", None)
+        if bar is None or mk is None:
+            return
+        try:
+            t = self.theme
+            menu = tk.Menu(
+                win, tearoff=0,
+                bg=t.get("popup_bg", t["bg"]), fg=t["fg"],
+                activebackground=t["accent"], activeforeground="#ffffff",
+                bd=0, relief="flat",
+                font=("Microsoft YaHei UI", 9))
+            for code, (zh_name, _en) in LANGUAGES.items():
+                menu.add_command(
+                    label=f"译成{zh_name}",
+                    command=lambda c=code: self._retranslate_to(c))
+            btn = mk("重译 ▾", lambda: self._show_retrans_menu(win))
+            btn.pack(side="right", padx=(0, 4))
+            win._retrans_btn = btn
+            win._retrans_menu = menu
+            win._has_retrans_btn = True
+        except Exception:
+            pass
+
+    def _show_retrans_menu(self, win):
+        menu = getattr(win, "_retrans_menu", None)
+        btn = getattr(win, "_retrans_btn", None)
+        if menu is None or btn is None:
+            return
+        try:
+            x = btn.winfo_rootx()
+            y = btn.winfo_rooty() + btn.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+
+    def _retranslate_to(self, code):
+        src = self._last_input
+        prompt = DIRECTION_MODES.get(f"to_{code}")
+        if not src or not prompt:
+            return
+        win = self.popup
+        btn = getattr(win, "_retrans_btn", None) if win else None
+        if btn is not None:
+            try:
+                btn.config(text="重译中…", state="disabled", cursor="watch")
+            except Exception:
+                pass
+        threading.Thread(
+            target=self._do_retranslate,
+            args=(src, prompt + SYSTEM_SUFFIX, code), daemon=True).start()
+
+    def _do_retranslate(self, src, prompt, code):
+        try:
+            ok, result = self._call_claude(src, prompt)
+        except Exception as e:
+            ok, result = False, f"出错了：{e}"
+        self.root.after(0, lambda: self._apply_retranslation(ok, result, code))
+
+    def _apply_retranslation(self, ok, result, code):
+        win = self.popup
+        if not win or not getattr(win, "_text", None):
+            return
+        btn = getattr(win, "_retrans_btn", None)
+        if ok:
+            if getattr(win._text, "_rich", False):
+                win._text._rich_highlight = True
+            self._set_popup_text(result, resize=True)
+            if self.cfg.get("history_enabled", True) and self._last_input:
+                add_history(self._last_input, result, False,
+                            self.cfg.get("history_limit", 100), is_code=False)
+        if btn is not None:
+            try:
+                btn.config(text="重译 ▾", state="normal", cursor="hand2")
+            except Exception:
+                pass
 
     def _explain_code_in_result(self):
         """Button handler: explain the code in the current result. Runs the
@@ -1654,6 +1958,9 @@ class TranslatorApp:
             return
         divider = "\n\n────────  代码解释  ────────\n\n"
         combined = base + divider + explanation
+        # Final frame: highlight code blocks in the combined result.
+        if getattr(win._text, "_rich", False):
+            win._text._rich_highlight = True
         # _set_popup_text branches on layout: centred refits, dynamic resizes.
         self._set_popup_text(combined, resize=True)
         if btn is not None:
@@ -1723,7 +2030,8 @@ class TranslatorApp:
         win.focus_force()
         return win
 
-    def _make_popup(self, message, anchor=None, is_error=False, title="译文"):
+    def _make_popup(self, message, anchor=None, is_error=False, title="译文",
+                    highlight=False):
         t = self.theme
         win = tk.Toplevel(self.root)
         # Map the window fully transparent instead of withdrawn: the text must
@@ -1831,6 +2139,9 @@ class TranslatorApp:
         text._rich = not is_error
         if text._rich:
             self._configure_rich_tags(text)
+            if highlight:
+                # Final (non-streaming) frame: syntax-highlight code blocks.
+                text._rich_highlight = True
 
         # Ensure the window is mapped (still invisible via alpha) so the text
         # widget is laid out and _size_popup can measure wrapped lines correctly.
@@ -2314,12 +2625,21 @@ class TranslatorApp:
         text_widget.tag_configure(
             "rich_h3", font=(ui, base, "bold"),
             foreground=t["rich_heading_fg"], spacing1=2, spacing3=1)
+        # Pygments token tags: mono font on the code-block background so a
+        # highlighted block keeps the same card look, just multi-coloured.
+        for name in ("keyword", "string", "comment", "number",
+                     "func", "operator", "ident"):
+            text_widget.tag_configure(
+                "rich_tok_" + name, font=(mono, base),
+                foreground=t.get("rich_tok_" + name, t["rich_code_fg"]),
+                background=t["rich_code_bg"], lmargin1=10, lmargin2=10)
 
     def _fill_text(self, text_widget, message):
         text_widget.config(state="normal")
         text_widget.delete("1.0", "end")
         if getattr(text_widget, "_rich", False):
-            for chunk, tag in iter_rich_segments(message):
+            hl = getattr(text_widget, "_rich_highlight", False)
+            for chunk, tag in iter_rich_segments(message, highlight=hl):
                 if tag:
                     text_widget.insert("end", chunk, tag)
                 else:
@@ -2935,6 +3255,13 @@ class TranslatorApp:
             padx=12, pady=10, font=(FONT, self.cfg["font_size"]),
             selectbackground=t["sel_bg"], highlightthickness=0)
         detail.pack(fill="both", expand=True, padx=(8, 12), pady=8)
+        # Reuse the main popup's markdown-lite renderer so history detail looks
+        # consistent with the live result window.
+        self._configure_rich_tags(detail)
+        detail.tag_configure(
+            "detail_head",
+            font=("Microsoft YaHei UI", int(self.cfg["font_size"]), "bold"),
+            foreground=t["rich_heading_fg"], spacing1=2, spacing3=4)
 
         for e in entries:
             if e.get("is_code"):
@@ -2954,8 +3281,17 @@ class TranslatorApp:
             e = entries[sel[0]]
             detail.config(state="normal")
             detail.delete("1.0", "end")
-            detail.insert("1.0", f"【原文】\n{e.get('input','')}\n\n"
-                                 f"【结果】\n{e.get('output','')}")
+            # Source stays literal (it may be code the user selected); the
+            # result is rendered with the rich markdown-lite tags.
+            detail.insert("end", "【原文】\n", "detail_head")
+            detail.insert("end", (e.get("input", "") or "") + "\n\n")
+            detail.insert("end", "【结果】\n", "detail_head")
+            for chunk, tag in iter_rich_segments(e.get("output", "") or "",
+                                                 highlight=True):
+                if tag:
+                    detail.insert("end", chunk, tag)
+                else:
+                    detail.insert("end", chunk)
             detail.config(state="disabled")
 
         listbox.bind("<<ListboxSelect>>", show_detail)

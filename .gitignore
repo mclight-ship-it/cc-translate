@@ -2,6 +2,7 @@
 config.json
 history.json
 perf.log
+error.log
 
 # Python
 __pycache__/
