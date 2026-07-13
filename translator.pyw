@@ -868,24 +868,87 @@ def version_string():
     return _format_version(_local_head_short(), _local_commit_date())
 
 
-def _spawn_relauncher():
-    """Launch a detached helper that waits for THIS process to exit — releasing
-    the single-instance mutex — then starts a fresh app instance. Running the
-    waiter out-of-process is what makes an in-place restart safe despite the
-    single-instance guard."""
-    pid = os.getpid()
+def _ps_squote(s):
+    """Quote a string as a PowerShell single-quoted literal (doubling any
+    embedded single quotes). Safe for paths with spaces/quotes."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def _spawn_relauncher(pid=None):
+    """Write a small detached PowerShell helper that waits for THIS process to
+    fully exit (which releases the single-instance mutex), then starts a fresh
+    instance — retrying if the first attempt dies immediately (which would mean
+    the mutex was still held). Every step is logged to relaunch.log so a failed
+    restart can be diagnosed. Running the waiter out-of-process, from a real
+    script file rather than a fragile inline string, is what makes an in-place
+    restart reliable despite the single-instance guard."""
+    if pid is None:
+        pid = os.getpid()
+    log = os.path.join(DATA_DIR, "relaunch.log")
+    script_path = os.path.join(DATA_DIR, "_relaunch.ps1")
     ps = (
-        "$ErrorActionPreference='SilentlyContinue';"
-        f"try {{ Wait-Process -Id {pid} -Timeout 30 }} catch {{}};"
-        "Start-Sleep -Milliseconds 500;"
-        f"Start-Process -FilePath '{PYTHONW}' "
-        f"-ArgumentList '\"{SCRIPT_PATH}\"' -WorkingDirectory '{APP_DIR}'"
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"$log = {_ps_squote(log)}\n"
+        "function W($m) { \"[$(Get-Date -Format HH:mm:ss.fff)] $m\" | "
+        "Out-File -FilePath $log -Append -Encoding utf8 }\n"
+        f"W 'relaunch start; waiting for pid {pid} to exit'\n"
+        # Wait (up to ~30s) for the old process to disappear; the mutex is
+        # released the instant the process terminates.
+        f"for ($i = 0; $i -lt 300; $i++) {{\n"
+        f"  if (-not (Get-Process -Id {pid} -ErrorAction SilentlyContinue)) "
+        "{ break }\n"
+        "  Start-Sleep -Milliseconds 100\n"
+        "}\n"
+        "W 'old process gone (or wait timed out)'\n"
+        "Start-Sleep -Milliseconds 600\n"
+        # Start the new instance, retrying if it dies within 2s (mutex not yet
+        # free / transient failure).
+        "for ($try = 1; $try -le 5; $try++) {\n"
+        f"  $p = Start-Process -FilePath {_ps_squote(PYTHONW)} "
+        f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
+        f"-WorkingDirectory {_ps_squote(APP_DIR)} -PassThru\n"
+        "  W \"started attempt $try pid=$($p.Id)\"\n"
+        "  Start-Sleep -Seconds 2\n"
+        "  if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) "
+        "{ W 'alive after 2s - success'; break }\n"
+        "  W 'new instance died within 2s — retrying'\n"
+        "  Start-Sleep -Milliseconds 800\n"
+        "}\n"
+        "W 'relaunch done'\n"
     )
-    DETACHED_PROCESS = 0x00000008
+    try:
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(ps)
+    except Exception:
+        # Fall back to a minimal inline command if the script can't be written.
+        script_path = None
+
+    if script_path:
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+               "-WindowStyle", "Hidden", "-File", script_path]
+    else:
+        inline = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            f"for($i=0;$i -lt 300;$i++){{if(-not (Get-Process -Id {pid} "
+            "-ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 100};"
+            "Start-Sleep -Milliseconds 600;"
+            f"Start-Process -FilePath {_ps_squote(PYTHONW)} "
+            f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
+            f"-WorkingDirectory {_ps_squote(APP_DIR)}"
+        )
+        cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+               "-Command", inline]
+    # IMPORTANT: use CREATE_NO_WINDOW *only*. DETACHED_PROCESS (even on its own,
+    # and especially combined with CREATE_NO_WINDOW) prevents the headless
+    # PowerShell helper from ever executing when spawned from our no-console
+    # pythonw host — the relaunch then silently fails. CREATE_NO_WINDOW keeps the
+    # helper hidden while still letting it run and outlive this process. stdio is
+    # redirected to DEVNULL because pythonw has no valid standard handles to
+    # inherit, which would otherwise break the child's startup.
     subprocess.Popen(
-        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
-        creationflags=subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS,
-        close_fds=True)
+        cmd, creationflags=subprocess.CREATE_NO_WINDOW, close_fds=True,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL)
 
 
 def _create_shortcut(link_path):
@@ -1307,6 +1370,7 @@ class TranslatorApp:
         # Self-update state.
         self._update_in_progress = False
         self._nightly_job = None
+        self._settings_check = None   # set while the settings window is open
 
         # Warm process pool state (speed-up). Guarded by _warm_lock.
         self._warm_lock = threading.Lock()
@@ -1483,20 +1547,22 @@ class TranslatorApp:
             log_error("nightly_tick", e)
         self._schedule_nightly_update()
 
-    def _begin_update(self, silent=False, on_status=None):
-        """Kick off a check-and-update on a background thread (git + network
-        must never run on the Tk main thread). ``on_status(msg, kind)`` is
-        marshalled back to the main thread; kind is 'info' | 'ok' | 'err'."""
+    def _begin_update(self, silent=False, on_status=None, check_only=False):
+        """Kick off a check (and optional update) on a background thread (git +
+        network must never run on the Tk main thread). ``on_status(msg, kind)``
+        is marshalled back to the main thread; kind is
+        'info' | 'ok' | 'err' | 'avail'. When ``check_only`` is True the worker
+        stops after reporting availability and never modifies the checkout."""
         if self._update_in_progress:
             if on_status:
                 on_status("更新进行中…", "info")
             return
         self._update_in_progress = True
         threading.Thread(
-            target=self._update_worker, args=(silent, on_status),
+            target=self._update_worker, args=(silent, on_status, check_only),
             daemon=True).start()
 
-    def _update_worker(self, silent, on_status):
+    def _update_worker(self, silent, on_status, check_only=False):
         def report(msg, kind="info"):
             if on_status:
                 self.root.after(0, lambda: on_status(msg, kind))
@@ -1513,6 +1579,11 @@ class TranslatorApp:
                 return
             if not update_available(local, remote):
                 report("已是最新 ✓", "ok")
+                return
+
+            # There is a newer commit on the remote.
+            if check_only:
+                report(f"发现新版本 {remote[:7]}", "avail")
                 return
 
             # A remote SHA differs — confirm it's a clean fast-forward before
@@ -1600,8 +1671,10 @@ class TranslatorApp:
 
     def _relaunch(self):
         """Restart the app to load freshly-pulled code. Spawns the detached
-        waiter first, then tears down so the process exits and frees the
-        single-instance mutex before the new instance starts."""
+        waiter first, then tears down. A hard os._exit fallback guarantees the
+        process actually terminates promptly (a lingering non-daemon thread must
+        not keep the old instance — and its single-instance mutex — alive, or
+        the relauncher would wait and the new instance would collide)."""
         try:
             _spawn_relauncher()
         except Exception as e:
@@ -1615,15 +1688,21 @@ class TranslatorApp:
         try:
             self.root.after(0, self.root.destroy)
         except Exception:
-            os._exit(0)
-
-    def _tray_update_status(self, msg, kind):
-        """Surface a manual (tray-initiated) update result as a balloon."""
-        try:
-            if self.tray is not None:
-                self.tray.notify(msg, APP_NAME)
-        except Exception:
             pass
+        # Force a prompt exit shortly after, whether or not the clean Tk
+        # teardown fully unwinds — this releases the mutex so the relauncher's
+        # wait returns and the fresh instance starts.
+        threading.Timer(1.2, lambda: os._exit(0)).start()
+
+    def check_update_via_settings(self):
+        """Tray entry point for "检查更新": open Settings and trigger its check,
+        so both entry points converge on the same in-window experience (status
+        line + explicit "更新并重启" button) rather than updating silently."""
+        def go():
+            self._open_settings()
+            if callable(self._settings_check):
+                self.root.after(350, self._settings_check)
+        self.root.after(0, go)
 
     def _show_update_notice_if_any(self):
         """On startup, if an update breadcrumb exists, show a tray balloon
@@ -3444,25 +3523,50 @@ class TranslatorApp:
         section("更新")
         field("当前版本", tk.Label(body, text=version_string(), bg=bg, fg=hint,
                                  font=(FONT, 10)))
-        # Inline status line for the check button; created before the row so the
-        # button's handler can reference it.
+        # Inline status line + an "更新并重启" button that only appears once a
+        # newer version has been found (checking never updates on its own — the
+        # user decides). Both are created before the row that references them.
         upd_status = tk.Label(body, text="", bg=bg, fg=hint, font=(FONT, 9))
+        upd_apply_btn = tk.Button(
+            body, text="更新并重启",
+            bg=accent, fg="#ffffff",
+            activebackground=accent, activeforeground="#ffffff",
+            relief="flat", bd=0, highlightthickness=0,
+            font=(FONT, 9), cursor="hand2", padx=14, pady=4)
+
+        def _upd_show(msg, kind):
+            colour = {"ok": t["status_ok"], "err": t["status_err"],
+                      "avail": accent}.get(kind, hint)
+            upd_status.config(text=msg, fg=colour)
+            if kind == "avail":
+                upd_apply_btn.grid()      # reveal the explicit update button
+            else:
+                upd_apply_btn.grid_remove()
+
+        def on_apply_update_click():
+            upd_apply_btn.grid_remove()
+            upd_status.config(text="正在更新…", fg=hint)
+            self._begin_update(check_only=False, on_status=_upd_show)
+
+        upd_apply_btn.config(command=on_apply_update_click)
 
         def on_check_update_click():
+            upd_apply_btn.grid_remove()
             upd_status.config(text="检查中…", fg=hint)
+            # Check only — if an update exists we surface a button, not an
+            # automatic restart.
+            self._begin_update(check_only=True, on_status=_upd_show)
 
-            def show(msg, kind):
-                colour = {"ok": t["status_ok"], "err": t["status_err"]}.get(
-                    kind, hint)
-                upd_status.config(text=msg, fg=colour)
-
-            self._begin_update(silent=False, on_status=show)
+        # Expose the check so the tray "检查更新" entry can route through here,
+        # converging both entry points on this one UI.
+        self._settings_check = on_check_update_click
 
         auto_update_sw = toggle_row_with_action(
             "夜间自动更新", self.cfg.get("auto_update_enabled", True),
             "检查更新", on_check_update_click)
-        upd_status.grid(row=row, column=0, columnspan=2, sticky="w",
-                        pady=(0, 4))
+        upd_status.grid(row=row, column=0, sticky="w", pady=(0, 4))
+        upd_apply_btn.grid(row=row, column=1, sticky="e", pady=(0, 4))
+        upd_apply_btn.grid_remove()       # hidden until a version is found
         row += 1
 
         # ---- Footer: status + action buttons ----
@@ -3747,8 +3851,7 @@ class TranslatorApp:
             icon.update_menu()
 
         def on_check_update(icon, item):
-            self.root.after(0, lambda: self._begin_update(
-                silent=False, on_status=self._tray_update_status))
+            self.check_update_via_settings()
 
         def on_quit(icon, item):
             icon.stop()

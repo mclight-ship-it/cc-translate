@@ -3,6 +3,9 @@ config.json
 history.json
 perf.log
 error.log
+update_notice.txt
+relaunch.log
+_relaunch.ps1
 
 # Python
 __pycache__/
