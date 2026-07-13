@@ -73,6 +73,21 @@
 ### 10. 打包分发 ⏸
 - 用 PyInstaller 打成单个 `.exe`，普通用户双击即用，免装 Python 与依赖。
 
+### 11. 自动检查 / 更新 ✅
+- **需求**：本地程序能检查 GitHub 是否有新版本，有则更新并重启；支持夜间自动更新
+  （设置里可开关）与手动更新。
+- **方案**：app 本身是 `git clone` 部署，所以「更新 = `git pull --ff-only`」。
+  - 检查：`git ls-remote origin master` 取远端 SHA 与本地 `HEAD` 比对（不落文件、不改本地）。
+  - 更新：`git fetch` → `merge-base --is-ancestor` 确认可 fast-forward（本地分叉/领先则中止）
+    → `git merge --ff-only`。
+  - 安全护栏：更新后 `py_compile` + 跑单元测试，任一失败自动 `git reset --hard` 回滚并放弃重启。
+  - 重启：启动一个分离的中转脚本，等当前进程退出（释放单例互斥锁）后再拉起新实例，避免锁竞争。
+  - 无人值守安全：所有 git 调用禁用凭据弹窗（`GIT_TERMINAL_PROMPT=0`）+ 短超时，夜间检查不会卡住。
+  - 优雅降级：非 git 部署 / git 缺失 / 网络失败均静默跳过，不影响正常使用。
+- **配置**：`auto_update_enabled`（默认开，凌晨检查）、`auto_update_hour`（默认 3）。
+- **入口**：设置「更新」区（版本号 + 夜间自动更新开关 + 检查更新按钮）、托盘「检查更新」。
+- **版本标识**：git 短 SHA + 提交日期（如 `9ef3615 · 2026-07-13`）。
+
 ---
 
 ## macOS 移植（另行讨论）

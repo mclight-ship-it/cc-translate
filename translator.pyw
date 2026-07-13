@@ -275,6 +275,8 @@ DEFAULT_CONFIG = {
     "popup_layout": "centered",
     "history_enabled": True,
     "history_limit": 100,
+    "auto_update_enabled": True,
+    "auto_update_hour": 3,
 }
 
 # Two colour palettes. Every UI surface reads from the active theme so the
@@ -764,6 +766,123 @@ SCRIPT_PATH = os.path.abspath(__file__)
 PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
 
 
+# ---------------------------------------------------------------------------
+# Self-update (git-based).
+#
+# The app is deployed as a plain ``git clone`` of the public repo, so "updating"
+# is simply a fast-forward pull of origin/master. Because user data now lives in
+# %APPDATA% (config/history/logs are all outside the working tree), a pull never
+# conflicts with anything the user owns.
+#
+# Every git call runs with a hidden window, a short timeout, and credential
+# prompts disabled (GIT_TERMINAL_PROMPT=0) so an unattended nightly check can
+# never hang waiting on a login dialog. The whole feature degrades gracefully
+# when git is missing or the folder is not a repo.
+# ---------------------------------------------------------------------------
+GIT_REMOTE = "origin"
+GIT_BRANCH = "master"
+UPDATE_NET_TIMEOUT = 25          # seconds for network git ops (fetch/ls-remote)
+
+
+def _git(args, timeout=15, cwd=None):
+    """Run a git command in the app dir. Returns ``(rc, stdout, stderr)`` with
+    both streams stripped. The window is hidden and credential prompts are
+    disabled so a call fails fast instead of blocking on interactive auth."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env.setdefault("GCM_INTERACTIVE", "never")
+    try:
+        p = subprocess.run(
+            ["git", *args], cwd=cwd or APP_DIR, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+    except FileNotFoundError:
+        return 127, "", "git-not-found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
+    except Exception as e:
+        return 1, "", str(e)[:200]
+
+
+def is_git_deploy():
+    """True when the app folder is a git working tree and git is available."""
+    rc, out, _ = _git(["rev-parse", "--is-inside-work-tree"], timeout=8)
+    return rc == 0 and out == "true"
+
+
+def local_head():
+    rc, out, _ = _git(["rev-parse", "HEAD"], timeout=8)
+    return out if rc == 0 and out else None
+
+
+def _local_head_short():
+    rc, out, _ = _git(["rev-parse", "--short", "HEAD"], timeout=8)
+    return out if rc == 0 and out else None
+
+
+def _local_commit_date():
+    rc, out, _ = _git(
+        ["show", "-s", "--format=%cd", "--date=format:%Y-%m-%d", "HEAD"],
+        timeout=8)
+    return out if rc == 0 and out else None
+
+
+def remote_head():
+    """Latest commit SHA on the remote branch via ``ls-remote`` (cheap; touches
+    no local refs and writes no files). Returns None on any failure."""
+    rc, out, _ = _git(
+        ["ls-remote", GIT_REMOTE, f"refs/heads/{GIT_BRANCH}"],
+        timeout=UPDATE_NET_TIMEOUT)
+    if rc != 0 or not out:
+        return None
+    first = out.splitlines()[0].split()
+    return first[0].strip() if first else None
+
+
+def update_available(local_sha, remote_sha):
+    """Pure predicate: the remote points at a different commit than local.
+
+    This is a cheap heuristic; the actual updater still confirms a clean
+    fast-forward (via merge-base) before touching anything, so a local checkout
+    that happens to be *ahead* of the remote is handled there, not here."""
+    if not local_sha or not remote_sha:
+        return False
+    return local_sha.strip() != remote_sha.strip()
+
+
+def _format_version(short_sha, date):
+    """Human version label, e.g. ``9ef3615 · 2026-07-13``."""
+    if not short_sha:
+        return "未知版本"
+    return f"{short_sha} · {date}" if date else short_sha
+
+
+def version_string():
+    return _format_version(_local_head_short(), _local_commit_date())
+
+
+def _spawn_relauncher():
+    """Launch a detached helper that waits for THIS process to exit — releasing
+    the single-instance mutex — then starts a fresh app instance. Running the
+    waiter out-of-process is what makes an in-place restart safe despite the
+    single-instance guard."""
+    pid = os.getpid()
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        f"try {{ Wait-Process -Id {pid} -Timeout 30 }} catch {{}};"
+        "Start-Sleep -Milliseconds 500;"
+        f"Start-Process -FilePath '{PYTHONW}' "
+        f"-ArgumentList '\"{SCRIPT_PATH}\"' -WorkingDirectory '{APP_DIR}'"
+    )
+    DETACHED_PROCESS = 0x00000008
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+        creationflags=subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS,
+        close_fds=True)
+
+
 def _create_shortcut(link_path):
     """Create or update a .lnk pointing to this app's pythonw launcher."""
     try:
@@ -1180,6 +1299,10 @@ class TranslatorApp:
         self._resize_mode = None
         self._resize_start = None
 
+        # Self-update state.
+        self._update_in_progress = False
+        self._nightly_job = None
+
         # Warm process pool state (speed-up). Guarded by _warm_lock.
         self._warm_lock = threading.Lock()
         self._warm = None            # the next pre-warmed WarmClaude (or None)
@@ -1213,6 +1336,10 @@ class TranslatorApp:
         # Run shortcut/migration work in background so startup stays responsive
         # and the first hotkey trigger is not blocked by PowerShell startup.
         threading.Thread(target=self._run_startup_tasks, daemon=True).start()
+
+        # Arm the nightly auto-update scheduler (a no-op when disabled / not a
+        # git deploy — the tick re-checks config each time it fires).
+        self._schedule_nightly_update()
 
     # ---------- Warm process pool ----------
     def _warm_key(self):
@@ -1287,6 +1414,196 @@ class TranslatorApp:
             # Convert that into the new managed .lnk so the setting stays in sync.
             if os.path.exists(LEGACY_STARTUP_VBS) and not is_autostart_enabled():
                 set_autostart(True)
+        except Exception:
+            pass
+
+    # ---------- Self-update ----------
+    def _is_busy(self):
+        """True when yanking the app out for a restart would disrupt the user:
+        a translation popup is showing, or the settings / history window is
+        open. Used to defer the unattended nightly update."""
+        if self.popup is not None:
+            return True
+        for w in (getattr(self, "settings_win", None),
+                  getattr(self, "history_win", None)):
+            try:
+                if w is not None and tk.Toplevel.winfo_exists(w):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _schedule_nightly_update(self):
+        """(Re)arm a timer that fires at the configured nightly hour. Always
+        reschedules itself, so toggling the setting at runtime takes effect on
+        the next fire without a restart."""
+        try:
+            import datetime
+            if self._nightly_job is not None:
+                try:
+                    self.root.after_cancel(self._nightly_job)
+                except Exception:
+                    pass
+                self._nightly_job = None
+            hour = int(self.cfg.get("auto_update_hour", 3))
+            hour = min(23, max(0, hour))
+            now = datetime.datetime.now()
+            target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            delay_ms = int((target - now).total_seconds() * 1000)
+            # Clamp so a suspended/resumed machine or clock change re-evaluates
+            # at least daily and never underflows.
+            delay_ms = max(60_000, min(delay_ms, 24 * 3600 * 1000))
+            self._nightly_job = self.root.after(delay_ms, self._nightly_tick)
+        except Exception as e:
+            log_error("schedule_nightly", e)
+
+    def _nightly_tick(self):
+        """Fired at the nightly hour. Update silently when enabled and idle;
+        retry shortly if the user is mid-translation, else reschedule."""
+        try:
+            if self.cfg.get("auto_update_enabled", True):
+                if self._is_busy():
+                    # Don't interrupt — try again soon, same night.
+                    self._nightly_job = self.root.after(
+                        10 * 60 * 1000, self._nightly_tick)
+                    return
+                self._begin_update(silent=True)
+        except Exception as e:
+            log_error("nightly_tick", e)
+        self._schedule_nightly_update()
+
+    def _begin_update(self, silent=False, on_status=None):
+        """Kick off a check-and-update on a background thread (git + network
+        must never run on the Tk main thread). ``on_status(msg, kind)`` is
+        marshalled back to the main thread; kind is 'info' | 'ok' | 'err'."""
+        if self._update_in_progress:
+            if on_status:
+                on_status("更新进行中…", "info")
+            return
+        self._update_in_progress = True
+        threading.Thread(
+            target=self._update_worker, args=(silent, on_status),
+            daemon=True).start()
+
+    def _update_worker(self, silent, on_status):
+        def report(msg, kind="info"):
+            if on_status:
+                self.root.after(0, lambda: on_status(msg, kind))
+
+        restart = False
+        try:
+            if not is_git_deploy():
+                report("非 git 部署，无法自动更新", "err")
+                return
+            local = local_head()
+            remote = remote_head()
+            if remote is None:
+                report("检查失败：无法连接远程", "err")
+                return
+            if not update_available(local, remote):
+                report("已是最新 ✓", "ok")
+                return
+
+            # A remote SHA differs — confirm it's a clean fast-forward before
+            # changing anything. Fetch, then require HEAD to be an ancestor of
+            # the fetched tip (i.e. we're strictly behind, not diverged/ahead).
+            report("正在下载更新…", "info")
+            rc, _, err = _git(["fetch", GIT_REMOTE, GIT_BRANCH],
+                              timeout=UPDATE_NET_TIMEOUT)
+            if rc != 0:
+                log_error("update_fetch", RuntimeError(err or f"rc={rc}"))
+                report("更新失败：下载出错", "err")
+                return
+            ref = f"{GIT_REMOTE}/{GIT_BRANCH}"
+            rc, _, _ = _git(
+                ["merge-base", "--is-ancestor", "HEAD", ref], timeout=10)
+            if rc != 0:
+                # Local is ahead or has diverged (e.g. the dev machine) — this
+                # is not a plain update, so leave the checkout untouched.
+                report("本地有改动，未自动更新", "err")
+                return
+
+            before = local
+            rc, _, err = _git(["merge", "--ff-only", ref], timeout=30)
+            if rc != 0:
+                log_error("update_merge", RuntimeError(err or f"rc={rc}"))
+                report("更新失败：合并出错", "err")
+                return
+
+            # Safety net: the new code must at least compile (and pass tests if
+            # present), else roll straight back to where we were.
+            if not self._verify_update(before):
+                report("更新有误，已回滚", "err")
+                return
+
+            report("更新完成，正在重启…", "ok")
+            restart = True
+        except Exception as e:
+            log_error("update_worker", e)
+            report("更新失败", "err")
+        finally:
+            self._update_in_progress = False
+            if restart:
+                self.root.after(700, self._relaunch)
+
+    def _verify_update(self, before_sha):
+        """Guard against updating into a broken state. Compile-check the new
+        main script and (when present) run the unit tests. On failure, hard
+        reset back to ``before_sha`` and return False."""
+        import py_compile
+        try:
+            py_compile.compile(SCRIPT_PATH, doraise=True)
+        except Exception as e:
+            log_error("update_verify_compile", e)
+            _git(["reset", "--hard", before_sha], timeout=15)
+            return False
+
+        tests_dir = os.path.join(APP_DIR, "tests")
+        if os.path.isdir(tests_dir):
+            try:
+                p = subprocess.run(
+                    [sys.executable, "-m", "unittest", "discover",
+                     "-s", "tests"],
+                    cwd=APP_DIR, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, timeout=180,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                if p.returncode != 0:
+                    log_error("update_verify_tests",
+                              RuntimeError("unit tests failed"))
+                    _git(["reset", "--hard", before_sha], timeout=15)
+                    return False
+            except Exception as e:
+                # Couldn't run the tests (env issue) — compile already passed,
+                # so don't block the update on an inability to test.
+                log_error("update_verify_tests_run", e)
+        return True
+
+    def _relaunch(self):
+        """Restart the app to load freshly-pulled code. Spawns the detached
+        waiter first, then tears down so the process exits and frees the
+        single-instance mutex before the new instance starts."""
+        try:
+            _spawn_relauncher()
+        except Exception as e:
+            log_error("relaunch_spawn", e)
+        try:
+            if self.tray is not None:
+                self.tray.stop()
+        except Exception:
+            pass
+        self.close_warm_pool()
+        try:
+            self.root.after(0, self.root.destroy)
+        except Exception:
+            os._exit(0)
+
+    def _tray_update_status(self, msg, kind):
+        """Surface a manual (tray-initiated) update result as a balloon."""
+        try:
+            if self.tray is not None:
+                self.tray.notify(msg, APP_NAME)
         except Exception:
             pass
 
@@ -3078,6 +3395,31 @@ class TranslatorApp:
             "打开历史", self._open_history)
         autostart_sw = toggle_row("开机自动启动", is_autostart_enabled())
 
+        # ---- Section: 更新 ----
+        section("更新")
+        field("当前版本", tk.Label(body, text=version_string(), bg=bg, fg=hint,
+                                 font=(FONT, 10)))
+        # Inline status line for the check button; created before the row so the
+        # button's handler can reference it.
+        upd_status = tk.Label(body, text="", bg=bg, fg=hint, font=(FONT, 9))
+
+        def on_check_update_click():
+            upd_status.config(text="检查中…", fg=hint)
+
+            def show(msg, kind):
+                colour = {"ok": t["status_ok"], "err": t["status_err"]}.get(
+                    kind, hint)
+                upd_status.config(text=msg, fg=colour)
+
+            self._begin_update(silent=False, on_status=show)
+
+        auto_update_sw = toggle_row_with_action(
+            "夜间自动更新", self.cfg.get("auto_update_enabled", True),
+            "检查更新", on_check_update_click)
+        upd_status.grid(row=row, column=0, columnspan=2, sticky="w",
+                        pady=(0, 4))
+        row += 1
+
         # ---- Footer: status + action buttons ----
         tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16, pady=(4, 0))
         footer = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
@@ -3103,9 +3445,13 @@ class TranslatorApp:
                 self.cfg["max_chars"] = int(max_var.get())
                 self.cfg["history_limit"] = int(hist_limit_var.get())
                 self.cfg["history_enabled"] = bool(history_sw.get())
+                self.cfg["auto_update_enabled"] = bool(auto_update_sw.get())
                 save_config(self.cfg)
                 if autostart_sw.get() != is_autostart_enabled():
                     set_autostart(autostart_sw.get())
+                # Re-arm the nightly timer so an auto-update toggle change takes
+                # effect immediately.
+                self._schedule_nightly_update()
                 # Re-resolve theme so new popups pick it up immediately.
                 self.theme = resolve_theme(self.cfg)
                 self._setup_scrollbar_style()
@@ -3355,6 +3701,10 @@ class TranslatorApp:
             self.paused = not self.paused
             icon.update_menu()
 
+        def on_check_update(icon, item):
+            self.root.after(0, lambda: self._begin_update(
+                silent=False, on_status=self._tray_update_status))
+
         def on_quit(icon, item):
             icon.stop()
             self.close_warm_pool()
@@ -3363,6 +3713,7 @@ class TranslatorApp:
         menu = pystray.Menu(
             pystray.MenuItem("设置", on_settings, default=True),
             pystray.MenuItem("历史记录", on_history),
+            pystray.MenuItem("检查更新", on_check_update),
             pystray.MenuItem(
                 lambda item: "恢复翻译" if self.paused else "暂停翻译",
                 on_toggle_pause),
