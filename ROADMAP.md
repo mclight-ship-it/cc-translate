@@ -63,9 +63,12 @@
 - 纯内部重构，对外行为零变化，提升可维护性与「给 AI 助手改」的友好度。
 - **建议**：功能稳定后集中做一次。
 
-### 9. 单元测试 ⏸
-- 纯函数（`classify_selection`、`code_ratio`、`iter_rich_segments`、`is_single_word`）
-  最适合加单元测试，投入小、回归保护大。
+### 9. 单元测试 ✅
+- 纯函数（`classify_selection`、`code_ratio`、`iter_rich_segments`、`is_single_word`、
+  `highlight_code`）最适合加单元测试，投入小、回归保护大。
+- **已完成**：`tests/` 目录，37 个用例，覆盖分类/词典判定/markdown-lite 解析/
+  流式安全/代码块高亮降级。用标准库 `unittest`，零新运行时依赖，对 app 功能无影响。
+  跑法：`python -m unittest discover -s tests`（或 `pytest`）。
 
 ### 10. 打包分发 ⏸
 - 用 PyInstaller 打成单个 `.exe`，普通用户双击即用，免装 Python 与依赖。

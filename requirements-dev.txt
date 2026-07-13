@@ -1,0 +1,4 @@
+# Development-only dependencies (NOT needed to run the app).
+# The test suite uses the standard library's unittest, so nothing here is
+# strictly required — pytest is listed only as a nicer optional runner.
+pytest>=7.0
