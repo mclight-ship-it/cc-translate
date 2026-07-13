@@ -4,14 +4,12 @@
 
 A local select-and-translate tool: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI — it reuses your existing Claude subscription, needs no separate API key, and runs entirely on your machine.
 
-Inspired by DeepL's double-Ctrl+C selection translation, but the translation engine is an LLM, with extras such as a **code-explanation mode**, a **word-dictionary mode**, **rich-text rendering**, **streaming for long text**, **translation history**, and **theme switching**.
-
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; for mixed prose + code it translates normally while keeping the code verbatim, and the popup offers an "Explain code" button to explain the code on demand
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
-- **Rich-text rendering**: the result popup supports lightweight Markdown (inline code, code blocks, bold, italic, headings, lists, links) and colorizes code, identifiers, paths, etc. like a code editor; code blocks can optionally use Pygments for per-token syntax highlighting (auto-degrading to a monochrome code style when Pygments isn't installed) for clearer output; copied text remains plain, markup-free text
+- **Rich-text rendering**: the result popup supports lightweight Markdown (inline code, code blocks, bold, italic, headings, lists, links) and colorizes code like a code editor; code blocks can optionally use Pygments for syntax highlighting (auto-degrading to monochrome when not installed); copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
 - **Re-translate/switch direction in the popup**: the normal translation popup has a "Re-translate" menu to force the current selection into Chinese/English/Japanese/Korean/French/German/Spanish
 - **Streaming for long text**: long text reveals its translation progressively
@@ -19,8 +17,7 @@ Inspired by DeepL's double-Ctrl+C selection translation, but the translation eng
 - **Popup layout**: classic (screen-centered, fixed size) or dynamic (follows the mouse, auto-sizing), switchable in settings
 - **Themes**: follow system / light / dark
 - **System tray**: left-click for settings; right-click for history / check for updates / pause / quit (right-click "Check for updates" opens Settings and triggers the check there, converging both entry points on one experience)
-- **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and `git pull` to update, then restart. "Check for updates" in Settings only checks and changes nothing; when a newer version is found it reveals an "Update & restart" button, leaving the decision to you. The "Nightly auto-update" toggle (on by default, 3 AM) updates silently in the background. Before updating it compiles + runs the tests, auto-rolls-back on failure, and will never update into a non-starting state; after restarting it shows a tray balloon confirming "Updated and restarted" (the new process's tray icon may land in Windows' overflow area, so a balloon gives visible feedback)
-- Popup text is selectable, copyable, draggable, resizable, scrollable; the loading window disappears on outside click
+- **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and `git pull` to update, then restart. "Check for updates" in Settings only checks and changes nothing; when a newer version is found it reveals an "Update & restart" button, leaving the decision to you. The "Nightly auto-update" toggle (on by default) updates silently in the background. Before updating it compiles + runs the tests and auto-rolls-back on failure, so it will never update into a non-starting state
 - Optional launch on startup
 
 ## Requirements
