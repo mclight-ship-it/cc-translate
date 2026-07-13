@@ -26,7 +26,7 @@
 - Python 3.12+
 - Node.js（用于安装 Claude Code CLI）
 - 一个可登录的 Claude 订阅（Pro/Max）
-- 先将 Claude Code CLI 升级到最新版本（避免参数不兼容）
+- ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
 
 ## 安装（人工步骤）
 
@@ -40,8 +40,9 @@ winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.12
 
 # 3. 安装/升级 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
+#    ⚠️ 即使之前装过，也务必跑这条升级到最新版——版本过旧会导致翻译失败或结果异常
 npm install -g @anthropic-ai/claude-code@latest
-claude --version
+claude --version   # 确认已是最新版；若明显偏旧，重跑上一行强制更新
 claude   # 首次运行按提示在浏览器登录，然后 Ctrl+C 退出交互模式
 
 # 4. 安装 Python 依赖
@@ -52,6 +53,10 @@ pip install Pygments
 # 5. 首次运行（确保当前目录是项目根目录 cc-translate）
 pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Translate”图标
 ```
+
+> ⚠️ **务必更新到最新版 Claude Code CLI**：本工具依赖较新的 `claude -p` 命令行参数，
+> 旧版会导致翻译报错或结果异常。**即使你之前已经装过 `claude`，安装本工具前也请再跑一次
+> `npm install -g @anthropic-ai/claude-code@latest` 升级到最新版**，并用 `claude --version` 确认。
 
 > 提示：`translator.pyw` 会自动探测 `claude` CLI 的位置（先查 PATH，再查 npm 全局目录）。
 > 若找不到，请确保 `claude` 在 PATH 中，或 npm 全局 bin 目录已加入 PATH。

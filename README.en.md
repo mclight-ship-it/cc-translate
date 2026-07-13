@@ -26,7 +26,7 @@ A local select-and-translate tool: **double-tap Ctrl+C** to translate the curren
 - Python 3.12+
 - Node.js (used to install the Claude Code CLI)
 - A signed-in Claude subscription (Pro/Max)
-- Upgrade the Claude Code CLI to the latest version first (to avoid argument incompatibilities)
+- ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
 ## Install (manual steps)
 
@@ -41,8 +41,10 @@ winget install Python.Python.3.12
 
 # 3. Install/upgrade the Claude Code CLI and sign in
 #    (browser OAuth, uses your subscription, no extra charge)
+#    ⚠️ Even if you installed it before, run this to upgrade to the latest —
+#       an outdated version causes translation failures or garbled output
 npm install -g @anthropic-ai/claude-code@latest
-claude --version
+claude --version   # confirm it's the latest; if clearly old, re-run the line above to force an update
 claude   # on first run, follow the prompt to sign in via browser, then Ctrl+C to exit interactive mode
 
 # 4. Install Python dependencies
@@ -53,6 +55,11 @@ pip install Pygments
 # 5. First run (make sure the current directory is the project root, cc-translate)
 pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in the Start Menu
 ```
+
+> ⚠️ **Make sure the Claude Code CLI is up to date**: this tool relies on newer `claude -p`
+> command-line arguments, and an old version causes translation errors or garbled output.
+> **Even if you already had `claude` installed, run `npm install -g @anthropic-ai/claude-code@latest`
+> again before installing this tool**, and confirm with `claude --version`.
 
 > Note: `translator.pyw` auto-detects the location of the `claude` CLI (checks PATH first, then the npm global directory).
 > If it can't be found, make sure `claude` is on PATH, or that the npm global bin directory has been added to PATH.

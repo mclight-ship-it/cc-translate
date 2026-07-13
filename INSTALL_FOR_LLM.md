@@ -31,12 +31,16 @@ winget install Python.Python.3.12 --accept-source-agreements --accept-package-ag
 > Python 通常在 `%LOCALAPPDATA%\Programs\Python\Python312\`，Node 在 `%ProgramFiles%\nodejs\`。
 > 用绝对路径调用，或让用户重开终端。
 
-### 2. 安装并登录 Claude Code CLI（先升级到最新）
+### 2. 安装并登录 Claude Code CLI（⚠️ 必须升级到最新版）
 
 ```bash
 npm install -g @anthropic-ai/claude-code@latest
 claude --version
 ```
+
+> ⚠️ **这一步的升级绝不能跳过。** 本工具依赖较新的 `claude -p` 参数，旧版 CLI 会导致翻译
+> 报错或结果异常（这是最常见的故障原因）。**即使 `claude` 已经装过，也必须运行上面的
+> `@latest` 命令强制升级到最新版**，再用 `claude --version` 确认。切勿因为「已经装了」就略过。
 
 然后**让用户运行 `claude` 并在浏览器完成登录**（OAuth，用其 Claude 订阅，不额外收费）。
 你无法代替用户完成浏览器登录——请提示用户：运行 `claude`，按提示登录，成功后 Ctrl+C 退出交互模式。
