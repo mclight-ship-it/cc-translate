@@ -1,0 +1,41 @@
+#!/bin/sh
+# pre-push hook: run the unit test suite before allowing a push.
+# A non-zero exit blocks the push, so broken pure-function behaviour can never
+# reach the remote. Uses only the standard library's unittest (no extra deps).
+#
+# Enable it (once per clone) from the repo root:
+#     git config core.hooksPath .githooks
+#
+# Bypass in a genuine emergency:  git push --no-verify
+
+set -e
+
+# Move to the repo root regardless of where git invoked us from.
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Find a usable Python interpreter across platforms.
+PYTHON=""
+for cand in python python3 py; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        PYTHON="$cand"
+        break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo "pre-push: no Python interpreter found (tried python, python3, py)." >&2
+    echo "pre-push: install Python or push with --no-verify to bypass." >&2
+    exit 1
+fi
+
+echo "pre-push: running unit tests with '$PYTHON'..."
+if "$PYTHON" -m unittest discover -s tests; then
+    echo "pre-push: tests passed — allowing push."
+    exit 0
+else
+    echo "" >&2
+    echo "pre-push: TESTS FAILED — push blocked." >&2
+    echo "pre-push: fix the failures, or use 'git push --no-verify' to bypass." >&2
+    exit 1
+fi

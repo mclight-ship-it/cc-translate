@@ -78,3 +78,11 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 ## 给 AI 助手的一键安装说明
 
 见 [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md)：把该文件内容交给新机器上的 Claude/AI 助手，它会按步骤完成依赖安装、登录、依赖库安装并启动。
+
+## 开发 / 测试
+
+改动流程与约定见 [AGENTS.md](AGENTS.md)。要点：
+
+- 跑测试：`python -m unittest discover -s tests`（标准库，无需额外依赖）。
+- 仓库自带 pre-push 钩子，推送前会自动跑测试、失败即阻止推送。
+- **新 clone 后启用一次**：`git config core.hooksPath .githooks`。
