@@ -14,6 +14,7 @@ import sys
 import re
 import json
 import time
+import dataclasses
 import queue
 import threading
 import subprocess
@@ -1338,6 +1339,23 @@ class WarmClaude:
             pass
 
 
+@dataclasses.dataclass
+class StreamSession:
+    """Holds all mutable state for a single streaming translation session.
+    Created fresh for each translation, replacing the 10 individual _stream_*
+    instance attributes that were scattered across TranslatorApp."""
+    popup_ready: bool = False
+    queue: object = dataclasses.field(default_factory=queue.Queue)
+    accum: str = ""
+    flush_job: object = None  # tkinter after() job ID; None when idle
+    cols: int = 0
+    fixed_w: int = 0
+    max_h: int = 0
+    origin_x: object = None  # int once the first frame is placed
+    origin_y: object = None  # int once the first frame is placed
+    monitor_rect: object = None  # (left, top, right, bottom) or None
+
+
 class TranslatorApp:
     def __init__(self):
         self.cfg = load_config()
@@ -1354,16 +1372,7 @@ class TranslatorApp:
         self._last_input = None
         self._last_class = "text"
         self._trigger_queue = queue.Queue()
-        self._stream_popup_ready = False
-        self._stream_queue = queue.Queue()
-        self._stream_accum = ""
-        self._stream_flush_job = None
-        self._stream_cols = 0
-        self._stream_fixed_w = 0
-        self._stream_max_h = 0
-        self._stream_origin_x = None
-        self._stream_origin_y = None
-        self._stream_monitor_rect = None
+        self._ss = StreamSession()
         self._resize_mode = None
         self._resize_start = None
 
@@ -1852,25 +1861,21 @@ class TranslatorApp:
             log_error("restore_clipboard", e)
 
     # ---------- Translation ----------
+    def _cancel_stream_flush(self):
+        """Cancel any pending after() flush job and clear the reference."""
+        if self._ss.flush_job:
+            try:
+                self.root.after_cancel(self._ss.flush_job)
+            except Exception:
+                pass
+            self._ss.flush_job = None
+
     def _show_loading(self, text):
         self._destroy_popup()
         self._last_input = text
         self._last_class = classify_selection(text)
-        self._stream_popup_ready = False
-        self._stream_accum = ""
-        self._stream_queue = queue.Queue()
-        self._stream_cols = 0
-        self._stream_fixed_w = 0
-        self._stream_max_h = 0
-        self._stream_origin_x = None
-        self._stream_origin_y = None
-        self._stream_monitor_rect = None
-        if self._stream_flush_job:
-            try:
-                self.root.after_cancel(self._stream_flush_job)
-            except Exception:
-                pass
-            self._stream_flush_job = None
+        self._cancel_stream_flush()
+        self._ss = StreamSession()
         self.popup = self._make_loading_popup()
         self._animate_loading(0)
         threading.Thread(target=self._do_translate, args=(text,),
@@ -1976,11 +1981,11 @@ class TranslatorApp:
         warm = self._take_warm()
         if warm is None:
             return False
-        self._stream_popup_ready = False
+        self._ss.popup_ready = False
         t0 = time.perf_counter()
         try:
             def on_delta(txt):
-                self._stream_queue.put(txt)
+                self._ss.queue.put(txt)
                 self.root.after(0, self._stream_flush)
 
             final = warm.send_and_stream(text, on_delta)
@@ -2012,7 +2017,7 @@ class TranslatorApp:
         deltas arrive. Returns True on success, False to fall back to one-shot."""
         system_prompt = self._system_prompt_for(text)
         payload = f"<text>\n{text}\n</text>"
-        self._stream_popup_ready = False
+        self._ss.popup_ready = False
         t0 = time.perf_counter()
         try:
             proc = subprocess.Popen(
@@ -2047,7 +2052,7 @@ class TranslatorApp:
                         txt = delta.get("text", "")
                         if txt:
                             acc.append(txt)
-                            self._stream_queue.put(txt)
+                            self._ss.queue.put(txt)
                             self.root.after(0, self._stream_flush)
             proc.wait()
 
@@ -2072,27 +2077,27 @@ class TranslatorApp:
 
     def _stream_flush(self):
         """Batch stream chunks on the UI thread to reduce redraw churn/crashes."""
-        if self._stream_flush_job:
+        if self._ss.flush_job:
             return
 
         def do_flush():
-            self._stream_flush_job = None
+            self._ss.flush_job = None
             appended = []
             try:
                 while True:
-                    appended.append(self._stream_queue.get_nowait())
+                    appended.append(self._ss.queue.get_nowait())
             except queue.Empty:
                 pass
             if not appended:
                 return
-            self._stream_accum += "".join(appended)
+            self._ss.accum += "".join(appended)
             try:
-                self._stream_update(self._stream_accum)
+                self._stream_update(self._ss.accum)
             except Exception:
                 # If UI update races with close/destroy, ignore this frame.
                 return
 
-        self._stream_flush_job = self.root.after(50, do_flush)
+        self._ss.flush_job = self.root.after(50, do_flush)
 
     def _stream_update(self, current):
         """Called on the UI thread as streamed text grows. The first call swaps
@@ -2100,8 +2105,8 @@ class TranslatorApp:
         Uses an explicit flag (set synchronously here on the UI thread) so
         queued callbacks can't each re-create the popup."""
         try:
-            if not self._stream_popup_ready:
-                self._stream_popup_ready = True
+            if not self._ss.popup_ready:
+                self._ss.popup_ready = True
                 self._stop_animation()
                 anchor = None
                 if self.popup:
@@ -2121,13 +2126,8 @@ class TranslatorApp:
             return
 
     def _stream_finalize(self, final):
-        if self._stream_flush_job:
-            try:
-                self.root.after_cancel(self._stream_flush_job)
-            except Exception:
-                pass
-            self._stream_flush_job = None
-        self._stream_accum = final
+        self._cancel_stream_flush()
+        self._ss.accum = final
         try:
             if self.popup and getattr(self.popup, "_text", None):
                 # Final frame keeps stable stream geometry (no shrink/reposition jump).
@@ -2149,7 +2149,7 @@ class TranslatorApp:
             self.popup = self._make_popup(final, anchor=anchor,
                                           title=self._result_title(),
                                           highlight=True)
-            self._stream_popup_ready = True
+            self._ss.popup_ready = True
             self._set_popup_text(final, stream_grow=True)
             self._maybe_add_explain_button(self.popup)
             self._maybe_add_retranslate_button(self.popup)
@@ -2711,8 +2711,8 @@ class TranslatorApp:
         screen_cap = max(24, int((mon_w * 0.9) / avg_char_px))
         # Keep stream width stable and reasonably wide from the first frame.
         preferred_cols = min(max(36, int(screen_cap * 0.7)), 48)
-        cols = self._stream_cols or preferred_cols
-        self._stream_cols = cols
+        cols = self._ss.cols or preferred_cols
+        self._ss.cols = cols
 
         self._fill_text(text, message)
         text.config(width=cols, height=1)
@@ -2725,10 +2725,10 @@ class TranslatorApp:
         true_lines = max(true_lines, 1)
 
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
-        if self._stream_origin_y is not None:
+        if self._ss.origin_y is not None:
             # Once the stream anchor is fixed, height may only grow downward
             # until the bottom edge is reached; never move the window upward.
-            max_popup_h = max(1, int(bottom - self._stream_origin_y - 8))
+            max_popup_h = max(1, int(bottom - self._ss.origin_y - 8))
         else:
             max_popup_h = max(MIN_POPUP_HEIGHT, int(mon_h - 20))
         available_text_h = max(24, max_popup_h - bar_h - (shell_pad * 2))
@@ -2751,23 +2751,23 @@ class TranslatorApp:
             w += win._scroll.winfo_reqwidth()
         h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
 
-        if not self._stream_fixed_w:
-            self._stream_fixed_w = int(w)
-        if self._stream_max_h:
-            h = max(int(h), self._stream_max_h)
+        if not self._ss.fixed_w:
+            self._ss.fixed_w = int(w)
+        if self._ss.max_h:
+            h = max(int(h), self._ss.max_h)
 
         h = min(int(h), max_popup_h)
-        self._stream_max_h = int(h)
+        self._ss.max_h = int(h)
 
-        if self._stream_monitor_rect is None:
+        if self._ss.monitor_rect is None:
             try:
                 cx, cy = win.winfo_x(), win.winfo_y()
             except Exception:
                 cx, cy = left + 12, top + 12
             rect0 = get_monitor_rect((cx, cy))
-            self._stream_monitor_rect = rect0 if rect0 else (left, top, right, bottom)
+            self._ss.monitor_rect = rect0 if rect0 else (left, top, right, bottom)
 
-        return int(self._stream_fixed_w), int(h)
+        return int(self._ss.fixed_w), int(h)
 
     def _on_mousewheel(self, event):
         if self.popup and getattr(self.popup, "_text", None):
@@ -3161,20 +3161,20 @@ class TranslatorApp:
         if stream_grow:
             w, h = self._size_popup_stream_grow(win, message)
 
-            if self._stream_monitor_rect is None:
+            if self._ss.monitor_rect is None:
                 try:
                     cx0, cy0 = win.winfo_x(), win.winfo_y()
                 except Exception:
                     cx0, cy0 = 0, 0
                 rect0 = get_monitor_rect((cx0, cy0))
-                self._stream_monitor_rect = rect0 if rect0 else (
+                self._ss.monitor_rect = rect0 if rect0 else (
                     0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
 
-            left, top, right, bottom = self._stream_monitor_rect
+            left, top, right, bottom = self._ss.monitor_rect
             min_top = top + 12
             max_y = max(min_top, bottom - h - 8)
 
-            if self._stream_origin_x is None or self._stream_origin_y is None:
+            if self._ss.origin_x is None or self._ss.origin_y is None:
                 try:
                     cx, cy = win.winfo_x(), win.winfo_y()
                 except Exception:
@@ -3183,15 +3183,15 @@ class TranslatorApp:
                 min_visible = min(MIN_STREAM_VISIBLE_HEIGHT, max(80, bottom - top - 20))
                 max_origin_y = max(min_top, bottom - min_visible - 8)
                 ny = min(max(cy, min_top), max_origin_y)
-                self._stream_origin_x, self._stream_origin_y = nx, ny
+                self._ss.origin_x, self._ss.origin_y = nx, ny
             else:
-                nx = max(left + 4, min(self._stream_origin_x, right - w - 4))
-                ny = self._stream_origin_y
+                nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
+                ny = self._ss.origin_y
 
             if (bottom - ny - 8) < MIN_POPUP_HEIGHT:
                 ny = max(min_top, bottom - MIN_POPUP_HEIGHT - 8)
-                if self._stream_origin_y is not None:
-                    self._stream_origin_y = ny
+                if self._ss.origin_y is not None:
+                    self._ss.origin_y = ny
 
             win.geometry(f"{w}x{h}+{nx}+{ny}")
             self._apply_window_rounding(win)
@@ -3221,22 +3221,17 @@ class TranslatorApp:
             pass
         if self.popup is win:
             self.popup = None
-        log_perf("loading_dismissed", {"has_stream_data": bool(self._stream_accum)})
+        log_perf("loading_dismissed", {"has_stream_data": bool(self._ss.accum)})
 
     def _destroy_popup(self):
         self._stop_animation()
-        if self._stream_flush_job:
-            try:
-                self.root.after_cancel(self._stream_flush_job)
-            except Exception:
-                pass
-            self._stream_flush_job = None
-        self._stream_cols = 0
-        self._stream_fixed_w = 0
-        self._stream_max_h = 0
-        self._stream_origin_x = None
-        self._stream_origin_y = None
-        self._stream_monitor_rect = None
+        self._cancel_stream_flush()
+        self._ss.cols = 0
+        self._ss.fixed_w = 0
+        self._ss.max_h = 0
+        self._ss.origin_x = None
+        self._ss.origin_y = None
+        self._ss.monitor_rect = None
         self._resize_mode = None
         self._resize_start = None
         if self.popup:
