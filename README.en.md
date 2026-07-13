@@ -7,17 +7,17 @@ A local select-and-translate tool: **double-tap Ctrl+C** to translate the curren
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
-- **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; for mixed prose + code it translates normally while keeping the code verbatim, and the popup offers an "Explain code" button to explain the code on demand
+- **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
-- **Rich-text rendering**: the result popup supports lightweight Markdown (inline code, code blocks, bold, italic, headings, lists, links) and colorizes code like a code editor; code blocks can optionally use Pygments for syntax highlighting (auto-degrading to monochrome when not installed); copied text stays plain
+- **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
-- **Re-translate/switch direction in the popup**: the normal translation popup has a "Re-translate" menu to force the current selection into Chinese/English/Japanese/Korean/French/German/Spanish
+- **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click
 - **Streaming for long text**: long text reveals its translation progressively
-- **Translation history**: open the history window from the tray; toggleable, with a configurable entry cap
-- **Popup layout**: classic (screen-centered, fixed size) or dynamic (follows the mouse, auto-sizing), switchable in settings
+- **Translation history**: open the history window from the tray
+- **Popup layout**: classic (screen-centered) or dynamic (follows the mouse), switchable in settings
 - **Themes**: follow system / light / dark
-- **System tray**: left-click for settings; right-click for history / check for updates / pause / quit (right-click "Check for updates" opens Settings and triggers the check there, converging both entry points on one experience)
-- **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and `git pull` to update, then restart. "Check for updates" in Settings only checks and changes nothing; when a newer version is found it reveals an "Update & restart" button, leaving the decision to you. The "Nightly auto-update" toggle (on by default) updates silently in the background. Before updating it compiles + runs the tests and auto-rolls-back on failure, so it will never update into a non-starting state
+- **System tray**: left-click for settings; right-click for history / check for updates / pause / quit
+- **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and update — via a manual "Check for updates" or a nightly auto-update
 - Optional launch on startup
 
 ## Requirements
