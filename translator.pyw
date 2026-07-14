@@ -3245,9 +3245,15 @@ class TranslatorApp:
         # `body`/`row_state` to the active column before each group.
         left_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         left_col.grid(row=0, column=0, sticky="n", padx=(0, 16))
-        tk.Frame(body, bg=border, width=1).grid(row=0, column=1, sticky="ns")
+        # Weighted spacer columns on either side of the divider soak up any extra
+        # window width (e.g. the room reserved for the update button) evenly, so
+        # the two columns sit against the left/right edges with the divider
+        # centred between them instead of leaving a dead gap on the right.
+        body.grid_columnconfigure(1, weight=1)
+        tk.Frame(body, bg=border, width=1).grid(row=0, column=2, sticky="ns")
+        body.grid_columnconfigure(3, weight=1)
         right_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        right_col.grid(row=0, column=2, sticky="n", padx=(16, 0))
+        right_col.grid(row=0, column=4, sticky="n", padx=(16, 0))
         for _col in (left_col, right_col):
             _col.grid_columnconfigure(0, weight=1)
             _col.grid_columnconfigure(1, minsize=140)
