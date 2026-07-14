@@ -15,6 +15,7 @@ __pycache__/
 # Icon-generator preview scratch (tools/make_icons.py)
 _preview-*.png
 _small-*.png
+_verify-*.png
 _iconpreview.png
 
 # OS
