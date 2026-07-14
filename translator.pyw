@@ -148,11 +148,12 @@ CONFIG_PATH = _user_data_path("config.json")
 # then deletes it.
 UPDATE_NOTICE_PATH = os.path.join(DATA_DIR, "update_notice.txt")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
-# Adaptive tray icons: a "CC" mark chosen to stay crisp against whichever
-# taskbar theme is active. cc-dark.ico is the icon for a DARK taskbar (light
-# mark on a dark tile); cc-light.ico is for a LIGHT taskbar (dark-blue mark on
-# a light tile). Both are packed from assets/icon-{dark,light}.png by
-# tools/make_icons.py. cc.ico (the legacy blue tile) remains the fallback.
+# Adaptive tray icons: two "CC" tile marks. cc-dark.ico is the DARK tile (white
+# mark); cc-light.ico is the LIGHT tile (dark-blue mark). Both are packed from
+# assets/icon-{dark,light}.png by tools/make_icons.py. To stay legible in the
+# system tray we show the *opposite* tile from the taskbar theme (a dark tile on
+# a light taskbar and vice versa) so the icon always contrasts its background.
+# cc.ico (the legacy blue tile) remains the fallback.
 ICON_PATH_DARK = os.path.join(APP_DIR, "cc-dark.ico")
 ICON_PATH_LIGHT = os.path.join(APP_DIR, "cc-light.ico")
 MIN_POPUP_HEIGHT = 150
@@ -341,14 +342,15 @@ def detect_taskbar_theme():
 
 
 def tray_icon_path(taskbar_theme=None):
-    """Pick the tray icon file matching the taskbar theme, with fallbacks.
+    """Pick the tray icon file that contrasts the taskbar theme, with fallbacks.
 
-    Light taskbar -> the blue glyph; dark taskbar -> the white glyph. If the
-    theme-specific file is missing, fall back to the legacy tile (cc.ico); if
+    To stay visible we show the *opposite* tile: a light taskbar gets the dark
+    tile (cc-dark.ico) and a dark taskbar gets the light tile (cc-light.ico). If
+    the theme-specific file is missing, fall back to the legacy tile (cc.ico); if
     that is missing too, return None so the caller draws a glyph instead.
     """
     theme = taskbar_theme or detect_taskbar_theme()
-    primary = ICON_PATH_LIGHT if theme == "light" else ICON_PATH_DARK
+    primary = ICON_PATH_DARK if theme == "light" else ICON_PATH_LIGHT
     if os.path.exists(primary):
         return primary
     if os.path.exists(ICON_PATH):

@@ -379,9 +379,10 @@ class TestAdaptiveTrayIcon(unittest.TestCase):
                             f"missing tray icon file: {path}")
 
     def test_tray_icon_path_picks_matching_theme(self):
-        # When the theme-specific files exist, each theme maps to its own file.
-        self.assertEqual(tr.tray_icon_path("light"), tr.ICON_PATH_LIGHT)
-        self.assertEqual(tr.tray_icon_path("dark"), tr.ICON_PATH_DARK)
+        # Each taskbar theme shows the *opposite* tile for contrast: a light
+        # taskbar gets the dark tile and a dark taskbar gets the light tile.
+        self.assertEqual(tr.tray_icon_path("light"), tr.ICON_PATH_DARK)
+        self.assertEqual(tr.tray_icon_path("dark"), tr.ICON_PATH_LIGHT)
 
     def test_tray_icon_path_falls_back_to_tile(self):
         # If the theme-specific file is missing, fall back to cc.ico, else None.
