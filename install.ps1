@@ -79,11 +79,44 @@ function Invoke-Or-DryRun($desc, [scriptblock]$action) {
     & $action
 }
 
+function Ensure-ExecutionPolicy {
+    # Windows' default 'Restricted' policy blocks the PowerShell .ps1 shims npm
+    # installs for `claude` (and `npm` itself), so the user can't even run
+    # `claude` to log in — which leaves the app with no Claude session and makes
+    # every translation fail. Raise the CurrentUser policy (no admin needed) to
+    # RemoteSigned when the effective policy is more restrictive; RemoteSigned
+    # runs local scripts and still requires a signature for downloaded ones.
+    $eff = try { Get-ExecutionPolicy } catch { return }
+    if ($eff -notin @('Restricted', 'AllSigned', 'Undefined')) {
+        Good "  ✓ 执行策略正常（$eff），可运行本地脚本"
+        return
+    }
+    if ($DryRun) {
+        Info "  [dry-run] 将把当前用户执行策略设为 RemoteSigned（当前: $eff）"
+        return
+    }
+    try {
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+        $now = Get-ExecutionPolicy
+        if ($now -in @('Restricted', 'AllSigned', 'Undefined')) {
+            Warn "  ⚠ 执行策略仍为 $now（可能被组策略锁定）。登录时请改用命令： claude.cmd"
+        } else {
+            Good "  ✓ 已允许运行本地脚本（执行策略: $now）——这样才能运行 claude 登录"
+        }
+    } catch {
+        Warn "  ⚠ 无法调整执行策略。登录 Claude 时请改用命令： claude.cmd"
+    }
+}
+
 # ---------- banner ----------
 Write-Host ""
 Write-Host "  CC Translate 安装程序" -ForegroundColor White
 Write-Host "  安装目录: $InstallDir" -ForegroundColor DarkGray
 if ($DryRun) { Warn "  （dry-run 模式：只显示步骤，不做任何改动）" }
+
+# ---------- prep: allow local .ps1 scripts so `claude` can be launched ----------
+Write-Host "`n[准备] PowerShell 执行策略" -ForegroundColor Cyan
+Ensure-ExecutionPolicy
 
 # ---------- 1. base tooling ----------
 Step 1 "检查基础环境（git / Python / Node.js）"
@@ -141,7 +174,7 @@ if (Test-ClaudeReady) {
 } else {
     Warn "  还需登录一次（用你现有的 Claude 订阅，走浏览器授权，不额外收费）："
     Info  "      1) 打开一个新的终端窗口"
-    Info  "      2) 运行:  claude"
+    Info  "      2) 运行:  claude    （若提示脚本被禁用，改用:  claude.cmd）"
     Info  "      3) 按提示在浏览器完成登录，成功后按 Ctrl+C 退出交互模式"
     Info  "  未登录时 CC Translate 会弹出「未登录」提示——登录后即可正常翻译。"
 }

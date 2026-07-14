@@ -85,5 +85,6 @@ pythonw translator.pyw
 
 - **双击 Ctrl+C 没反应**：确认程序在运行（任务管理器有 `pythonw.exe`）；确认托盘图标存在；确认没在设置里“暂停翻译”。
 - **弹窗显示“Claude 未登录”**：重新运行 `claude` 完成浏览器登录。
+- **`claude` / `npm` 报“running scripts is disabled on this system”**：PowerShell 执行策略是默认的 `Restricted`，挡住了 npm 装的 `.ps1` 快捷方式。修复：`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`（回答 Y），或临时改用带 `.cmd` 后缀的命令 `claude.cmd` / `npm.cmd`。注意：这**不影响** app 本身翻译（app 走 `claude.cmd` + subprocess，不受执行策略限制），但会挡住你**手动登录** `claude`——没登录成功翻译自然失败。
 - **找不到 claude**：确保 `claude` 在 PATH，或 npm 全局 bin（通常 `%APPDATA%\npm`）已加入 PATH。
 - **文字模糊**：确认是本仓库最新版（已含 DPI 处理）。

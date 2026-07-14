@@ -77,6 +77,15 @@ sign in (uses your existing Claude subscription, no extra charge).
 > `$env:CC_TRANSLATE_DRYRUN="1"` to do a dry run that only prints each step and
 > changes nothing.
 
+> If running `claude` manually fails with **"running scripts is disabled on this
+> system"**, PowerShell's default `Restricted` execution policy is blocking npm's
+> `.ps1` shims. The installer automatically raises the current-user policy to
+> `RemoteSigned` to fix this; if you still hit it, run
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (answer Y), or log in with
+> `claude.cmd` instead. This does not affect the app's translation (it calls
+> `claude.cmd` via subprocess, unaffected by the policy), but it blocks the manual
+> login — and without logging in, translation can't work.
+
 Prefer to install step by step? See [Install (manual steps)](#install-manual-steps) below.
 
 ## Install (manual steps)

@@ -70,6 +70,8 @@ irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/instal
 
 > 可选环境变量（运行前设置）：`$env:CC_TRANSLATE_DIR` 指定安装目录（默认 `%USERPROFILE%\cc-translate`）；`$env:CC_TRANSLATE_DRYRUN="1"` 先“空跑”一遍，只显示每步会做什么、不做任何改动。
 
+> 如果手动运行 `claude` 时报 **“running scripts is disabled on this system”**，是 PowerShell 默认执行策略（`Restricted`）挡住了 npm 的 `.ps1` 快捷方式。安装脚本会自动把当前用户策略设为 `RemoteSigned` 修复它；若仍遇到，手动执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`（回答 Y），或改用 `claude.cmd` 登录。这不影响 app 翻译，但会挡住手动登录，而没登录就无法翻译。
+
 想更透明地手动逐步安装，见下面的[安装（人工步骤）](#安装人工步骤)。
 
 ## 安装（人工步骤）
