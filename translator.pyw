@@ -3190,10 +3190,26 @@ class TranslatorApp:
 
         body = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=20, pady=(14, 6))
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_columnconfigure(1, minsize=190)
-        row_state = {"value": 0}
 
+        # Two columns side by side so the panel stays short instead of one long
+        # vertical strip. Each column is an independent label|widget grid with
+        # its own row counter; sections are split to keep the columns roughly
+        # the same height. The section code below is unchanged — we just alias
+        # `body`/`row_state` to the active column before each group.
+        left_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        left_col.grid(row=0, column=0, sticky="n", padx=(0, 16))
+        tk.Frame(body, bg=border, width=1).grid(row=0, column=1, sticky="ns")
+        right_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        right_col.grid(row=0, column=2, sticky="n", padx=(16, 0))
+        for _col in (left_col, right_col):
+            _col.grid_columnconfigure(0, weight=1)
+            _col.grid_columnconfigure(1, minsize=170)
+        left_state = {"value": 0}
+        right_state = {"value": 0}
+
+        # ----- Left column -----
+        body = left_col
+        row_state = left_state
         # ---- Section: 翻译 ----
         self._settings_section(
             body, row_state, "翻译", bg=bg, accent=accent, font=FONT)
@@ -3250,6 +3266,29 @@ class TranslatorApp:
                 width=18, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
+        # ---- Section: 截图翻译 ----
+        self._settings_section(
+            body, row_state, "截图翻译 (Win+Shift+C)",
+            bg=bg, accent=accent, font=FONT)
+        ocr_engine_var = tk.StringVar(
+            value=OCR_ENGINE_LABELS.get(
+                self.cfg.get(CFG.OCR_ENGINE, "claude"),
+                OCR_ENGINE_LABELS["claude"]))
+        self._settings_field(
+            body, row_state, "识别引擎",
+            ttk.Combobox(
+                body, textvariable=ocr_engine_var, state="readonly", width=20,
+                style="CC.TCombobox", font=(FONT, 10),
+                values=list(OCR_ENGINE_LABELS.values())),
+            bg=bg, fg=fg, font=FONT)
+        ocr_hotkey_sw = self._settings_toggle_row(
+            body, row_state,
+            "启用截图翻译热键", self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
+            bg=bg, fg=fg, font=FONT)
+
+        # ----- Right column -----
+        body = right_col
+        row_state = right_state
         # ---- Section: 行为 ----
         self._settings_section(
             body, row_state, "行为", bg=bg, accent=accent, font=FONT)
@@ -3287,26 +3326,6 @@ class TranslatorApp:
         autostart_sw = self._settings_toggle_row(
             body, row_state,
             "开机自动启动", is_autostart_enabled(),
-            bg=bg, fg=fg, font=FONT)
-
-        # ---- Section: 截图翻译 ----
-        self._settings_section(
-            body, row_state, "截图翻译 (Win+Shift+C)",
-            bg=bg, accent=accent, font=FONT)
-        ocr_engine_var = tk.StringVar(
-            value=OCR_ENGINE_LABELS.get(
-                self.cfg.get(CFG.OCR_ENGINE, "claude"),
-                OCR_ENGINE_LABELS["claude"]))
-        self._settings_field(
-            body, row_state, "识别引擎",
-            ttk.Combobox(
-                body, textvariable=ocr_engine_var, state="readonly", width=20,
-                style="CC.TCombobox", font=(FONT, 10),
-                values=list(OCR_ENGINE_LABELS.values())),
-            bg=bg, fg=fg, font=FONT)
-        ocr_hotkey_sw = self._settings_toggle_row(
-            body, row_state,
-            "启用截图翻译热键", self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
             bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 更新 ----
