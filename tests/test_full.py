@@ -792,6 +792,20 @@ class TestOCRIntegrationInApp(unittest.TestCase):
         self.assertIsInstance(tr.OCR_VISION_PROMPT, str)
         self.assertGreater(len(tr.OCR_VISION_PROMPT), 0)
 
+    def test_vision_mention_is_quoted(self):
+        # DATA_DIR has a space ("CC Translate"); the @mention MUST be quoted so
+        # the CLI reads the file instead of breaking at the space. Regression
+        # guard for the "I need permission to read the image" bug.
+        m = tr.vision_image_mention(r"C:\Users\me\CC Translate\tmp_ocr.png")
+        self.assertTrue(m.startswith('@"'))
+        self.assertTrue(m.endswith('"'))
+        self.assertIn("CC Translate", m)
+
+    def test_vision_mention_uses_forward_slashes(self):
+        m = tr.vision_image_mention(r"C:\a\b\img.png")
+        self.assertNotIn("\\", m)
+        self.assertIn("C:/a/b/img.png", m)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

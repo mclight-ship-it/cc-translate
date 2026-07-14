@@ -398,6 +398,16 @@ OCR_VISION_PROMPT = (
 )
 
 
+def vision_image_mention(img_path):
+    """Build the Claude CLI `@path` image mention for a screenshot.
+
+    The path is quoted because DATA_DIR contains a space ("CC Translate"); an
+    unquoted mention breaks at the space so Claude never sees the file. Uses
+    forward slashes, which the CLI accepts on Windows."""
+    posix_path = str(img_path).replace("\\", "/")
+    return '@"' + posix_path + '"'
+
+
 # (rich-text rendering: iter_rich_segments, highlight_code etc. live in cc_rich.py)
 
 def is_single_word(text):
@@ -1553,9 +1563,17 @@ class TranslatorApp:
     def _call_claude_vision(self, img_path):
         """One-shot Claude call that reads the image via the CLI's `@path`
         reference and returns only the translation. Mirrors _call_claude's
-        subprocess/JSON handling."""
-        posix_path = str(img_path).replace("\\", "/")
-        payload = "@" + posix_path
+        subprocess/JSON handling.
+
+        Two details are essential for the image to actually be read:
+          * The `@path` mention is quoted — DATA_DIR contains a space
+            ("CC Translate"), and an unquoted mention would break at the space,
+            so Claude never sees the file and replies "please share the image".
+          * `--tools ""` disables tools, so the CLI attaches the image as a
+            multimodal content block instead of routing it through the Read
+            tool (which, in safe-mode headless runs, asks for permission and
+            returns a "I need permission to read the file" message)."""
+        payload = vision_image_mention(img_path)
         t0 = time.perf_counter()
         try:
             proc = subprocess.run(
@@ -1563,6 +1581,7 @@ class TranslatorApp:
                  self.cfg[CFG.MODEL],
                  "--system-prompt", OCR_VISION_PROMPT,
                  "--output-format", "json",
+                 "--tools", "",
                  "--no-session-persistence"],
                 input=payload,
                 capture_output=True, text=True, encoding="utf-8",
