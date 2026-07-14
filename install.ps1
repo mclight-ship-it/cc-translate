@@ -1,4 +1,3 @@
-﻿#Requires -Version 5.1
 <#
     CC Translate — one-line installer (Windows).
 
@@ -44,6 +43,18 @@ function Update-SessionPath {
     $npmBin  = Join-Path $env:APPDATA 'npm'
     if (Test-Path $npmBin) { $parts += $npmBin }
     $env:Path = ($parts -join ';')
+}
+
+function Get-NpmCmd {
+    # Invoke npm via its .cmd shim, never the bare `npm` name: PowerShell would
+    # resolve that to npm.ps1, which a default execution policy blocks with
+    # "running scripts is disabled on this system". A .cmd batch file is run by
+    # cmd.exe and isn't subject to the PowerShell execution policy.
+    $c = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    $guess = Join-Path $env:ProgramFiles 'nodejs\npm.cmd'
+    if (Test-Path $guess) { return $guess }
+    return 'npm.cmd'
 }
 
 function Ensure-Winget {
@@ -94,8 +105,9 @@ Good "  ✓ 代码就绪"
 # ---------- 3. Claude Code CLI ----------
 Step 3 "安装 / 升级 Claude Code CLI"
 Warn "  （必须升到最新版：旧版 CLI 的参数不兼容，会导致翻译报错）"
-Invoke-Or-DryRun "npm install -g @anthropic-ai/claude-code@latest" {
-    npm install -g '@anthropic-ai/claude-code@latest'
+$npm = Get-NpmCmd
+Invoke-Or-DryRun "$npm install -g @anthropic-ai/claude-code@latest" {
+    & $npm install -g '@anthropic-ai/claude-code@latest'
 }
 Update-SessionPath
 if ((Have claude) -or $DryRun) { Good "  ✓ Claude CLI 就绪" }
