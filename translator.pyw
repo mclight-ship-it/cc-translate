@@ -186,6 +186,8 @@ LOADING_CORNER_RADIUS = 11
 # physical size on any display.
 CENTERED_POPUP_W = 552
 CENTERED_POPUP_H = 389
+HISTORY_WINDOW_W = 720
+HISTORY_WINDOW_H = 520
 
 # Hotkey handoff: the global keyboard listener runs on its own thread and must
 # never touch Tcl/Tk directly. It drops trigger requests into a queue that the
@@ -2936,17 +2938,15 @@ class TranslatorApp:
     def _is_centered_layout(self):
         return self.cfg.get(CFG.POPUP_LAYOUT, "centered") == "centered"
 
-    def _centered_box(self):
-        """Fixed popup geometry (w, h, x, y) in physical px, centred on the
-        active monitor. Size is a DPI-scaled logical box (~2x the dynamic
-        popup at a 4:3 ratio), clamped to fit the monitor."""
+    def _scaled_centered_box(self, logical_w, logical_h, min_w=280, min_h=150):
+        """Scale a logical window size by DPI and centre it on the active monitor."""
         scale = 1.0
         try:
             scale = self.root.winfo_fpixels("1i") / 96.0
         except Exception:
             pass
-        w = int(CENTERED_POPUP_W * scale)
-        h = int(CENTERED_POPUP_H * scale)
+        w = int(logical_w * scale)
+        h = int(logical_h * scale)
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
@@ -2955,11 +2955,21 @@ class TranslatorApp:
             right = self.root.winfo_screenwidth()
             bottom = self.root.winfo_screenheight()
         mon_w, mon_h = right - left, bottom - top
-        w = max(280, min(w, mon_w - 40))
-        h = max(150, min(h, mon_h - 40))
+        w = max(min_w, min(w, mon_w - 40))
+        h = max(min_h, min(h, mon_h - 40))
         x = left + (mon_w - w) // 2
         y = top + (mon_h - h) // 2
         return w, h, x, y
+
+    def _centered_box(self):
+        """Fixed popup geometry (w, h, x, y) in physical px, centred on the
+        active monitor. Size is a DPI-scaled logical box (~2x the dynamic
+        popup at a 4:3 ratio), clamped to fit the monitor."""
+        return self._scaled_centered_box(CENTERED_POPUP_W, CENTERED_POPUP_H)
+
+    def _history_box(self):
+        """A roomier centred box for the feature-rich history window."""
+        return self._scaled_centered_box(HISTORY_WINDOW_W, HISTORY_WINDOW_H)
 
     def _fit_centered(self, win, message, scroll_end=False):
         """Fill a fixed-size centred popup with text: the window keeps its fixed
@@ -4263,15 +4273,6 @@ class TranslatorApp:
         upd_status.config(text="")
         upd_apply_btn.grid_remove()       # hidden until a version is found
         row_state["value"] += 1
-        diag_btn = self._pill_button(
-            body, "打开诊断", self._open_diagnostics,
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 9), padx=14, pady=3)
-        self._settings_field(
-            body, row_state, "问题排查", diag_btn,
-            bg=bg, fg=fg, font=FONT)
 
         # ---- Footer: status + action buttons ----
         tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16, pady=(4, 0))
@@ -4458,7 +4459,7 @@ class TranslatorApp:
             "detail_head",
             font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
             foreground=theme["rich_heading_fg"], spacing1=2, spacing3=4)
-        return bottom, listbox, detail, search_var, filter_var
+        return bottom, listbox, detail, search, search_var, filter_var
 
     def _populate_history_list(self, listbox, entries):
         for e in entries:
@@ -4482,15 +4483,54 @@ class TranslatorApp:
         detail.config(state="disabled")
 
     def _wire_history_interactions(self, win, listbox, detail, entries,
-                                   bottom, theme, font, search_var, filter_var):
+                                   bottom, theme, font, search, search_var,
+                                   filter_var):
         state = {"all": list(entries), "shown": []}
         kind_by_label = {v: k for k, v in HISTORY_FILTER_LABELS.items()}
+        placeholder = {"on": False}
         status = tk.Label(bottom, text="", bg=theme["settings_bg"],
                           fg=theme["popup_hint"], font=(font, 9))
         status.pack(side="left", padx=(0, 8), pady=(4, 12))
 
         def set_status(text_, colour=None):
             status.config(text=text_, fg=colour or theme["popup_hint"])
+
+        def show_search_placeholder():
+            placeholder["on"] = True
+            search.config(fg=theme["popup_hint"])
+            search_var.set("搜索")
+            try:
+                search.selection_range(0, "end")
+                search.icursor(0)
+            except Exception:
+                pass
+
+        def clear_search_placeholder():
+            if not placeholder["on"]:
+                return
+            placeholder["on"] = False
+            search.config(fg=theme["fg"])
+            search_var.set("")
+
+        def effective_query():
+            return "" if placeholder["on"] else search_var.get()
+
+        def on_search_focus_in(_evt=None):
+            if placeholder["on"]:
+                search.selection_range(0, "end")
+                search.icursor(0)
+
+        def on_search_focus_out(_evt=None):
+            if not search_var.get().strip():
+                show_search_placeholder()
+
+        def on_search_key_press(_evt=None):
+            if placeholder["on"]:
+                clear_search_placeholder()
+
+        def on_search_key_release(_evt=None):
+            if not placeholder["on"] and not search_var.get():
+                show_search_placeholder()
 
         def selected_entry():
             sel = listbox.curselection()
@@ -4512,9 +4552,12 @@ class TranslatorApp:
             self._render_history_detail(detail, entry)
 
         def refresh_list(*_args):
+            if placeholder["on"] and search_var.get() != "搜索":
+                placeholder["on"] = False
+                search.config(fg=theme["fg"])
             current = selected_entry()
             shown = filter_history_entries(
-                state["all"], search_var.get(),
+                state["all"], effective_query(),
                 kind_by_label.get(filter_var.get(), "all"))
             state["shown"] = shown
             listbox.delete(0, "end")
@@ -4526,6 +4569,7 @@ class TranslatorApp:
             idx = shown.index(current) if current in shown else 0
             listbox.selection_set(idx)
             listbox.activate(idx)
+            listbox.see(idx)
             set_status(f"{len(shown)} / {len(state['all'])} 条")
             show_detail()
 
@@ -4580,14 +4624,19 @@ class TranslatorApp:
 
         hist_btn("清空历史", do_clear, danger=True).pack(
             side="right", padx=(0, 16), pady=(4, 12))
-        hist_btn("关闭", win.destroy).pack(side="right", padx=(0, 8), pady=(4, 12))
         hist_btn("重新翻译", rerun_entry).pack(side="right", padx=(0, 8), pady=(4, 12))
         hist_btn("复制双语", copy_bilingual).pack(side="right", padx=(0, 8), pady=(4, 12))
         hist_btn("复制结果", copy_output).pack(side="right", padx=(0, 8), pady=(4, 12))
 
         listbox.bind("<<ListboxSelect>>", show_detail)
+        search.bind("<FocusIn>", on_search_focus_in)
+        search.bind("<Button-1>", on_search_focus_in, add="+")
+        search.bind("<FocusOut>", on_search_focus_out, add="+")
+        search.bind("<KeyPress>", on_search_key_press, add="+")
+        search.bind("<KeyRelease>", on_search_key_release, add="+")
         search_var.trace_add("write", refresh_list)
         filter_var.trace_add("write", refresh_list)
+        show_search_placeholder()
         refresh_list()
         win.bind("<Escape>", lambda e: win.destroy())
 
@@ -4615,19 +4664,20 @@ class TranslatorApp:
         win.attributes("-topmost", True)
         self.history_win = win
 
-        # Same centred placement/size as the settings & result popups, and the
-        # same rounded borderless shell, so the windows feel like one family.
-        w, h, x, y = self._centered_box()
+        # A larger centred card than the result/settings popups, so the richer
+        # history tools (search, filters, copy/rerun actions) still have room.
+        w, h, x, y = self._history_box()
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
         self._build_history_titlebar(
             card, win, bg=bg, border=border, accent=accent, hint=hint,
             font=FONT)
 
         entries = load_history()
-        bottom, listbox, detail, search_var, filter_var = self._build_history_views(
+        bottom, listbox, detail, search, search_var, filter_var = self._build_history_views(
             card, width=w, bg=bg, border=border, theme=t, font=FONT)
         self._wire_history_interactions(
-            win, listbox, detail, entries, bottom, t, FONT, search_var, filter_var)
+            win, listbox, detail, entries, bottom, t, FONT, search, search_var,
+            filter_var)
 
         # ---- Reveal centred, staying above the (topmost) settings window ----
         self._reveal_rounded_window(win, w, h, x, y)
@@ -4676,14 +4726,16 @@ class TranslatorApp:
             self.root.after(0, self.root.destroy)
 
         menu = pystray.Menu(
-            pystray.MenuItem("设置", on_settings, default=True),
             pystray.MenuItem("历史记录", on_history),
             pystray.MenuItem("截图翻译", on_ocr),
-            pystray.MenuItem("检查更新", on_check_update),
-            pystray.MenuItem("诊断", on_diagnostics),
             pystray.MenuItem(
                 lambda item: "恢复翻译" if self.paused else "暂停翻译",
                 on_toggle_pause),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("设置", on_settings, default=True),
+            pystray.MenuItem("诊断", on_diagnostics),
+            pystray.MenuItem("检查更新", on_check_update),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", on_quit),
         )
         self.tray = pystray.Icon(APP_NAME, image, APP_NAME, menu)
