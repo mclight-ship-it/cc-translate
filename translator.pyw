@@ -3510,8 +3510,21 @@ class TranslatorApp:
         # ---- Size & center on the active monitor, then reveal ----
         # The content lives inside a Canvas card inset by the corner radius, so
         # measure the card and pad by the radius on every side.
+        # Reserve room for the worst-case update row before measuring: the
+        # "发现新版本 <sha>" status (right column, col 0) is wider than the plain
+        # labels the panel is otherwise sized for, and the "更新并重启" button
+        # (col 1) only appears after a check. The widest real status is a 7-char
+        # sha; the measured worst case is an all-'b' sha, so use that as the
+        # placeholder. Both are shown here purely so the fixed window width
+        # accounts for them, then reset — the window is still withdrawn, so the
+        # user never sees the placeholder.
+        upd_status.config(text="发现新版本 bbbbbbb")
+        upd_apply_btn.grid()
         win.update_idletasks()
         w = max(outer.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS, 380)
+        upd_status.config(text="")
+        upd_apply_btn.grid_remove()
+        win.update_idletasks()
         h = outer.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
         rect = get_monitor_rect()
         if rect:
