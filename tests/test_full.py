@@ -97,6 +97,7 @@ class TestCFGConstants(unittest.TestCase):
         "MAX_CHARS", "THEME", "POPUP_LAYOUT",
         "HISTORY_ENABLED", "HISTORY_LIMIT",
         "AUTO_UPDATE_ENABLED", "AUTO_UPDATE_HOUR",
+        "OCR_ENGINE", "OCR_HOTKEY_ENABLED",
     }
 
     def test_cfg_has_all_attributes(self):
@@ -680,6 +681,116 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
         self.assertIn("dark", tr.THEME_LABELS)
         self.assertIn("light", tr.THEME_LABELS)
         self.assertIn("system", tr.THEME_LABELS)
+
+
+# ============================================================
+# OCR screenshot translation (cc_ocr pure functions + wiring)
+# ============================================================
+
+import cc_ocr
+
+
+class TestOCRModule(unittest.TestCase):
+    def test_public_api_present(self):
+        for name in ("grab_region", "save_region", "local_ocr_available",
+                     "available_ocr_languages", "ocr_local",
+                     "pick_ocr_result", "set_log_error"):
+            self.assertTrue(hasattr(cc_ocr, name),
+                            f"cc_ocr missing {name}")
+
+    def test_set_log_error_wires_callback(self):
+        captured = {}
+
+        def fake(where, exc):
+            captured["where"] = where
+
+        cc_ocr.set_log_error(fake)
+        try:
+            self.assertIs(cc_ocr._log_error, fake)
+        finally:
+            cc_ocr.set_log_error(cc_ocr._noop_log_error)
+
+    def test_cjk_detection(self):
+        self.assertTrue(cc_ocr._is_cjk("中"))
+        self.assertTrue(cc_ocr._is_cjk("あ"))
+        self.assertFalse(cc_ocr._is_cjk("a"))
+        self.assertFalse(cc_ocr._is_cjk("1"))
+        self.assertEqual(cc_ocr._cjk_count("你好abc世界"), 4)
+        self.assertEqual(cc_ocr._cjk_count("hello"), 0)
+
+    def test_pick_prefers_cjk_engine_when_cjk_present(self):
+        results = [("en-US", "Mixed 123"),
+                   ("zh-Hans-CN", "你好世界 Mixed 123")]
+        self.assertEqual(cc_ocr.pick_ocr_result(results),
+                         "你好世界 Mixed 123")
+
+    def test_pick_prefers_english_when_no_cjk(self):
+        results = [("en-US", "Hello world clean"),
+                   ("zh-Hans-CN", "He llo worl d")]
+        self.assertEqual(cc_ocr.pick_ocr_result(results),
+                         "Hello world clean")
+
+    def test_pick_ignores_empty_and_whitespace(self):
+        self.assertEqual(
+            cc_ocr.pick_ocr_result([("en-US", ""), ("zh-Hans-CN", "   ")]),
+            "")
+
+    def test_pick_returns_empty_for_empty_input(self):
+        self.assertEqual(cc_ocr.pick_ocr_result([]), "")
+
+    def test_pick_most_cjk_wins(self):
+        results = [("zh-Hans-CN", "你好"), ("ja-JP", "你好世界你好")]
+        self.assertEqual(cc_ocr.pick_ocr_result(results), "你好世界你好")
+
+    def test_target_tags_include_english_and_chinese(self):
+        tags = cc_ocr._target_language_tags(["en-US", "zh-Hans-CN"])
+        self.assertIn("en-US", tags)
+        self.assertIn("zh-Hans-CN", tags)
+
+    def test_target_tags_adds_extra_when_available(self):
+        tags = cc_ocr._target_language_tags(
+            ["en-US", "zh-Hans-CN", "ja-JP"], extra_langs=["ja"])
+        self.assertIn("ja-JP", tags)
+
+    def test_target_tags_skips_unavailable_extra(self):
+        tags = cc_ocr._target_language_tags(
+            ["en-US", "zh-Hans-CN"], extra_langs=["ko"])
+        self.assertNotIn("ko", tags)
+        self.assertNotIn("ko-KR", tags)
+
+    def test_target_tags_no_duplicates(self):
+        tags = cc_ocr._target_language_tags(
+            ["en-US", "zh-Hans-CN"], extra_langs=["en", "en-US"])
+        self.assertEqual(len(tags), len(set(tags)))
+
+    def test_target_tags_fallback_to_available(self):
+        tags = cc_ocr._target_language_tags(["fr-FR"])
+        self.assertEqual(tags, ["fr-FR"])
+
+    def test_available_languages_returns_list(self):
+        self.assertIsInstance(cc_ocr.available_ocr_languages(), list)
+
+    def test_local_ocr_available_returns_bool(self):
+        self.assertIsInstance(cc_ocr.local_ocr_available(), bool)
+
+
+class TestOCRIntegrationInApp(unittest.TestCase):
+    def test_ocr_engine_labels_present(self):
+        self.assertIn("claude", tr.OCR_ENGINE_LABELS)
+        self.assertIn("local", tr.OCR_ENGINE_LABELS)
+
+    def test_default_ocr_engine_in_labels(self):
+        self.assertIn(tr.DEFAULT_CONFIG[tr.CFG.OCR_ENGINE],
+                      tr.OCR_ENGINE_LABELS)
+
+    def test_ocr_defaults(self):
+        self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.OCR_ENGINE], "claude")
+        self.assertIsInstance(
+            tr.DEFAULT_CONFIG[tr.CFG.OCR_HOTKEY_ENABLED], bool)
+
+    def test_vision_prompt_is_nonempty_string(self):
+        self.assertIsInstance(tr.OCR_VISION_PROMPT, str)
+        self.assertGreater(len(tr.OCR_VISION_PROMPT), 0)
 
 
 if __name__ == "__main__":
