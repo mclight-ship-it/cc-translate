@@ -148,12 +148,14 @@ CONFIG_PATH = _user_data_path("config.json")
 # then deletes it.
 UPDATE_NOTICE_PATH = os.path.join(DATA_DIR, "update_notice.txt")
 ICON_PATH = os.path.join(APP_DIR, "cc.ico")
-# Adaptive tray icons: two "CC" tile marks. cc-dark.ico is the DARK tile (white
-# mark); cc-light.ico is the LIGHT tile (dark-blue mark). Both are packed from
-# assets/icon-{dark,light}.png by tools/make_icons.py. To stay legible in the
-# system tray we show the *opposite* tile from the taskbar theme (a dark tile on
-# a light taskbar and vice versa) so the icon always contrasts its background.
-# cc.ico (the legacy blue tile) remains the fallback.
+# Adaptive tray icons: two "CC" tile marks. cc-dark.ico is the darker tile (a
+# blue tile with a white mark); cc-light.ico is the lighter tile (white tile
+# with a blue mark). Both are packed from assets/icon-{dark,light}.png by
+# tools/make_icons.py. To stay legible in the system tray we show the *opposite*
+# tile from the taskbar theme (the darker tile on a light taskbar and vice
+# versa) so the icon always contrasts its background. The Start Menu / shortcut
+# launcher also uses cc-dark.ico (see cc_update.py). cc.ico (the legacy blue
+# tile) remains the fallback.
 ICON_PATH_DARK = os.path.join(APP_DIR, "cc-dark.ico")
 ICON_PATH_LIGHT = os.path.join(APP_DIR, "cc-light.ico")
 MIN_POPUP_HEIGHT = 150
