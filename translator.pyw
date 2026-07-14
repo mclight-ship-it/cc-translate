@@ -205,7 +205,7 @@ DIRECTION_MODES = {
     "auto": ("Translate the user's text. If it is Chinese, translate to natural "
              "English; otherwise translate to natural Simplified Chinese."),
 }
-DIRECTION_LABELS = {"auto": "自动"}
+DIRECTION_LABELS = {"auto": "自动（中→英，其他→中）"}
 for _code, (_zh_name, _en_name) in LANGUAGES.items():
     DIRECTION_MODES[f"to_{_code}"] = (
         f"Translate the user's text into natural {_en_name}.")
