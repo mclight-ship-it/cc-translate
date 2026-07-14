@@ -79,7 +79,8 @@ Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relie
 |---|---|
 | `translator.pyw` | Main program |
 | `run.vbs` | Silent launcher (portable, locates `translator.pyw` in the same directory) |
-| `cc.ico` | Tray / shortcut icon |
+| `cc-dark.ico` / `cc-light.ico` | Adaptive tray icons (dark/light taskbar); Start Menu / shortcut uses `cc-dark.ico` |
+| `cc.ico` | Legacy icon (fallback when the themed icons are missing) |
 | `config.json` | User config (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
 | `history.json` | Translation history (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
 

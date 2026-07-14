@@ -44,7 +44,13 @@ LEGACY_STARTUP_VBS = os.path.join(STARTUP_DIR, "QuickTranslate.vbs")
 SCRIPT_PATH = os.path.join(APP_DIR, "translator.pyw")
 PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
 
-ICON_PATH = os.path.join(APP_DIR, "cc.ico")
+# Start Menu / Startup shortcut icon. The Start Menu doesn't adapt to the
+# light/dark theme, so we ship the dark-tile artwork (white CC mark) which
+# reads well on both light and dark Start Menu backgrounds. Falls back to the
+# legacy cc.ico if the themed icon is missing.
+ICON_PATH = os.path.join(APP_DIR, "cc-dark.ico")
+if not os.path.exists(ICON_PATH):
+    ICON_PATH = os.path.join(APP_DIR, "cc.ico")
 
 # ---------------------------------------------------------------------------
 # Git constants + error-log hook

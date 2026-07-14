@@ -76,7 +76,8 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 |---|---|
 | `translator.pyw` | 主程序 |
 | `run.vbs` | 静默启动器（可移植，定位同目录的 translator.pyw） |
-| `cc.ico` | 托盘/快捷方式图标 |
+| `cc-dark.ico` / `cc-light.ico` | 自适应托盘图标（深/浅色任务栏）；开始菜单/快捷方式用 `cc-dark.ico` |
+| `cc.ico` | 旧版图标（图标缺失时的回退） |
 | `config.json` | 用户配置（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
 | `history.json` | 翻译历史（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
 
