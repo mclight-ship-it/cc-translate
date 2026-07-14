@@ -898,6 +898,18 @@ class TestDiagnosticsHelpers(unittest.TestCase):
         })
         self.assertEqual(info["mode"], "custom_endpoint")
 
+    def test_describe_model_routing_without_override(self):
+        note = tr.describe_model_routing("sonnet", "subscription", "")
+        self.assertIn("设置中的模型", note)
+        self.assertIn("正常情况下会使用", note)
+
+    def test_describe_model_routing_with_proxy_override(self):
+        note = tr.describe_model_routing(
+            "sonnet", "agent_maestro", "claude-fable-5")
+        self.assertIn("--model", note)
+        self.assertIn("claude-fable-5", note)
+        self.assertIn("取决于代理/端点实现", note)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

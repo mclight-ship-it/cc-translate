@@ -793,6 +793,18 @@ def infer_claude_backend(env):
     }
 
 
+def describe_model_routing(app_model, backend_mode, backend_model):
+    app_model = (app_model or "").strip() or "未设置"
+    backend_model = (backend_model or "").strip()
+    if backend_model and backend_mode != "subscription":
+        if backend_model == app_model:
+            return ("App 会把设置中的模型作为 `--model` 传给 Claude CLI；当前代理/端点"
+                    "也声明了同名模型。")
+        return ("App 会把设置中的模型作为 `--model` 传给 Claude CLI；但当前代理/端点"
+                f"还声明了模型 `{backend_model}`，最终是否覆写取决于代理/端点实现。")
+    return "当前未检测到代理级模型声明；正常情况下会使用设置中的模型。"
+
+
 def probe_base_url(base_url, timeout=1.5):
     if not base_url:
         return None
@@ -3449,6 +3461,9 @@ class TranslatorApp:
             ps_policy["value"] = f"{type(e).__name__}: {e}"
 
         advice = []
+        app_model = self.cfg.get(CFG.MODEL, "")
+        model_route_note = describe_model_routing(
+            app_model, backend["mode"], backend.get("model"))
         if backend["mode"] == "agent_maestro":
             if endpoint_probe and not endpoint_probe["ok"]:
                 advice.append(
@@ -3464,6 +3479,8 @@ class TranslatorApp:
             advice.append("已检测到订阅登录，但它当前会被 API / 自定义端点配置覆盖。")
         if backend["mode"] == "subscription" and not login["ok"]:
             advice.append("未检测到 Claude 订阅登录。请在终端运行 claude 或 claude.cmd 完成登录。")
+        if backend.get("model") and backend["mode"] != "subscription":
+            advice.append(model_route_note)
         if ps_policy["value"] in ("Restricted", "AllSigned"):
             advice.append(
                 "PowerShell 执行策略较严格；如果手动运行 claude 报脚本被禁用，可改用 "
@@ -3490,6 +3507,8 @@ class TranslatorApp:
             "claude_cli": claude_cli,
             "powershell_policy": ps_policy,
             "endpoint_probe": endpoint_probe,
+            "app_model": app_model,
+            "model_route_note": model_route_note,
             "last_result": {
                 "ok": self._last_result_ok,
                 "title": self._last_result_title,
@@ -3525,13 +3544,15 @@ class TranslatorApp:
             f"- Claude CLI：{snapshot['claude_cli']['version'] or '未知'}",
             f"- 登录状态：{login['summary']}",
             f"- PowerShell 执行策略：{snapshot['powershell_policy']['value'] or '未知'}",
+            f"- 设置中的模型：{snapshot['app_model'] or '未设置'}",
         ]
         if backend.get("model"):
-            lines.append(f"- 自定义模型：{backend['model']}")
+            lines.append(f"- 代理/端点声明模型：{backend['model']}")
         if snapshot["endpoint_probe"] is not None:
             lines.append(f"- 端点连通性：{snapshot['endpoint_probe']['summary']}")
         else:
             lines.append("- 端点连通性：未配置自定义端点（走 CLI 默认链路）")
+        lines.append(f"- 模型说明：{snapshot['model_route_note']}")
         if last_result["ok"] is None:
             lines.append("- 最近一次结果：暂无")
         else:
@@ -4418,14 +4439,21 @@ class TranslatorApp:
         left.pack_propagate(False)
         controls = tk.Frame(left, bg=bg)
         controls.pack(fill="x", padx=(12, 0), pady=(8, 4))
+        search_wrap = tk.Frame(
+            controls, bg=theme["bg"], bd=0, highlightthickness=1,
+            highlightbackground=border)
+        search_wrap.pack(side="left", fill="x", expand=True)
         search_var = tk.StringVar()
         search = tk.Entry(
-            controls, textvariable=search_var,
+            search_wrap, textvariable=search_var,
             bg=theme["bg"], fg=theme["fg"], relief="flat", bd=0,
-            insertbackground=theme["fg"], highlightthickness=1,
-            highlightbackground=border, highlightcolor=theme["accent"],
+            insertbackground=theme["fg"], highlightthickness=0,
             font=(font, 9))
-        search.pack(side="left", fill="x", expand=True, ipady=5)
+        search.pack(side="left", fill="x", expand=True, ipady=5, padx=(8, 0))
+        search_icon = tk.Label(
+            search_wrap, text="⌕", bg=theme["bg"], fg=theme["popup_hint"],
+            font=("Segoe UI Symbol", 10), padx=8)
+        search_icon.pack(side="right")
         filter_var = tk.StringVar(value=HISTORY_FILTER_LABELS["all"])
         filt = ttk.Combobox(
             controls, textvariable=filter_var, state="readonly", width=6,
@@ -4459,7 +4487,8 @@ class TranslatorApp:
             "detail_head",
             font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
             foreground=theme["rich_heading_fg"], spacing1=2, spacing3=4)
-        return bottom, listbox, detail, search, search_var, filter_var
+        return (bottom, listbox, detail, search_wrap, search, search_icon,
+                search_var, filter_var)
 
     def _populate_history_list(self, listbox, entries):
         for e in entries:
@@ -4483,11 +4512,11 @@ class TranslatorApp:
         detail.config(state="disabled")
 
     def _wire_history_interactions(self, win, listbox, detail, entries,
-                                   bottom, theme, font, search, search_var,
-                                   filter_var):
+                                   bottom, theme, font, search_wrap, search,
+                                   search_icon, search_var, filter_var):
         state = {"all": list(entries), "shown": []}
         kind_by_label = {v: k for k, v in HISTORY_FILTER_LABELS.items()}
-        placeholder = {"on": False}
+        icon_visible = {"on": True}
         status = tk.Label(bottom, text="", bg=theme["settings_bg"],
                           fg=theme["popup_hint"], font=(font, 9))
         status.pack(side="left", padx=(0, 8), pady=(4, 12))
@@ -4495,42 +4524,35 @@ class TranslatorApp:
         def set_status(text_, colour=None):
             status.config(text=text_, fg=colour or theme["popup_hint"])
 
-        def show_search_placeholder():
-            placeholder["on"] = True
-            search.config(fg=theme["popup_hint"])
-            search_var.set("搜索")
+        def focus_search(_evt=None):
             try:
-                search.selection_range(0, "end")
-                search.icursor(0)
+                search.focus_force()
             except Exception:
-                pass
+                try:
+                    search.focus_set()
+                except Exception:
+                    pass
 
-        def clear_search_placeholder():
-            if not placeholder["on"]:
+        def show_search_icon():
+            if icon_visible["on"]:
                 return
-            placeholder["on"] = False
-            search.config(fg=theme["fg"])
-            search_var.set("")
+            icon_visible["on"] = True
+            search_icon.pack(side="right")
 
-        def effective_query():
-            return "" if placeholder["on"] else search_var.get()
+        def hide_search_icon():
+            if not icon_visible["on"]:
+                return
+            icon_visible["on"] = False
+            search_icon.pack_forget()
 
         def on_search_focus_in(_evt=None):
-            if placeholder["on"]:
-                search.selection_range(0, "end")
-                search.icursor(0)
+            search_wrap.config(highlightbackground=theme["accent"])
+            hide_search_icon()
 
         def on_search_focus_out(_evt=None):
+            search_wrap.config(highlightbackground=border)
             if not search_var.get().strip():
-                show_search_placeholder()
-
-        def on_search_key_press(_evt=None):
-            if placeholder["on"]:
-                clear_search_placeholder()
-
-        def on_search_key_release(_evt=None):
-            if not placeholder["on"] and not search_var.get():
-                show_search_placeholder()
+                show_search_icon()
 
         def selected_entry():
             sel = listbox.curselection()
@@ -4552,12 +4574,9 @@ class TranslatorApp:
             self._render_history_detail(detail, entry)
 
         def refresh_list(*_args):
-            if placeholder["on"] and search_var.get() != "搜索":
-                placeholder["on"] = False
-                search.config(fg=theme["fg"])
             current = selected_entry()
             shown = filter_history_entries(
-                state["all"], effective_query(),
+                state["all"], search_var.get(),
                 kind_by_label.get(filter_var.get(), "all"))
             state["shown"] = shown
             listbox.delete(0, "end")
@@ -4629,14 +4648,13 @@ class TranslatorApp:
         hist_btn("复制结果", copy_output).pack(side="right", padx=(0, 8), pady=(4, 12))
 
         listbox.bind("<<ListboxSelect>>", show_detail)
+        search_wrap.bind("<Button-1>", focus_search, add="+")
+        search_icon.bind("<Button-1>", focus_search, add="+")
         search.bind("<FocusIn>", on_search_focus_in)
-        search.bind("<Button-1>", on_search_focus_in, add="+")
         search.bind("<FocusOut>", on_search_focus_out, add="+")
-        search.bind("<KeyPress>", on_search_key_press, add="+")
-        search.bind("<KeyRelease>", on_search_key_release, add="+")
         search_var.trace_add("write", refresh_list)
         filter_var.trace_add("write", refresh_list)
-        show_search_placeholder()
+        show_search_icon()
         refresh_list()
         win.bind("<Escape>", lambda e: win.destroy())
 
@@ -4673,11 +4691,12 @@ class TranslatorApp:
             font=FONT)
 
         entries = load_history()
-        bottom, listbox, detail, search, search_var, filter_var = self._build_history_views(
+        (bottom, listbox, detail, search_wrap, search, search_icon,
+         search_var, filter_var) = self._build_history_views(
             card, width=w, bg=bg, border=border, theme=t, font=FONT)
         self._wire_history_interactions(
-            win, listbox, detail, entries, bottom, t, FONT, search, search_var,
-            filter_var)
+            win, listbox, detail, entries, bottom, t, FONT, search_wrap, search,
+            search_icon, search_var, filter_var)
 
         # ---- Reveal centred, staying above the (topmost) settings window ----
         self._reveal_rounded_window(win, w, h, x, y)
