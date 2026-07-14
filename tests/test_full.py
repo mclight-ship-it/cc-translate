@@ -22,6 +22,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from tests._tr import tr
 
@@ -366,6 +367,45 @@ class TestThemeResolution(unittest.TestCase):
         self.assertLess(avg_rgb(dark["bg"]), avg_rgb(light["bg"]))
 
 
+class TestAdaptiveTrayIcon(unittest.TestCase):
+    """The tray icon adapts to the taskbar (light/dark) theme."""
+
+    def test_detect_taskbar_theme_returns_valid(self):
+        self.assertIn(tr.detect_taskbar_theme(), ("light", "dark"))
+
+    def test_icon_files_exist(self):
+        for path in (tr.ICON_PATH_DARK, tr.ICON_PATH_LIGHT):
+            self.assertTrue(os.path.exists(path),
+                            f"missing tray icon file: {path}")
+
+    def test_tray_icon_path_picks_matching_theme(self):
+        # When the theme-specific files exist, each theme maps to its own file.
+        self.assertEqual(tr.tray_icon_path("light"), tr.ICON_PATH_LIGHT)
+        self.assertEqual(tr.tray_icon_path("dark"), tr.ICON_PATH_DARK)
+
+    def test_tray_icon_path_falls_back_to_tile(self):
+        # If the theme-specific file is missing, fall back to cc.ico, else None.
+        real_exists = os.path.exists
+
+        def fake_exists(p):
+            if p in (tr.ICON_PATH_DARK, tr.ICON_PATH_LIGHT):
+                return False
+            return real_exists(p)
+
+        with unittest.mock.patch("os.path.exists", side_effect=fake_exists):
+            expected = tr.ICON_PATH if real_exists(tr.ICON_PATH) else None
+            self.assertEqual(tr.tray_icon_path("light"), expected)
+
+    def test_icon_files_are_valid_multisize_icos(self):
+        from PIL import Image
+        for path in (tr.ICON_PATH_DARK, tr.ICON_PATH_LIGHT):
+            with Image.open(path) as im:
+                self.assertEqual(im.format, "ICO")
+                sizes = im.info.get("sizes", set())
+                self.assertIn((16, 16), sizes)
+                self.assertIn((32, 32), sizes)
+
+
 # ============================================================
 # Direction / language modes
 # ============================================================
@@ -651,7 +691,8 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
     def test_all_module_level_constants_are_accessible(self):
         constants = [
             "APP_NAME", "APP_DIR", "DATA_DIR", "CONFIG_PATH", "HISTORY_PATH",
-            "ICON_PATH", "MIN_POPUP_HEIGHT", "MIN_STREAM_VISIBLE_HEIGHT",
+            "ICON_PATH", "ICON_PATH_DARK", "ICON_PATH_LIGHT",
+            "MIN_POPUP_HEIGHT", "MIN_STREAM_VISIBLE_HEIGHT",
             "LOADING_SPINNER", "POPUP_CORNER_RADIUS", "LOADING_CORNER_RADIUS",
             "CENTERED_POPUP_W", "CENTERED_POPUP_H",
             "TRIGGER_POLL_MS", "TRIGGER_SETTLE_MS", "CLIP_RESTORE_MS",

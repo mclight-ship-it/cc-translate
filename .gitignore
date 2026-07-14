@@ -12,6 +12,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Icon-generator preview scratch (tools/make_icons.py)
+_preview-*.png
+_small-*.png
+_iconpreview.png
+
 # OS
 Thumbs.db
 desktop.ini
