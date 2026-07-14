@@ -4,6 +4,36 @@
 
 A local select-and-translate tool: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI — it reuses your existing Claude subscription, needs no separate API key, and runs entirely on your machine.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/popup-translate.png" alt="Translation popup" width="520"><br>
+  <sub><b>Double-tap Ctrl+C</b> — select text and the translation pops up next to your cursor</sub>
+</p>
+
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-dict.png" alt="Dictionary mode" width="360"><br>
+  <sub><b>Dictionary mode</b>: a single word returns phonetics / part of speech / definitions / examples</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-code.png" alt="Code-explanation mode" width="360"><br>
+  <sub><b>Code-explanation mode</b>: code isn't force-translated — it's explained in plain language</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/settings.png" alt="Settings window" width="420"><br>
+  <sub><b>Settings</b>: a two-column layout — model / direction / theme / OCR / updates at a glance</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/history.png" alt="Translation history" width="420"><br>
+  <sub><b>History</b>: opened from the tray — list on the left, source &amp; result on the right</sub>
+</td>
+</tr>
+</table>
+
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse

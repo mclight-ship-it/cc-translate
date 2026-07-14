@@ -4,6 +4,36 @@
 
 一个本地划词翻译小工具：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 订阅，无需单独的 API key，全部本机运行。
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/screenshots/popup-translate.png" alt="划词翻译弹窗" width="520"><br>
+  <sub><b>双击 Ctrl+C</b> —— 选中文字，鼠标旁立刻弹出译文</sub>
+</p>
+
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-dict.png" alt="词典模式" width="360"><br>
+  <sub><b>词典模式</b>：选中单个单词，返回音标 / 词性 / 释义 / 例句</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-code.png" alt="代码解释模式" width="360"><br>
+  <sub><b>代码解释模式</b>：选中代码不硬翻，用中文讲清它做什么</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/settings.png" alt="设置窗口" width="420"><br>
+  <sub><b>设置</b>：两列布局，模型 / 方向 / 主题 / 截图翻译 / 更新一屏可见</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/history.png" alt="翻译历史" width="420"><br>
+  <sub><b>翻译历史</b>：托盘打开，左侧列表、右侧原文与结果</sub>
+</td>
+</tr>
+</table>
+
 ## 功能
 
 - **双击 Ctrl+C** 翻译剪贴板/选中文字，鼠标旁弹窗显示
