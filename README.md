@@ -58,6 +58,20 @@
 - 一个可登录的 Claude 订阅（Pro/Max）
 - ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
 
+## 快速安装（推荐）
+
+在 **PowerShell** 里跑这一行，脚本会自动装好 git / Python / Node、拉取代码、安装 Claude CLI 与 Python 依赖，并启动程序：
+
+```powershell
+irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
+```
+
+它会自动完成**除登录 Claude 以外**的所有步骤——登录是一次性的浏览器授权，任何脚本都无法代劳。装完后按提示跑一次 `claude` 登录即可（用你现有的 Claude 订阅，不额外收费）。
+
+> 可选环境变量（运行前设置）：`$env:CC_TRANSLATE_DIR` 指定安装目录（默认 `%USERPROFILE%\cc-translate`）；`$env:CC_TRANSLATE_DRYRUN="1"` 先“空跑”一遍，只显示每步会做什么、不做任何改动。
+
+想更透明地手动逐步安装，见下面的[安装（人工步骤）](#安装人工步骤)。
+
 ## 安装（人工步骤）
 
 ```bash
@@ -105,6 +119,7 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 | 文件 | 作用 |
 |---|---|
 | `translator.pyw` | 主程序 |
+| `install.ps1` | 一行命令安装脚本（`irm ... \| iex`） |
 | `run.vbs` | 静默启动器（可移植，定位同目录的 translator.pyw） |
 | `cc-dark.ico` / `cc-light.ico` | 自适应托盘图标（深/浅色任务栏）；开始菜单/快捷方式用 `cc-dark.ico` |
 | `cc.ico` | 旧版图标（图标缺失时的回退） |

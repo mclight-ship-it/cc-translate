@@ -58,6 +58,27 @@ A local select-and-translate tool: **double-tap Ctrl+C** to translate the curren
 - A signed-in Claude subscription (Pro/Max)
 - ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
+## Quick install (recommended)
+
+Run this one line in **PowerShell**. The script installs git / Python / Node as
+needed, clones the repo, installs the Claude CLI and Python dependencies, and
+launches the app:
+
+```powershell
+irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
+```
+
+It automates **everything except logging in to Claude** — that's a one-time
+browser OAuth no script can do for you. When it finishes, run `claude` once to
+sign in (uses your existing Claude subscription, no extra charge).
+
+> Optional environment variables (set before running): `$env:CC_TRANSLATE_DIR`
+> to choose the install location (default `%USERPROFILE%\cc-translate`);
+> `$env:CC_TRANSLATE_DRYRUN="1"` to do a dry run that only prints each step and
+> changes nothing.
+
+Prefer to install step by step? See [Install (manual steps)](#install-manual-steps) below.
+
 ## Install (manual steps)
 
 ```bash
@@ -108,6 +129,7 @@ Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relie
 | File | Purpose |
 |---|---|
 | `translator.pyw` | Main program |
+| `install.ps1` | One-line installer (`irm ... \| iex`) |
 | `run.vbs` | Silent launcher (portable, locates `translator.pyw` in the same directory) |
 | `cc-dark.ico` / `cc-light.ico` | Adaptive tray icons (dark/light taskbar); Start Menu / shortcut uses `cc-dark.ico` |
 | `cc.ico` | Legacy icon (fallback when the themed icons are missing) |
