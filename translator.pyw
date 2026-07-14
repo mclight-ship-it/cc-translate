@@ -3488,10 +3488,23 @@ class TranslatorApp:
             "夜间自动更新", self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
             "检查更新", on_check_update_click,
             bg=bg, fg=fg, font=FONT, theme=t)
-        upd_status.grid(row=row_state["value"], column=0, sticky="w",
-                        pady=(0, 4))
-        upd_apply_btn.grid(row=row_state["value"], column=1, sticky="e",
-                           pady=(0, 4))
+        upd_row = row_state["value"]
+        upd_status.grid(row=upd_row, column=0, sticky="w", pady=(0, 4))
+        upd_apply_btn.grid(row=upd_row, column=1, sticky="e", pady=(0, 4))
+        # Permanently reserve the update row's footprint so revealing the status
+        # text and "更新并重启" button never reflows the right column or shifts the
+        # divider — the panel always looks like the post-check state. Measure the
+        # worst case (widest real status is a 7-char sha; an all-'b' sha is the
+        # measured widest) with the button shown, pin col 0's min width and the
+        # row's min height to it, then reset to the idle (empty / hidden) look.
+        upd_status.config(text="发现新版本 bbbbbbb")
+        right_col.update_idletasks()
+        right_col.grid_columnconfigure(0, minsize=upd_status.winfo_reqwidth())
+        # +4 accounts for the row's pady=(0, 4) bottom padding, which the grid
+        # adds on top of the button's own height.
+        right_col.grid_rowconfigure(
+            upd_row, minsize=upd_apply_btn.winfo_reqheight() + 4)
+        upd_status.config(text="")
         upd_apply_btn.grid_remove()       # hidden until a version is found
         row_state["value"] += 1
 
@@ -3571,22 +3584,11 @@ class TranslatorApp:
 
         # ---- Size & center on the active monitor, then reveal ----
         # The content lives inside a Canvas card inset by the corner radius, so
-        # measure the card and pad by the radius on every side.
-        # Reserve room for the worst-case update row before measuring: the
-        # "发现新版本 <sha>" status (right column, col 0) is wider than the plain
-        # labels the panel is otherwise sized for, and the "更新并重启" button
-        # (col 1) only appears after a check. The widest real status is a 7-char
-        # sha; the measured worst case is an all-'b' sha, so use that as the
-        # placeholder. Both are shown here purely so the fixed window width
-        # accounts for them, then reset — the window is still withdrawn, so the
-        # user never sees the placeholder.
-        upd_status.config(text="发现新版本 bbbbbbb")
-        upd_apply_btn.grid()
+        # measure the card and pad by the radius on every side. The update row's
+        # footprint is already reserved above (col-0 min width + row min height),
+        # so the measured size stays constant whether or not an update is found.
         win.update_idletasks()
         w = max(outer.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS, 380)
-        upd_status.config(text="")
-        upd_apply_btn.grid_remove()
-        win.update_idletasks()
         h = outer.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
         rect = get_monitor_rect()
         if rect:
