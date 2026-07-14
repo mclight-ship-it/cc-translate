@@ -205,7 +205,7 @@ DIRECTION_MODES = {
     "auto": ("Translate the user's text. If it is Chinese, translate to natural "
              "English; otherwise translate to natural Simplified Chinese."),
 }
-DIRECTION_LABELS = {"auto": "自动检测（中→英 / 其他→中）"}
+DIRECTION_LABELS = {"auto": "自动"}
 for _code, (_zh_name, _en_name) in LANGUAGES.items():
     DIRECTION_MODES[f"to_{_code}"] = (
         f"Translate the user's text into natural {_en_name}.")
@@ -3203,7 +3203,7 @@ class TranslatorApp:
         right_col.grid(row=0, column=2, sticky="n", padx=(16, 0))
         for _col in (left_col, right_col):
             _col.grid_columnconfigure(0, weight=1)
-            _col.grid_columnconfigure(1, minsize=170)
+            _col.grid_columnconfigure(1, minsize=140)
         left_state = {"value": 0}
         right_state = {"value": 0}
 
@@ -3217,7 +3217,7 @@ class TranslatorApp:
         self._settings_field(
             body, row_state, "翻译模型",
             ttk.Combobox(
-                body, textvariable=model_var, state="readonly", width=20,
+                body, textvariable=model_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=["haiku", "sonnet", "opus"]),
             bg=bg, fg=fg, font=FONT)
@@ -3228,7 +3228,7 @@ class TranslatorApp:
         self._settings_field(
             body, row_state, "翻译方向",
             ttk.Combobox(
-                body, textvariable=dir_var, state="readonly", width=20,
+                body, textvariable=dir_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(DIRECTION_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
@@ -3241,7 +3241,7 @@ class TranslatorApp:
         self._settings_field(
             body, row_state, "主题",
             ttk.Combobox(
-                body, textvariable=theme_var, state="readonly", width=20,
+                body, textvariable=theme_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(THEME_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
@@ -3253,7 +3253,7 @@ class TranslatorApp:
         self._settings_field(
             body, row_state, "弹窗位置",
             ttk.Combobox(
-                body, textvariable=layout_var, state="readonly", width=20,
+                body, textvariable=layout_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(POPUP_LAYOUT_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
@@ -3263,7 +3263,7 @@ class TranslatorApp:
             body, row_state, "字体大小",
             ttk.Spinbox(
                 body, textvariable=font_var, from_=9, to=24, increment=1,
-                width=18, style="CC.TSpinbox", font=(FONT, 10)),
+                width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 截图翻译 ----
@@ -3277,7 +3277,7 @@ class TranslatorApp:
         self._settings_field(
             body, row_state, "识别引擎",
             ttk.Combobox(
-                body, textvariable=ocr_engine_var, state="readonly", width=20,
+                body, textvariable=ocr_engine_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(OCR_ENGINE_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
@@ -3297,7 +3297,7 @@ class TranslatorApp:
             body, row_state, "双击间隔 (秒)",
             ttk.Spinbox(
                 body, textvariable=gap_var, from_=0.2, to=1.5, increment=0.1,
-                width=18, style="CC.TSpinbox", format="%.1f",
+                width=10, style="CC.TSpinbox", format="%.1f",
                 font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
@@ -3306,7 +3306,7 @@ class TranslatorApp:
             body, row_state, "最大字符数",
             ttk.Spinbox(
                 body, textvariable=max_var, from_=500, to=20000, increment=500,
-                width=18, style="CC.TSpinbox", font=(FONT, 10)),
+                width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
         hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
@@ -3314,7 +3314,7 @@ class TranslatorApp:
             body, row_state, "历史保留条数",
             ttk.Spinbox(
                 body, textvariable=hist_limit_var, from_=20, to=500,
-                increment=20, width=18, style="CC.TSpinbox",
+                increment=20, width=10, style="CC.TSpinbox",
                 font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
