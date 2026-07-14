@@ -360,12 +360,17 @@ def tray_icon_path(taskbar_theme=None):
     return None
 
 
-def resolve_theme(cfg):
-    """Pick the active palette dict based on config ('system'/'dark'/'light')."""
+def resolve_theme_name(cfg):
+    """Return the active theme name ('dark' or 'light') based on config."""
     choice = cfg.get(CFG.THEME, "system")
     if choice not in ("dark", "light"):
         choice = detect_system_theme()
-    return THEMES[choice]
+    return choice
+
+
+def resolve_theme(cfg):
+    """Pick the active palette dict based on config ('system'/'dark'/'light')."""
+    return THEMES[resolve_theme_name(cfg)]
 
 
 THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
@@ -2237,10 +2242,19 @@ class TranslatorApp:
                  pady=(POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM))
 
         title_color = theme["status_err"] if is_error else accent
-        title_lbl = tk.Label(bar, text="●  " + title, bg=popup_bg,
-                             fg=title_color,
+        logo_img = self._logo_image(15)
+        drag_targets = [bar]
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
+                                highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 6))
+            drag_targets.append(logo_lbl)
+        title_lbl = tk.Label(bar, text=title if logo_img else "●  " + title,
+                             bg=popup_bg, fg=title_color,
                              font=("Microsoft YaHei UI", 9, "bold"))
         title_lbl.pack(side="left")
+        drag_targets.append(title_lbl)
 
         def _mk_btn(txt, cmd, danger=False):
             active_bg = (theme["btn_close_active"] if danger
@@ -2270,7 +2284,7 @@ class TranslatorApp:
                      fill="x", padx=POPUP_BAR_PAD_X)
 
         # Dragging the header (but not the buttons) moves the window.
-        self._make_draggable((bar, title_lbl), lambda: self.popup,
+        self._make_draggable(tuple(drag_targets), lambda: self.popup,
                              guard=lambda: self._resize_mode)
 
     def _build_popup_body(self, win, frame, *, popup_bg, is_error, highlight):
@@ -2997,6 +3011,39 @@ class TranslatorApp:
     def open_settings(self):
         self.root.after(0, self._open_settings)
 
+    def _logo_image(self, px, theme_name=None):
+        """Load the app logo as a PhotoImage sized ~px pt (DPI-scaled) for use in
+        window title bars. Picks the tile that contrasts the window background
+        (light theme -> blue cc-dark tile; dark theme -> white cc-light tile) so
+        the badge stays crisp on either background. Cached by (theme, size);
+        keeping the reference here also stops Tk from garbage-collecting it.
+        Returns None if PIL/ImageTk or the icon files are unavailable."""
+        if theme_name is None:
+            theme_name = resolve_theme_name(self.cfg)
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            scale = 1.0
+        size = max(12, round(px * scale))
+        key = (theme_name, size)
+        cache = getattr(self, "_logo_cache", None)
+        if cache is None:
+            cache = self._logo_cache = {}
+        if key in cache:
+            return cache[key]
+        try:
+            from PIL import Image, ImageTk
+            path = ICON_PATH_DARK if theme_name == "light" else ICON_PATH_LIGHT
+            if not os.path.exists(path):
+                path = ICON_PATH
+            with Image.open(path) as im:
+                img = im.convert("RGBA").resize((size, size), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            cache[key] = photo
+            return photo
+        except Exception:
+            return None
+
     def _make_chevron_image(self, color_hex, scale):
         """Draw a thin, modern downward chevron as a PhotoImage for the combobox
         dropdown indicator. Supersampled then downscaled for smooth anti-aliased
@@ -3217,12 +3264,21 @@ class TranslatorApp:
         FONT = "Microsoft YaHei UI"
         outer = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
 
-        # ---- Title bar (draggable, with close button) ----
+        # ---- Title bar (draggable, with logo + close button) ----
         bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
-        title_lbl = tk.Label(bar, text=f"{APP_NAME} 设置", bg=bg,
+        logo_img = self._logo_image(18)
+        drag_targets = [bar]
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 8))
+            drag_targets.append(logo_lbl)
+        title_lbl = tk.Label(bar, text="设置", bg=bg,
                              fg=accent, font=(FONT, 11, "bold"))
         title_lbl.pack(side="left")
+        drag_targets.append(title_lbl)
         close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
                              font=(FONT, 11), cursor="hand2", padx=6)
         close_btn.pack(side="right")
@@ -3231,7 +3287,7 @@ class TranslatorApp:
         close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
 
         # Drag the bar (but not the close button) to move the borderless window.
-        self._make_draggable((bar, title_lbl), win)
+        self._make_draggable(tuple(drag_targets), win)
 
         tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
 
@@ -3554,9 +3610,18 @@ class TranslatorApp:
                                 font):
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
-        title_lbl = tk.Label(bar, text=f"{APP_NAME} 历史记录", bg=bg,
+        logo_img = self._logo_image(18)
+        drag_targets = [bar]
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 8))
+            drag_targets.append(logo_lbl)
+        title_lbl = tk.Label(bar, text="历史记录", bg=bg,
                              fg=accent, font=(font, 11, "bold"))
         title_lbl.pack(side="left")
+        drag_targets.append(title_lbl)
         close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
                              font=(font, 11), cursor="hand2", padx=6)
         close_btn.pack(side="right")
@@ -3564,7 +3629,7 @@ class TranslatorApp:
         close_btn.bind("<Enter>", lambda e: close_btn.config(
             fg=self.theme["status_err"]))
         close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
-        self._make_draggable((bar, title_lbl), win)
+        self._make_draggable(tuple(drag_targets), win)
         tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
     def _build_history_views(self, card, *, width, bg, border, theme, font):
