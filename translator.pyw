@@ -4517,6 +4517,7 @@ class TranslatorApp:
         state = {"all": list(entries), "shown": []}
         kind_by_label = {v: k for k, v in HISTORY_FILTER_LABELS.items()}
         icon_visible = {"on": True}
+        default_border = theme["popup_border"]
         status = tk.Label(bottom, text="", bg=theme["settings_bg"],
                           fg=theme["popup_hint"], font=(font, 9))
         status.pack(side="left", padx=(0, 8), pady=(4, 12))
@@ -4545,14 +4546,44 @@ class TranslatorApp:
             icon_visible["on"] = False
             search_icon.pack_forget()
 
+        def is_search_widget(widget):
+            while widget is not None:
+                if widget in (search_wrap, search, search_icon):
+                    return True
+                widget = getattr(widget, "master", None)
+            return False
+
+        def sync_search_adornment():
+            try:
+                focused = (win.focus_get() == search)
+            except Exception:
+                focused = False
+            has_text = bool(search_var.get().strip())
+            search_wrap.config(
+                highlightbackground=theme["accent"] if focused else default_border)
+            if focused or has_text:
+                hide_search_icon()
+            else:
+                show_search_icon()
+
         def on_search_focus_in(_evt=None):
-            search_wrap.config(highlightbackground=theme["accent"])
-            hide_search_icon()
+            sync_search_adornment()
 
         def on_search_focus_out(_evt=None):
-            search_wrap.config(highlightbackground=border)
+            win.after_idle(sync_search_adornment)
+
+        def on_window_click(evt=None):
+            if evt is not None and is_search_widget(evt.widget):
+                return
             if not search_var.get().strip():
-                show_search_icon()
+                try:
+                    evt.widget.focus_set()
+                except Exception:
+                    try:
+                        win.focus_set()
+                    except Exception:
+                        pass
+            win.after_idle(sync_search_adornment)
 
         def selected_entry():
             sel = listbox.curselection()
@@ -4648,13 +4679,15 @@ class TranslatorApp:
         hist_btn("复制结果", copy_output).pack(side="right", padx=(0, 8), pady=(4, 12))
 
         listbox.bind("<<ListboxSelect>>", show_detail)
+        win.bind("<ButtonPress-1>", on_window_click, add="+")
         search_wrap.bind("<Button-1>", focus_search, add="+")
         search_icon.bind("<Button-1>", focus_search, add="+")
         search.bind("<FocusIn>", on_search_focus_in)
         search.bind("<FocusOut>", on_search_focus_out, add="+")
-        search_var.trace_add("write", refresh_list)
+        search_var.trace_add("write",
+                             lambda *_args: (refresh_list(), sync_search_adornment()))
         filter_var.trace_add("write", refresh_list)
-        show_search_icon()
+        sync_search_adornment()
         refresh_list()
         win.bind("<Escape>", lambda e: win.destroy())
 
