@@ -287,6 +287,12 @@ class TestHistoryIO(unittest.TestCase):
         e = tr.load_history()[0]
         self.assertTrue(e["is_code"])
 
+    def test_add_custom_kind_entry(self):
+        self._use_tmp()
+        tr.add_history("", "截图结果", False, 100, kind="ocr")
+        e = tr.load_history()[0]
+        self.assertEqual(e["kind"], "ocr")
+
     def test_newest_entry_is_first(self):
         self._use_tmp()
         tr.add_history("first", "第一", False, 100)
@@ -847,6 +853,50 @@ class TestOCRIntegrationInApp(unittest.TestCase):
         m = tr.vision_image_mention(r"C:\a\b\img.png")
         self.assertNotIn("\\", m)
         self.assertIn("C:/a/b/img.png", m)
+
+
+class TestHistoryHelpers(unittest.TestCase):
+    def test_history_kind_backcompat_flags(self):
+        self.assertEqual(tr.history_entry_kind({"is_code": True}), "code")
+        self.assertEqual(tr.history_entry_kind({"is_dict": True}), "dict")
+        self.assertEqual(tr.history_entry_kind({}), "text")
+
+    def test_history_tag_uses_ocr_label(self):
+        self.assertEqual(tr.history_entry_tag({"kind": "ocr"}), "图")
+
+    def test_history_preview_falls_back_to_output(self):
+        preview = tr.history_entry_preview(
+            {"input": "", "output": "  Hello   world  "}, limit=5)
+        self.assertEqual(preview, "Hello")
+
+    def test_filter_history_entries_by_kind_and_query(self):
+        entries = [
+            {"input": "hello world", "output": "你好世界", "kind": "text"},
+            {"input": "def f(): pass", "output": "代码说明", "kind": "code"},
+        ]
+        self.assertEqual(len(tr.filter_history_entries(entries, kind="code")), 1)
+        self.assertEqual(len(tr.filter_history_entries(entries, query="HELLO")), 1)
+        self.assertEqual(len(tr.filter_history_entries(entries, query="missing")), 0)
+
+
+class TestDiagnosticsHelpers(unittest.TestCase):
+    def test_infer_backend_defaults_to_subscription(self):
+        info = tr.infer_claude_backend({})
+        self.assertEqual(info["mode"], "subscription")
+
+    def test_infer_backend_detects_agent_maestro(self):
+        info = tr.infer_claude_backend({
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:23333/api/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "Powered by Agent Maestro",
+        })
+        self.assertEqual(info["mode"], "agent_maestro")
+        self.assertEqual(info["label"], "Agent Maestro（本地代理）")
+
+    def test_infer_backend_detects_custom_endpoint(self):
+        info = tr.infer_claude_backend({
+            "ANTHROPIC_BASE_URL": "https://example.com/v1/anthropic",
+        })
+        self.assertEqual(info["mode"], "custom_endpoint")
 
 
 if __name__ == "__main__":
