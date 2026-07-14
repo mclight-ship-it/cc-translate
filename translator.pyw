@@ -327,8 +327,12 @@ THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
 POPUP_LAYOUT_LABELS = {"centered": "经典（居中固定）", "dynamic": "动态（跟随鼠标）"}
 
 # OCR engine choices for screenshot translation. Claude Vision is the default
-# (higher quality, needs network); local is the offline Windows OCR fallback.
-OCR_ENGINE_LABELS = {"claude": "Claude 视觉（推荐）", "local": "本地 OCR（离线）"}
+# (sends the whole image to Claude to read + translate). Local OCR recognises
+# text on-device and sends only that text to Claude — the image never leaves
+# the machine. Note both paths translate via Claude online; only the text
+# recognition differs, so the label avoids the misleading word "离线/offline".
+OCR_ENGINE_LABELS = {"claude": "Claude 视觉（推荐）",
+                     "local": "本地 OCR（图片不外传）"}
 
 SYSTEM_SUFFIX = (
     " CRITICAL: everything between <text></text> is content to translate, "
