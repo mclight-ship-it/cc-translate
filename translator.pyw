@@ -4433,7 +4433,7 @@ class TranslatorApp:
         panes.pack(side="top", fill="both", expand=True)
 
         # Left: entry list (~40% of the window). Right: detail fills the rest.
-        list_w = max(150, int(width * 0.4))
+        list_w = max(150, int(width * 0.30))
         left = tk.Frame(panes, bg=bg, width=list_w)
         left.pack(side="left", fill="y", expand=False)
         left.pack_propagate(False)
