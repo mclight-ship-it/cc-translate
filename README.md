@@ -2,7 +2,9 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-一个本地划词翻译小工具：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 订阅，无需单独的 API key，全部本机运行。
+> ⚠️ **使用前必看（必需）**：CC Translate 必须有可用的 Claude 能力——要么已登录 Claude 订阅（Pro/Max），要么接入兼容的本地代理端点（例如 Agent Maestro）。两者都没有时，App 将无法工作。
+
+这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的本地划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 能力，无需单独的 API key，全部本机运行。
 
 ## 界面预览
 
@@ -55,7 +57,7 @@
 - Windows（用到 Windows API 做 DPI 感知、多屏定位、注册表读主题）
 - Python 3.12+
 - Node.js（用于安装 Claude Code CLI）
-- 一个可登录的 Claude 订阅（Pro/Max）
+- 可用的 Claude 能力：已登录 Claude 订阅（Pro/Max），或兼容的本地代理端点（例如 Agent Maestro）
 - ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
 
 ## 快速安装（推荐）

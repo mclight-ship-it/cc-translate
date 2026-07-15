@@ -425,9 +425,9 @@ POPUP_LAYOUT_LABELS_EN = {"centered": "Classic (Centered)", "dynamic": "Dynamic 
 # (sends the whole image to Claude to read + translate). Local OCR recognises
 # text on-device and sends only that text to Claude. Both translate via Claude
 # online; only the text-recognition step differs.
-OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉（推荐）",
+OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉",
                         "local": "本地 OCR"}
-OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision (Rec.)",
+OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision",
                         "local": "Local OCR"}
 LANGUAGE_LABELS = {"zh_CN": "中文", "en_US": "English"}
 HISTORY_FILTER_LABELS_ZH = {
@@ -2383,7 +2383,11 @@ class TranslatorApp:
                 font=("Microsoft YaHei UI", 9))
             if self._last_input:
                 for code, (zh_name, en_name) in LANGUAGES.items():
-                    lang_name = en_name if i18n.get_language() == "en_US" else zh_name
+                    if i18n.get_language() == "en_US":
+                        lang_name = (i18n.get("result.language_chinese")
+                                     if code == "zh" else en_name)
+                    else:
+                        lang_name = zh_name
                     menu.add_command(
                         label=i18n.get("result.retranslate_to").format(language=lang_name),
                         command=lambda c=code: self._retranslate_to(c))
@@ -4959,7 +4963,7 @@ class TranslatorApp:
 
         menu = pystray.Menu(
             pystray.MenuItem(i18n.get("tray.history"), on_history),
-            pystray.MenuItem(i18n.get("tray.screenshot"), on_ocr),
+            pystray.MenuItem(i18n.get("tray.screenshot_menu"), on_ocr),
             pystray.MenuItem(
                 lambda item: i18n.get("tray.resume") if self.paused else i18n.get("tray.pause"),
                 on_toggle_pause),

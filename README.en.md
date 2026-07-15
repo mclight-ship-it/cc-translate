@@ -2,7 +2,9 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-A local select-and-translate tool: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI — it reuses your existing Claude subscription, needs no separate API key, and runs entirely on your machine.
+> ⚠️ **Required before use:** CC Translate needs working Claude access — either a signed-in Claude subscription (Pro/Max) or a compatible local proxy endpoint (for example, Agent Maestro). Without either one, the app cannot translate and will not function.
+
+An **LLM-powered** local select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI, it reuses your existing Claude capability, needs no separate API key, and runs entirely on your machine.
 
 ## Screenshots
 
@@ -55,7 +57,7 @@ A local select-and-translate tool: **double-tap Ctrl+C** to translate the curren
 - Windows (uses Windows APIs for DPI awareness, multi-monitor positioning, and reading the theme from the registry)
 - Python 3.12+
 - Node.js (used to install the Claude Code CLI)
-- A signed-in Claude subscription (Pro/Max)
+- Working Claude access: either a signed-in Claude subscription (Pro/Max), or a compatible local proxy endpoint (for example, Agent Maestro)
 - ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
 ## Quick install (recommended)
