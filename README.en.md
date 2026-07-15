@@ -4,7 +4,7 @@
 
 > ⚠️ **Required before use:** CC Translate needs working Claude access — either a signed-in Claude subscription (Pro/Max) or a compatible local proxy endpoint (for example, Agent Maestro). Without either one, the app cannot translate and will not function.
 
-An **LLM-powered** local select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI, it reuses your existing Claude capability, needs no separate API key, and runs all UI and interactions locally.
+An **LLM-powered** local select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI, it reuses your existing Claude capability and needs no separate API key.
 
 ## Screenshots
 
