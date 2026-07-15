@@ -862,7 +862,9 @@ class TestHistoryHelpers(unittest.TestCase):
         self.assertEqual(tr.history_entry_kind({}), "text")
 
     def test_history_tag_uses_ocr_label(self):
-        self.assertEqual(tr.history_entry_tag({"kind": "ocr"}), "图")
+        self.assertEqual(
+            tr.history_entry_tag({"kind": "ocr"}),
+            tr.i18n.get("history.tag.ocr"))
 
     def test_history_preview_falls_back_to_output(self):
         preview = tr.history_entry_preview(
@@ -890,7 +892,8 @@ class TestDiagnosticsHelpers(unittest.TestCase):
             "ANTHROPIC_AUTH_TOKEN": "Powered by Agent Maestro",
         })
         self.assertEqual(info["mode"], "agent_maestro")
-        self.assertEqual(info["label"], "Agent Maestro（本地代理）")
+        self.assertEqual(
+            info["label"], tr.i18n.get("diagnostics.backend.agent_maestro"))
 
     def test_infer_backend_detects_custom_endpoint(self):
         info = tr.infer_claude_backend({
@@ -900,15 +903,15 @@ class TestDiagnosticsHelpers(unittest.TestCase):
 
     def test_describe_model_routing_without_override(self):
         note = tr.describe_model_routing("sonnet", "subscription", "")
-        self.assertIn("设置中的模型", note)
-        self.assertIn("正常情况下会使用", note)
+        self.assertEqual(note, tr.i18n.get("diagnostics.routing.no_proxy"))
 
     def test_describe_model_routing_with_proxy_override(self):
         note = tr.describe_model_routing(
             "sonnet", "agent_maestro", "claude-fable-5")
-        self.assertIn("--model", note)
-        self.assertIn("claude-fable-5", note)
-        self.assertIn("取决于代理/端点实现", note)
+        self.assertEqual(
+            note,
+            tr.i18n.get("diagnostics.routing.proxy_override").format(
+                backend_model="claude-fable-5"))
 
 
 if __name__ == "__main__":

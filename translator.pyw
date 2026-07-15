@@ -548,9 +548,9 @@ RESULT_SUMMARY_PROMPT = (
 )
 
 RESULT_ACTION_PROMPTS = {
-    "concise": ("更简洁", RESULT_CONCISE_PROMPT),
-    "formal": ("更正式", RESULT_FORMAL_PROMPT),
-    "summary": ("提炼要点", RESULT_SUMMARY_PROMPT),
+    "concise": ("result.rewrite_casual", RESULT_CONCISE_PROMPT),
+    "formal": ("result.rewrite_formal", RESULT_FORMAL_PROMPT),
+    "summary": ("result.rewrite_summary", RESULT_SUMMARY_PROMPT),
 }
 
 
@@ -766,11 +766,11 @@ def history_entry_kind(entry):
 
 def history_entry_tag(entry):
     return {
-        "text": "译",
-        "dict": "词",
-        "code": "码",
-        "ocr": "图",
-    }.get(history_entry_kind(entry), "译")
+        "text": i18n.get("history.tag.text"),
+        "dict": i18n.get("history.tag.dict"),
+        "code": i18n.get("history.tag.code"),
+        "ocr": i18n.get("history.tag.ocr"),
+    }.get(history_entry_kind(entry), i18n.get("history.tag.text"))
 
 
 def history_entry_preview(entry, limit=24):
@@ -778,7 +778,7 @@ def history_entry_preview(entry, limit=24):
     if not text:
         text = (entry.get("output") or "").strip()
     text = " ".join(text.split())
-    return (text[:limit] if text else "（空白记录）")
+    return (text[:limit] if text else i18n.get("history.preview_empty"))
 
 
 def filter_history_entries(entries, query="", kind="all"):
@@ -807,7 +807,7 @@ def _load_json_object(path):
             data = json.load(f)
         if isinstance(data, dict):
             return data
-        return {"__error__": "JSON 根对象不是对象"}
+        return {"__error__": i18n.get("diagnostics.json_root_not_object")}
     except FileNotFoundError:
         return None
     except Exception as e:
@@ -822,7 +822,7 @@ def _redact_diag_value(name, value):
     if any(k in low for k in ("api_key", "token", "auth")):
         if text.strip() == "Powered by Agent Maestro":
             return text
-        return "[已设置]"
+        return i18n.get("diagnostics.value_set")
     return text
 
 
@@ -840,19 +840,19 @@ def infer_claude_backend(env):
     if base_url:
         if host in ("127.0.0.1", "localhost") and (
                 port == 23333 or "agent maestro" in auth_token.lower()):
-            label = "Agent Maestro（本地代理）"
+            label = i18n.get("diagnostics.backend.agent_maestro")
             mode = "agent_maestro"
         elif host.endswith("anthropic.com"):
-            label = "Anthropic API / 官方端点"
+            label = i18n.get("diagnostics.backend.anthropic_api")
             mode = "anthropic_api"
         else:
-            label = "自定义兼容端点"
+            label = i18n.get("diagnostics.backend.custom_endpoint")
             mode = "custom_endpoint"
     elif api_key or auth_token:
-        label = "API Key / Token 模式"
+        label = i18n.get("diagnostics.backend.api_token")
         mode = "api_token"
     else:
-        label = "官方 Claude CLI / 订阅直连"
+        label = i18n.get("diagnostics.backend.subscription")
         mode = "subscription"
     return {
         "mode": mode,
@@ -867,15 +867,14 @@ def infer_claude_backend(env):
 
 
 def describe_model_routing(app_model, backend_mode, backend_model):
-    app_model = (app_model or "").strip() or "未设置"
+    app_model = (app_model or "").strip() or i18n.get("diagnostics.model_not_set")
     backend_model = (backend_model or "").strip()
     if backend_model and backend_mode != "subscription":
         if backend_model == app_model:
-            return ("App 会把设置中的模型作为 `--model` 传给 Claude CLI；当前代理/端点"
-                    "也声明了同名模型。")
-        return ("App 会把设置中的模型作为 `--model` 传给 Claude CLI；但当前代理/端点"
-                f"还声明了模型 `{backend_model}`，最终是否覆写取决于代理/端点实现。")
-    return "当前未检测到代理级模型声明；正常情况下会使用设置中的模型。"
+            return i18n.get("diagnostics.routing.same_model")
+        return i18n.get("diagnostics.routing.proxy_override").format(
+            backend_model=backend_model)
+    return i18n.get("diagnostics.routing.no_proxy")
 
 
 def probe_base_url(base_url, timeout=1.5):
@@ -884,22 +883,22 @@ def probe_base_url(base_url, timeout=1.5):
     try:
         parsed = urlsplit(base_url)
     except Exception as e:
-        return {"ok": False, "summary": f"端点地址无法解析：{e}"}
+        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.parse_failed").format(error=e)}
     host = parsed.hostname
     if not host:
-        return {"ok": False, "summary": "端点地址缺少主机名"}
+        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.missing_host")}
     port = parsed.port
     if port is None:
         port = 443 if parsed.scheme == "https" else 80 if parsed.scheme == "http" else None
     if port is None:
-        return {"ok": False, "summary": "端点地址缺少端口/协议"}
+        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.missing_port")}
     try:
         with socket.create_connection((host, port), timeout=timeout):
-            return {"ok": True, "summary": f"{host}:{port} 可连接"}
+            return {"ok": True, "summary": i18n.get("diagnostics.endpoint.reachable").format(host=host, port=port)}
     except ConnectionRefusedError:
-        return {"ok": False, "summary": f"{host}:{port} 拒绝连接"}
+        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.refused").format(host=host, port=port)}
     except OSError as e:
-        return {"ok": False, "summary": f"{host}:{port} 不可达：{e}"}
+        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.unreachable").format(host=host, port=port, error=e)}
 
 
 def tail_text_file(path, max_lines=8):
@@ -910,7 +909,8 @@ def tail_text_file(path, max_lines=8):
     except FileNotFoundError:
         return ""
     except Exception as e:
-        return f"读取失败：{type(e).__name__}: {e}"
+        return i18n.get("diagnostics.read_failed").format(
+            error_type=type(e).__name__, error=e)
 
 
 # (autostart / shortcut / git-update helpers live in cc_update.py)
@@ -1362,7 +1362,7 @@ class TranslatorApp:
         stops after reporting availability and never modifies the checkout."""
         if self._update_in_progress:
             if on_status:
-                on_status("更新进行中…", "info")
+                on_status(i18n.get("update.in_progress"), "info")
             return
         self._update_in_progress = True
         threading.Thread(
@@ -1377,31 +1377,31 @@ class TranslatorApp:
         restart = False
         try:
             if not is_git_deploy():
-                report("非 git 部署，无法自动更新", "err")
+                report(i18n.get("update.non_git"), "err")
                 return
             local = local_head()
             remote = remote_head()
             if remote is None:
-                report("检查失败：无法连接远程", "err")
+                report(i18n.get("update.check_failed_remote"), "err")
                 return
             if not update_available(local, remote):
-                report("已是最新 ✓", "ok")
+                report(i18n.get("update.no_update"), "ok")
                 return
 
             # There is a newer commit on the remote.
             if check_only:
-                report(f"发现新版本 {remote[:7]}", "avail")
+                report(i18n.get("update.found_version").format(sha=remote[:7]), "avail")
                 return
 
             # A remote SHA differs — confirm it's a clean fast-forward before
             # changing anything. Fetch, then require HEAD to be an ancestor of
             # the fetched tip (i.e. we're strictly behind, not diverged/ahead).
-            report("正在下载更新…", "info")
+            report(i18n.get("update.downloading"), "info")
             rc, _, err = _git(["fetch", GIT_REMOTE, GIT_BRANCH],
                               timeout=UPDATE_NET_TIMEOUT)
             if rc != 0:
                 log_error("update_fetch", RuntimeError(err or f"rc={rc}"))
-                report("更新失败：下载出错", "err")
+                report(i18n.get("update.download_failed"), "err")
                 return
             ref = f"{GIT_REMOTE}/{GIT_BRANCH}"
             rc, _, _ = _git(
@@ -1409,20 +1409,20 @@ class TranslatorApp:
             if rc != 0:
                 # Local is ahead or has diverged (e.g. the dev machine) — this
                 # is not a plain update, so leave the checkout untouched.
-                report("本地有改动，未自动更新", "err")
+                report(i18n.get("update.local_changes"), "err")
                 return
 
             before = local
             rc, _, err = _git(["merge", "--ff-only", ref], timeout=30)
             if rc != 0:
                 log_error("update_merge", RuntimeError(err or f"rc={rc}"))
-                report("更新失败：合并出错", "err")
+                report(i18n.get("update.merge_failed"), "err")
                 return
 
             # Safety net: the new code must at least compile (and pass tests if
             # present), else roll straight back to where we were.
             if not self._verify_update(before):
-                report("更新有误，已回滚", "err")
+                report(i18n.get("update.rollback"), "err")
                 return
 
             # Leave a breadcrumb so the relaunched instance can confirm success
@@ -1434,11 +1434,11 @@ class TranslatorApp:
             except Exception as e:
                 log_error("update_write_notice", e)
 
-            report("更新完成，正在重启…", "ok")
+            report(i18n.get("update.done_restarting"), "ok")
             restart = True
         except Exception as e:
             log_error("update_worker", e)
-            report("更新失败", "err")
+            report(i18n.get("update.failed"), "err")
         finally:
             self._update_in_progress = False
             if restart:
@@ -1528,7 +1528,10 @@ class TranslatorApp:
             self.root.after(1000, self._show_update_notice_if_any)
             return
         try:
-            msg = f"已更新到 {ver} 并重启" if ver else "已更新并重启"
+            msg = (
+                i18n.get("update.notice_with_version").format(version=ver)
+                if ver else i18n.get("update.notice_no_version")
+            )
             if self.tray is not None:
                 self.tray.notify(msg, APP_NAME)
         except Exception as e:
@@ -1794,7 +1797,7 @@ class TranslatorApp:
         hint = canvas.create_text(
             vw // 2, 30, fill="#e6e9f0",
             font=("Microsoft YaHei UI", 13),
-            text="拖动选择要翻译的区域 · Esc 取消")
+            text=i18n.get("ocr.drag_select_hint"))
 
         state = {"sx": 0, "sy": 0, "rect": None}
 
@@ -1960,10 +1963,10 @@ class TranslatorApp:
                         return True, out
             return False, self._humanize_error(proc.stderr or "")
         except subprocess.TimeoutExpired:
-            return False, "识别超时，请重试。"
+            return False, i18n.get("error.ocr_timeout")
         except Exception as e:
             log_error("call_claude_vision", e)
-            return False, f"出错了：{e}"
+            return False, i18n.get("error.unexpected").format(error=e)
 
     def _system_prompt_for(self, text):
         """Pick the system prompt for the current selection: code explanation
@@ -1984,9 +1987,9 @@ class TranslatorApp:
         if self._last_origin == "ocr":
             return i18n.get("tray.screenshot")
         if self._last_class == "code":
-            return "代码解释"
+            return i18n.get("result.title_code")
         if self._last_input and is_single_word(self._last_input):
-            return "词典"
+            return i18n.get("result.title_dict")
         return i18n.get("result.title")
 
     def _history_kind(self):
@@ -2039,7 +2042,7 @@ class TranslatorApp:
                     return   # streaming handled display + history
             ok, result = self._call_claude(text)
         except Exception as e:
-            ok, result = False, f"出错了：{e}"
+            ok, result = False, i18n.get("error.unexpected").format(error=e)
             log_error("translate", e)
         log_perf("translate_done", {
             "mode": mode,
@@ -2289,23 +2292,23 @@ class TranslatorApp:
             return False, self._humanize_error(proc.stderr or "")
         except subprocess.TimeoutExpired:
             log_perf("oneshot_timeout", {"chars": len(text)})
-            return False, "翻译超时，请重试。"
+            return False, i18n.get("error.translation_timeout")
         except Exception as e:
             log_perf("oneshot_error", {"chars": len(text), "err": str(e)[:160]})
             log_error("call_claude", e)
-            return False, f"出错了：{e}"
+            return False, i18n.get("error.unexpected").format(error=e)
 
     def _humanize_error(self, stderr):
         s = (stderr or "").strip()
         low = s.lower()
         if any(k in low for k in ("not logged in", "authentication",
                                   "unauthorized", "please run", "login")):
-            return "Claude 未登录。请在终端运行 claude 登录后重试。"
+            return i18n.get("error.login_required")
         if "rate limit" in low or "429" in low:
-            return "请求过于频繁，请稍后重试。"
+            return i18n.get("error.rate_limited")
         if not s:
-            return "没有返回结果，请重试。"
-        return f"翻译失败：{s[:200]}"
+            return i18n.get("error.no_result")
+        return i18n.get("error.translation_failed_with_reason").format(error=s[:200])
 
     def _show_result(self, ok, result):
         self._stop_animation()
@@ -2379,16 +2382,18 @@ class TranslatorApp:
                 bd=0, relief="flat",
                 font=("Microsoft YaHei UI", 9))
             if self._last_input:
-                for code, (zh_name, _en) in LANGUAGES.items():
+                for code, (zh_name, en_name) in LANGUAGES.items():
+                    lang_name = en_name if i18n.get_language() == "en_US" else zh_name
                     menu.add_command(
-                        label=f"译成{zh_name}",
+                        label=i18n.get("result.retranslate_to").format(language=lang_name),
                         command=lambda c=code: self._retranslate_to(c))
                 menu.add_separator()
                 menu.add_command(label=i18n.get("result.copy_bilingual"), command=self._copy_bilingual_result)
                 menu.add_separator()
             for mode in ("concise", "formal", "summary"):
+                label_key = RESULT_ACTION_PROMPTS[mode][0]
                 menu.add_command(
-                    label=RESULT_ACTION_PROMPTS[mode][0],
+                    label=i18n.get(label_key),
                     command=lambda m=mode: self._transform_result(m))
             btn = mk(i18n.get("result.actions"), lambda: self._show_result_actions_menu(win))
             btn.pack(side="right", padx=(0, 4))
@@ -2422,7 +2427,9 @@ class TranslatorApp:
         btn = getattr(win, "_actions_btn", None) if win else None
         if btn is not None:
             try:
-                btn.config(text="处理中…", state="disabled", cursor="watch")
+                btn.config(
+                    text=i18n.get("result.processing"), state="disabled",
+                    cursor="watch")
             except Exception:
                 pass
         threading.Thread(
@@ -2433,7 +2440,7 @@ class TranslatorApp:
         try:
             ok, result = self._call_claude(src, prompt)
         except Exception as e:
-            ok, result = False, f"出错了：{e}"
+            ok, result = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(0, lambda: self._apply_retranslation(ok, result, code))
 
     def _apply_retranslation(self, ok, result, code):
@@ -2453,7 +2460,8 @@ class TranslatorApp:
                             is_code=False, kind=self._history_kind())
         if btn is not None:
             try:
-                btn.config(text="操作 ▾", state="normal", cursor="hand2")
+                btn.config(text=i18n.get("result.actions"), state="normal",
+                           cursor="hand2")
             except Exception:
                 pass
 
@@ -2488,7 +2496,10 @@ class TranslatorApp:
         if not result:
             return
         if self._last_input:
-            content = f"原文：\n{self._last_input}\n\n结果：\n{result}"
+            content = (
+                f"{i18n.get('result.source_label')}:\n{self._last_input}\n\n"
+                f"{i18n.get('result.output_label')}:\n{result}"
+            )
         else:
             content = result
         if self._copy_text_content(content):
@@ -2503,7 +2514,8 @@ class TranslatorApp:
         btn = getattr(win, "_actions_btn", None) if win else None
         if btn is not None:
             try:
-                btn.config(text=item[0] + "…", state="disabled", cursor="watch")
+                btn.config(text=i18n.get(item[0]) + "…", state="disabled",
+                           cursor="watch")
             except Exception:
                 pass
         threading.Thread(target=self._do_transform_result,
@@ -2514,7 +2526,7 @@ class TranslatorApp:
         try:
             ok, result = self._call_claude(current, prompt)
         except Exception as e:
-            ok, result = False, f"出错了：{e}"
+            ok, result = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(0, lambda: self._apply_result_transform(ok, result))
 
     def _apply_result_transform(self, ok, result):
@@ -2563,7 +2575,7 @@ class TranslatorApp:
         try:
             ok, explanation = self._call_claude(src, CODE_EXPLAIN_APPEND_PROMPT)
         except Exception as e:
-            ok, explanation = False, f"出错了：{e}"
+            ok, explanation = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(
             0, lambda: self._append_code_explanation(ok, base, explanation))
 
@@ -2575,12 +2587,13 @@ class TranslatorApp:
         if not ok:
             if btn is not None:
                 try:
-                    btn.config(text="解释代码", state="normal", cursor="hand2")
+                    btn.config(text=i18n.get("result.explain"), state="normal",
+                               cursor="hand2")
                 except Exception:
                     pass
-            explanation = explanation or "代码解释失败，请重试。"
+            explanation = explanation or i18n.get("result.explain_failed")
             return
-        divider = "\n\n────────  代码解释  ────────\n\n"
+        divider = i18n.get("result.explain_divider")
         combined = base + divider + explanation
         # Final frame: highlight code blocks in the combined result.
         if getattr(win._text, "_rich", False):
@@ -2590,7 +2603,8 @@ class TranslatorApp:
         self._remember_result(True, self._result_title(True), combined)
         if btn is not None:
             try:
-                btn.config(text="已解释", state="disabled", cursor="arrow")
+                btn.config(text=i18n.get("result.explained"), state="disabled",
+                           cursor="arrow")
             except Exception:
                 pass
 
@@ -2628,9 +2642,10 @@ class TranslatorApp:
 
         hint = tk.Label(
             row,
-            text=("解释中" if self._last_class == "code"
-                  else "截图翻译中" if self._last_origin == "ocr"
-                  else "翻译中"),
+            text=(i18n.get("result.explaining") if self._last_class == "code"
+                  else i18n.get("result.processing_screenshot")
+                  if self._last_origin == "ocr"
+                  else i18n.get("result.processing")),
             bg=popup_bg,
             fg=popup_hint,
             font=("Microsoft YaHei UI", 10),
@@ -2698,13 +2713,13 @@ class TranslatorApp:
 
         close_btn = _mk_btn("✕", self._destroy_popup, danger=True)
         close_btn.pack(side="right")
-        copy_btn = _mk_btn("复制", self._copy_result)
+        copy_btn = _mk_btn(i18n.get("result.copy"), self._copy_result)
         copy_btn.pack(side="right", padx=(0, 4))
         win._copy_btn = copy_btn
         win._btn_bar = bar
         win._mk_bar_btn = _mk_btn
         if is_error:
-            retry_btn = _mk_btn("重试", self._retry)
+            retry_btn = _mk_btn(i18n.get("result.retranslate"), self._retry)
             retry_btn.pack(side="right", padx=(0, 4))
 
         tk.Frame(header, bg=popup_border, height=1,
@@ -2778,7 +2793,7 @@ class TranslatorApp:
         win.bind("<ButtonRelease-1>", self._popup_release)
         win.bind("<Escape>", lambda e: self._destroy_popup())
 
-    def _make_popup(self, message, anchor=None, is_error=False, title="译文",
+    def _make_popup(self, message, anchor=None, is_error=False, title=None,
                     highlight=False):
         t = self.theme
         win = tk.Toplevel(self.root)
@@ -2801,7 +2816,8 @@ class TranslatorApp:
         frame.pack(fill="both", expand=True,
                    padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
         self._build_popup_header(
-            win, frame, title=title, is_error=is_error, popup_bg=popup_bg,
+            win, frame, title=(title or i18n.get("result.title")),
+            is_error=is_error, popup_bg=popup_bg,
             popup_border=popup_border, hint=hint, accent=accent, theme=t)
         self._build_popup_body(
             win, frame, popup_bg=popup_bg, is_error=is_error,
@@ -3452,11 +3468,13 @@ class TranslatorApp:
     def _diagnostics_settings_paths(self):
         home = os.path.expanduser("~")
         return [
-            ("用户级 settings.json", os.path.join(home, ".claude", "settings.json")),
-            ("用户级 settings.local.json",
+            (i18n.get("diagnostics.settings.user_json"),
+             os.path.join(home, ".claude", "settings.json")),
+            (i18n.get("diagnostics.settings.user_local_json"),
              os.path.join(home, ".claude", "settings.local.json")),
-            ("应用目录 settings.json", os.path.join(APP_DIR, ".claude", "settings.json")),
-            ("应用目录 settings.local.json",
+            (i18n.get("diagnostics.settings.app_json"),
+             os.path.join(APP_DIR, ".claude", "settings.json")),
+            (i18n.get("diagnostics.settings.app_local_json"),
              os.path.join(APP_DIR, ".claude", "settings.local.json")),
         ]
 
@@ -3498,21 +3516,21 @@ class TranslatorApp:
         login = {
             "path": claude_meta_path,
             "exists": os.path.exists(claude_meta_path),
-            "summary": "未检测到订阅登录",
+            "summary": i18n.get("diagnostics.login.not_detected"),
             "ok": False,
             "error": "",
         }
         if isinstance(claude_meta, dict):
             if "__error__" in claude_meta:
-                login["summary"] = "登录元数据读取失败"
+                login["summary"] = i18n.get("diagnostics.login.meta_read_failed")
                 login["error"] = claude_meta["__error__"]
             elif claude_meta.get("userID") and claude_meta.get("hasCompletedOnboarding"):
-                login["summary"] = "订阅登录已完成"
+                login["summary"] = i18n.get("diagnostics.login.complete")
                 login["ok"] = True
             elif claude_meta.get("userID"):
-                login["summary"] = "检测到账号，但登录未完成"
+                login["summary"] = i18n.get("diagnostics.login.account_incomplete")
         elif claude_meta is None:
-            login["summary"] = "未找到订阅登录元数据"
+            login["summary"] = i18n.get("diagnostics.login.meta_missing")
 
         resolved_cmd = CLAUDE_CMD if os.path.isabs(CLAUDE_CMD) else (
             shutil.which(CLAUDE_CMD) or CLAUDE_CMD)
@@ -3530,7 +3548,8 @@ class TranslatorApp:
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             out = (proc.stdout or proc.stderr or "").strip()
-            claude_cli["version"] = out or f"退出码 {proc.returncode}"
+            claude_cli["version"] = out or i18n.get("diagnostics.exit_code").format(
+                code=proc.returncode)
             claude_cli["ok"] = (proc.returncode == 0)
         except Exception as e:
             claude_cli["version"] = f"{type(e).__name__}: {e}"
@@ -3554,29 +3573,23 @@ class TranslatorApp:
             app_model, backend["mode"], backend.get("model"))
         if backend["mode"] == "agent_maestro":
             if endpoint_probe and not endpoint_probe["ok"]:
-                advice.append(
-                    "检测到 Agent Maestro 本地代理，但对应端口当前不可连接。请先启动 "
-                    "VS Code / Agent Maestro，或移除 ~/.claude/settings.json 里的代理配置。")
+                advice.append(i18n.get("diagnostics.advice.agent_unreachable"))
             else:
-                advice.append(
-                    "当前翻译走 Agent Maestro 本地代理；如果 VS Code / Agent Maestro "
-                    "没有运行，翻译可能会失败。")
+                advice.append(i18n.get("diagnostics.advice.agent_maybe_down"))
         elif backend["mode"] in ("custom_endpoint", "api_token", "anthropic_api"):
-            advice.append("当前运行不是订阅直连，而是 API / 自定义端点模式。")
+            advice.append(i18n.get("diagnostics.advice.api_mode"))
         if backend["mode"] != "subscription" and login["ok"]:
-            advice.append("已检测到订阅登录，但它当前会被 API / 自定义端点配置覆盖。")
+            advice.append(i18n.get("diagnostics.advice.login_overridden"))
         if backend["mode"] == "subscription" and not login["ok"]:
-            advice.append("未检测到 Claude 订阅登录。请在终端运行 claude 或 claude.cmd 完成登录。")
+            advice.append(i18n.get("diagnostics.advice.login_missing"))
         if backend.get("model") and backend["mode"] != "subscription":
             advice.append(model_route_note)
         if ps_policy["value"] in ("Restricted", "AllSigned"):
-            advice.append(
-                "PowerShell 执行策略较严格；如果手动运行 claude 报脚本被禁用，可改用 "
-                "claude.cmd，或执行 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned。")
+            advice.append(i18n.get("diagnostics.advice.ps_policy"))
         if not claude_cli["ok"]:
-            advice.append("claude CLI 调用失败；请检查 CLI 安装、PATH 或 npm 全局命令。")
+            advice.append(i18n.get("diagnostics.advice.cli_failed"))
         if not advice:
-            advice.append("未发现明显异常。当前环境看起来基本正常。")
+            advice.append(i18n.get("diagnostics.advice.no_obvious_issue"))
 
         return {
             "app": {
@@ -3610,13 +3623,15 @@ class TranslatorApp:
 
     def _diagnostics_summary_text(self, snapshot):
         backend = snapshot["backend"]["label"]
-        cli = "CLI 正常" if snapshot["claude_cli"]["ok"] else "CLI 异常"
+        cli = (i18n.get("diagnostics.summary.cli_ok")
+               if snapshot["claude_cli"]["ok"]
+               else i18n.get("diagnostics.summary.cli_bad"))
         if snapshot["endpoint_probe"] is not None:
             conn = snapshot["endpoint_probe"]["summary"]
         elif snapshot["login"]["ok"] or snapshot["backend"]["mode"] != "subscription":
-            conn = "链路已配置"
+            conn = i18n.get("diagnostics.summary.link_ready")
         else:
-            conn = "待登录"
+            conn = i18n.get("diagnostics.summary.pending_login")
         return f"{backend} · {cli} · {conn}"
 
     def _format_diagnostics_report(self, snapshot):
@@ -3625,71 +3640,89 @@ class TranslatorApp:
         app = snapshot["app"]
         last_result = snapshot["last_result"]
         lines = [
-            "【概览】",
-            f"- 版本：{app['version']}",
-            f"- Git 部署：{'是' if app['git_deploy'] else '否'}",
-            f"- 当前后端：{backend['label']}",
-            f"- Claude CLI：{snapshot['claude_cli']['version'] or '未知'}",
-            f"- 登录状态：{login['summary']}",
-            f"- PowerShell 执行策略：{snapshot['powershell_policy']['value'] or '未知'}",
-            f"- 设置中的模型：{snapshot['app_model'] or '未设置'}",
+            i18n.get("diagnostics.overview"),
+            f"- {i18n.get('diagnostics.version')}: {app['version']}",
+            f"- {i18n.get('diagnostics.git_deployed')}: "
+            f"{i18n.get('diagnostics.yes') if app['git_deploy'] else i18n.get('diagnostics.no')}",
+            f"- {i18n.get('diagnostics.backend')}: {backend['label']}",
+            f"- {i18n.get('diagnostics.cli_version')}: "
+            f"{snapshot['claude_cli']['version'] or i18n.get('diagnostics.unknown')}",
+            f"- {i18n.get('diagnostics.login_status')}: {login['summary']}",
+            f"- {i18n.get('diagnostics.powershell_policy')}: "
+            f"{snapshot['powershell_policy']['value'] or i18n.get('diagnostics.unknown')}",
+            f"- {i18n.get('diagnostics.custom_model')}: "
+            f"{snapshot['app_model'] or i18n.get('diagnostics.model_not_set')}",
         ]
         if backend.get("model"):
-            lines.append(f"- 代理/端点声明模型：{backend['model']}")
+            lines.append(f"- {i18n.get('model.routing_proxy')}: {backend['model']}")
         if snapshot["endpoint_probe"] is not None:
-            lines.append(f"- 端点连通性：{snapshot['endpoint_probe']['summary']}")
-        else:
-            lines.append("- 端点连通性：未配置自定义端点（走 CLI 默认链路）")
-        lines.append(f"- 模型说明：{snapshot['model_route_note']}")
-        if last_result["ok"] is None:
-            lines.append("- 最近一次结果：暂无")
-        else:
-            state = "成功" if last_result["ok"] else "失败"
-            preview = last_result["preview"] or "（无预览）"
             lines.append(
-                f"- 最近一次结果：{state} · {last_result['title'] or '未知类型'} · {preview}")
+                f"- {i18n.get('diagnostics.endpoint_connectivity')}: "
+                f"{snapshot['endpoint_probe']['summary']}"
+            )
+        else:
+            lines.append(
+                f"- {i18n.get('diagnostics.endpoint_connectivity')}: "
+                f"{i18n.get('diagnostics.endpoint.not_configured')}"
+            )
+        lines.append(f"- {i18n.get('model.routing_note')}: {snapshot['model_route_note']}")
+        if last_result["ok"] is None:
+            lines.append(
+                f"- {i18n.get('diagnostics.last_result')}: {i18n.get('diagnostics.last.none')}"
+            )
+        else:
+            state = (i18n.get("diagnostics.last.success")
+                     if last_result["ok"]
+                     else i18n.get("diagnostics.last.failed"))
+            preview = last_result["preview"] or i18n.get("diagnostics.last.no_preview")
+            lines.append(
+                f"- {i18n.get('diagnostics.last_result')}: {state} · "
+                f"{last_result['title'] or i18n.get('diagnostics.last.unknown_type')} · {preview}")
 
-        lines.extend(["", "【建议】"])
+        lines.extend(["", i18n.get("diagnostics.section.advice")])
         for item in snapshot["advice"]:
             lines.append(f"- {item}")
 
         lines.extend([
-            "", "【关键路径】",
+            "", i18n.get("diagnostics.section.paths"),
             f"- APP_DIR = {app['app_dir']}",
             f"- DATA_DIR = {app['data_dir']}",
             f"- CONFIG_PATH = {app['config_path']}",
             f"- HISTORY_PATH = {app['history_path']}",
-            f"- 工作目录 = {app['cwd']}",
+            f"- {i18n.get('diagnostics.path.work_dir')} = {app['cwd']}",
             f"- CLAUDE_CMD = {snapshot['claude_cli']['resolved']}",
-            f"- 登录元数据 = {login['path']}",
+            f"- {i18n.get('diagnostics.path.login_meta')} = {login['path']}",
         ])
 
-        lines.extend(["", "【进程环境变量】"])
+        lines.extend(["", i18n.get("diagnostics.section.env")])
         if snapshot["runtime_env"]:
             for key in sorted(snapshot["runtime_env"]):
                 val = _redact_diag_value(key, snapshot["runtime_env"][key])
                 lines.append(f"- {key} = {val}")
         else:
-            lines.append("- （未检测到相关环境变量）")
+            lines.append(f"- {i18n.get('diagnostics.env.none')}")
 
-        lines.extend(["", "【Claude 配置文件】"])
+        lines.extend(["", i18n.get("diagnostics.section.configs")])
         for src in snapshot["settings_sources"]:
             if not src["exists"]:
-                lines.append(f"- {src['label']}：不存在")
+                lines.append(
+                    f"- {src['label']}: {i18n.get('diagnostics.config.missing')}")
                 continue
             data = src["data"]
             if isinstance(data, dict) and "__error__" in data:
-                lines.append(f"- {src['label']}：读取失败（{data['__error__']}）")
+                lines.append(
+                    f"- {src['label']}: "
+                    f"{i18n.get('diagnostics.config.read_failed').format(error=data['__error__'])}")
                 continue
-            lines.append(f"- {src['label']}：{src['path']}")
+            lines.append(f"- {src['label']}: {src['path']}")
             if src["env"]:
                 for key in sorted(src["env"]):
                     lines.append(f"    - {key} = {_redact_diag_value(key, src['env'][key])}")
             else:
-                lines.append("    - 未设置 env 覆盖")
+                lines.append(f"    - {i18n.get('diagnostics.config.no_env_override')}")
 
-        lines.extend(["", "【最近错误日志】"])
-        lines.append(snapshot["recent_errors"] or "（error.log 暂无内容）")
+        lines.extend(["", i18n.get("diagnostics.section.recent_errors")])
+        lines.append(snapshot["recent_errors"] or i18n.get("diagnostics.error_log.empty"))
         return "\n".join(lines)
 
     def _apply_diagnostics_report(self, win, summary_text, report):
@@ -3711,7 +3744,9 @@ class TranslatorApp:
             text.config(state="disabled")
         win._diag_report = report
         if refresh_btn is not None:
-            refresh_btn.config(state="normal", cursor="hand2", text="重新检测")
+            refresh_btn.config(
+                state="normal", cursor="hand2",
+                text=i18n.get("diagnostics.redetect"))
         if copy_btn is not None:
             copy_btn.config(state="normal", cursor="hand2")
 
@@ -3751,7 +3786,11 @@ class TranslatorApp:
                     self._format_diagnostics_report(snapshot),
                 ))
             except Exception as e:
-                result_q.put(("诊断失败", f"诊断失败：{type(e).__name__}: {e}"))
+                result_q.put((
+                    i18n.get("diagnostics.redetect_failed_title"),
+                    i18n.get("diagnostics.redetect_failed_detail").format(
+                        error_type=type(e).__name__, error=e),
+                ))
 
         def poll():
             try:
@@ -4398,9 +4437,9 @@ class TranslatorApp:
         # worst case (widest real status is a 7-char sha; an all-'b' sha is the
         # measured widest) with the button shown, pin col 0's min width and the
         # row's min height to it, then reset to the idle (empty / hidden) look.
-        # Keep this calibration text locale-independent so the settings width
-        # stays stable across languages.
-        upd_status.config(text="发现新版本 bbbbbbb")
+        # Use a representative "new version" status sample to reserve enough
+        # width for the real check result.
+        upd_status.config(text=i18n.get("update.found_version").format(sha="bbbbbbb"))
         right_col.update_idletasks()
         right_col.grid_columnconfigure(0, minsize=upd_status.winfo_reqwidth())
         # +4 accounts for the row's pady=(0, 4) bottom padding, which the grid
@@ -4634,9 +4673,9 @@ class TranslatorApp:
         detail.delete("1.0", "end")
         # Source stays literal (it may be code the user selected); the result is
         # rendered with the rich markdown-lite tags.
-        detail.insert("end", "【原文】\n", "detail_head")
+        detail.insert("end", f"{i18n.get('result.source_label')}\n", "detail_head")
         detail.insert("end", (entry.get("input", "") or "") + "\n\n")
-        detail.insert("end", "【结果】\n", "detail_head")
+        detail.insert("end", f"{i18n.get('result.output_label')}\n", "detail_head")
         for chunk, tag in iter_rich_segments(entry.get("output", "") or "",
                                              highlight=True):
             if tag:
@@ -4733,7 +4772,7 @@ class TranslatorApp:
             if entry is None:
                 detail.config(state="normal")
                 detail.delete("1.0", "end")
-                detail.insert("1.0", "没有匹配的历史记录。")
+                detail.insert("1.0", i18n.get("history.no_match"))
                 detail.config(state="disabled")
                 return
             self._render_history_detail(detail, entry)
@@ -4747,30 +4786,31 @@ class TranslatorApp:
             listbox.delete(0, "end")
             self._populate_history_list(listbox, shown)
             if not shown:
-                set_status("0 条匹配")
+                set_status(i18n.get("history.matches_zero"))
                 show_detail()
                 return
             idx = shown.index(current) if current in shown else 0
             listbox.selection_set(idx)
             listbox.activate(idx)
             listbox.see(idx)
-            set_status(f"{len(shown)} / {len(state['all'])} 条")
+            set_status(i18n.get("history.matches_count").format(
+                shown=len(shown), total=len(state["all"])))
             show_detail()
 
         def do_clear():
             clear_history()
             state["all"].clear()
             refresh_list()
-            set_status("历史已清空", theme["status_ok"])
+            set_status(i18n.get("history.cleared"), theme["status_ok"])
 
         def copy_output():
             entry = selected_entry()
             if entry is None:
                 return
             if self._copy_text_content(entry.get("output", "")):
-                set_status("已复制结果", theme["status_ok"])
+                set_status(i18n.get("history.copied_result"), theme["status_ok"])
             else:
-                set_status("复制失败", theme["status_err"])
+                set_status(i18n.get("history.copy_failed"), theme["status_err"])
 
         def copy_bilingual():
             entry = selected_entry()
@@ -4778,11 +4818,14 @@ class TranslatorApp:
                 return
             source = (entry.get("input") or "").strip()
             output = (entry.get("output") or "").strip()
-            payload = output if not source else f"原文：\n{source}\n\n结果：\n{output}"
+            payload = output if not source else (
+                f"{i18n.get('result.source_label')}:\n{source}\n\n"
+                f"{i18n.get('result.output_label')}:\n{output}"
+            )
             if self._copy_text_content(payload):
-                set_status("已复制双语", theme["status_ok"])
+                set_status(i18n.get("history.copied_bilingual"), theme["status_ok"])
             else:
-                set_status("复制失败", theme["status_err"])
+                set_status(i18n.get("history.copy_failed"), theme["status_err"])
 
         def rerun_entry():
             entry = selected_entry()
@@ -4790,7 +4833,7 @@ class TranslatorApp:
                 return
             src = (entry.get("input") or "").strip()
             if not src:
-                set_status("这条记录没有可重译的原文", theme["status_err"])
+                set_status(i18n.get("history.no_source"), theme["status_err"])
                 return
             origin = "ocr" if history_entry_kind(entry) == "ocr" else "text"
             win.destroy()
@@ -4806,11 +4849,14 @@ class TranslatorApp:
                 active_bg=hover, active_fg=hover_fg,
                 font=(font, 9), padx=14, pady=6)
 
-        hist_btn("清空历史", do_clear, danger=True).pack(
+        hist_btn(i18n.get("history.clear"), do_clear, danger=True).pack(
             side="right", padx=(0, 16), pady=(4, 12))
-        hist_btn("重新翻译", rerun_entry).pack(side="right", padx=(0, 8), pady=(4, 12))
-        hist_btn("复制双语", copy_bilingual).pack(side="right", padx=(0, 8), pady=(4, 12))
-        hist_btn("复制结果", copy_output).pack(side="right", padx=(0, 8), pady=(4, 12))
+        hist_btn(i18n.get("history.rerun"), rerun_entry).pack(
+            side="right", padx=(0, 8), pady=(4, 12))
+        hist_btn(i18n.get("history.copy_bilingual"), copy_bilingual).pack(
+            side="right", padx=(0, 8), pady=(4, 12))
+        hist_btn(i18n.get("history.copy_result"), copy_output).pack(
+            side="right", padx=(0, 8), pady=(4, 12))
 
         listbox.bind("<<ListboxSelect>>", show_detail)
         win.bind("<ButtonPress-1>", on_window_click, add="+")
