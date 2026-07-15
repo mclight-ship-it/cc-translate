@@ -4,7 +4,7 @@
 
 > ⚠️ **使用前必看（必需）**：CC Translate 必须有可用的 Claude 能力——要么已登录 Claude 订阅（Pro/Max），要么接入兼容的本地代理端点（例如 Agent Maestro）。两者都没有时，App 将无法工作。
 
-这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的本地划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 能力，无需单独的 API key，全部本机运行。
+这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的本地划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 能力，无需单独的 API key，UI 和交互在本机完全进行。
 
 ## 界面预览
 
