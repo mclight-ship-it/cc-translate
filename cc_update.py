@@ -33,6 +33,8 @@ import time
 # ---------------------------------------------------------------------------
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
+VERSION_MAJOR = 2
+VERSION_MINOR = 1
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
@@ -115,6 +117,16 @@ def _local_commit_date():
     return out if rc == 0 and out else None
 
 
+def _local_commit_count():
+    rc, out, _ = _git(["rev-list", "--count", "HEAD"], timeout=8)
+    if rc != 0 or not out:
+        return None
+    try:
+        return int(out.strip())
+    except Exception:
+        return None
+
+
 def remote_head():
     """Latest commit SHA on the remote branch via ``ls-remote`` (cheap; touches
     no local refs and writes no files). Returns None on any failure."""
@@ -145,8 +157,29 @@ def _format_version(short_sha, date):
     return f"{short_sha} · {date}" if date else short_sha
 
 
+def _format_numeric_version(build):
+    """Numeric app version label, e.g. ``2.1.347``."""
+    try:
+        n = int(build)
+    except Exception:
+        n = 0
+    if n < 0:
+        n = 0
+    return f"{VERSION_MAJOR}.{VERSION_MINOR}.{n}"
+
+
 def version_string():
-    return _format_version(_local_head_short(), _local_commit_date())
+    # Prefer a monotonic numeric version users can read at a glance.
+    count = _local_commit_count()
+    if count is not None:
+        return _format_numeric_version(count)
+
+    # Fallback for non-git environments: still keep a numeric-looking version.
+    date = _local_commit_date()
+    if date:
+        compact = date.replace("-", "")
+        return f"{VERSION_MAJOR}.{VERSION_MINOR}.{compact}"
+    return _format_numeric_version(0)
 
 
 # ---------------------------------------------------------------------------
