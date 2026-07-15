@@ -148,8 +148,16 @@ else { Warn "  ⚠ 装完仍找不到 claude——请确认 npm 全局目录（%
 
 # ---------- 4. python deps ----------
 Step 4 "安装 Python 依赖"
-Invoke-Or-DryRun "python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments" {
+Invoke-Or-DryRun "python -m pip install --user --upgrade pip pynput pyperclip pystray Pillow Pygments" {
+    # Try system-wide install first, fall back to --user if permission denied
     python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments
+    if ($LASTEXITCODE -ne 0) {
+        Warn "  ⚠ 系统级安装失败（权限不足），改用用户级安装…"
+        python -m pip install --user --upgrade pip pynput pyperclip pystray Pillow Pygments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python 依赖安装失败。请尝试：`n  1) 以管理员身份重新运行本脚本`n  2) 手动运行: python -m pip install --user pynput pyperclip pystray Pillow Pygments"
+        }
+    }
 }
 Good "  ✓ 依赖就绪"
 
