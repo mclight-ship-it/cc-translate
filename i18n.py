@@ -98,6 +98,17 @@ TRANSLATIONS = {
         "settings.label.auto_start_boot": "开机自动启动",
         "settings.label.update_section": "更新",
         "settings.label.current_version": "当前版本",
+        "settings.label.close": "关闭",
+
+        # About dialog
+        "about.title": "关于",
+        "about.name": "CC Translate",
+        "about.description": "由大语言模型驱动的本地划词翻译 App",
+        "about.version": "版本",
+        "about.homepage": "主页",
+        "about.author": "作者",
+        "about.author_email": "mclight@foxmail.com",
+        "about.github": "GitHub 仓库",
         "settings.label.auto_update": "夜间自动更新",
         "settings.label.check_update_action": "检查更新",
         "settings.label.saved_notice": "已保存 ✓（主题下次弹窗生效）",
@@ -351,6 +362,16 @@ TRANSLATIONS = {
         "settings.label.language_changed": "Language changed, restarting…",
         "settings.label.save_failed": "Save failed",
         "settings.label.close": "Close",
+
+        # About dialog
+        "about.title": "About",
+        "about.name": "CC Translate",
+        "about.description": "LLM-powered local select-and-translate app",
+        "about.version": "Version",
+        "about.homepage": "Homepage",
+        "about.author": "Author",
+        "about.author_email": "mclight@foxmail.com",
+        "about.github": "GitHub Repository",
 
         # Diagnostics window
         "diagnostics.title": "Diagnostics",

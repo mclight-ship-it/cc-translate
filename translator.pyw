@@ -1154,6 +1154,7 @@ class TranslatorApp:
         self.settings_win = None
         self.history_win = None
         self.diagnostics_win = None
+        self.about_win = None
         self.paused = False
         self.tray = None
         self._anim_job = None
@@ -3925,6 +3926,116 @@ class TranslatorApp:
         self._reveal_rounded_window(win, w, h, x, y)
         self._refresh_diagnostics_window(win)
 
+    # ---------- About window ----------
+    def open_about(self):
+        self.root.after(0, self._open_about)
+
+    def _open_about(self):
+        if self.about_win and tk.Toplevel.winfo_exists(self.about_win):
+            self.about_win.lift()
+            self.about_win.focus_force()
+            return
+
+        t = self.theme
+        bg = t["settings_bg"]
+        fg = t["settings_fg"]
+        border = t["popup_border"]
+        hint = t["popup_hint"]
+        accent = t["accent"]
+        FONT = "Microsoft YaHei UI"
+
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        self.about_win = win
+
+        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+
+        # ---- Title bar ----
+        bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=16, pady=(12, 8))
+        logo_img = self._logo_image(18)
+        drag_targets = [bar]
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 8))
+            drag_targets.append(logo_lbl)
+        title_lbl = tk.Label(bar, text=i18n.get("about.title"), bg=bg,
+                             fg=accent, font=(FONT, 11, "bold"))
+        title_lbl.pack(side="left")
+        drag_targets.append(title_lbl)
+        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                             font=(FONT, 11), cursor="hand2", padx=6)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: win.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+        self._make_draggable(tuple(drag_targets), win)
+
+        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+
+        # ---- Content ----
+        body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # App name
+        name_lbl = tk.Label(body, text=i18n.get("about.name"), bg=bg, fg=accent,
+                            font=(FONT, 14, "bold"))
+        name_lbl.pack(pady=(0, 4))
+
+        # Description
+        desc_lbl = tk.Label(body, text=i18n.get("about.description"), bg=bg, fg=hint,
+                            font=(FONT, 10))
+        desc_lbl.pack(pady=(0, 16))
+
+        # Version
+        version_str = version_string()
+        version_lbl = tk.Label(
+            body, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
+            font=(FONT, 10))
+        version_lbl.pack(anchor="w", pady=4)
+
+        # Author
+        author_lbl = tk.Label(
+            body, text=f"{i18n.get('about.author')}: {i18n.get('about.author_email')}", 
+            bg=bg, fg=fg, font=(FONT, 10))
+        author_lbl.pack(anchor="w", pady=4)
+
+        # GitHub link
+        github_url = "https://github.com/mclight-ship-it/cc-translate"
+        github_lbl = tk.Label(
+            body, text=f"{i18n.get('about.github')}: GitHub", bg=bg, fg=accent,
+            font=(FONT, 10, "underline"), cursor="hand2")
+        github_lbl.pack(anchor="w", pady=4)
+        github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
+
+        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+        bottom = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        bottom.pack(fill="x", padx=16, pady=(10, 14))
+        close_btn2 = self._pill_button(
+            bottom, i18n.get("settings.label.close"), win.destroy,
+            bg=t["list_bg"], fg=fg,
+            hover_bg=t["btn_active"], hover_fg=fg,
+            active_bg=t["list_sel"], active_fg=fg,
+            font=(FONT, 10), padx=18, pady=6)
+        close_btn2.pack(side="right")
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        w, h, x, y = self._centered_box()
+        self._reveal_rounded_window(win, w, h, x, y)
+
+    def _open_url(self, url):
+        """Open a URL in the default browser."""
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+
     # ---------- Settings window ----------
     def open_settings(self):
         self.root.after(0, self._open_settings)
@@ -4956,6 +5067,9 @@ class TranslatorApp:
         def on_diagnostics(icon, item):
             self.open_diagnostics()
 
+        def on_about(icon, item):
+            self.open_about()
+
         def on_quit(icon, item):
             icon.stop()
             self.close_warm_pool()
@@ -4970,6 +5084,7 @@ class TranslatorApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(i18n.get("tray.settings"), on_settings, default=True),
             pystray.MenuItem(i18n.get("tray.diagnostics"), on_diagnostics),
+            pystray.MenuItem(i18n.get("about.title"), on_about),
             pystray.MenuItem(i18n.get("tray.check_update"), on_check_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(i18n.get("tray.exit"), on_quit),
