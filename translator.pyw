@@ -4383,40 +4383,84 @@ class TranslatorApp:
         except Exception:
             return None
 
+    @staticmethod
+    def _despeckle_key_color(rgb_img, ImageChops=None):
+        """Remap every pixel that exactly equals ROUND_KEY_COLOR to pure black.
+
+        Rounded popups use ROUND_KEY_COLOR as the Win32 -transparentcolor key,
+        so any pixel matching it is rendered transparent and leaks whatever is
+        behind the window. Photographic / anti-aliased content (e.g. downscaled
+        QR codes) can contain pixels that coincidentally hit that near-black
+        key colour. Replacing them with (0,0,0) is visually indistinguishable
+        but keeps them opaque. Returns the original image if the key colour is
+        not near-black (nothing to do) or on any failure.
+        """
+        try:
+            from PIL import Image, ImageChops
+            key = ROUND_KEY_COLOR.lstrip("#")
+            kr, kg, kb = (int(key[i:i + 2], 16) for i in (0, 2, 4))
+            # Only near-black keys can collide with black QR modules; skip work
+            # for distinctive keys (e.g. magenta) that never appear in content.
+            if max(kr, kg, kb) > 16:
+                return rgb_img
+            key_img = Image.new("RGB", rgb_img.size, (kr, kg, kb))
+            r, g, b = ImageChops.difference(rgb_img, key_img).split()
+            # Per-channel difference summed: 0 only where all three channels
+            # match the key exactly. add() saturates at 255 which is fine here.
+            diff = ImageChops.add(ImageChops.add(r, g), b)
+            # mask == 255 exactly where the pixel equals the key colour. Keep
+            # it as an 8-bit ("L") mask and hand it straight to composite; a
+            # "1"-mode conversion would dither and corrupt the exact mask.
+            mask = diff.point(lambda v: 255 if v == 0 else 0)
+            black = Image.new("RGB", rgb_img.size, (0, 0, 0))
+            return Image.composite(black, rgb_img, mask)
+        except Exception:
+            return rgb_img
+
     def _load_support_image(self, max_w, max_h):
         """Return (PhotoImage, width, height) for the donation QR image.
 
-        The RGBA asset is first flattened onto a white background so its
-        transparent gutter never lets the window background bleed through
-        (which made the black QR look speckled). It is shown at native size
-        when it already fits max_w x max_h; otherwise it is downscaled ONCE
-        with LANCZOS (a high-quality anti-aliasing filter) so the QR codes
-        stay smooth and scannable. Point-sampling (NEAREST / subsample) is
-        deliberately avoided: it drops QR modules unevenly and produces
-        salt-and-pepper speckles. The on-disk asset is never modified.
+        The RGBA asset is flattened onto the window background colour so its
+        transparent gutter blends into the dialog in both light and dark
+        themes. It is shown at native size when it already fits
+        max_w x max_h; otherwise it is downscaled ONCE with LANCZOS (a
+        high-quality anti-aliasing filter) so the QR codes stay smooth and
+        scannable. Any pixel that coincidentally equals the rounded-window
+        transparency key (ROUND_KEY_COLOR) is remapped to pure black so it
+        stays opaque instead of leaking the background. The on-disk asset is
+        never modified.
         """
         if not os.path.exists(SUPPORT_IMAGE_PATH):
             return None, 0, 0
         cache = getattr(self, "_support_img_cache", None)
         if cache is None:
             cache = self._support_img_cache = {}
-        key = (int(max_w), int(max_h))
+        # Flatten the transparent gutter onto the window's own background colour
+        # so it blends in both light and dark themes (a hard-coded white fill
+        # left an ugly white seam in dark mode).
+        try:
+            bg_hex = self.theme["settings_bg"]
+        except Exception:
+            bg_hex = "#ffffff"
+        try:
+            h = bg_hex.lstrip("#")
+            bg_rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        except Exception:
+            bg_rgb = (255, 255, 255)
+        key = (int(max_w), int(max_h), bg_rgb)
         if key in cache:
             return cache[key]
         try:
             from PIL import Image, ImageTk
             with Image.open(SUPPORT_IMAGE_PATH) as im:
                 src_w, src_h = im.size
-                # The asset is RGBA and has a fully transparent gutter between
-                # the two payment panels (pure-black pixels with alpha 0). If
-                # that transparency reaches Tk the window background bleeds
-                # through it and the black QR looks speckled/patchy. Flatten
-                # onto white (the image's own background colour) so the result
-                # is fully opaque before it is ever handed to Tk. The on-disk
-                # file is never touched.
+                # The asset is RGBA with a transparent gutter between the two
+                # payment panels; flatten onto the window background colour so
+                # no source alpha reaches Tk and the gutter blends into the
+                # dialog. The on-disk file is never touched.
                 if im.mode in ("RGBA", "LA", "P"):
                     rgba = im.convert("RGBA")
-                    flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    flat = Image.new("RGBA", rgba.size, bg_rgb + (255,))
                     flat.alpha_composite(rgba)
                     base = flat.convert("RGB")
                 else:
@@ -4427,6 +4471,17 @@ class TranslatorApp:
                     base = base.resize((fit_w, fit_h), resample)
                 else:
                     fit_w, fit_h = src_w, src_h
+                # The rounded popup uses ROUND_KEY_COLOR (#010101) as its Win32
+                # transparent colour key, so ANY pixel that exactly equals that
+                # colour is punched out and the desktop/background shows through.
+                # LANCZOS anti-aliasing of the black QR modules produces many
+                # near-black pixels, some of which land exactly on (1,1,1);
+                # those turned into "speckles" that leaked the background colour
+                # (white in light mode, red on a red desktop, etc.). Remap any
+                # exact key-colour pixel to pure black (0,0,0) -- visually
+                # identical but no longer the transparency key -- so the QR
+                # stays a solid, opaque black on every background.
+                base = self._despeckle_key_color(base)
                 photo = ImageTk.PhotoImage(base, master=self.root)
             result = (photo, fit_w, fit_h)
             cache[key] = result

@@ -749,6 +749,47 @@ class TestSupportAuthorWindow(unittest.TestCase):
         self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["support.image_missing"], "支持图片暂不可用。")
         self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["support.image_missing"], "Support image unavailable.")
 
+    def test_despeckle_removes_transparency_key_color(self):
+        """Any pixel equal to the rounded-window transparency key would be
+        punched transparent by Win32 and leak the background; despeckle must
+        remap those to opaque pure black so nothing bleeds through."""
+        try:
+            from PIL import Image, ImageChops
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        key = tr.ROUND_KEY_COLOR.lstrip("#")
+        kr, kg, kb = (int(key[i:i + 2], 16) for i in (0, 2, 4))
+        # Build an image that contains the key colour, pure black, and white.
+        img = Image.new("RGB", (4, 1), (255, 255, 255))
+        img.putpixel((0, 0), (kr, kg, kb))   # exact key colour
+        img.putpixel((1, 0), (0, 0, 0))       # pure black
+        img.putpixel((2, 0), (kr, kg, kb))   # exact key colour again
+        out = tr.TranslatorApp._despeckle_key_color(img)
+        # No pixel may still equal the key colour.
+        colors = [out.getpixel((x, 0)) for x in range(out.width)]
+        self.assertNotIn((kr, kg, kb), colors)
+        # Former key pixels became pure black; black/white are untouched.
+        self.assertEqual(out.getpixel((0, 0)), (0, 0, 0))
+        self.assertEqual(out.getpixel((1, 0)), (0, 0, 0))
+        self.assertEqual(out.getpixel((2, 0)), (0, 0, 0))
+        self.assertEqual(out.getpixel((3, 0)), (255, 255, 255))
+
+    def test_despeckle_noops_for_distinctive_key(self):
+        """A non-near-black key can never collide with QR content, so the
+        image must be returned unchanged (fast path)."""
+        try:
+            from PIL import Image, ImageChops
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        orig = tr.ROUND_KEY_COLOR
+        try:
+            tr.ROUND_KEY_COLOR = "#ff00ff"
+            img = Image.new("RGB", (2, 1), (0, 0, 0))
+            out = tr.TranslatorApp._despeckle_key_color(img)
+            self.assertIs(out, img)
+        finally:
+            tr.ROUND_KEY_COLOR = orig
+
 
 # ============================================================
 # OCR screenshot translation (cc_ocr pure functions + wiring)
