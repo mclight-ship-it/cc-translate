@@ -3977,43 +3977,47 @@ class TranslatorApp:
 
         tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
-        # ---- Content (centered, with better spacing) ----
+        # ---- Content (vertically centered) ----
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=20, pady=24)
 
+        # Wrapper frame for content to center vertically in body
+        content_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        content_frame.pack(fill="none", expand=True, anchor="center")
+
         # Top spacer
-        tk.Frame(body, bg=bg, height=8).pack()
+        tk.Frame(content_frame, bg=bg, height=8).pack()
 
         # App logo/icon (larger: 48px)
         logo_img_large = self._logo_image(48)
         if logo_img_large:
-            logo_large_lbl = tk.Label(body, image=logo_img_large, bg=bg, bd=0,
+            logo_large_lbl = tk.Label(content_frame, image=logo_img_large, bg=bg, bd=0,
                                       highlightthickness=0)
             logo_large_lbl.image = logo_img_large
             logo_large_lbl.pack(pady=(0, 16))
 
         # App name
-        name_lbl = tk.Label(body, text=i18n.get("about.name"), bg=bg, fg=accent,
+        name_lbl = tk.Label(content_frame, text=i18n.get("about.name"), bg=bg, fg=accent,
                             font=(FONT, 14, "bold"))
         name_lbl.pack(pady=(0, 8))
 
         # Description
-        desc_lbl = tk.Label(body, text=i18n.get("about.description"), bg=bg, fg=hint,
+        desc_lbl = tk.Label(content_frame, text=i18n.get("about.description"), bg=bg, fg=hint,
                             font=(FONT, 10))
         desc_lbl.pack(pady=(0, 20))
 
         # Middle spacer
-        tk.Frame(body, bg=bg, height=8).pack()
+        tk.Frame(content_frame, bg=bg, height=8).pack()
 
         # Version
         version_str = version_string()
         version_lbl = tk.Label(
-            body, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
+            content_frame, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
             font=(FONT, 10))
         version_lbl.pack(pady=6)
 
         # Contact author (with clickable email)
-        contact_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        contact_frame = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
         contact_frame.pack(pady=6)
         contact_label = tk.Label(contact_frame, text=i18n.get('about.contact_author') + ": ",
                                 bg=bg, fg=fg, font=(FONT, 10))
@@ -4026,7 +4030,7 @@ class TranslatorApp:
 
         # GitHub
         github_url = "https://github.com/mclight-ship-it/cc-translate"
-        github_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        github_frame = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
         github_frame.pack(pady=6)
         github_label = tk.Label(github_frame, text="GitHub: ",
                                bg=bg, fg=fg, font=(FONT, 10))
@@ -4037,7 +4041,7 @@ class TranslatorApp:
         github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
 
         # Bottom spacer
-        tk.Frame(body, bg=bg, height=8).pack()
+        tk.Frame(content_frame, bg=bg, height=8).pack()
 
         win.bind("<Escape>", lambda e: win.destroy())
 
