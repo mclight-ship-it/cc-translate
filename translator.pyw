@@ -4324,97 +4324,42 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _load_support_image(self, max_w=None, max_h=None):
-        """Load the support image, shrinking only when it won't fit."""
-        key = (int(max_w) if max_w is not None else None,
-               int(max_h) if max_h is not None else None)
+    def _load_support_image(self, max_w, max_h):
+        """Return (PhotoImage, width, height) for the donation QR image.
+
+        The image is shown at its native resolution when it already fits
+        max_w x max_h; otherwise it is downscaled ONCE with LANCZOS (a
+        high-quality anti-aliasing filter) so the QR codes stay smooth and
+        scannable. Point-sampling (NEAREST / PhotoImage.subsample) is
+        deliberately avoided: it drops QR modules unevenly and produces
+        salt-and-pepper speckles. The on-disk asset is never modified.
+        """
+        if not os.path.exists(SUPPORT_IMAGE_PATH):
+            return None, 0, 0
         cache = getattr(self, "_support_img_cache", None)
         if cache is None:
             cache = self._support_img_cache = {}
+        key = (int(max_w), int(max_h))
         if key in cache:
             return cache[key]
-        if not os.path.exists(SUPPORT_IMAGE_PATH):
-            return None, 0, 0
         try:
             from PIL import Image, ImageTk
             with Image.open(SUPPORT_IMAGE_PATH) as im:
                 src_w, src_h = im.size
-                if max_w is None or max_h is None:
-                    photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
-                    cache[key] = (photo, src_w, src_h)
-                    return photo, src_w, src_h
                 fit_w, fit_h, scale = fit_box_size(src_w, src_h, max_w, max_h)
                 if scale < 1.0:
-                    # Downscaling a QR image: use a high-quality anti-aliasing
-                    # filter (LANCZOS). NEAREST point-sampling drops/keeps QR
-                    # modules unevenly and produces salt-and-pepper speckles.
                     resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
-                    img = im.convert("RGB").resize((fit_w, fit_h), resample)
-                    photo = ImageTk.PhotoImage(img, master=self.root)
+                    rgb = im.convert("RGB").resize((fit_w, fit_h), resample)
+                    photo = ImageTk.PhotoImage(rgb, master=self.root)
                 else:
+                    # Already fits: load the file verbatim, zero processing.
                     photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
                     fit_w, fit_h = src_w, src_h
-                cache[key] = (photo, fit_w, fit_h)
-                return photo, fit_w, fit_h
+            result = (photo, fit_w, fit_h)
+            cache[key] = result
+            return result
         except Exception:
             return None, 0, 0
-
-    def _coffee_icon_image(self, px=16):
-        """Create a compact coffee icon for the support link."""
-        size = max(12, int(px))
-        cache = getattr(self, "_coffee_icon_cache", None)
-        if cache is None:
-            cache = self._coffee_icon_cache = {}
-        if size in cache:
-            return cache[size]
-        try:
-            from PIL import Image, ImageDraw, ImageTk
-            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            steam = (208, 175, 143, 255)
-            mug = (149, 93, 50, 255)
-            fill = (245, 228, 206, 255)
-            saucer = (116, 69, 36, 255)
-
-            # Steam.
-            steam_xs = [int(round(size * f)) for f in (0.34, 0.49, 0.64)]
-            steam_top = int(round(size * 0.08))
-            steam_bot = int(round(size * 0.28))
-            steam_w = max(1, int(round(size * 0.045)))
-            for x in steam_xs:
-                d.rounded_rectangle(
-                    (x, steam_top, x + steam_w, steam_bot),
-                    radius=max(1, int(size * 0.02)), fill=steam)
-
-            # Mug body and rim.
-            left = int(size * 0.22)
-            top = int(size * 0.34)
-            right = int(size * 0.74)
-            bottom = int(size * 0.68)
-            d.rounded_rectangle((left, top, right, bottom), radius=max(2, size // 8),
-                                fill=fill, outline=None)
-            d.rectangle((left + 1, top, right - 1, top + max(1, size // 9)),
-                         fill=mug)
-
-            # Handle.
-            hx1 = int(size * 0.68)
-            hy1 = int(size * 0.40)
-            hx2 = int(size * 0.90)
-            hy2 = int(size * 0.62)
-            d.ellipse((hx1, hy1, hx2, hy2), fill=mug)
-            inset = max(1, int(round(size * 0.08)))
-            d.ellipse((hx1 + inset, hy1 + inset, hx2 - inset, hy2 - inset),
-                      fill=(0, 0, 0, 0))
-
-            # Saucer.
-            d.ellipse((int(size * 0.20), int(size * 0.67),
-                       int(size * 0.78), int(size * 0.84)), fill=saucer)
-
-            photo = ImageTk.PhotoImage(img)
-            cache[size] = photo
-            return photo
-        except Exception:
-            return None
 
     def _make_chevron_image(self, color_hex, scale):
         """Draw a thin, modern downward chevron as a PhotoImage for the combobox
