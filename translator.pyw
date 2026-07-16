@@ -4171,9 +4171,16 @@ class TranslatorApp:
 
         support_row = tk.Frame(contact_group, bg=bg, bd=0, highlightthickness=0)
         support_row.pack(pady=(14, 0))
-        coffee_lbl = tk.Label(
-            support_row, text="☕", bg=bg, fg=accent, cursor="hand2",
-            font=("Segoe UI Emoji", 11))
+        coffee_photo = self._emoji_image("\u2615", px=13, bg_hex=bg)
+        if coffee_photo:
+            coffee_lbl = tk.Label(
+                support_row, image=coffee_photo, bg=bg, cursor="hand2",
+                bd=0, highlightthickness=0)
+            coffee_lbl.image = coffee_photo
+        else:
+            coffee_lbl = tk.Label(
+                support_row, text="\u2615", bg=bg, fg=accent, cursor="hand2",
+                font=("Segoe UI Emoji", 11))
         coffee_lbl.pack(side="left", padx=(0, 6))
         coffee_lbl.bind("<Button-1>", lambda e: self.open_support_author())
         support_lbl = tk.Label(
@@ -4319,6 +4326,58 @@ class TranslatorApp:
             with Image.open(path) as im:
                 img = im.convert("RGBA").resize((size, size), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
+            cache[key] = photo
+            return photo
+        except Exception:
+            return None
+
+    def _emoji_image(self, char, px=14, bg_hex=None):
+        """Render a single emoji as a FULL-COLOR PhotoImage using the system
+        color emoji font (Segoe UI Emoji). Tk's own text renderer only draws
+        the monochrome outline glyph of an emoji, so to get the colored ☕ we
+        rasterize it with Pillow (embedded_color=True) and show it as an image.
+
+        `px` is the target on-screen size in points (DPI-scaled here). If
+        `bg_hex` is given the glyph is flattened onto that background (Tk
+        labels can't show partial transparency cleanly on every theme).
+        Returns None if PIL or the emoji font is unavailable (caller falls
+        back to a plain text label).
+        """
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            scale = 1.0
+        size = max(12, round(px * scale))
+        cache = getattr(self, "_emoji_cache", None)
+        if cache is None:
+            cache = self._emoji_cache = {}
+        key = (char, size, bg_hex)
+        if key in cache:
+            return cache[key]
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageTk
+            font_path = os.path.join(
+                os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "seguiemj.ttf")
+            if not os.path.exists(font_path):
+                return None
+            # Segoe UI Emoji ships bitmap strikes rendered at 109px; request
+            # that so embedded_color glyphs load, then downscale to UI size.
+            font = ImageFont.truetype(font_path, 109)
+            canvas = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(canvas)
+            try:
+                draw.text((0, 0), char, font=font, embedded_color=True)
+            except TypeError:
+                draw.text((0, 0), char, font=font)
+            bbox = canvas.getbbox()
+            if bbox:
+                canvas = canvas.crop(bbox)
+            glyph = canvas.resize((size, size), Image.LANCZOS)
+            if bg_hex:
+                flat = Image.new("RGBA", glyph.size, bg_hex)
+                flat.alpha_composite(glyph)
+                glyph = flat.convert("RGB")
+            photo = ImageTk.PhotoImage(glyph, master=self.root)
             cache[key] = photo
             return photo
         except Exception:
