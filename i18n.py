@@ -108,6 +108,9 @@ TRANSLATIONS = {
         "about.contact_author": "联系作者",
         "about.author_email": "mclight@foxmail.com",
         "about.github": "GitHub 仓库",
+        "about.support_author": "支持作者",
+        "support.title": "支持作者",
+        "support.image_missing": "支持图片暂不可用。",
         "settings.label.auto_update": "夜间自动更新",
         "settings.label.check_update_action": "检查更新",
         "settings.label.saved_notice": "已保存 ✓（主题下次弹窗生效）",
@@ -385,6 +388,9 @@ TRANSLATIONS = {
         "about.contact_author": "Contact Author",
         "about.author_email": "mclight@foxmail.com",
         "about.github": "GitHub Repository",
+        "about.support_author": "Support",
+        "support.title": "Support the Author",
+        "support.image_missing": "Support image unavailable.",
 
         # Diagnostics window
         "diagnostics.title": "Diagnostics",

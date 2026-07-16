@@ -699,6 +699,7 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
         constants = [
             "APP_NAME", "APP_DIR", "DATA_DIR", "CONFIG_PATH", "HISTORY_PATH",
             "ICON_PATH", "ICON_PATH_DARK", "ICON_PATH_LIGHT",
+            "SUPPORT_IMAGE_PATH",
             "MIN_POPUP_HEIGHT", "MIN_STREAM_VISIBLE_HEIGHT",
             "LOADING_SPINNER", "POPUP_CORNER_RADIUS", "LOADING_CORNER_RADIUS",
             "CENTERED_POPUP_W", "CENTERED_POPUP_H",
@@ -729,6 +730,20 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
         self.assertIn("dark", tr.THEME_LABELS)
         self.assertIn("light", tr.THEME_LABELS)
         self.assertIn("system", tr.THEME_LABELS)
+
+    def test_support_image_path_exists(self):
+        self.assertTrue(os.path.exists(tr.SUPPORT_IMAGE_PATH),
+                        f"support image missing: {tr.SUPPORT_IMAGE_PATH}")
+
+
+class TestSupportAuthorWindow(unittest.TestCase):
+    def test_support_strings_present(self):
+        self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["about.support_author"], "支持作者")
+        self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["about.support_author"], "Support")
+        self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["support.title"], "支持作者")
+        self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["support.title"], "Support the Author")
+        self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["support.image_missing"], "支持图片暂不可用。")
+        self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["support.image_missing"], "Support image unavailable.")
 
 
 # ============================================================

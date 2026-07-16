@@ -161,6 +161,7 @@ ICON_PATH = os.path.join(APP_DIR, "cc.ico")
 # tile) remains the fallback.
 ICON_PATH_DARK = os.path.join(APP_DIR, "cc-dark.ico")
 ICON_PATH_LIGHT = os.path.join(APP_DIR, "cc-light.ico")
+SUPPORT_IMAGE_PATH = os.path.join(APP_DIR, "assets", "support-author.png")
 MIN_POPUP_HEIGHT = 150
 MIN_STREAM_VISIBLE_HEIGHT = 220
 MIN_RESIZE_WIDTH = 280
@@ -1209,6 +1210,7 @@ class TranslatorApp:
         self.history_win = None
         self.diagnostics_win = None
         self.about_win = None
+        self.support_win = None
         self.paused = False
         self.tray = None
         self._anim_job = None
@@ -4148,12 +4150,109 @@ class TranslatorApp:
         github_lbl.pack(side="left")
         github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
 
+        support_row = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
+        support_row.pack(pady=(14, 0))
+        support_btn = self._pill_button(
+            support_row, i18n.get("about.support_author"), self.open_support_author,
+            bg=accent, fg="#ffffff",
+            hover_bg=accent, hover_fg="#ffffff",
+            active_bg=accent, active_fg="#ffffff",
+            font=(FONT, 10), padx=16, pady=6)
+        support_btn.pack()
+
         # Bottom spacer
         tk.Frame(content_frame, bg=bg, height=8).pack()
 
         win.bind("<Escape>", lambda e: win.destroy())
 
         w, h, x, y = self._centered_box()
+        self._reveal_rounded_window(win, w, h, x, y)
+
+    def open_support_author(self):
+        self.root.after(0, self._open_support_author)
+
+    def _open_support_author(self):
+        if self.support_win and tk.Toplevel.winfo_exists(self.support_win):
+            self.support_win.lift()
+            self.support_win.focus_force()
+            return
+
+        t = self.theme
+        bg = t["settings_bg"]
+        border = t["popup_border"]
+        hint = t["popup_hint"]
+        accent = t["accent"]
+        FONT = "Microsoft YaHei UI"
+
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        self.support_win = win
+
+        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+
+        bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=16, pady=(12, 8))
+        logo_img = self._logo_image(18)
+        drag_targets = [bar]
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                               highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 8))
+            drag_targets.append(logo_lbl)
+        title_lbl = tk.Label(bar, text=i18n.get("support.title"), bg=bg,
+                             fg=accent, font=(FONT, 11, "bold"))
+        title_lbl.pack(side="left")
+        drag_targets.append(title_lbl)
+        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                             font=(FONT, 11), cursor="hand2", padx=6)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: win.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+        self._make_draggable(tuple(drag_targets), win)
+        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+
+        body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=18, pady=18)
+
+        content = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        content.pack(expand=True)
+
+        rect = get_monitor_rect()
+        if rect:
+            left, top, right, bottom = rect
+        else:
+            left, top = 0, 0
+            right = self.root.winfo_screenwidth()
+            bottom = self.root.winfo_screenheight()
+        mon_w = right - left
+        mon_h = bottom - top
+        max_image_w = max(320, mon_w - 96)
+        max_image_h = max(240, mon_h - 120)
+        support_img = self._support_qr_image(max_image_w, max_image_h)
+        if support_img:
+            img_lbl = tk.Label(content, image=support_img, bg=bg, bd=0,
+                              highlightthickness=0)
+            img_lbl.image = support_img
+            img_lbl.pack()
+        else:
+            fallback_lbl = tk.Label(
+                content, text=i18n.get("support.image_missing"), bg=bg, fg=hint,
+                font=(FONT, 10))
+            fallback_lbl.pack(padx=12, pady=24)
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        win.update_idletasks()
+        w = card.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS
+        h = card.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
+        w = min(w, max(320, mon_w - 20))
+        h = min(h, max(240, mon_h - 20))
+        x = left + (mon_w - w) // 2
+        y = top + (mon_h - h) // 2
         self._reveal_rounded_window(win, w, h, x, y)
 
     def _open_url(self, url):
@@ -4196,6 +4295,34 @@ class TranslatorApp:
             with Image.open(path) as im:
                 img = im.convert("RGBA").resize((size, size), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
+            cache[key] = photo
+            return photo
+        except Exception:
+            return None
+
+    def _support_qr_image(self, max_w, max_h):
+        """Load and scale the support QR image for the donation window."""
+        max_w = max(1, int(max_w))
+        max_h = max(1, int(max_h))
+        key = (max_w, max_h)
+        cache = getattr(self, "_support_img_cache", None)
+        if cache is None:
+            cache = self._support_img_cache = {}
+        if key in cache:
+            return cache[key]
+        if not os.path.exists(SUPPORT_IMAGE_PATH):
+            return None
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(SUPPORT_IMAGE_PATH) as im:
+                img = im.convert("RGBA")
+                src_w, src_h = img.size
+                scale = min(1.0, max_w / src_w, max_h / src_h)
+                if scale < 1.0:
+                    new_w = max(1, int(round(src_w * scale)))
+                    new_h = max(1, int(round(src_h * scale)))
+                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
             cache[key] = photo
             return photo
         except Exception:
