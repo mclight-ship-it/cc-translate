@@ -4151,14 +4151,12 @@ class TranslatorApp:
         github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
 
         support_row = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        support_row.pack(pady=(14, 0))
-        support_btn = self._pill_button(
-            support_row, i18n.get("about.support_author"), self.open_support_author,
-            bg=accent, fg="#ffffff",
-            hover_bg=accent, hover_fg="#ffffff",
-            active_bg=accent, active_fg="#ffffff",
-            font=(FONT, 10), padx=16, pady=6)
-        support_btn.pack()
+        support_row.pack(pady=(26, 0))
+        support_lbl = tk.Label(
+            support_row, text=i18n.get("about.support_author"), bg=bg,
+            fg=accent, font=(FONT, 10, "underline"), cursor="hand2")
+        support_lbl.pack()
+        support_lbl.bind("<Button-1>", lambda e: self.open_support_author())
 
         # Bottom spacer
         tk.Frame(content_frame, bg=bg, height=8).pack()
@@ -4218,9 +4216,6 @@ class TranslatorApp:
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=18, pady=18)
 
-        content = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        content.pack(expand=True)
-
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
@@ -4230,19 +4225,45 @@ class TranslatorApp:
             bottom = self.root.winfo_screenheight()
         mon_w = right - left
         mon_h = bottom - top
-        max_image_w = max(320, mon_w - 96)
-        max_image_h = max(240, mon_h - 120)
-        support_img = self._support_qr_image(max_image_w, max_image_h)
+        support_img = self._load_support_image()
         if support_img:
-            img_lbl = tk.Label(content, image=support_img, bg=bg, bd=0,
-                              highlightthickness=0)
-            img_lbl.image = support_img
-            img_lbl.pack()
+            img_w = support_img.width()
+            img_h = support_img.height()
+            max_canvas_w = max(320, mon_w - 120)
+            max_canvas_h = max(240, mon_h - 170)
+            canvas_w = min(img_w, max_canvas_w)
+            canvas_h = min(img_h, max_canvas_h)
+            if img_w > canvas_w or img_h > canvas_h:
+                canvas_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+                canvas_frame.pack(expand=True)
+                canvas = tk.Canvas(
+                    canvas_frame, bg=bg, bd=0, highlightthickness=0,
+                    width=canvas_w, height=canvas_h)
+                canvas.grid(row=0, column=0, sticky="nsew")
+                vbar = ttk.Scrollbar(
+                    canvas_frame, orient="vertical", style="CC.Vertical.TScrollbar",
+                    command=canvas.yview)
+                hbar = ttk.Scrollbar(
+                    canvas_frame, orient="horizontal", style="CC.Horizontal.TScrollbar",
+                    command=canvas.xview)
+                canvas.config(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+                vbar.grid(row=0, column=1, sticky="ns")
+                hbar.grid(row=1, column=0, sticky="ew")
+                canvas_frame.grid_rowconfigure(0, weight=1)
+                canvas_frame.grid_columnconfigure(0, weight=1)
+                canvas.create_image(0, 0, anchor="nw", image=support_img)
+                canvas.config(scrollregion=(0, 0, img_w, img_h))
+                win._support_canvas = canvas
+            else:
+                img_lbl = tk.Label(body, image=support_img, bg=bg, bd=0,
+                                  highlightthickness=0)
+                img_lbl.pack(expand=True)
+            win._support_image = support_img
         else:
             fallback_lbl = tk.Label(
-                content, text=i18n.get("support.image_missing"), bg=bg, fg=hint,
+                body, text=i18n.get("support.image_missing"), bg=bg, fg=hint,
                 font=(FONT, 10))
-            fallback_lbl.pack(padx=12, pady=24)
+            fallback_lbl.pack(expand=True, padx=12, pady=24)
 
         win.bind("<Escape>", lambda e: win.destroy())
 
@@ -4300,11 +4321,9 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _support_qr_image(self, max_w, max_h):
-        """Load and scale the support QR image for the donation window."""
-        max_w = max(1, int(max_w))
-        max_h = max(1, int(max_h))
-        key = (max_w, max_h)
+    def _load_support_image(self):
+        """Load the support image without resizing or re-encoding it."""
+        key = "support-image"
         cache = getattr(self, "_support_img_cache", None)
         if cache is None:
             cache = self._support_img_cache = {}
@@ -4313,16 +4332,7 @@ class TranslatorApp:
         if not os.path.exists(SUPPORT_IMAGE_PATH):
             return None
         try:
-            from PIL import Image, ImageTk
-            with Image.open(SUPPORT_IMAGE_PATH) as im:
-                img = im.convert("RGBA")
-                src_w, src_h = img.size
-                scale = min(1.0, max_w / src_w, max_h / src_h)
-                if scale < 1.0:
-                    new_w = max(1, int(round(src_w * scale)))
-                    new_h = max(1, int(round(src_h * scale)))
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
+            photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
             cache[key] = photo
             return photo
         except Exception:
