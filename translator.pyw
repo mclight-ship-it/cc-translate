@@ -4345,8 +4345,11 @@ class TranslatorApp:
                     return photo, src_w, src_h
                 fit_w, fit_h, scale = fit_box_size(src_w, src_h, max_w, max_h)
                 if scale < 1.0:
-                    resample = getattr(getattr(Image, "Resampling", Image), "NEAREST")
-                    img = im.convert("RGBA").resize((fit_w, fit_h), resample)
+                    # Downscaling a QR image: use a high-quality anti-aliasing
+                    # filter (LANCZOS). NEAREST point-sampling drops/keeps QR
+                    # modules unevenly and produces salt-and-pepper speckles.
+                    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+                    img = im.convert("RGB").resize((fit_w, fit_h), resample)
                     photo = ImageTk.PhotoImage(img, master=self.root)
                 else:
                     photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
