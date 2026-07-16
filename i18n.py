@@ -103,7 +103,7 @@ TRANSLATIONS = {
         # About dialog
         "about.title": "关于",
         "about.name": "CC Translate",
-        "about.description": "由大语言模型驱动的本地划词翻译 App",
+        "about.description": "由大语言模型驱动的划词翻译 App",
         "about.version": "版本",
         "about.contact_author": "联系作者",
         "about.author_email": "mclight@foxmail.com",
@@ -365,7 +365,7 @@ TRANSLATIONS = {
         # About dialog
         "about.title": "About",
         "about.name": "CC Translate",
-        "about.description": "LLM-powered local select-and-translate app",
+        "about.description": "LLM-powered select-and-translate app",
         "about.version": "Version",
         "about.contact_author": "Contact Author",
         "about.author_email": "mclight@foxmail.com",
