@@ -4386,10 +4386,12 @@ class TranslatorApp:
     def _load_support_image(self, max_w, max_h):
         """Return (PhotoImage, width, height) for the donation QR image.
 
-        The image is shown at its native resolution when it already fits
-        max_w x max_h; otherwise it is downscaled ONCE with LANCZOS (a
-        high-quality anti-aliasing filter) so the QR codes stay smooth and
-        scannable. Point-sampling (NEAREST / PhotoImage.subsample) is
+        The RGBA asset is first flattened onto a white background so its
+        transparent gutter never lets the window background bleed through
+        (which made the black QR look speckled). It is shown at native size
+        when it already fits max_w x max_h; otherwise it is downscaled ONCE
+        with LANCZOS (a high-quality anti-aliasing filter) so the QR codes
+        stay smooth and scannable. Point-sampling (NEAREST / subsample) is
         deliberately avoided: it drops QR modules unevenly and produces
         salt-and-pepper speckles. The on-disk asset is never modified.
         """
@@ -4405,15 +4407,27 @@ class TranslatorApp:
             from PIL import Image, ImageTk
             with Image.open(SUPPORT_IMAGE_PATH) as im:
                 src_w, src_h = im.size
+                # The asset is RGBA and has a fully transparent gutter between
+                # the two payment panels (pure-black pixels with alpha 0). If
+                # that transparency reaches Tk the window background bleeds
+                # through it and the black QR looks speckled/patchy. Flatten
+                # onto white (the image's own background colour) so the result
+                # is fully opaque before it is ever handed to Tk. The on-disk
+                # file is never touched.
+                if im.mode in ("RGBA", "LA", "P"):
+                    rgba = im.convert("RGBA")
+                    flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    flat.alpha_composite(rgba)
+                    base = flat.convert("RGB")
+                else:
+                    base = im.convert("RGB")
                 fit_w, fit_h, scale = fit_box_size(src_w, src_h, max_w, max_h)
                 if scale < 1.0:
                     resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
-                    rgb = im.convert("RGB").resize((fit_w, fit_h), resample)
-                    photo = ImageTk.PhotoImage(rgb, master=self.root)
+                    base = base.resize((fit_w, fit_h), resample)
                 else:
-                    # Already fits: load the file verbatim, zero processing.
-                    photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
                     fit_w, fit_h = src_w, src_h
+                photo = ImageTk.PhotoImage(base, master=self.root)
             result = (photo, fit_w, fit_h)
             cache[key] = result
             return result
