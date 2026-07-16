@@ -37,7 +37,7 @@ TRANSLATIONS = {
         "result.rewrite_summary": "提炼要点",
         "result.explain": "解释代码",
         "result.explaining": "解释中…",
-        "result.processing": "处理中…",
+        "result.processing": "翻译中…",
         "result.processing_screenshot": "截图翻译中…",
         "result.explained": "已解释",
         "result.retranslate_to": "译成{language}",
@@ -243,7 +243,7 @@ TRANSLATIONS = {
         "history.copy_result": "复制结果",
 
         # Status/UI elements
-        "ui.loading": "处理中…",
+        "ui.loading": "翻译中…",
         "ui.close": "✕",
         "ui.ok": "确定",
         "ui.cancel": "取消",
