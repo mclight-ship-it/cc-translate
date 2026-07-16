@@ -3977,9 +3977,17 @@ class TranslatorApp:
 
         tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
-        # ---- Content ----
+        # ---- Content (centered) ----
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # App logo/icon (larger)
+        logo_img_large = self._logo_image(32)
+        if logo_img_large:
+            logo_large_lbl = tk.Label(body, image=logo_img_large, bg=bg, bd=0,
+                                      highlightthickness=0)
+            logo_large_lbl.image = logo_img_large
+            logo_large_lbl.pack(pady=(0, 12))
 
         # App name
         name_lbl = tk.Label(body, text=i18n.get("about.name"), bg=bg, fg=accent,
@@ -3996,20 +4004,30 @@ class TranslatorApp:
         version_lbl = tk.Label(
             body, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
             font=(FONT, 10))
-        version_lbl.pack(anchor="w", pady=4)
+        version_lbl.pack(pady=4)
 
-        # Author
-        author_lbl = tk.Label(
-            body, text=f"{i18n.get('about.author')}: {i18n.get('about.author_email')}", 
-            bg=bg, fg=fg, font=(FONT, 10))
-        author_lbl.pack(anchor="w", pady=4)
+        # Contact author (with clickable email)
+        contact_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        contact_frame.pack(pady=4)
+        contact_label = tk.Label(contact_frame, text=i18n.get('about.contact_author') + ": ",
+                                bg=bg, fg=fg, font=(FONT, 10))
+        contact_label.pack(side="left")
+        email_addr = i18n.get('about.author_email')
+        email_lbl = tk.Label(contact_frame, text=email_addr, bg=bg, fg=accent,
+                            font=(FONT, 10, "underline"), cursor="hand2")
+        email_lbl.pack(side="left")
+        email_lbl.bind("<Button-1>", lambda e: self._open_url(f"mailto:{email_addr}"))
 
-        # GitHub link
+        # GitHub
         github_url = "https://github.com/mclight-ship-it/cc-translate"
-        github_lbl = tk.Label(
-            body, text=f"{i18n.get('about.github')}: GitHub", bg=bg, fg=accent,
-            font=(FONT, 10, "underline"), cursor="hand2")
-        github_lbl.pack(anchor="w", pady=4)
+        github_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        github_frame.pack(pady=4)
+        github_label = tk.Label(github_frame, text="GitHub: ",
+                               bg=bg, fg=fg, font=(FONT, 10))
+        github_label.pack(side="left")
+        github_lbl = tk.Label(github_frame, text=github_url, bg=bg, fg=accent,
+                             font=(FONT, 10, "underline"), cursor="hand2")
+        github_lbl.pack(side="left")
         github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
 
         tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
