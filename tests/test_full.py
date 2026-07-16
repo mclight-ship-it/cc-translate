@@ -840,6 +840,11 @@ class TestOCRIntegrationInApp(unittest.TestCase):
         self.assertIsInstance(tr.OCR_VISION_PROMPT, str)
         self.assertGreater(len(tr.OCR_VISION_PROMPT), 0)
 
+    def test_vision_prompt_mentions_layout_preservation(self):
+        self.assertIn("换行", tr.OCR_VISION_PROMPT)
+        self.assertIn("项目符号", tr.OCR_VISION_PROMPT)
+        self.assertIn("编号", tr.OCR_VISION_PROMPT)
+
     def test_vision_mention_is_quoted(self):
         # DATA_DIR has a space ("CC Translate"); the @mention MUST be quoted so
         # the CLI reads the file instead of breaking at the space. Regression
@@ -912,6 +917,35 @@ class TestDiagnosticsHelpers(unittest.TestCase):
             note,
             tr.i18n.get("diagnostics.routing.proxy_override").format(
                 backend_model="claude-fable-5"))
+
+    def test_build_diagnostics_actions_for_cli_and_login(self):
+        actions = tr.build_diagnostics_actions({
+            "backend": {"mode": "subscription"},
+            "login": {"ok": False},
+            "claude_cli": {"ok": False},
+            "endpoint_probe": None,
+            "powershell_policy": {"value": "Unrestricted"},
+            "last_result": {"ok": None, "detail": "", "preview": ""},
+        })
+        self.assertIn(tr.i18n.get("diagnostics.action.fix_cli"), actions)
+        self.assertIn(
+            tr.i18n.get("diagnostics.action.login_subscription"), actions)
+
+    def test_build_diagnostics_actions_timeout_hint(self):
+        actions = tr.build_diagnostics_actions({
+            "backend": {"mode": "subscription"},
+            "login": {"ok": True},
+            "claude_cli": {"ok": True},
+            "endpoint_probe": None,
+            "powershell_policy": {"value": "Unrestricted"},
+            "last_result": {
+                "ok": False,
+                "detail": "OCR timeout, please retry.",
+                "preview": "",
+            },
+        })
+        self.assertIn(
+            tr.i18n.get("diagnostics.action.retry_after_timeout"), actions)
 
 
 if __name__ == "__main__":

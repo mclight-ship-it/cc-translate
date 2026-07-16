@@ -557,9 +557,15 @@ RESULT_ACTION_PROMPTS = {
 # Claude Vision (OCR screenshot translation): the CLI attaches the referenced
 # image as multimodal content; Claude reads the text and translates it. We show
 # only the translation, matching the app's normal double-Ctrl+C experience.
+OCR_STRUCTURE_HINT = (
+    "\n请尽量保留原文排版结构：保留段落换行、项目符号/编号列表和短行分段；"
+    "不要把多行内容合并成一整段，也不要自行增删条目。"
+)
+
 OCR_VISION_PROMPT = (
     "你是一个截图翻译助手。用户会提供一张图片。请识别图片中的文字并翻译："
     "如果原文主要是中文，翻译成自然流畅的英文；否则翻译成自然流畅的简体中文。"
+    "翻译时请尽量保留原文排版结构（换行、项目符号、编号等）。"
     "只输出翻译结果本身，不要输出原文、图片描述、语言名称或任何解释、前后缀。"
     "如果图片中没有可识别的文字，只回复：未识别到文字。"
 )
@@ -875,6 +881,54 @@ def describe_model_routing(app_model, backend_mode, backend_model):
         return i18n.get("diagnostics.routing.proxy_override").format(
             backend_model=backend_model)
     return i18n.get("diagnostics.routing.no_proxy")
+
+
+def build_diagnostics_actions(snapshot):
+    snapshot = dict(snapshot or {})
+    backend = dict(snapshot.get("backend") or {})
+    login = dict(snapshot.get("login") or {})
+    cli = dict(snapshot.get("claude_cli") or {})
+    endpoint_probe = snapshot.get("endpoint_probe")
+    ps_policy = dict(snapshot.get("powershell_policy") or {})
+    last_result = dict(snapshot.get("last_result") or {})
+    detail = ((last_result.get("detail") or "") + "\n" +
+              (last_result.get("preview") or "")).casefold()
+
+    actions = []
+    if not cli.get("ok"):
+        actions.append(i18n.get("diagnostics.action.fix_cli"))
+    if backend.get("mode") == "subscription" and not login.get("ok"):
+        actions.append(i18n.get("diagnostics.action.login_subscription"))
+    if backend.get("mode") == "agent_maestro":
+        if endpoint_probe and not endpoint_probe.get("ok"):
+            actions.append(i18n.get("diagnostics.action.start_agent_maestro"))
+        else:
+            actions.append(i18n.get("diagnostics.action.keep_agent_maestro_running"))
+    elif (backend.get("mode") in ("custom_endpoint", "api_token", "anthropic_api")
+          and endpoint_probe and not endpoint_probe.get("ok")):
+        actions.append(i18n.get("diagnostics.action.check_endpoint"))
+    if ps_policy.get("value") in ("Restricted", "AllSigned"):
+        actions.append(i18n.get("diagnostics.action.use_claude_cmd"))
+
+    if last_result.get("ok") is False:
+        if any(k in detail for k in ("timeout", "超时")):
+            actions.append(i18n.get("diagnostics.action.retry_after_timeout"))
+        elif any(k in detail for k in ("rate limit", "429", "限流", "频率")):
+            actions.append(i18n.get("diagnostics.action.retry_after_rate_limit"))
+        elif any(k in detail for k in ("not logged in", "authentication",
+                                       "unauthorized", "login", "未登录", "登录")):
+            actions.append(i18n.get("diagnostics.action.retry_after_login"))
+        else:
+            actions.append(i18n.get("diagnostics.action.retry_generic"))
+
+    if not actions:
+        actions.append(i18n.get("diagnostics.action.no_action_needed"))
+
+    deduped = []
+    for item in actions:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
 
 
 def probe_base_url(base_url, timeout=1.5):
@@ -1979,7 +2033,10 @@ class TranslatorApp:
             return DICTIONARY_PROMPT
         mode = self.cfg.get(CFG.DIRECTION, "auto")
         app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
-        return direction_prompt(mode, app_language) + SYSTEM_SUFFIX
+        base_prompt = direction_prompt(mode, app_language)
+        if self._last_origin == "ocr":
+            base_prompt += OCR_STRUCTURE_HINT
+        return base_prompt + SYSTEM_SUFFIX
 
     def _result_title(self, ok=True):
         """Title for the result popup, reflecting the active mode."""
@@ -3596,7 +3653,7 @@ class TranslatorApp:
         if not advice:
             advice.append(i18n.get("diagnostics.advice.no_obvious_issue"))
 
-        return {
+        snapshot = {
             "app": {
                 "version": version_string(),
                 "git_deploy": is_git_deploy(),
@@ -3620,11 +3677,14 @@ class TranslatorApp:
                 "title": self._last_result_title,
                 "preview": (self._last_result_text[:180] + "…")
                 if len(self._last_result_text) > 180 else self._last_result_text,
+                "detail": self._last_result_text,
                 "origin": self._last_origin,
             },
             "recent_errors": tail_text_file(os.path.join(DATA_DIR, "error.log"), 8),
             "advice": advice,
         }
+        snapshot["actions"] = build_diagnostics_actions(snapshot)
+        return snapshot
 
     def _diagnostics_summary_text(self, snapshot):
         backend = snapshot["backend"]["label"]
@@ -3688,6 +3748,10 @@ class TranslatorApp:
         for item in snapshot["advice"]:
             lines.append(f"- {item}")
 
+        lines.extend(["", i18n.get("diagnostics.section.next_steps")])
+        for idx, item in enumerate(snapshot.get("actions", []), start=1):
+            lines.append(f"{idx}. {item}")
+
         lines.extend([
             "", i18n.get("diagnostics.section.paths"),
             f"- APP_DIR = {app['app_dir']}",
@@ -3730,6 +3794,28 @@ class TranslatorApp:
         lines.append(snapshot["recent_errors"] or i18n.get("diagnostics.error_log.empty"))
         return "\n".join(lines)
 
+    def _can_retry_last_translation(self):
+        return bool(self._last_input or self._last_origin == "ocr")
+
+    def _retry_from_diagnostics(self, win):
+        retry_btn = getattr(win, "_diag_retry_btn", None)
+        if not self._can_retry_last_translation():
+            if retry_btn is not None:
+                retry_btn.config(
+                    state="disabled", cursor="arrow",
+                    text=i18n.get("diagnostics.retry_unavailable"))
+            return
+        if retry_btn is not None:
+            retry_btn.config(
+                state="disabled", cursor="watch",
+                text=i18n.get("diagnostics.retrying"))
+        if self._last_input:
+            win.destroy()
+            self._retry()
+            return
+        win.destroy()
+        self._ocr_from_menu()
+
     def _apply_diagnostics_report(self, win, summary_text, report):
         try:
             if not tk.Toplevel.winfo_exists(win):
@@ -3740,6 +3826,7 @@ class TranslatorApp:
         text = getattr(win, "_diag_text", None)
         refresh_btn = getattr(win, "_diag_refresh_btn", None)
         copy_btn = getattr(win, "_diag_copy_btn", None)
+        retry_btn = getattr(win, "_diag_retry_btn", None)
         if summary is not None:
             summary.config(text=summary_text, fg=self.theme["accent"])
         if text is not None:
@@ -3754,6 +3841,13 @@ class TranslatorApp:
                 text=i18n.get("diagnostics.redetect"))
         if copy_btn is not None:
             copy_btn.config(state="normal", cursor="hand2")
+        if retry_btn is not None:
+            can_retry = self._can_retry_last_translation()
+            retry_btn.config(
+                state="normal" if can_retry else "disabled",
+                cursor="hand2" if can_retry else "arrow",
+                text=(i18n.get("diagnostics.retry_translate")
+                      if can_retry else i18n.get("diagnostics.retry_unavailable")))
 
     def _refresh_diagnostics_window(self, win=None):
         win = win or self.diagnostics_win
@@ -3768,6 +3862,7 @@ class TranslatorApp:
         text = getattr(win, "_diag_text", None)
         refresh_btn = getattr(win, "_diag_refresh_btn", None)
         copy_btn = getattr(win, "_diag_copy_btn", None)
+        retry_btn = getattr(win, "_diag_retry_btn", None)
         if summary is not None:
             summary.config(text=i18n.get("diagnostics.refreshing"), fg=self.theme["popup_hint"])
         if text is not None:
@@ -3779,6 +3874,10 @@ class TranslatorApp:
             refresh_btn.config(state="disabled", cursor="watch", text=i18n.get("diagnostics.refreshing"))
         if copy_btn is not None:
             copy_btn.config(state="disabled", cursor="arrow")
+        if retry_btn is not None:
+            retry_btn.config(
+                state="disabled", cursor="watch",
+                text=i18n.get("diagnostics.refreshing"))
 
         result_q = queue.Queue()
         win._diag_queue = result_q
@@ -3914,11 +4013,20 @@ class TranslatorApp:
             active_bg=t["list_sel"], active_fg=fg,
             font=(FONT, 10), padx=18, pady=6)
         copy_btn.pack(side="right", padx=(0, 8))
+        retry_btn = self._pill_button(
+            bottom, i18n.get("diagnostics.retry_translate"),
+            lambda: self._retry_from_diagnostics(win),
+            bg=t["list_bg"], fg=fg,
+            hover_bg=t["btn_active"], hover_fg=fg,
+            active_bg=t["list_sel"], active_fg=fg,
+            font=(FONT, 10), padx=18, pady=6)
+        retry_btn.pack(side="right", padx=(0, 8))
 
         win._diag_summary = summary
         win._diag_text = text
         win._diag_refresh_btn = refresh_btn
         win._diag_copy_btn = copy_btn
+        win._diag_retry_btn = retry_btn
         win._diag_report = ""
         win.bind("<Escape>", lambda e: win.destroy())
 
@@ -4746,28 +4854,28 @@ class TranslatorApp:
         left.pack_propagate(False)
         controls = tk.Frame(left, bg=bg)
         controls.pack(fill="x", padx=(12, 0), pady=(8, 4))
+        history_filter_labels = get_history_filter_labels()
+        filter_var = tk.StringVar(value=history_filter_labels["all"])
+        filt = ttk.Combobox(
+            controls, textvariable=filter_var, state="readonly", width=7,
+            style="CC.TCombobox", font=(font, 9),
+            values=list(history_filter_labels.values()))
+        filt.pack(side="right")
         search_wrap = tk.Frame(
             controls, bg=theme["bg"], bd=0, highlightthickness=1,
             highlightbackground=border)
-        search_wrap.pack(side="left", fill="x", expand=True)
+        search_wrap.pack(side="left", fill="x", expand=True, padx=(0, 8))
         search_var = tk.StringVar()
         search = tk.Entry(
             search_wrap, textvariable=search_var,
             bg=theme["bg"], fg=theme["fg"], relief="flat", bd=0,
             insertbackground=theme["fg"], highlightthickness=0,
-            font=(font, 9))
+            font=(font, 9), width=10)
         search.pack(side="left", fill="x", expand=True, ipady=5, padx=(8, 0))
         search_icon = tk.Label(
             search_wrap, text="⌕", bg=theme["bg"], fg=theme["popup_hint"],
             font=("Segoe UI Symbol", 10), padx=8)
         search_icon.pack(side="right")
-        history_filter_labels = get_history_filter_labels()
-        filter_var = tk.StringVar(value=history_filter_labels["all"])
-        filt = ttk.Combobox(
-            controls, textvariable=filter_var, state="readonly", width=6,
-            style="CC.TCombobox", font=(font, 9),
-            values=list(history_filter_labels.values()))
-        filt.pack(side="left", padx=(8, 0))
         listbox = tk.Listbox(
             left, bg=theme["list_bg"], fg=theme["settings_fg"],
             selectbackground=theme["list_sel"],
