@@ -4857,7 +4857,7 @@ class TranslatorApp:
         history_filter_labels = get_history_filter_labels()
         filter_var = tk.StringVar(value=history_filter_labels["all"])
         filt = ttk.Combobox(
-            controls, textvariable=filter_var, state="readonly", width=7,
+            controls, textvariable=filter_var, state="readonly", width=6,
             style="CC.TCombobox", font=(font, 9),
             values=list(history_filter_labels.values()))
         filt.pack(side="right")
@@ -4870,7 +4870,7 @@ class TranslatorApp:
             search_wrap, textvariable=search_var,
             bg=theme["bg"], fg=theme["fg"], relief="flat", bd=0,
             insertbackground=theme["fg"], highlightthickness=0,
-            font=(font, 9), width=10)
+            font=(font, 9), width=12)
         search.pack(side="left", fill="x", expand=True, ipady=5, padx=(8, 0))
         search_icon = tk.Label(
             search_wrap, text="⌕", bg=theme["bg"], fg=theme["popup_hint"],
