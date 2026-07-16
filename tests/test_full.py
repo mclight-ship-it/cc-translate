@@ -738,8 +738,8 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
 
 class TestSupportAuthorWindow(unittest.TestCase):
     def test_support_strings_present(self):
-        self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["about.support_author"], "☕ 请作者喝杯咖啡")
-        self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["about.support_author"], "☕ Buy me a coffee")
+        self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["about.support_author"], "请作者喝杯咖啡")
+        self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["about.support_author"], "Buy me a coffee")
         self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["support.title"], "请作者喝杯咖啡")
         self.assertEqual(tr.i18n.TRANSLATIONS["en_US"]["support.title"], "Buy me a coffee")
         self.assertEqual(tr.i18n.TRANSLATIONS["zh_CN"]["support.image_missing"], "支持图片暂不可用。")

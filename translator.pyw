@@ -4119,16 +4119,35 @@ class TranslatorApp:
         # Middle spacer
         tk.Frame(content_frame, bg=bg, height=8).pack()
 
-        # Version
-        version_str = version_string()
-        version_lbl = tk.Label(
-            content_frame, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
-            font=(FONT, 10))
-        version_lbl.pack(pady=6)
+        info_group = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
+        info_group.pack(pady=(4, 0))
 
-        # Contact author (with clickable email)
-        contact_frame = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        contact_frame.pack(pady=6)
+        # Version + GitHub
+        version_str = version_string()
+        version_frame = tk.Frame(info_group, bg=bg, bd=0, highlightthickness=0)
+        version_frame.pack(pady=5)
+        version_lbl = tk.Label(
+            version_frame, text=f"{i18n.get('about.version')}: {version_str}", bg=bg, fg=fg,
+            font=(FONT, 10))
+        version_lbl.pack(side="left")
+
+        github_url = "https://github.com/mclight-ship-it/cc-translate"
+        github_frame = tk.Frame(info_group, bg=bg, bd=0, highlightthickness=0)
+        github_frame.pack(pady=5)
+        github_label = tk.Label(github_frame, text="GitHub: ",
+                               bg=bg, fg=fg, font=(FONT, 10))
+        github_label.pack(side="left")
+        github_lbl = tk.Label(github_frame, text=github_url, bg=bg, fg=accent,
+                             font=(FONT, 10, "underline"), cursor="hand2")
+        github_lbl.pack(side="left")
+        github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
+
+        # Contact author + coffee link
+        contact_group = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
+        contact_group.pack(pady=(24, 0))
+
+        contact_frame = tk.Frame(contact_group, bg=bg, bd=0, highlightthickness=0)
+        contact_frame.pack(pady=5)
         contact_label = tk.Label(contact_frame, text=i18n.get('about.contact_author') + ": ",
                                 bg=bg, fg=fg, font=(FONT, 10))
         contact_label.pack(side="left")
@@ -4138,24 +4157,20 @@ class TranslatorApp:
         email_lbl.pack(side="left")
         email_lbl.bind("<Button-1>", lambda e: self._open_url(f"mailto:{email_addr}"))
 
-        # GitHub
-        github_url = "https://github.com/mclight-ship-it/cc-translate"
-        github_frame = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        github_frame.pack(pady=6)
-        github_label = tk.Label(github_frame, text="GitHub: ",
-                               bg=bg, fg=fg, font=(FONT, 10))
-        github_label.pack(side="left")
-        github_lbl = tk.Label(github_frame, text=github_url, bg=bg, fg=accent,
-                             font=(FONT, 10, "underline"), cursor="hand2")
-        github_lbl.pack(side="left")
-        github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
-
-        support_row = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        support_row.pack(pady=(26, 0))
+        support_row = tk.Frame(contact_group, bg=bg, bd=0, highlightthickness=0)
+        support_row.pack(pady=(12, 0))
+        coffee_img = self._coffee_icon_image(16)
+        if coffee_img:
+            coffee_lbl = tk.Label(
+                support_row, image=coffee_img, bg=bg, bd=0, highlightthickness=0,
+                cursor="hand2")
+            coffee_lbl.image = coffee_img
+            coffee_lbl.pack(side="left", padx=(0, 6))
+            coffee_lbl.bind("<Button-1>", lambda e: self.open_support_author())
         support_lbl = tk.Label(
             support_row, text=i18n.get("about.support_author"), bg=bg,
             fg=accent, font=(FONT, 10, "underline"), cursor="hand2")
-        support_lbl.pack()
+        support_lbl.pack(side="left")
         support_lbl.bind("<Button-1>", lambda e: self.open_support_author())
 
         # Bottom spacer
@@ -4235,7 +4250,7 @@ class TranslatorApp:
             canvas_h = min(img_h, max_canvas_h)
             if img_w > canvas_w or img_h > canvas_h:
                 canvas_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-                canvas_frame.pack(expand=True)
+                canvas_frame.pack(fill="both", expand=True)
                 canvas = tk.Canvas(
                     canvas_frame, bg=bg, bd=0, highlightthickness=0,
                     width=canvas_w, height=canvas_h)
@@ -4334,6 +4349,63 @@ class TranslatorApp:
         try:
             photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
             cache[key] = photo
+            return photo
+        except Exception:
+            return None
+
+    def _coffee_icon_image(self, px=16):
+        """Create a compact coffee icon for the support link."""
+        size = max(12, int(px))
+        cache = getattr(self, "_coffee_icon_cache", None)
+        if cache is None:
+            cache = self._coffee_icon_cache = {}
+        if size in cache:
+            return cache[size]
+        try:
+            from PIL import Image, ImageDraw, ImageTk
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            steam = (208, 175, 143, 255)
+            mug = (149, 93, 50, 255)
+            fill = (245, 228, 206, 255)
+            saucer = (116, 69, 36, 255)
+
+            # Steam.
+            steam_xs = [int(round(size * f)) for f in (0.34, 0.49, 0.64)]
+            steam_top = int(round(size * 0.08))
+            steam_bot = int(round(size * 0.28))
+            steam_w = max(1, int(round(size * 0.045)))
+            for x in steam_xs:
+                d.rounded_rectangle(
+                    (x, steam_top, x + steam_w, steam_bot),
+                    radius=max(1, int(size * 0.02)), fill=steam)
+
+            # Mug body and rim.
+            left = int(size * 0.22)
+            top = int(size * 0.34)
+            right = int(size * 0.74)
+            bottom = int(size * 0.68)
+            d.rounded_rectangle((left, top, right, bottom), radius=max(2, size // 8),
+                                fill=fill, outline=None)
+            d.rectangle((left + 1, top, right - 1, top + max(1, size // 9)),
+                         fill=mug)
+
+            # Handle.
+            hx1 = int(size * 0.68)
+            hy1 = int(size * 0.40)
+            hx2 = int(size * 0.90)
+            hy2 = int(size * 0.62)
+            d.ellipse((hx1, hy1, hx2, hy2), fill=mug)
+            inset = max(1, int(round(size * 0.08)))
+            d.ellipse((hx1 + inset, hy1 + inset, hx2 - inset, hy2 - inset),
+                      fill=(0, 0, 0, 0))
+
+            # Saucer.
+            d.ellipse((int(size * 0.20), int(size * 0.67),
+                       int(size * 0.78), int(size * 0.84)), fill=saucer)
+
+            photo = ImageTk.PhotoImage(img)
+            cache[size] = photo
             return photo
         except Exception:
             return None
