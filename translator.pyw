@@ -4144,7 +4144,7 @@ class TranslatorApp:
 
         # Contact author + coffee link
         contact_group = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        contact_group.pack(pady=(24, 0))
+        contact_group.pack(pady=(30, 0))
 
         contact_frame = tk.Frame(contact_group, bg=bg, bd=0, highlightthickness=0)
         contact_frame.pack(pady=5)
@@ -4158,18 +4158,15 @@ class TranslatorApp:
         email_lbl.bind("<Button-1>", lambda e: self._open_url(f"mailto:{email_addr}"))
 
         support_row = tk.Frame(contact_group, bg=bg, bd=0, highlightthickness=0)
-        support_row.pack(pady=(12, 0))
-        coffee_img = self._coffee_icon_image(16)
-        if coffee_img:
-            coffee_lbl = tk.Label(
-                support_row, image=coffee_img, bg=bg, bd=0, highlightthickness=0,
-                cursor="hand2")
-            coffee_lbl.image = coffee_img
-            coffee_lbl.pack(side="left", padx=(0, 6))
-            coffee_lbl.bind("<Button-1>", lambda e: self.open_support_author())
+        support_row.pack(pady=(14, 0))
+        coffee_lbl = tk.Label(
+            support_row, text="☕", bg=bg, fg=accent, cursor="hand2",
+            font=("Segoe UI Emoji", 11))
+        coffee_lbl.pack(side="left", padx=(0, 6))
+        coffee_lbl.bind("<Button-1>", lambda e: self.open_support_author())
         support_lbl = tk.Label(
             support_row, text=i18n.get("about.support_author"), bg=bg,
-            fg=accent, font=(FONT, 10, "underline"), cursor="hand2")
+            fg=accent, font=(FONT, 10), cursor="hand2")
         support_lbl.pack(side="left")
         support_lbl.bind("<Button-1>", lambda e: self.open_support_author())
 
@@ -4244,8 +4241,11 @@ class TranslatorApp:
         if support_img:
             img_w = support_img.width()
             img_h = support_img.height()
-            max_canvas_w = max(320, mon_w - 120)
-            max_canvas_h = max(240, mon_h - 170)
+            # Keep the raw image unscaled whenever it fits the monitor; only
+            # fall back to a scrollable viewport when it truly exceeds the
+            # available screen area.
+            max_canvas_w = max(320, mon_w - 72)
+            max_canvas_h = max(240, mon_h - 96)
             canvas_w = min(img_w, max_canvas_w)
             canvas_h = min(img_h, max_canvas_h)
             if img_w > canvas_w or img_h > canvas_h:
