@@ -884,6 +884,18 @@ def describe_model_routing(app_model, backend_mode, backend_model):
     return i18n.get("diagnostics.routing.no_proxy")
 
 
+def fit_box_size(src_w, src_h, max_w, max_h):
+    """Fit a box into a max area while preserving aspect ratio."""
+    src_w = int(src_w)
+    src_h = int(src_h)
+    max_w = int(max_w)
+    max_h = int(max_h)
+    if src_w <= 0 or src_h <= 0 or max_w <= 0 or max_h <= 0:
+        return 0, 0, 0.0
+    scale = min(1.0, max_w / src_w, max_h / src_h)
+    return max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale))), scale
+
+
 def build_diagnostics_actions(snapshot):
     snapshot = dict(snapshot or {})
     backend = dict(snapshot.get("backend") or {})
@@ -4237,42 +4249,18 @@ class TranslatorApp:
             bottom = self.root.winfo_screenheight()
         mon_w = right - left
         mon_h = bottom - top
-        support_img = self._load_support_image()
+        max_image_w = max(240, mon_w - 64)
+        max_image_h = max(180, mon_h - 120)
+        support_img, img_w, img_h = self._load_support_image(max_image_w, max_image_h)
         if support_img:
-            img_w = support_img.width()
-            img_h = support_img.height()
-            # Keep the raw image unscaled whenever it fits the monitor; only
-            # fall back to a scrollable viewport when it truly exceeds the
-            # available screen area.
-            max_canvas_w = max(320, mon_w - 72)
-            max_canvas_h = max(240, mon_h - 96)
-            canvas_w = min(img_w, max_canvas_w)
-            canvas_h = min(img_h, max_canvas_h)
-            if img_w > canvas_w or img_h > canvas_h:
-                canvas_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-                canvas_frame.pack(fill="both", expand=True)
-                canvas = tk.Canvas(
-                    canvas_frame, bg=bg, bd=0, highlightthickness=0,
-                    width=canvas_w, height=canvas_h)
-                canvas.grid(row=0, column=0, sticky="nsew")
-                vbar = ttk.Scrollbar(
-                    canvas_frame, orient="vertical", style="CC.Vertical.TScrollbar",
-                    command=canvas.yview)
-                hbar = ttk.Scrollbar(
-                    canvas_frame, orient="horizontal", style="CC.Horizontal.TScrollbar",
-                    command=canvas.xview)
-                canvas.config(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
-                vbar.grid(row=0, column=1, sticky="ns")
-                hbar.grid(row=1, column=0, sticky="ew")
-                canvas_frame.grid_rowconfigure(0, weight=1)
-                canvas_frame.grid_columnconfigure(0, weight=1)
-                canvas.create_image(0, 0, anchor="nw", image=support_img)
-                canvas.config(scrollregion=(0, 0, img_w, img_h))
-                win._support_canvas = canvas
-            else:
-                img_lbl = tk.Label(body, image=support_img, bg=bg, bd=0,
-                                  highlightthickness=0)
-                img_lbl.pack(expand=True)
+            image_frame = tk.Frame(
+                body, bg=bg, bd=0, highlightthickness=0,
+                width=img_w, height=img_h)
+            image_frame.pack_propagate(False)
+            image_frame.pack(expand=True)
+            img_lbl = tk.Label(image_frame, image=support_img, bg=bg, bd=0,
+                               highlightthickness=0)
+            img_lbl.pack(fill="both", expand=True)
             win._support_image = support_img
         else:
             fallback_lbl = tk.Label(
@@ -4336,22 +4324,37 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _load_support_image(self):
-        """Load the support image without resizing or re-encoding it."""
-        key = "support-image"
+    def _load_support_image(self, max_w=None, max_h=None):
+        """Load the support image, shrinking only when it won't fit."""
+        key = (int(max_w) if max_w is not None else None,
+               int(max_h) if max_h is not None else None)
         cache = getattr(self, "_support_img_cache", None)
         if cache is None:
             cache = self._support_img_cache = {}
         if key in cache:
             return cache[key]
         if not os.path.exists(SUPPORT_IMAGE_PATH):
-            return None
+            return None, 0, 0
         try:
-            photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
-            cache[key] = photo
-            return photo
+            from PIL import Image, ImageTk
+            with Image.open(SUPPORT_IMAGE_PATH) as im:
+                src_w, src_h = im.size
+                if max_w is None or max_h is None:
+                    photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
+                    cache[key] = (photo, src_w, src_h)
+                    return photo, src_w, src_h
+                fit_w, fit_h, scale = fit_box_size(src_w, src_h, max_w, max_h)
+                if scale < 1.0:
+                    resample = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+                    img = im.convert("RGBA").resize((fit_w, fit_h), resample)
+                    photo = ImageTk.PhotoImage(img, master=self.root)
+                else:
+                    photo = tk.PhotoImage(file=SUPPORT_IMAGE_PATH, master=self.root)
+                    fit_w, fit_h = src_w, src_h
+                cache[key] = (photo, fit_w, fit_h)
+                return photo, fit_w, fit_h
         except Exception:
-            return None
+            return None, 0, 0
 
     def _coffee_icon_image(self, px=16):
         """Create a compact coffee icon for the support link."""

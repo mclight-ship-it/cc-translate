@@ -735,6 +735,10 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
         self.assertTrue(os.path.exists(tr.SUPPORT_IMAGE_PATH),
                         f"support image missing: {tr.SUPPORT_IMAGE_PATH}")
 
+    def test_fit_box_size_preserves_aspect(self):
+        self.assertEqual(tr.fit_box_size(100, 50, 120, 120), (100, 50, 1.0))
+        self.assertEqual(tr.fit_box_size(100, 50, 50, 50), (50, 25, 0.5))
+
 
 class TestSupportAuthorWindow(unittest.TestCase):
     def test_support_strings_present(self):
