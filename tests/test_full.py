@@ -100,6 +100,7 @@ class TestCFGConstants(unittest.TestCase):
         "AUTO_UPDATE_ENABLED", "AUTO_UPDATE_HOUR",
         "OCR_ENGINE", "OCR_HOTKEY_ENABLED",
         "CLIPBOARD_PROTECTION_ENABLED",
+        "AUTOSTART_INITIALIZED",
     }
 
     def test_cfg_has_all_attributes(self):

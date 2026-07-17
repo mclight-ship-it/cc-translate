@@ -281,6 +281,7 @@ class CFG:
     OCR_HOTKEY_ENABLED = "ocr_hotkey_enabled"
     LANGUAGE = "language"
     CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
+    AUTOSTART_INITIALIZED = "autostart_initialized"
 
 
 DEFAULT_CONFIG = {
@@ -298,6 +299,7 @@ DEFAULT_CONFIG = {
     CFG.OCR_ENGINE: "claude",
     CFG.OCR_HOTKEY_ENABLED: True,
     CFG.CLIPBOARD_PROTECTION_ENABLED: False,
+    CFG.AUTOSTART_INITIALIZED: False,
 }
 
 # Two colour palettes. Every UI surface reads from the active theme so the
@@ -1202,6 +1204,11 @@ class StreamSession:
 
 class TranslatorApp:
     def __init__(self):
+        # Detect a fresh install *before* loading config: on first run the
+        # config file doesn't exist yet. We use this to enable autostart by
+        # default for new users (see _run_startup_tasks), without ever
+        # re-enabling it for existing users who deliberately turned it off.
+        self._fresh_install = not os.path.exists(CONFIG_PATH)
         self.cfg = load_config()
         
         # Initialize i18n (language support)
@@ -1365,6 +1372,14 @@ class TranslatorApp:
             # Convert that into the new managed .lnk so the setting stays in sync.
             if os.path.exists(LEGACY_STARTUP_VBS) and not is_autostart_enabled():
                 set_autostart(True)
+            # First-run default: new installs start with autostart ON. Gated by a
+            # persistent flag so we only ever do this once — after that the user's
+            # choice in Settings is respected and never overridden.
+            if not self.cfg.get(CFG.AUTOSTART_INITIALIZED, False):
+                if self._fresh_install and not is_autostart_enabled():
+                    set_autostart(True)
+                self.cfg[CFG.AUTOSTART_INITIALIZED] = True
+                save_config(self.cfg)
         except Exception as e:
             log_error("startup_tasks", e)
 
