@@ -4778,6 +4778,8 @@ class TranslatorApp:
             return ImageTk.PhotoImage(img)
         except Exception:
             return None
+
+    def _install_combo_chevron(self, style, hint, accent, scale):
         """Register a custom chevron image element and point the combobox layout
         at it. Elements can only be created once per name, so we cache per
         (colour, size). Returns True if the custom chevron is in use."""
