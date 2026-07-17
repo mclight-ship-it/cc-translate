@@ -44,5 +44,60 @@ class TestFormatVersion(unittest.TestCase):
         self.assertEqual(tr._format_version("", None), "未知版本")
 
 
+class TestUninstaller(unittest.TestCase):
+    """The uninstaller writes a detached cleanup script; verify its contents
+    without ever spawning a process or deleting anything real."""
+
+    def _run(self, tmp, remove_data, notify=True):
+        import os
+        import unittest.mock as mock
+        cc = tr._cc_update
+        app_dir = os.path.join(tmp, "cc-translate")
+        data_dir = os.path.join(tmp, "CC Translate")
+        os.makedirs(app_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
+        with mock.patch.dict(os.environ, {"TEMP": tmp, "TMP": tmp}), \
+                mock.patch.object(cc.subprocess, "Popen") as popen:
+            ok = cc.spawn_uninstaller(
+                app_dir=app_dir, data_dir=data_dir,
+                remove_data=remove_data, pid=999999, notify=notify)
+        script_path = os.path.join(tmp, "cc_uninstall.ps1")
+        with open(script_path, encoding="utf-8") as f:
+            script = f.read()
+        return ok, script, app_dir, data_dir, popen
+
+    def test_spawns_and_targets_app_dir(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, script, app_dir, data_dir, popen = self._run(tmp, remove_data=False)
+            self.assertTrue(ok)
+            self.assertTrue(popen.called)
+            # Always removes the program folder.
+            self.assertIn(app_dir, script)
+            # Waits on the given pid before deleting.
+            self.assertIn("999999", script)
+
+    def test_keep_data_leaves_data_dir_untouched(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, script, app_dir, data_dir, _ = self._run(tmp, remove_data=False)
+            self.assertNotIn(data_dir, script)
+
+    def test_remove_data_includes_data_dir(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, script, app_dir, data_dir, _ = self._run(tmp, remove_data=True)
+            self.assertIn(data_dir, script)
+
+    def test_notify_toggles_messagebox(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, with_msg, _, _, _ = self._run(tmp, remove_data=False, notify=True)
+            self.assertIn("MessageBox", with_msg)
+        with tempfile.TemporaryDirectory() as tmp:
+            _, no_msg, _, _, _ = self._run(tmp, remove_data=False, notify=False)
+            self.assertNotIn("MessageBox", no_msg)
+
+
 if __name__ == "__main__":
     unittest.main()

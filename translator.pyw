@@ -41,6 +41,7 @@ from cc_update import (
     is_git_deploy, local_head, remote_head, update_available, version_string,
     _format_version,
     is_autostart_enabled, set_autostart, ensure_startmenu_shortcut,
+    remove_shortcuts, spawn_uninstaller,
     _spawn_relauncher, _git, GIT_REMOTE, GIT_BRANCH, UPDATE_NET_TIMEOUT,
     LEGACY_STARTUP_VBS, SCRIPT_PATH, PYTHONW, STARTUP_LNK, STARTMENU_LNK,
 )
@@ -4204,6 +4205,133 @@ class TranslatorApp:
         w, h, x, y = self._centered_box()
         self._reveal_rounded_window(win, w, h, x, y)
 
+    def _confirm_and_uninstall(self):
+        """Show a themed confirm dialog with a checked-by-default "keep my data"
+        toggle, then run the uninstaller if the user confirms."""
+        t = self.theme
+        bg = t["settings_bg"]
+        fg = t["settings_fg"]
+        border = t["popup_border"]
+        hint = t["popup_hint"]
+        accent = t["accent"]
+        FONT = "Microsoft YaHei UI"
+
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+
+        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+
+        # ---- Title bar ----
+        bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=16, pady=(12, 8))
+        title_lbl = tk.Label(bar, text=i18n.get("uninstall.title"), bg=bg,
+                             fg=t["status_err"], font=(FONT, 11, "bold"))
+        title_lbl.pack(side="left")
+        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                             font=(FONT, 11), cursor="hand2", padx=6)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda e: win.destroy())
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+        self._make_draggable((bar, title_lbl), win)
+
+        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+
+        body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=20, pady=(16, 16))
+
+        msg = tk.Label(body, text=i18n.get("uninstall.body"), bg=bg, fg=fg,
+                       font=(FONT, 10), justify="left", wraplength=360)
+        msg.pack(anchor="w", pady=(0, 14))
+
+        keep_row = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        keep_row.pack(fill="x", pady=(0, 4))
+        keep_lbl = tk.Label(keep_row, text=i18n.get("uninstall.keep_data"),
+                            bg=bg, fg=fg, font=(FONT, 10))
+        keep_lbl.pack(side="left")
+        keep_sw = self._make_toggle(keep_row, True, bg)
+        keep_sw.pack(side="right")
+
+        status = tk.Label(body, text="", bg=bg, fg=t["status_err"],
+                          font=(FONT, 9))
+        status.pack(anchor="w", pady=(10, 0))
+
+        footer = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        footer.pack(fill="x", pady=(14, 0))
+
+        def on_confirm():
+            status.config(text=i18n.get("uninstall.working"), fg=hint)
+            win.update_idletasks()
+            keep = keep_sw.get()
+            ok = self._perform_uninstall(remove_data=not keep)
+            if not ok:
+                status.config(text=i18n.get("uninstall.failed"),
+                              fg=t["status_err"])
+
+        confirm_btn = self._pill_button(
+            footer, i18n.get("uninstall.confirm"), on_confirm,
+            bg=t["status_err"], fg="#ffffff",
+            hover_bg=t["status_err"], hover_fg="#ffffff",
+            active_bg=t["status_err"], active_fg="#ffffff",
+            font=(FONT, 10), padx=18, pady=6)
+        confirm_btn.pack(side="right")
+        cancel_btn = self._pill_button(
+            footer, i18n.get("uninstall.cancel"), win.destroy,
+            bg=t["list_bg"], fg=fg,
+            hover_bg=t["btn_active"], hover_fg=fg,
+            active_bg=t["list_sel"], active_fg=fg,
+            font=(FONT, 10), padx=18, pady=6)
+        cancel_btn.pack(side="right", padx=(0, 8))
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        win.update_idletasks()
+        w = max(card.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS, 420)
+        h = card.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
+        rect = get_monitor_rect()
+        if rect:
+            left, top, right, bottom = rect
+            x = left + (right - left - w) // 2
+            y = top + (bottom - top - h) // 2
+        else:
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            x, y = (sw - w) // 2, (sh - h) // 2
+        self._reveal_rounded_window(win, w, h, x, y)
+
+    def _perform_uninstall(self, remove_data=False):
+        """Remove shortcuts, spawn the detached cleanup helper, then tear the
+        app down (modeled on _relaunch). Returns False if the helper couldn't
+        be spawned (in which case the app stays running)."""
+        try:
+            remove_shortcuts()
+        except Exception as e:
+            log_error("uninstall_shortcuts", e)
+        ok = False
+        try:
+            ok = spawn_uninstaller(app_dir=APP_DIR, data_dir=DATA_DIR,
+                                   remove_data=remove_data)
+        except Exception as e:
+            log_error("uninstall_spawn", e)
+            ok = False
+        if not ok:
+            return False
+        try:
+            if self.tray is not None:
+                self.tray.stop()
+        except Exception:
+            pass
+        self.close_warm_pool()
+        try:
+            self.root.after(0, self.root.destroy)
+        except Exception:
+            pass
+        # Force a prompt exit so the interpreter releases its file locks and the
+        # cleanup helper can delete the program folder.
+        threading.Timer(1.2, lambda: os._exit(0)).start()
+        return True
+
     def open_support_author(self):
         self.root.after(0, self._open_support_author)
 
@@ -4991,6 +5119,18 @@ class TranslatorApp:
             upd_row, minsize=upd_apply_btn.winfo_reqheight() + 4)
         upd_status.config(text="")
         upd_apply_btn.grid_remove()       # hidden until a version is found
+        row_state["value"] += 1
+
+        # ---- Uninstall (low-key, sits at the bottom of the Update section) ----
+        uninstall_row = row_state["value"]
+        self._pill_button(
+            body, i18n.get("settings.label.uninstall"),
+            lambda: self._confirm_and_uninstall(),
+            bg=bg, fg=hint,
+            hover_bg=t["list_bg"], hover_fg=t["status_err"],
+            active_bg=t["list_sel"], active_fg=t["status_err"],
+            font=(FONT, 9), padx=10, pady=3).grid(
+            row=uninstall_row, column=0, columnspan=2, sticky="w", pady=(2, 0))
         row_state["value"] += 1
 
         # ---- Footer: status + action buttons ----

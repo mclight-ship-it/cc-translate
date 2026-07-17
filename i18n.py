@@ -118,9 +118,14 @@ TRANSLATIONS = {
         "settings.label.language_changed": "语言已更改，正在重启…",
         "settings.label.save_failed": "保存失败",
         "settings.label.close": "关闭",
-
-        # Diagnostics window
-        "diagnostics.title": "诊断",
+        "settings.label.uninstall": "卸载 CC Translate",
+        "uninstall.title": "卸载 CC Translate",
+        "uninstall.body": "这将删除程序文件夹和快捷方式（开机自启、开始菜单）。\n\n不会卸载 Python、Node.js 或 Claude CLI 等公共工具。\n\n此操作无法撤销。",
+        "uninstall.keep_data": "保留我的配置和历史记录",
+        "uninstall.confirm": "确认卸载",
+        "uninstall.cancel": "取消",
+        "uninstall.working": "正在卸载…",
+        "uninstall.failed": "卸载失败",
         "diagnostics.copy": "复制诊断",
         "diagnostics.copied": "已复制",
         "diagnostics.overview": "【概览】",
@@ -381,6 +386,14 @@ TRANSLATIONS = {
         "settings.label.language_changed": "Language changed, restarting…",
         "settings.label.save_failed": "Save failed",
         "settings.label.close": "Close",
+        "settings.label.uninstall": "Uninstall CC Translate",
+        "uninstall.title": "Uninstall CC Translate",
+        "uninstall.body": "This removes the program folder and its shortcuts (startup, Start Menu).\n\nShared tools like Python, Node.js and the Claude CLI are NOT uninstalled.\n\nThis cannot be undone.",
+        "uninstall.keep_data": "Keep my settings and history",
+        "uninstall.confirm": "Uninstall",
+        "uninstall.cancel": "Cancel",
+        "uninstall.working": "Uninstalling…",
+        "uninstall.failed": "Uninstall failed",
 
         # About dialog
         "about.title": "About",

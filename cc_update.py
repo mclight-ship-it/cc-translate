@@ -14,6 +14,8 @@ Public API used by translator.pyw:
   is_autostart_enabled()
   set_autostart(enable)
   ensure_startmenu_shortcut()
+  remove_shortcuts()
+  spawn_uninstaller(app_dir=None, data_dir=None, remove_data=False, ...)
   _spawn_relauncher(pid=None)
 
   LEGACY_STARTUP_VBS  — path checked on first run to migrate old launchers
@@ -309,3 +311,92 @@ def set_autostart(enable):
                 os.remove(STARTUP_LNK)
         except Exception:
             pass
+
+
+def remove_shortcuts():
+    """Delete the Startup and Start Menu shortcuts (and the legacy VBS
+    launcher). Best-effort — missing files are ignored."""
+    for p in (STARTUP_LNK, STARTMENU_LNK, LEGACY_STARTUP_VBS):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+
+
+def spawn_uninstaller(app_dir=None, data_dir=None, remove_data=False,
+                      pid=None, notify=True):
+    """Write a detached PowerShell helper (in %TEMP%, so it isn't sitting in a
+    folder it's about to delete) that waits for THIS process to exit, then
+    removes the program folder, optionally the user-data folder, shows an
+    optional "uninstalled" message box, and finally deletes itself.
+
+    Modeled on _spawn_relauncher: running the cleanup out-of-process from a
+    real script file is what lets the app delete its own folder — the files
+    stay locked until the interpreter exits, so we wait on the PID first.
+    Returns True if the helper was launched."""
+    if pid is None:
+        pid = os.getpid()
+    if app_dir is None:
+        app_dir = APP_DIR
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or app_dir
+    log = os.path.join(tmp, "cc_uninstall.log")
+    script_path = os.path.join(tmp, "cc_uninstall.ps1")
+
+    lines = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        f"$log = {_ps_squote(log)}",
+        ("function W($m) { \"[$(Get-Date -Format HH:mm:ss.fff)] $m\" | "
+         "Out-File -FilePath $log -Append -Encoding utf8 }"),
+        f"W 'uninstall start; waiting for pid {pid} to exit'",
+        f"for ($i = 0; $i -lt 300; $i++) {{",
+        f"  if (-not (Get-Process -Id {pid} -ErrorAction SilentlyContinue)) "
+        "{ break }",
+        "  Start-Sleep -Milliseconds 100",
+        "}",
+        "Start-Sleep -Milliseconds 600",
+        "W 'old process gone (or wait timed out)'",
+    ]
+    if remove_data and data_dir:
+        lines += [
+            f"W 'removing data dir {data_dir}'",
+            f"Remove-Item -LiteralPath {_ps_squote(data_dir)} "
+            "-Recurse -Force -ErrorAction SilentlyContinue",
+        ]
+    lines += [
+        f"W 'removing app dir {app_dir}'",
+        f"Remove-Item -LiteralPath {_ps_squote(app_dir)} "
+        "-Recurse -Force -ErrorAction SilentlyContinue",
+        "W 'app dir removed'",
+    ]
+    if notify:
+        lines += [
+            "Add-Type -AssemblyName System.Windows.Forms",
+            "[System.Windows.Forms.MessageBox]::Show("
+            f"{_ps_squote('CC Translate has been uninstalled.')}, "
+            f"{_ps_squote('CC Translate')}) | Out-Null",
+        ]
+    lines += [
+        "W 'uninstall done'",
+        # Self-delete: schedule removal of this very script after we exit.
+        "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path "
+        "-Force -ErrorAction SilentlyContinue",
+    ]
+    ps = "\n".join(lines) + "\n"
+
+    try:
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(ps)
+    except Exception:
+        return False
+
+    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+           "-WindowStyle", "Hidden", "-File", script_path]
+    try:
+        subprocess.Popen(
+            cmd, cwd=tmp, creationflags=subprocess.CREATE_NO_WINDOW,
+            close_fds=True, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return False
+    return True
