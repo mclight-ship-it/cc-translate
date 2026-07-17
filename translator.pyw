@@ -4726,7 +4726,7 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _make_help_icon_image(self, ring_hex, glyph_hex, bg_hex, diameter=16):
+    def _make_help_icon_image(self, ring_hex, glyph_hex, bg_hex, diameter=18):
         """Draw a small circular "?" help badge as a PhotoImage: a thin ring
         outline with a centered question mark. Supersampled for smooth edges.
         Flattened onto bg_hex so no alpha reaches Tk. Returns None if PIL is
@@ -4757,7 +4757,7 @@ class TranslatorApp:
             font = None
             for name in ("segoeui.ttf", "arial.ttf", "calibri.ttf"):
                 try:
-                    font = ImageFont.truetype(name, int(size * 0.62))
+                    font = ImageFont.truetype(name, int(size * 0.70))
                     break
                 except Exception:
                     continue
@@ -4930,7 +4930,7 @@ class TranslatorApp:
             tk.Label(cell, text=text_, bg=bg, fg=fg, font=(font, 10)).pack(
                 side="left")
             icon = self._make_help_icon_image(
-                help_ring or fg, help_glyph or fg, bg, diameter=15)
+                help_ring or fg, help_glyph or fg, bg, diameter=18)
             if icon is not None:
                 if not hasattr(self, "_help_icon_imgs"):
                     self._help_icon_imgs = []
@@ -4940,7 +4940,7 @@ class TranslatorApp:
                 help_lbl.image = icon
             else:
                 help_lbl = tk.Label(cell, text="(?)", bg=bg, fg=help_ring or fg,
-                                    font=(font, 9), cursor="hand2")
+                                    font=(font, 10), cursor="hand2")
             help_lbl.pack(side="left", padx=(6, 0))
             self._make_tooltip(help_lbl, help_text)
         else:
