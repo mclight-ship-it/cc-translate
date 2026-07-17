@@ -1677,15 +1677,16 @@ class TranslatorApp:
                     return
                 if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                     if not self.ctrl_down:
-                        # Ctrl just went down and no C has been pressed yet, so
-                        # the clipboard still holds the user's own content.
-                        # Snapshot it now; if a translate trigger follows, we
-                        # restore this instead of leaving the selection behind.
-                        try:
-                            self._clip_saved = pyperclip.paste()
-                        except Exception as e:
-                            self._clip_saved = None
-                            log_error("clip_snapshot", e)
+                        # Snapshot clipboard before Ctrl+C so we can restore it
+                        # afterwards. Only do this when clipboard protection is
+                        # enabled — the snapshot itself is a clipboard read that
+                        # can race with system tools like Win+Shift+S.
+                        if self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
+                            try:
+                                self._clip_saved = pyperclip.paste()
+                            except Exception as e:
+                                self._clip_saved = None
+                                log_error("clip_snapshot", e)
                     self.ctrl_down = True
                 elif self.ctrl_down and getattr(key, "char", None) == "\x03":
                     now = time.time()
@@ -4867,11 +4868,6 @@ class TranslatorApp:
             i18n.get("settings.label.ocr_hotkey"),
             self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
             bg=bg, fg=fg, font=FONT)
-        clip_protect_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.clipboard_protection"),
-            self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
-            bg=bg, fg=fg, font=FONT)
 
         # ----- Right column -----
         body = right_col
@@ -4915,6 +4911,11 @@ class TranslatorApp:
         autostart_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_start_boot"), is_autostart_enabled(),
+            bg=bg, fg=fg, font=FONT)
+        clip_protect_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.clipboard_protection"),
+            self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
             bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 更新 ----
