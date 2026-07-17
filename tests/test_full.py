@@ -1010,5 +1010,111 @@ class TestDiagnosticsHelpers(unittest.TestCase):
             tr.i18n.get("diagnostics.action.retry_after_timeout"), actions)
 
 
+# ============================================================
+# Headless UI smoke tests
+# ============================================================
+#
+# WHY THIS EXISTS: the rest of the suite imports translator.pyw as a module,
+# which only executes the top-level `def`s — it never *instantiates* the app or
+# *builds* any window. That left a whole class of bugs invisible: a dropped
+# `def` line silently merges a method's body into the previous method (still
+# valid Python, imports fine, ast.parse passes), and a build-time exception in
+# a dialog is swallowed. Both only surface when the window is actually built.
+#
+# These tests build each real Tk dialog headlessly (root is withdrawn, windows
+# are destroyed immediately) and assert it succeeds. That exercises the true
+# code path — the same one a user hits — so missing methods, orphaned bodies,
+# bad grid/pack calls, and i18n key typos are caught in CI instead of by the
+# user. If no display/Tk is available (e.g. a headless Linux CI box), the whole
+# class skips rather than failing spuriously.
+
+def _make_headless_app():
+    """Construct a TranslatorApp without running __init__ (which starts the
+    hotkey listener, tray icon, warm pool and background threads). We only wire
+    up the minimum state the window builders read, so building a dialog
+    exercises the same code a user triggers."""
+    import tkinter as tk
+    app = object.__new__(tr.TranslatorApp)
+    app._fresh_install = False
+    app.cfg = tr.load_config()
+    lang = app.cfg.get(tr.CFG.LANGUAGE) or "en_US"
+    tr.i18n.initialize(lang)
+    app.theme = tr.resolve_theme(app.cfg)
+    app.root = tk.Tk()
+    app.root.withdraw()
+    app.settings_win = None
+    app.history_win = None
+    app.about_win = None
+    app.support_win = None
+    app.diagnostics_win = None
+    app._settings_check = None
+    app._setup_scrollbar_style()
+    return app
+
+
+class TestUiSmoke(unittest.TestCase):
+    """Build each real dialog headlessly and assert it succeeds. These are the
+    tests that would have caught the settings-window crash (a dropped
+    `def _install_combo_chevron` line)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.destroy()
+        except Exception as e:   # no display / Tk unavailable
+            raise unittest.SkipTest(f"Tk not available: {e}")
+
+    def _build(self, method_name):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        getattr(app, method_name)()
+        return app
+
+    @staticmethod
+    def _safe_destroy(app):
+        try:
+            app.root.destroy()
+        except Exception:
+            pass
+
+    def test_settings_window_builds(self):
+        app = self._build("_open_settings")
+        self.assertTrue(app.settings_win is not None
+                        and tr.tk.Toplevel.winfo_exists(app.settings_win),
+                        "settings window should exist after _open_settings()")
+
+    def test_about_window_builds(self):
+        self._build("_open_about")
+
+    def test_history_window_builds(self):
+        self._build("_open_history")
+
+    def test_diagnostics_window_builds(self):
+        self._build("_open_diagnostics")
+
+    def test_critical_ui_methods_exist(self):
+        """Guard against orphaned/dropped method definitions: every method the
+        window builders call on `self` must be a bound method, not missing."""
+        required = [
+            "_open_settings", "_open_about", "_open_history",
+            "_open_diagnostics", "_open_support_author",
+            "_setup_form_style", "_setup_scrollbar_style",
+            "_install_combo_chevron", "_make_chevron_image",
+            "_make_help_icon_image", "_make_tooltip", "_make_toggle",
+            "_make_draggable", "_pill_button", "_rounded_shell",
+            "_settings_field", "_settings_section",
+            "_settings_toggle_row", "_settings_toggle_row_with_action",
+            "_confirm_and_uninstall",
+        ]
+        for name in required:
+            self.assertTrue(
+                callable(getattr(tr.TranslatorApp, name, None)),
+                f"TranslatorApp.{name} is missing or not callable "
+                f"(a dropped 'def' line can silently merge it into the "
+                f"previous method)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
