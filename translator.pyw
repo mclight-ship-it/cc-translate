@@ -3382,6 +3382,53 @@ class TranslatorApp:
         b.bind("<Leave>", lambda e: b.config(bg=bg, fg=fg))
         return b
 
+    def _make_tooltip(self, widget, text, delay_ms=800):
+        """Attach a simple tooltip to a widget. Shows on enter after a delay,
+        hides on leave."""
+        tooltip_var = {"job": None, "tooltip": None}
+
+        def show_tooltip(e):
+            def do_show():
+                try:
+                    x = widget.winfo_rootx() + widget.winfo_width() + 5
+                    y = widget.winfo_rooty()
+                    tt = tk.Toplevel(self.root)
+                    tt.wm_overrideredirect(True)
+                    tt.wm_geometry(f"+{x}+{y}")
+                    lbl = tk.Label(tt, text=text, bg="#333333", fg="#ffffff",
+                                   font=("Microsoft YaHei UI", 9),
+                                   wraplength=200, justify="left",
+                                   padx=8, pady=4, relief="solid", bd=1)
+                    lbl.pack()
+                    tt.update_idletasks()
+                    tooltip_var["tooltip"] = tt
+                except Exception:
+                    pass
+
+            if tooltip_var["job"]:
+                try:
+                    self.root.after_cancel(tooltip_var["job"])
+                except Exception:
+                    pass
+            tooltip_var["job"] = self.root.after(delay_ms, do_show)
+
+        def hide_tooltip(e):
+            if tooltip_var["job"]:
+                try:
+                    self.root.after_cancel(tooltip_var["job"])
+                except Exception:
+                    pass
+                tooltip_var["job"] = None
+            if tooltip_var["tooltip"]:
+                try:
+                    tooltip_var["tooltip"].destroy()
+                except Exception:
+                    pass
+                tooltip_var["tooltip"] = None
+
+        widget.bind("<Enter>", show_tooltip)
+        widget.bind("<Leave>", hide_tooltip)
+
     def _mono_family(self):
         """Resolve a monospace family once (VSCode-ish preference order)."""
         cached = getattr(self, "_mono_family_cache", None)
@@ -5060,6 +5107,16 @@ class TranslatorApp:
             i18n.get("settings.label.clipboard_protection"),
             self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
             bg=bg, fg=fg, font=FONT)
+        # Add help icon next to the toggle (manually inspect the last row placed
+        # and add a question mark icon with tooltip).
+        row = row_state["value"] - 1
+        help_cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        help_cell.grid(row=row, column=2, sticky="w", padx=(8, 0))
+        help_lbl = tk.Label(help_cell, text="?", bg=bg, fg=hint,
+                            font=(FONT, 9, "bold"), cursor="hand2",
+                            relief="solid", bd=1, width=2, height=1)
+        help_lbl.pack()
+        self._make_tooltip(help_lbl, i18n.get("settings.label.clipboard_protection_help"))
 
         # ---- Section: 更新 ----
         self._settings_section(

@@ -76,6 +76,12 @@ irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/instal
 
 想更透明地手动逐步安装，见下面的[安装（人工步骤）](#安装人工步骤)。
 
+## 卸载
+
+右键托盘 CC 图标 → **设置** → 滚到最底部 → 点左下角的**「卸载 CC Translate」**按钮。弹出确认框选择是否保留配置和历史记录，确认后会删除程序文件和快捷方式。
+
+> Python、Node.js 和 Claude CLI 等公共工具**不会被卸载**，这些可能被其他程序使用。
+
 ## 安装（人工步骤）
 
 ```bash
