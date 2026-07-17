@@ -5121,26 +5121,24 @@ class TranslatorApp:
         upd_apply_btn.grid_remove()       # hidden until a version is found
         row_state["value"] += 1
 
-        # ---- Uninstall (low-key, sits at the bottom of the Update section) ----
-        uninstall_row = row_state["value"]
-        self._pill_button(
-            body, i18n.get("settings.label.uninstall"),
-            lambda: self._confirm_and_uninstall(),
-            bg=bg, fg=hint,
-            hover_bg=t["list_bg"], hover_fg=t["status_err"],
-            active_bg=t["list_sel"], active_fg=t["status_err"],
-            font=(FONT, 9), padx=10, pady=3).grid(
-            row=uninstall_row, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        row_state["value"] += 1
-
         # ---- Footer: status + action buttons ----
         tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16, pady=(4, 0))
         footer = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         footer.pack(fill="x", padx=20, pady=(10, 14))
 
+        # Uninstall sits far left, deliberately separated from the save/close
+        # actions on the right so it can't be hit by accident.
+        self._pill_button(
+            footer, i18n.get("settings.label.uninstall"),
+            lambda: self._confirm_and_uninstall(),
+            bg=bg, fg=hint,
+            hover_bg=t["list_bg"], hover_fg=t["status_err"],
+            active_bg=t["list_sel"], active_fg=t["status_err"],
+            font=(FONT, 9), padx=10, pady=6).pack(side="left")
+
         status = tk.Label(footer, text="", bg=bg, fg=t["status_ok"],
                           font=(FONT, 9))
-        status.pack(side="left")
+        status.pack(side="left", padx=(12, 0))
 
         label_to_dir = {v: k for k, v in direction_labels.items()}
         label_to_theme = {v: k for k, v in theme_labels.items()}
