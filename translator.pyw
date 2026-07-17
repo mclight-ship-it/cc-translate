@@ -3382,25 +3382,37 @@ class TranslatorApp:
         b.bind("<Leave>", lambda e: b.config(bg=bg, fg=fg))
         return b
 
-    def _make_tooltip(self, widget, text, delay_ms=800):
+    def _make_tooltip(self, widget, text, delay_ms=400):
         """Attach a simple tooltip to a widget. Shows on enter after a delay,
-        hides on leave."""
+        hides on leave. The tooltip is topmost so it never hides behind a
+        borderless -topmost dialog (e.g. the settings window)."""
         tooltip_var = {"job": None, "tooltip": None}
 
         def show_tooltip(e):
             def do_show():
                 try:
-                    x = widget.winfo_rootx() + widget.winfo_width() + 5
-                    y = widget.winfo_rooty()
                     tt = tk.Toplevel(self.root)
                     tt.wm_overrideredirect(True)
-                    tt.wm_geometry(f"+{x}+{y}")
-                    lbl = tk.Label(tt, text=text, bg="#333333", fg="#ffffff",
+                    tt.attributes("-topmost", True)
+                    lbl = tk.Label(tt, text=text, bg="#2b2b2b", fg="#ffffff",
                                    font=("Microsoft YaHei UI", 9),
-                                   wraplength=200, justify="left",
-                                   padx=8, pady=4, relief="solid", bd=1)
+                                   wraplength=240, justify="left",
+                                   padx=10, pady=6, relief="flat", bd=0)
                     lbl.pack()
                     tt.update_idletasks()
+                    # Prefer to the right of the icon; if that would run off the
+                    # right screen edge, flip to the left side instead.
+                    tw = tt.winfo_width()
+                    th = tt.winfo_height()
+                    sw = widget.winfo_screenwidth()
+                    x = widget.winfo_rootx() + widget.winfo_width() + 8
+                    if x + tw > sw - 8:
+                        x = widget.winfo_rootx() - tw - 8
+                    y = widget.winfo_rooty() + (widget.winfo_height() - th) // 2
+                    if y < 8:
+                        y = 8
+                    tt.wm_geometry(f"+{x}+{y}")
+                    tt.lift()
                     tooltip_var["tooltip"] = tt
                 except Exception:
                     pass
@@ -4714,7 +4726,58 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _install_combo_chevron(self, style, hint, accent, scale):
+    def _make_help_icon_image(self, ring_hex, glyph_hex, bg_hex, diameter=16):
+        """Draw a small circular "?" help badge as a PhotoImage: a thin ring
+        outline with a centered question mark. Supersampled for smooth edges.
+        Flattened onto bg_hex so no alpha reaches Tk. Returns None if PIL is
+        unavailable (caller falls back to a text label)."""
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageTk
+        except Exception:
+            return None
+        try:
+            def _rgb(hx):
+                hx = hx.lstrip("#")
+                return tuple(int(hx[i:i + 2], 16) for i in (0, 2, 4))
+            ring = _rgb(ring_hex)
+            glyph = _rgb(glyph_hex)
+            bg = _rgb(bg_hex)
+            S = 4                      # supersample factor
+            D = int(diameter)
+            size = D * S
+            img = Image.new("RGB", (size, size), bg)
+            d = ImageDraw.Draw(img)
+            pad = max(1, round(0.06 * size))
+            lw = max(2, round(0.075 * size))
+            d.ellipse([pad, pad, size - pad - 1, size - pad - 1],
+                      outline=ring, width=lw)
+            # Center a "?" glyph. Try a truetype font for crisp shape, else use
+            # the default bitmap font.
+            txt = "?"
+            font = None
+            for name in ("segoeui.ttf", "arial.ttf", "calibri.ttf"):
+                try:
+                    font = ImageFont.truetype(name, int(size * 0.62))
+                    break
+                except Exception:
+                    continue
+            if font is None:
+                font = ImageFont.load_default()
+            try:
+                bbox = d.textbbox((0, 0), txt, font=font)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+                tx = (size - tw) / 2 - bbox[0]
+                ty = (size - th) / 2 - bbox[1]
+            except Exception:
+                tw, th = d.textsize(txt, font=font)
+                tx = (size - tw) / 2
+                ty = (size - th) / 2
+            d.text((tx, ty), txt, fill=glyph, font=font)
+            img = img.resize((D, D), Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
         """Register a custom chevron image element and point the combobox layout
         at it. Elements can only be created once per name, so we cache per
         (colour, size). Returns True if the custom chevron is in use."""
@@ -4854,10 +4917,33 @@ class TranslatorApp:
         row_state["value"] = row + 1
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
-                             bg, fg, font):
+                             bg, fg, font, help_text=None, help_ring=None,
+                             help_glyph=None):
         row = row_state["value"]
-        tk.Label(body, text=text_, bg=bg, fg=fg, font=(font, 10)).grid(
-            row=row, column=0, sticky="w", pady=8)
+        if help_text:
+            # Label + circular "?" help badge sit together in column 0 so the
+            # icon follows the feature name (not the far-right switch).
+            cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+            cell.grid(row=row, column=0, sticky="w", pady=8)
+            tk.Label(cell, text=text_, bg=bg, fg=fg, font=(font, 10)).pack(
+                side="left")
+            icon = self._make_help_icon_image(
+                help_ring or fg, help_glyph or fg, bg, diameter=15)
+            if icon is not None:
+                if not hasattr(self, "_help_icon_imgs"):
+                    self._help_icon_imgs = []
+                self._help_icon_imgs.append(icon)   # keep ref alive
+                help_lbl = tk.Label(cell, image=icon, bg=bg, bd=0,
+                                    highlightthickness=0, cursor="hand2")
+                help_lbl.image = icon
+            else:
+                help_lbl = tk.Label(cell, text="(?)", bg=bg, fg=help_ring or fg,
+                                    font=(font, 9), cursor="hand2")
+            help_lbl.pack(side="left", padx=(6, 0))
+            self._make_tooltip(help_lbl, help_text)
+        else:
+            tk.Label(body, text=text_, bg=bg, fg=fg, font=(font, 10)).grid(
+                row=row, column=0, sticky="w", pady=8)
         sw = self._make_toggle(body, initial, bg)
         sw.grid(row=row, column=1, sticky="e", pady=8)
         row_state["value"] = row + 1
@@ -5106,17 +5192,9 @@ class TranslatorApp:
             body, row_state,
             i18n.get("settings.label.clipboard_protection"),
             self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
-            bg=bg, fg=fg, font=FONT)
-        # Add help icon next to the toggle (manually inspect the last row placed
-        # and add a question mark icon with tooltip).
-        row = row_state["value"] - 1
-        help_cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        help_cell.grid(row=row, column=2, sticky="w", padx=(8, 0))
-        help_lbl = tk.Label(help_cell, text="?", bg=bg, fg=hint,
-                            font=(FONT, 9, "bold"), cursor="hand2",
-                            relief="solid", bd=1, width=2, height=1)
-        help_lbl.pack()
-        self._make_tooltip(help_lbl, i18n.get("settings.label.clipboard_protection_help"))
+            bg=bg, fg=fg, font=FONT,
+            help_text=i18n.get("settings.label.clipboard_protection_help"),
+            help_ring=hint, help_glyph=hint)
 
         # ---- Section: 更新 ----
         self._settings_section(
