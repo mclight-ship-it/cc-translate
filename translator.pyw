@@ -1466,12 +1466,16 @@ class TranslatorApp:
             if not is_git_deploy():
                 report(i18n.get("update.non_git"), "err")
                 return
-            local = local_head()
-            remote = remote_head()
-            if remote is None:
+            ok, err = _cc_update.fetch_remote_branch()
+            if not ok:
+                log_error("update_fetch_state", RuntimeError(err or "fetch failed"))
                 report(i18n.get("update.check_failed_remote"), "err")
                 return
-            if not update_available(local, remote):
+            state, local, remote = _cc_update.classify_update_state()
+            if state == "unknown" or not remote:
+                report(i18n.get("update.check_failed_remote"), "err")
+                return
+            if state != "behind":
                 report(i18n.get("update.no_update"), "ok")
                 return
 
@@ -1480,25 +1484,10 @@ class TranslatorApp:
                 report(i18n.get("update.found_version").format(sha=remote[:7]), "avail")
                 return
 
-            # A remote SHA differs — confirm it's a clean fast-forward before
-            # changing anything. Fetch, then require HEAD to be an ancestor of
-            # the fetched tip (i.e. we're strictly behind, not diverged/ahead).
+            # The fetched remote is strictly ahead of us, so a fast-forward
+            # merge should be the only change needed.
             report(i18n.get("update.downloading"), "info")
-            rc, _, err = _git(["fetch", GIT_REMOTE, GIT_BRANCH],
-                              timeout=UPDATE_NET_TIMEOUT)
-            if rc != 0:
-                log_error("update_fetch", RuntimeError(err or f"rc={rc}"))
-                report(i18n.get("update.download_failed"), "err")
-                return
             ref = f"{GIT_REMOTE}/{GIT_BRANCH}"
-            rc, _, _ = _git(
-                ["merge-base", "--is-ancestor", "HEAD", ref], timeout=10)
-            if rc != 0:
-                # Local is ahead or has diverged (e.g. the dev machine) — this
-                # is not a plain update, so leave the checkout untouched.
-                report(i18n.get("update.local_changes"), "err")
-                return
-
             before = local
             rc, _, err = _git(["merge", "--ff-only", ref], timeout=30)
             if rc != 0:
@@ -4726,11 +4715,14 @@ class TranslatorApp:
         except Exception:
             return None
 
-    def _make_help_icon_image(self, ring_hex, glyph_hex, bg_hex, diameter=18):
-        """Draw a small circular "?" help badge as a PhotoImage: a thin ring
-        outline with a centered question mark. Supersampled for smooth edges.
-        Flattened onto bg_hex so no alpha reaches Tk. Returns None if PIL is
-        unavailable (caller falls back to a text label)."""
+    def _make_help_icon_image(self, ring_hex, glyph_hex, bg_hex, diameter=16):
+        """Draw a circular "?" help badge as a PhotoImage.
+
+        ``diameter`` is the final on-screen pixel size. The caller sizes it from
+        the adjacent label's real font metrics so the badge stays visually
+        balanced with text across DPI settings. Supersampled for smooth edges
+        and flattened onto bg_hex so no alpha reaches Tk. Returns None if PIL
+        is unavailable (caller falls back to a text label)."""
         try:
             from PIL import Image, ImageDraw, ImageFont, ImageTk
         except Exception:
@@ -4743,7 +4735,7 @@ class TranslatorApp:
             glyph = _rgb(glyph_hex)
             bg = _rgb(bg_hex)
             S = 4                      # supersample factor
-            D = int(diameter)
+            D = max(12, int(round(float(diameter))))
             size = D * S
             img = Image.new("RGB", (size, size), bg)
             d = ImageDraw.Draw(img)
@@ -4755,9 +4747,12 @@ class TranslatorApp:
             # the default bitmap font.
             txt = "?"
             font = None
-            for name in ("segoeui.ttf", "arial.ttf", "calibri.ttf"):
+            for name in (
+                "segoeuib.ttf", "arialbd.ttf", "calibrib.ttf",
+                "segoeui.ttf", "arial.ttf", "calibri.ttf",
+            ):
                 try:
-                    font = ImageFont.truetype(name, int(size * 0.70))
+                    font = ImageFont.truetype(name, int(size * 0.78))
                     break
                 except Exception:
                     continue
@@ -4778,6 +4773,16 @@ class TranslatorApp:
             return ImageTk.PhotoImage(img)
         except Exception:
             return None
+
+    def _help_badge_diameter(self, font_spec):
+        """Size the help badge from the real label line-height so it tracks DPI
+        but still sits a little smaller than the adjacent setting text."""
+        try:
+            line_px = tkfont.Font(root=self.root, font=font_spec).metrics(
+                "linespace")
+        except Exception:
+            return 16
+        return max(14, min(22, int(round(line_px * 0.78))))
 
     def _install_combo_chevron(self, style, hint, accent, scale):
         """Register a custom chevron image element and point the combobox layout
@@ -4927,10 +4932,12 @@ class TranslatorApp:
             # icon follows the feature name (not the far-right switch).
             cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
             cell.grid(row=row, column=0, sticky="w", pady=8)
-            tk.Label(cell, text=text_, bg=bg, fg=fg, font=(font, 10)).pack(
+            label_font = (font, 10)
+            tk.Label(cell, text=text_, bg=bg, fg=fg, font=label_font).pack(
                 side="left")
             icon = self._make_help_icon_image(
-                help_ring or fg, help_glyph or fg, bg, diameter=18)
+                help_ring or fg, help_glyph or fg, bg,
+                diameter=self._help_badge_diameter(label_font))
             if icon is not None:
                 if not hasattr(self, "_help_icon_imgs"):
                     self._help_icon_imgs = []
@@ -5254,17 +5261,25 @@ class TranslatorApp:
         upd_row = row_state["value"]
         upd_status.grid(row=upd_row, column=0, sticky="w", pady=(0, 4))
         upd_apply_btn.grid(row=upd_row, column=1, sticky="e", pady=(0, 4))
-        # Permanently reserve the update row's footprint so revealing the status
-        # text and "更新并重启" button never reflows the right column or shifts the
-        # divider — the panel always looks like the post-check state. Measure the
-        # worst case (widest real status is a 7-char sha; an all-'b' sha is the
-        # measured widest) with the button shown, pin col 0's min width and the
-        # row's min height to it, then reset to the idle (empty / hidden) look.
-        # Use a representative "new version" status sample to reserve enough
-        # width for the real check result.
-        upd_status.config(text=i18n.get("update.found_version").format(sha="bbbbbbb"))
-        right_col.update_idletasks()
-        right_col.grid_columnconfigure(0, minsize=upd_status.winfo_reqwidth())
+        # Permanently reserve the update row's footprint so revealing any real
+        # status text or the "更新并重启" button never reflows the right column or
+        # shifts the divider. Measure the widest real status we can show here,
+        # with/without the button as appropriate, pin col 0's min width to that,
+        # then reset to the idle (empty / hidden) look.
+        status_w = 0
+        status_samples = [
+            (i18n.get("update.found_version").format(sha="bbbbbbb"), True),
+            (i18n.get("update.no_update"), False),
+        ]
+        for sample_text, show_btn in status_samples:
+            upd_status.config(text=sample_text)
+            if show_btn:
+                upd_apply_btn.grid()
+            else:
+                upd_apply_btn.grid_remove()
+            right_col.update_idletasks()
+            status_w = max(status_w, upd_status.winfo_reqwidth())
+        right_col.grid_columnconfigure(0, minsize=status_w)
         # +4 accounts for the row's pady=(0, 4) bottom padding, which the grid
         # adds on top of the button's own height.
         right_col.grid_rowconfigure(

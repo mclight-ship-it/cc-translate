@@ -268,7 +268,7 @@ TRANSLATIONS = {
 
         # Update messages
         "update.available": "有新版本可用",
-        "update.no_update": "已是最新版本",
+        "update.no_update": "已是最新",
         "update.checking": "检查中…",
         "update.updating": "更新中…",
         "update.in_progress": "更新进行中…",

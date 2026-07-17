@@ -9,6 +9,8 @@ Public API used by translator.pyw:
   is_git_deploy()
   local_head()
   remote_head()
+  fetch_remote_branch()
+  classify_update_state()
   update_available(local_sha, remote_sha)
   version_string()
   is_autostart_enabled()
@@ -139,6 +141,59 @@ def remote_head():
         return None
     first = out.splitlines()[0].split()
     return first[0].strip() if first else None
+
+
+def fetch_remote_branch():
+    """Refresh the local tracking ref for the configured remote branch.
+
+    Returns ``(ok, err)`` where ``ok`` is True on success. Update checks use a
+    real fetch so they can compare commit ancestry accurately instead of
+    treating any SHA difference as "newer"."""
+    rc, _, err = _git(
+        ["fetch", "--quiet", "--no-tags", GIT_REMOTE, GIT_BRANCH],
+        timeout=UPDATE_NET_TIMEOUT)
+    return rc == 0, (err or "")
+
+
+def classify_update_state(local_ref="HEAD", remote_ref=None):
+    """Compare local vs fetched remote history.
+
+    Returns ``(state, local_sha, remote_sha)`` where state is one of:
+      - ``current``  : both refs point at the same commit
+      - ``behind``   : local is an ancestor of remote (a real update exists)
+      - ``ahead``    : local already contains the remote commit
+      - ``diverged`` : neither side contains the other
+      - ``unknown``  : a git lookup/comparison failed
+    """
+    if remote_ref is None:
+        remote_ref = f"{GIT_REMOTE}/{GIT_BRANCH}"
+
+    rc, local, _ = _git(["rev-parse", local_ref], timeout=8)
+    if rc != 0 or not local:
+        return "unknown", None, None
+
+    rc, remote, _ = _git(["rev-parse", remote_ref], timeout=8)
+    if rc != 0 or not remote:
+        return "unknown", local.strip(), None
+
+    local = local.strip()
+    remote = remote.strip()
+    if local == remote:
+        return "current", local, remote
+
+    rc, _, _ = _git(["merge-base", "--is-ancestor", local, remote], timeout=10)
+    if rc == 0:
+        return "behind", local, remote
+    if rc not in (0, 1):
+        return "unknown", local, remote
+
+    rc, _, _ = _git(["merge-base", "--is-ancestor", remote, local], timeout=10)
+    if rc == 0:
+        return "ahead", local, remote
+    if rc not in (0, 1):
+        return "unknown", local, remote
+
+    return "diverged", local, remote
 
 
 def update_available(local_sha, remote_sha):

@@ -1,11 +1,12 @@
-"""Tests for the pure (network-free, git-free) self-update helpers:
-update_available and _format_version.
+"""Tests for the self-update decision helpers:
+update_available, classify_update_state and _format_version.
 
 The git/network calls (remote_head, _git, ...) are intentionally not tested
-here — they require a live repo. These two functions hold the decision logic
-and the user-visible version label, so their behaviour must stay stable.
+here against a live repo. The decision helpers and user-visible version label
+must stay stable, so we cover them with mocked git responses.
 """
 import unittest
+import unittest.mock
 
 from tests._tr import tr
 
@@ -26,6 +27,44 @@ class TestUpdateAvailable(unittest.TestCase):
         self.assertFalse(tr.update_available("abc123", None))
         self.assertFalse(tr.update_available("", "def456"))
         self.assertFalse(tr.update_available(None, None))
+
+
+class TestClassifyUpdateState(unittest.TestCase):
+    def test_behind_when_remote_descends_from_local(self):
+        cc = tr._cc_update
+        with unittest.mock.patch.object(
+                cc, "_git",
+                side_effect=[(0, "abc123", ""), (0, "def456", ""),
+                             (0, "", "")]):
+            state, local, remote = cc.classify_update_state()
+        self.assertEqual((state, local, remote), ("behind", "abc123", "def456"))
+
+    def test_ahead_when_local_already_contains_remote(self):
+        cc = tr._cc_update
+        with unittest.mock.patch.object(
+                cc, "_git",
+                side_effect=[(0, "abc123", ""), (0, "def456", ""),
+                             (1, "", ""), (0, "", "")]):
+            state, local, remote = cc.classify_update_state()
+        self.assertEqual((state, local, remote), ("ahead", "abc123", "def456"))
+
+    def test_diverged_when_neither_side_contains_the_other(self):
+        cc = tr._cc_update
+        with unittest.mock.patch.object(
+                cc, "_git",
+                side_effect=[(0, "abc123", ""), (0, "def456", ""),
+                             (1, "", ""), (1, "", "")]):
+            state, local, remote = cc.classify_update_state()
+        self.assertEqual((state, local, remote), ("diverged", "abc123", "def456"))
+
+    def test_unknown_when_merge_base_errors(self):
+        cc = tr._cc_update
+        with unittest.mock.patch.object(
+                cc, "_git",
+                side_effect=[(0, "abc123", ""), (0, "def456", ""),
+                             (128, "", "bad object")]):
+            state, local, remote = cc.classify_update_state()
+        self.assertEqual((state, local, remote), ("unknown", "abc123", "def456"))
 
 
 class TestFormatVersion(unittest.TestCase):

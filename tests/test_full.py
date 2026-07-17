@@ -1102,7 +1102,8 @@ class TestUiSmoke(unittest.TestCase):
             "_open_diagnostics", "_open_support_author",
             "_setup_form_style", "_setup_scrollbar_style",
             "_install_combo_chevron", "_make_chevron_image",
-            "_make_help_icon_image", "_make_tooltip", "_make_toggle",
+            "_make_help_icon_image", "_help_badge_diameter",
+            "_make_tooltip", "_make_toggle",
             "_make_draggable", "_pill_button", "_rounded_shell",
             "_settings_field", "_settings_section",
             "_settings_toggle_row", "_settings_toggle_row_with_action",
@@ -1114,6 +1115,54 @@ class TestUiSmoke(unittest.TestCase):
                 f"TranslatorApp.{name} is missing or not callable "
                 f"(a dropped 'def' line can silently merge it into the "
                 f"previous method)")
+
+    def test_help_badge_diameter_tracks_label_metrics(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        fake_font = unittest.mock.Mock()
+        fake_font.metrics.return_value = 29
+        with unittest.mock.patch.object(tr.tkfont, "Font", return_value=fake_font):
+            diameter = app._help_badge_diameter(("Microsoft YaHei UI", 10))
+        self.assertEqual(diameter, 22)
+
+    def test_help_icon_uses_requested_pixel_diameter(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        icon = app._make_help_icon_image("#667085", "#667085", "#ffffff",
+                                         diameter=22)
+        if icon is None:
+            self.skipTest("PIL/ImageTk not available")
+        self.assertEqual(icon.width(), 22)
+        self.assertEqual(icon.height(), 22)
+
+
+class TestUpdateStatusCopy(unittest.TestCase):
+    def _run_check_only_update(self, state):
+        app = _make_headless_app()
+        self.addCleanup(lambda: TestUiSmoke._safe_destroy(app))
+        seen = []
+
+        def on_status(msg, kind):
+            seen.append((msg, kind))
+
+        with unittest.mock.patch.object(
+                app.root, "after", side_effect=lambda _ms, fn: fn()), \
+                unittest.mock.patch.object(tr, "is_git_deploy", return_value=True), \
+                unittest.mock.patch.object(
+                    tr._cc_update, "fetch_remote_branch", return_value=(True, "")), \
+                unittest.mock.patch.object(
+                    tr._cc_update, "classify_update_state",
+                    return_value=(state, "localsha", "remotesha")):
+            app._update_worker(silent=False, on_status=on_status, check_only=True)
+        return seen
+
+    def test_ahead_state_reports_known_latest(self):
+        seen = self._run_check_only_update("ahead")
+        self.assertEqual(seen, [(tr.i18n.get("update.no_update"), "ok")])
+
+    def test_diverged_state_reports_known_latest(self):
+        seen = self._run_check_only_update("diverged")
+        self.assertEqual(seen, [(tr.i18n.get("update.no_update"), "ok")])
 
 
 if __name__ == "__main__":
