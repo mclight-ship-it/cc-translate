@@ -279,6 +279,7 @@ class CFG:
     OCR_ENGINE = "ocr_engine"
     OCR_HOTKEY_ENABLED = "ocr_hotkey_enabled"
     LANGUAGE = "language"
+    CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
 
 
 DEFAULT_CONFIG = {
@@ -295,6 +296,7 @@ DEFAULT_CONFIG = {
     CFG.AUTO_UPDATE_HOUR: 3,
     CFG.OCR_ENGINE: "claude",
     CFG.OCR_HOTKEY_ENABLED: True,
+    CFG.CLIPBOARD_PROTECTION_ENABLED: False,
 }
 
 # Two colour palettes. Every UI surface reads from the active theme so the
@@ -1745,7 +1747,11 @@ class TranslatorApp:
     def _restore_clipboard(self):
         """Restore the pre-Ctrl+C clipboard snapshot. Skips when there was no
         snapshot or it was empty/non-text (pyperclip can't round-trip images or
-        file lists, so we leave those rather than blanking the clipboard)."""
+        file lists, so we leave those rather than blanking the clipboard).
+        Respects the clipboard protection setting; disabled by default to avoid
+        interference with system clipboard tools like Win+Shift+S."""
+        if not self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
+            return
         saved = self._clip_saved
         self._clip_saved = None
         if not saved:
@@ -4861,6 +4867,11 @@ class TranslatorApp:
             i18n.get("settings.label.ocr_hotkey"),
             self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
             bg=bg, fg=fg, font=FONT)
+        clip_protect_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.clipboard_protection"),
+            self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
+            bg=bg, fg=fg, font=FONT)
 
         # ----- Right column -----
         body = right_col
@@ -5012,6 +5023,7 @@ class TranslatorApp:
                 self.cfg[CFG.OCR_ENGINE] = label_to_ocr_engine[
                     ocr_engine_var.get()]
                 self.cfg[CFG.OCR_HOTKEY_ENABLED] = bool(ocr_hotkey_sw.get())
+                self.cfg[CFG.CLIPBOARD_PROTECTION_ENABLED] = bool(clip_protect_sw.get())
                 
                 # Handle language change
                 new_lang = label_to_lang[lang_var.get()]

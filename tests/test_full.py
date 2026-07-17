@@ -99,6 +99,7 @@ class TestCFGConstants(unittest.TestCase):
         "HISTORY_ENABLED", "HISTORY_LIMIT",
         "AUTO_UPDATE_ENABLED", "AUTO_UPDATE_HOUR",
         "OCR_ENGINE", "OCR_HOTKEY_ENABLED",
+        "CLIPBOARD_PROTECTION_ENABLED",
     }
 
     def test_cfg_has_all_attributes(self):
