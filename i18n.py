@@ -14,7 +14,7 @@ TRANSLATIONS = {
     "zh_CN": {
         # Tray menu
         "tray.history": "历史记录",
-        "tray.quick_input": "快速输入翻译",
+        "tray.quick_input": "快速翻译",
         "tray.screenshot": "截图翻译",
         "tray.screenshot_menu": "截图翻译",
         "tray.pause": "暂停翻译",
@@ -305,7 +305,7 @@ TRANSLATIONS = {
     "en_US": {
         # Tray menu
         "tray.history": "History",
-        "tray.quick_input": "Quick Input Translate",
+        "tray.quick_input": "Quick Translate",
         "tray.screenshot": "Screenshot",
         "tray.screenshot_menu": "Screenshot Translate",
         "tray.pause": "Pause Translation",
