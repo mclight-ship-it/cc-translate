@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 
@@ -101,6 +102,7 @@ class TestCFGConstants(unittest.TestCase):
         "OCR_ENGINE", "OCR_HOTKEY_ENABLED",
         "CLIPBOARD_PROTECTION_ENABLED",
         "AUTOSTART_INITIALIZED",
+        "SUMMARY_ENABLED",
     }
 
     def test_cfg_has_all_attributes(self):
@@ -556,6 +558,133 @@ class TestCodeRatioBoundaries(unittest.TestCase):
             r = tr.classify_selection(text)
             self.assertIn(r, ("text", "code", "mixed"),
                           f"unexpected label {r!r} for {text!r}")
+
+
+# ============================================================
+# Long-text summary feature
+# ============================================================
+
+class TestSummaryHelpers(unittest.TestCase):
+    def test_stream_and_summary_thresholds_unified(self):
+        self.assertEqual(tr.STREAM_MIN_CHARS, tr.SUMMARY_MIN_CHARS)
+        self.assertEqual(tr.STREAM_MIN_CHARS, 400)
+
+    def test_prose_paragraph_is_summarizable(self):
+        prose = ("The quick brown fox jumps over the lazy dog. " * 20).strip()
+        self.assertTrue(tr.is_summarizable_prose(prose))
+
+    def test_empty_is_not_summarizable(self):
+        self.assertFalse(tr.is_summarizable_prose(""))
+        self.assertFalse(tr.is_summarizable_prose("   \n  "))
+
+    def test_bullet_list_is_not_summarizable(self):
+        lst = "\n".join(f"- item number {i} in the list here" for i in range(8))
+        self.assertFalse(tr.is_summarizable_prose(lst))
+
+    def test_numbered_list_is_not_summarizable(self):
+        lst = "\n".join(f"{i}. step number {i} to follow here" for i in range(1, 9))
+        self.assertFalse(tr.is_summarizable_prose(lst))
+
+    def test_url_dump_is_not_summarizable(self):
+        urls = "\n".join(
+            "https://example.com/some/long/path/segment/page%d" % i
+            for i in range(10))
+        self.assertFalse(tr.is_summarizable_prose(urls))
+
+    def test_json_blob_is_not_summarizable(self):
+        blob = ('{"name": "test", "value": 123, "items": [1, 2, 3], '
+                '"nested": {"a": true, "b": false}, "more": "data here"}' * 3)
+        self.assertFalse(tr.is_summarizable_prose(blob))
+
+    def test_yaml_like_config_block_is_not_summarizable(self):
+        cfg = "\n".join([
+            "service:",
+            "  name: gateway-edge",
+            "  region: ap-east-1",
+            "  replicas: 6",
+            "routing:",
+            "  - path: /api/v1/checkout",
+            "    timeout_ms: 1800",
+            "    retries: 2",
+            "logging:",
+            "  level: info",
+            "  endpoint: https://log-collector.example.net/ingest",
+        ])
+        self.assertFalse(tr.is_summarizable_prose(cfg))
+
+    def test_summary_headings_localized(self):
+        self.assertEqual(tr.summary_headings("en_US"), ("Summary", "Translation"))
+        self.assertEqual(tr.summary_headings("zh_CN"), ("摘要", "译文"))
+
+    def test_summary_instruction_contains_headings(self):
+        instr = tr.summary_instruction("zh_CN")
+        self.assertIn("## 摘要", instr)
+        self.assertIn("## 译文", instr)
+        instr_en = tr.summary_instruction("en_US")
+        self.assertIn("## Summary", instr_en)
+        self.assertIn("## Translation", instr_en)
+
+    def test_summary_default_off(self):
+        self.assertFalse(tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED])
+
+
+class TestShouldSummarize(unittest.TestCase):
+    """Exercise TranslatorApp._should_summarize without constructing the full
+    app: call the unbound method against a lightweight stub self."""
+
+    def _stub(self, *, enabled=True, last_class="text"):
+        ns = types.SimpleNamespace()
+        ns.cfg = {tr.CFG.SUMMARY_ENABLED: enabled}
+        ns._last_class = last_class
+        return ns
+
+    def _call(self, stub, text):
+        return tr.TranslatorApp._should_summarize(stub, text)
+
+    def _long_prose(self):
+        return ("The quick brown fox jumps over the lazy dog. " * 20).strip()
+
+    def test_long_prose_enabled(self):
+        self.assertTrue(self._call(self._stub(), self._long_prose()))
+
+    def test_disabled_setting(self):
+        self.assertFalse(self._call(self._stub(enabled=False), self._long_prose()))
+
+    def test_short_text_not_summarized(self):
+        self.assertFalse(self._call(self._stub(), "Short sentence here."))
+
+    def test_code_class_not_summarized(self):
+        self.assertFalse(
+            self._call(self._stub(last_class="code"), self._long_prose()))
+
+    def test_mixed_class_is_summarized(self):
+        # Mixed prose+code long text now qualifies (summary prompt keeps code
+        # verbatim); only pure code and screenshots are excluded.
+        self.assertTrue(
+            self._call(self._stub(last_class="mixed"), self._long_prose()))
+
+    def test_ocr_class_not_summarized(self):
+        # Screenshots take a separate one-shot vision path, not this pipeline.
+        self.assertFalse(
+            self._call(self._stub(last_class="ocr"), self._long_prose()))
+
+    def test_mixed_config_block_not_summarized(self):
+        cfg = "\n".join([
+            "service:",
+            "  name: gateway-edge",
+            "  region: ap-east-1",
+            "  runtime: python3.12",
+            "routing:",
+            "  - path: /api/v1/checkout",
+            "    timeout_ms: 1800",
+            "    retries: 2",
+            "metadata: {\"owner\":\"platform-core\",\"rollback\":\"enabled\"}",
+        ])
+        self.assertFalse(self._call(self._stub(last_class="mixed"), cfg))
+
+    def test_single_word_not_summarized(self):
+        long_word = "a" * 500
+        self.assertFalse(self._call(self._stub(), long_word))
 
 
 # ============================================================
@@ -1047,6 +1176,7 @@ def _make_headless_app():
     app.about_win = None
     app.support_win = None
     app.diagnostics_win = None
+    app.quick_input_win = None
     app._settings_check = None
     app._setup_scrollbar_style()
     return app
@@ -1074,6 +1204,21 @@ class TestUiSmoke(unittest.TestCase):
 
     @staticmethod
     def _safe_destroy(app):
+        for name in (
+                "quick_input_win", "settings_win", "history_win",
+                "about_win", "support_win", "diagnostics_win"):
+            w = getattr(app, name, None)
+            if w is None:
+                continue
+            try:
+                if tr.tk.Toplevel.winfo_exists(w):
+                    w.destroy()
+            except Exception:
+                pass
+        try:
+            app.root.update_idletasks()
+        except Exception:
+            pass
         try:
             app.root.destroy()
         except Exception:
@@ -1094,12 +1239,23 @@ class TestUiSmoke(unittest.TestCase):
     def test_diagnostics_window_builds(self):
         self._build("_open_diagnostics")
 
+    def test_quick_input_window_builds(self):
+        app = self._build("_open_quick_input")
+        self.assertTrue(app.quick_input_win is not None
+                        and tr.tk.Toplevel.winfo_exists(app.quick_input_win),
+                        "quick input window should exist after _open_quick_input()")
+        btn = getattr(app.quick_input_win, "_quick_input_submit_btn", None)
+        self.assertTrue(btn is not None and btn.winfo_exists(),
+                        "quick input window should expose a visible translate button")
+
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the
         window builders call on `self` must be a bound method, not missing."""
         required = [
             "_open_settings", "_open_about", "_open_history",
             "_open_diagnostics", "_open_support_author",
+            "open_quick_input", "_open_quick_input",
+            "_apply_ime_composition_font",
             "_setup_form_style", "_setup_scrollbar_style",
             "_install_combo_chevron", "_make_chevron_image",
             "_make_help_icon_image", "_help_badge_diameter",
@@ -1163,6 +1319,40 @@ class TestUpdateStatusCopy(unittest.TestCase):
     def test_diverged_state_reports_known_latest(self):
         seen = self._run_check_only_update("diverged")
         self.assertEqual(seen, [(tr.i18n.get("update.no_update"), "ok")])
+
+
+class TestQuickInputFallback(unittest.TestCase):
+    def _make_app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.load_config()
+        app.cfg[tr.CFG.MAX_CHARS] = 40
+        app._clip_seq_before = 20
+        app.root = unittest.mock.Mock()
+        app._restore_clipboard = unittest.mock.Mock()
+        app._show_loading = unittest.mock.Mock()
+        app._open_quick_input = unittest.mock.Mock()
+        return app
+
+    def test_trigger_opens_quick_input_when_clipboard_not_updated(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(tr.pyperclip, "paste",
+                                        return_value="existing clipboard text"), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_sequence", return_value=20):
+            app._trigger()
+        app._open_quick_input.assert_called_once_with()
+        app._show_loading.assert_not_called()
+        app.root.after.assert_called_once()
+
+    def test_trigger_translates_when_clipboard_updated(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(tr.pyperclip, "paste",
+                                        return_value="hello"), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_sequence", return_value=21):
+            app._trigger()
+        app._open_quick_input.assert_not_called()
+        app._show_loading.assert_called_once_with("hello")
 
 
 if __name__ == "__main__":
