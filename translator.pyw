@@ -5689,6 +5689,27 @@ class TranslatorApp:
             help_text=i18n.get("settings.label.summary_help"),
             help_ring=hint, help_glyph=hint)
 
+        # ---- Section: 截图翻译 ----
+        self._settings_section(
+            body, row_state, i18n.get("settings.label.screenshot_section"),
+            bg=bg, accent=accent, font=FONT)
+        ocr_engine_var = tk.StringVar(
+            value=ocr_engine_labels.get(
+                self.cfg.get(CFG.OCR_ENGINE, "claude"),
+                ocr_engine_labels["claude"]))
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.ocr_engine"),
+            ttk.Combobox(
+                body, textvariable=ocr_engine_var, state="readonly", width=18,
+                style="CC.TCombobox", font=(FONT, 10),
+                values=list(ocr_engine_labels.values())),
+            bg=bg, fg=fg, font=FONT)
+        ocr_hotkey_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.ocr_hotkey"),
+            self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
+            bg=bg, fg=fg, font=FONT)
+
         # ---- Section: 外观 ----
         self._settings_section(
             body, row_state, i18n.get("settings.label.appearance_section"),
@@ -5732,27 +5753,6 @@ class TranslatorApp:
                 body, textvariable=lang_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(LANGUAGE_LABELS.values())),
-            bg=bg, fg=fg, font=FONT)
-
-        # ---- Section: 截图翻译 ----
-        self._settings_section(
-            body, row_state, i18n.get("settings.label.screenshot_section"),
-            bg=bg, accent=accent, font=FONT)
-        ocr_engine_var = tk.StringVar(
-            value=ocr_engine_labels.get(
-                self.cfg.get(CFG.OCR_ENGINE, "claude"),
-                ocr_engine_labels["claude"]))
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.ocr_engine"),
-            ttk.Combobox(
-                body, textvariable=ocr_engine_var, state="readonly", width=18,
-                style="CC.TCombobox", font=(FONT, 10),
-                values=list(ocr_engine_labels.values())),
-            bg=bg, fg=fg, font=FONT)
-        ocr_hotkey_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.ocr_hotkey"),
-            self.cfg.get(CFG.OCR_HOTKEY_ENABLED, True),
             bg=bg, fg=fg, font=FONT)
 
         # ----- Right column -----
