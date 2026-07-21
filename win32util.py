@@ -16,6 +16,8 @@ Public API used by translator.pyw:
     round_apply_region(hwnd, radius)
     prefer_dwm_rounded(hwnd)
     set_taskbar_presence(hwnd, present)
+    get_toplevel_hwnd(hwnd) -> hwnd
+    activate_foreground(hwnd) -> bool
     acquire_single_instance_mutex(name) -> handle | None
 """
 
@@ -132,7 +134,7 @@ def prefer_dwm_rounded(hwnd):
         pass
 
 
-def set_taskbar_presence(hwnd, present):
+def set_taskbar_presence(hwnd, present, *, detach_owner=True):
     """Force a borderless (overrideredirect) window into or out of the Windows
     taskbar via the WS_EX_APPWINDOW / WS_EX_TOOLWINDOW extended styles.
 
@@ -140,10 +142,12 @@ def set_taskbar_presence(hwnd, present):
     an owned window never gets its own taskbar button no matter what ex-style it
     carries. So when ``present=True`` we both clear the owner and set
     WS_EX_APPWINDOW, giving the result popup a real taskbar button the user can
-    always click back to. ``present=False`` sets WS_EX_TOOLWINDOW to keep helper
-    dialogs out of the taskbar. Ex-style changes only take effect the next time
-    the window is shown, so call this while the window is withdrawn/hidden,
-    before deiconify."""
+    always click back to. Some Tk windows (notably transparent rounded cards)
+    need their owner preserved for stable coordinate/focus behavior; pass
+    ``detach_owner=False`` for that case. ``present=False`` sets
+    WS_EX_TOOLWINDOW to keep helper dialogs out of the taskbar. Ex-style changes
+    only take effect the next time the window is shown, so call this while the
+    window is withdrawn/hidden, before deiconify."""
     try:
         GWL_EXSTYLE = -20
         GWLP_HWNDPARENT = -8
@@ -160,12 +164,79 @@ def set_taskbar_presence(hwnd, present):
         if present:
             ex = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
             # Detach from the owner so the taskbar will grant a button.
-            setf(ctypes.c_void_p(hwnd), GWLP_HWNDPARENT, ctypes.c_ssize_t(0))
+            if detach_owner:
+                setf(ctypes.c_void_p(hwnd), GWLP_HWNDPARENT,
+                     ctypes.c_ssize_t(0))
         else:
             ex = (ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
         setf(ctypes.c_void_p(hwnd), GWL_EXSTYLE, ctypes.c_ssize_t(ex))
     except Exception:
         pass
+
+
+def get_toplevel_hwnd(hwnd):
+    """Return the real top-level OS window for a Tk child HWND.
+
+    Tk wraps every Toplevel in an inner frame window, so ``winfo_id()`` is that
+    inner frame — NOT the window that actually carries the taskbar / topmost /
+    activation styles and that the window manager treats as the top-level. That
+    real window is the frame's root ancestor. Manipulating activation or Z-order
+    on the inner frame silently no-ops, which is why a summoned borderless
+    window could feel 'stuck on top'. Always resolve to the ancestor first."""
+    try:
+        GA_ROOT = 2
+        top = ctypes.windll.user32.GetAncestor(hwnd, GA_ROOT)
+        return top or hwnd
+    except Exception:
+        return hwnd
+
+
+def activate_foreground(hwnd):
+    """Make ``hwnd`` the true foreground/active window and return whether it
+    ended up foreground.
+
+    Windows' foreground lock normally lets a background process only *raise* a
+    window, not *activate* it, leaving a summoned borderless window in a
+    'top-but-not-active' state: it floats above everything, yet clicking another
+    app won't send it behind until this window itself is clicked once. That is
+    exactly the 'still force-topmost' feeling users report.
+
+    The standard, side-effect-free workaround: briefly zero the foreground lock
+    timeout, attach our input thread to the current foreground thread so the OS
+    treats the activation as user-driven, call SetForegroundWindow/SetActiveWindow,
+    then restore everything. No synthetic keystrokes (which can pop app menus)."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000
+        SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001
+        SPIF_SENDCHANGE = 0x2
+        fg = user32.GetForegroundWindow()
+        if fg == hwnd:
+            return True
+        cur_tid = kernel32.GetCurrentThreadId()
+        fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        old = ctypes.c_uint(0)
+        user32.SystemParametersInfoW(
+            SPI_GETFOREGROUNDLOCKTIMEOUT, 0, ctypes.byref(old), 0)
+        user32.SystemParametersInfoW(
+            SPI_SETFOREGROUNDLOCKTIMEOUT, 0, ctypes.c_void_p(0), SPIF_SENDCHANGE)
+        attached = False
+        try:
+            if fg_tid and fg_tid != cur_tid:
+                attached = bool(user32.AttachThreadInput(fg_tid, cur_tid, True))
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(fg_tid, cur_tid, False)
+            user32.SystemParametersInfoW(
+                SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                ctypes.c_void_p(old.value), SPIF_SENDCHANGE)
+        return user32.GetForegroundWindow() == hwnd
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------

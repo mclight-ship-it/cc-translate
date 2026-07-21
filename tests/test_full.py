@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 import unittest.mock
@@ -1361,6 +1362,14 @@ class TestUiSmoke(unittest.TestCase):
 
         self.assertFalse(getattr(win, "_pinned", None),
                          "result popup should default to not pinned")
+        # The popup does a brief topmost "activation pulse" on reveal (so a
+        # borderless window actually comes to the foreground and can be sent
+        # behind by clicking another app), then releases it after ~90ms. Let
+        # that release fire before asserting it is not permanently on top.
+        deadline = time.time() + 1.0
+        while int(win.attributes("-topmost")) == 1 and time.time() < deadline:
+            win.update()
+            time.sleep(0.02)
         self.assertEqual(int(win.attributes("-topmost")), 0,
                          "result popup must not be always-on-top by default")
         # Regression guard for the "black corners" bug: the popup must round its
@@ -1385,6 +1394,157 @@ class TestUiSmoke(unittest.TestCase):
         self.assertFalse(win._pinned)
         self.assertEqual(int(win.attributes("-topmost")), 0,
                          "clicking the pin again should release topmost")
+
+    def test_centered_popup_reveals_on_screen(self):
+        # Regression guard for the off-screen measure/paint reveal: a centered
+        # popup must end up at its on-screen centered box, never left parked at
+        # the off-screen (-4000) measurement position.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "centered"
+        win = app._make_popup("centered reveal")
+
+        def _kill():
+            try:
+                if tr.tk.Toplevel.winfo_exists(win):
+                    win.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        bw, bh, bx, by = app._centered_box()
+        self.assertEqual((win.winfo_x(), win.winfo_y()), (bx, by),
+                         "centered popup should reveal at its centered box, not off-screen")
+        # The off-screen measurement park is at -4000; the popup must have been
+        # moved to its real (possibly negative on a left-of-primary monitor)
+        # centered box, never left at the park.
+        self.assertNotEqual((win.winfo_x(), win.winfo_y()), (-4000, -4000),
+                            "centered popup must not remain parked off-screen")
+
+    def test_bring_to_front_activates_real_toplevel_and_skips_topmost(self):
+        # The 'stuck on top' bug: _bring_to_front must make the window the true
+        # foreground window via its REAL top-level HWND (not Tk's inner frame),
+        # and when that activation succeeds it must NOT leave a topmost pulse
+        # behind (which is what made clicking another app fail to send it back).
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        win = tr.tk.Toplevel(app.root)
+        self.addCleanup(lambda: win.winfo_exists() and win.destroy())
+        win.overrideredirect(True)
+        win.geometry("200x120+300+200")
+        win.deiconify()
+        win.update_idletasks()
+
+        calls = {}
+
+        def fake_top(hwnd):
+            calls["top_arg"] = hwnd
+            return 424242
+
+        def fake_activate(hwnd):
+            calls["activate_arg"] = hwnd
+            return True
+
+        with unittest.mock.patch.object(tr.win32util, "get_toplevel_hwnd",
+                                        side_effect=fake_top), \
+                unittest.mock.patch.object(tr.win32util, "activate_foreground",
+                                           side_effect=fake_activate):
+            app._bring_to_front(win)
+
+        self.assertEqual(calls.get("top_arg"), int(win.winfo_id()),
+                         "should resolve the real top-level from winfo_id()")
+        self.assertEqual(calls.get("activate_arg"), 424242,
+                         "should activate the resolved top-level HWND, not the inner frame")
+        win.update()
+        self.assertEqual(int(win.attributes("-topmost")), 0,
+                         "successful activation must not leave the window topmost")
+
+    def test_bring_to_front_falls_back_to_topmost_when_activation_refused(self):
+        # If the OS refuses foreground activation, fall back to a brief topmost
+        # pulse so the window at least becomes visible.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        win = tr.tk.Toplevel(app.root)
+        self.addCleanup(lambda: win.winfo_exists() and win.destroy())
+        win.overrideredirect(True)
+        win.geometry("200x120+300+200")
+        win.deiconify()
+        win.update_idletasks()
+
+        with unittest.mock.patch.object(tr.win32util, "get_toplevel_hwnd",
+                                        return_value=1), \
+                unittest.mock.patch.object(tr.win32util, "activate_foreground",
+                                           return_value=False):
+            app._bring_to_front(win)
+        win.update()
+        self.assertEqual(int(win.attributes("-topmost")), 1,
+                         "refused activation should fall back to a topmost pulse")
+        # ...which then self-releases.
+        deadline = time.time() + 1.0
+        while int(win.attributes("-topmost")) == 1 and time.time() < deadline:
+            win.update()
+            time.sleep(0.02)
+        self.assertEqual(int(win.attributes("-topmost")), 0,
+                         "fallback topmost pulse must release itself")
+
+    def test_result_popup_root_coords_follow_geometry(self):
+        # Regression guard for the taskbar-style toggle: result popups must keep
+        # sane Tk geometry coordinates (rootx/rooty should match x/y), otherwise
+        # drag/resize math treats interior clicks as edge-resize hits.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        win = app._make_popup("coordinate sanity", anchor=(460, 320))
+
+        def _kill():
+            try:
+                if tr.tk.Toplevel.winfo_exists(win):
+                    win.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        self.assertEqual(win.winfo_x(), 460)
+        self.assertEqual(win.winfo_y(), 320)
+        self.assertEqual(
+            (win.winfo_rootx(), win.winfo_rooty()),
+            (win.winfo_x(), win.winfo_y()),
+            "result popup should preserve Tk root coordinates after taskbar styling")
+
+    def test_popup_press_uses_window_coords_when_root_coords_are_bad(self):
+        # If winfo_rootx/y are stale (0,0), _popup_press must still use the real
+        # window position so a center click doesn't accidentally enter resize mode.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        win = app._make_popup("drag me", anchor=(500, 360))
+
+        def _kill():
+            try:
+                if tr.tk.Toplevel.winfo_exists(win):
+                    win.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        app.popup = win
+        app._resize_mode = None
+        app._resize_start = None
+
+        class _E:
+            pass
+
+        e = _E()
+        e.x_root = win.winfo_x() + max(24, win.winfo_width() // 3)
+        e.y_root = win.winfo_y() + max(24, win.winfo_height() // 3)
+        with unittest.mock.patch.object(win, "winfo_x", return_value=win.winfo_x()), \
+                unittest.mock.patch.object(win, "winfo_y", return_value=win.winfo_y()), \
+                unittest.mock.patch.object(win, "winfo_rootx", return_value=0), \
+                unittest.mock.patch.object(win, "winfo_rooty", return_value=0):
+            app._popup_press(e)
+        self.assertIsNone(
+            app._resize_mode,
+            "interior click should not be misdetected as resize when root coords are stale")
 
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the

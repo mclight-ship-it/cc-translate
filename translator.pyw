@@ -2689,7 +2689,7 @@ class TranslatorApp:
                 anchor = None
                 if self.popup:
                     try:
-                        anchor = (self.popup.winfo_x(), self.popup.winfo_y())
+                        anchor = self._window_xy(self.popup)
                     except Exception:
                         anchor = None
                 self._destroy_popup()
@@ -2722,7 +2722,7 @@ class TranslatorApp:
             anchor = None
             if self.popup:
                 try:
-                    anchor = (self.popup.winfo_x(), self.popup.winfo_y())
+                    anchor = self._window_xy(self.popup)
                 except Exception:
                     anchor = None
             self._stop_animation()
@@ -2815,7 +2815,7 @@ class TranslatorApp:
         title = self._result_title(ok)
         if self.popup:
             try:
-                anchor = (self.popup.winfo_x(), self.popup.winfo_y())
+                anchor = self._window_xy(self.popup)
             except Exception:
                 anchor = None
         self._destroy_popup()
@@ -3308,18 +3308,49 @@ class TranslatorApp:
                 # Final (non-streaming) frame: syntax-highlight code blocks.
                 text._rich_highlight = True
 
-    def _position_popup(self, win, message, anchor):
+    def _layout_popup_offscreen(self, win, message, anchor):
+        """Measure and fill the popup while it stays parked off-screen, and
+        return the final on-screen (w, h, x, y). The window is deliberately NOT
+        moved on-screen here: the caller performs a single geometry move once
+        the rounded card has been painted, so the reveal never flashes an
+        unpainted colour-key (near-black) frame or a mid-measurement resize."""
+        off = -4000
         if self._is_centered_layout():
-            self._fit_centered(win, message)
-            return
+            w, h, x, y = self._centered_box()
+            win.geometry(f"{w}x{h}+{off}+{off}")
+            self._fill_text(win._text, message)
+            try:
+                win._text.config(width=1, height=1)
+            except Exception:
+                pass
+            win.update_idletasks()
+            first, last = 0.0, 1.0
+            try:
+                first, last = win._text.yview()
+            except Exception:
+                pass
+            if last < 1.0 - 1e-6 or first > 1e-6:
+                win._scroll.pack(side="right", fill="y")
+                win._text.bind("<MouseWheel>", self._on_mousewheel)
+                win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
+            else:
+                win._scroll.pack_forget()
+            return w, h, x, y
         w, h = self._size_popup(win, message)
         if anchor is not None:
-            x, y = anchor           # appear where the loading hint was
+            x, y = int(anchor[0]), int(anchor[1])
+            try:
+                px = int(self.root.winfo_pointerx())
+                py = int(self.root.winfo_pointery())
+                if x == 0 and y == 0 and (px > 24 or py > 24):
+                    x, y = px + 12, py + 18
+            except Exception:
+                pass
         else:
             x = self.root.winfo_pointerx() + 12
             y = self.root.winfo_pointery() + 18
         x, y = self._clamp_to_monitor(x, y, w, h, ref=anchor)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        return w, h, x, y
 
     def _bind_popup_window_events(self, win):
         win.bind("<Motion>", self._popup_motion)
@@ -3343,7 +3374,10 @@ class TranslatorApp:
         # while the window is hidden, before deiconify, to take effect.
         try:
             win.update_idletasks()
-            win32util.set_taskbar_presence(int(win.winfo_id()), True)
+            # Keep the Tk owner link for transparent rounded cards: detaching it
+            # breaks Tk's reported root coordinates/focus behavior on some hosts.
+            win32util.set_taskbar_presence(
+                int(win.winfo_id()), True, detach_owner=False)
         except Exception as e:
             log_error("popup_taskbar", e)
 
@@ -3364,21 +3398,28 @@ class TranslatorApp:
             win, card, popup_bg=popup_bg, is_error=is_error,
             highlight=highlight)
 
-        # Park off-screen and map so the Text is laid out for displayline
-        # measurement in _size_popup, without a visible resize flash. Colour-key
-        # transparency is incompatible with -alpha, so we hide the measurement
-        # dance off-screen instead of behind an alpha fade.
+        # Measure, fill and paint the popup entirely off-screen, then move it
+        # on-screen in a single painted step. Colour-key transparency is
+        # incompatible with -alpha, so we can't fade the reveal; instead the
+        # whole measurement/rounding dance happens off-screen and the ONLY
+        # on-screen frame is the finished window. This kills the flash of an
+        # unpainted (near-black) colour-key card that appeared when the popup
+        # was revealed before its text was laid out or its corners drawn.
         win.geometry("+{}+{}".format(-4000, -4000))
         win.deiconify()
         win.update_idletasks()
-        self._position_popup(win, message, anchor)
+        w, h, x, y = self._layout_popup_offscreen(win, message, anchor)
 
         self._bind_popup_window_events(win)
         self._apply_taskbar_identity(win)
         win.update_idletasks()
         win._round_redraw()
-        win.lift()
-        win.focus_force()
+        # Reveal at the final position as the only on-screen frame.
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        self._remember_window_xy(win, x, y)
+        win.update_idletasks()
+        win._round_redraw()
+        self._bring_to_front(win)
         return win
 
     def _size_popup(self, win, message):
@@ -3520,14 +3561,38 @@ class TranslatorApp:
         self._ss.max_h = int(h)
 
         if self._ss.monitor_rect is None:
-            try:
-                cx, cy = win.winfo_x(), win.winfo_y()
-            except Exception:
-                cx, cy = left + 12, top + 12
+            cx, cy = self._window_xy(win)
             rect0 = get_monitor_rect((cx, cy))
             self._ss.monitor_rect = rect0 if rect0 else (left, top, right, bottom)
 
         return int(self._ss.fixed_w), int(h)
+
+    def _remember_window_xy(self, win, x, y):
+        """Cache the last geometry position we explicitly applied to `win`.
+        Needed because some Win32 style combos can make Tk briefly report (0,0)
+        even though the real window is elsewhere."""
+        try:
+            win._screen_xy = (int(x), int(y))
+        except Exception:
+            pass
+
+    def _window_xy(self, win):
+        """Best-effort screen position for a Toplevel.
+        Prefer Tk's x/y, but fall back to cached geometry when Tk reports stale
+        origin coordinates for owner-style edge cases."""
+        cached = getattr(win, "_screen_xy", None)
+        try:
+            x = int(win.winfo_x())
+            y = int(win.winfo_y())
+        except Exception:
+            if isinstance(cached, tuple) and len(cached) == 2:
+                return int(cached[0]), int(cached[1])
+            return 0, 0
+        if isinstance(cached, tuple) and len(cached) == 2:
+            cx, cy = int(cached[0]), int(cached[1])
+            if (x, y) == (0, 0) and (cx, cy) != (0, 0):
+                return cx, cy
+        return x, y
 
     def _on_mousewheel(self, event):
         if self.popup and getattr(self.popup, "_text", None):
@@ -3535,25 +3600,65 @@ class TranslatorApp:
         return "break"
 
     def _bring_to_front(self, win):
-        """Reliably raise an existing borderless window above other apps and
-        focus it, without leaving it permanently topmost. A plain lift() only
-        reorders within our own app's z-group, so a window sitting behind
-        another application would appear 'stuck' and re-pressing the hotkey
-        would feel like the feature failed to launch."""
+        """Raise a borderless window above other apps AND make it the true
+        foreground/active window, so it behaves like a normal window.
+
+        Two failure modes this addresses:
+        * A plain lift() only reorders within our own app's z-group, so a window
+          sitting behind another application would appear 'stuck' and re-pressing
+          the hotkey would feel like the feature failed to launch.
+        * Merely *raising* a window (e.g. a topmost pulse) without *activating*
+          it leaves Windows in a 'top-but-not-active' state: the window floats on
+          top, yet clicking another app won't send it behind until this window is
+          clicked once. That is the 'still force-topmost' feeling users hit.
+
+        So we do a real foreground activation on the window's ACTUAL top-level
+        HWND (Tk's winfo_id() is only the inner frame — activation on it no-ops).
+        Only if the OS refuses activation (rare foreground-lock races) do we fall
+        back to a brief, self-releasing topmost pulse purely for visibility."""
         try:
             win.deiconify()
         except Exception:
             pass
         try:
             win.lift()
-            win.attributes("-topmost", True)
-            win.update_idletasks()
-            # Only the result popup (via its pin button) may stay on top.
-            if not getattr(win, "_pinned", False):
-                win.attributes("-topmost", False)
-            win.focus_force()
         except Exception:
             pass
+        activated = False
+        try:
+            top_hwnd = win32util.get_toplevel_hwnd(int(win.winfo_id()))
+            activated = win32util.activate_foreground(top_hwnd)
+        except Exception:
+            activated = False
+        try:
+            win.focus_set()
+        except Exception:
+            try:
+                win.focus_force()
+            except Exception:
+                pass
+        if activated or getattr(win, "_pinned", False):
+            # Real activation succeeded (window is active and can be sent behind
+            # by clicking elsewhere), or the window is pinned and legitimately
+            # stays topmost — either way, no fallback pulse needed.
+            return
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            return
+
+        def _release_topmost():
+            try:
+                if tk.Toplevel.winfo_exists(win) and not getattr(
+                        win, "_pinned", False):
+                    win.attributes("-topmost", False)
+            except Exception:
+                pass
+
+        try:
+            win.after(90, _release_topmost)
+        except Exception:
+            _release_topmost()
 
     def _apply_taskbar_identity(self, win, title=None):
         """Give a borderless Toplevel a proper taskbar / Alt-Tab identity so its
@@ -3685,6 +3790,7 @@ class TranslatorApp:
         when the content overflows. Used for both result and streaming frames."""
         w, h, x, y = self._centered_box()
         win.geometry(f"{w}x{h}+{x}+{y}")
+        self._remember_window_xy(win, x, y)
         self._fill_text(win._text, message)
         # width/height in chars = 1 so pack(fill=both, expand) lets the Text
         # stretch to the window's fixed pixel size instead of its content size.
@@ -3749,8 +3855,9 @@ class TranslatorApp:
             return
         if self._resize_mode:
             return
-        lx = event.x_root - win.winfo_rootx()
-        ly = event.y_root - win.winfo_rooty()
+        wx, wy = self._window_xy(win)
+        lx = event.x_root - wx
+        ly = event.y_root - wy
         mode = self._resize_hit(win, lx, ly)
         try:
             win.configure(cursor=self._resize_cursor(mode))
@@ -3761,17 +3868,19 @@ class TranslatorApp:
         win = self.popup
         if not win:
             return
-        lx = event.x_root - win.winfo_rootx()
-        ly = event.y_root - win.winfo_rooty()
+        wx, wy = self._window_xy(win)
+        lx = event.x_root - wx
+        ly = event.y_root - wy
         mode = self._resize_hit(win, lx, ly)
         if not mode:
             self._resize_mode = None
             self._resize_start = None
             return
+        ox, oy = self._window_xy(win)
         self._resize_mode = mode
         self._resize_start = (
             event.x_root, event.y_root,
-            win.winfo_x(), win.winfo_y(),
+            ox, oy,
             win.winfo_width(), win.winfo_height(),
         )
 
@@ -3829,6 +3938,7 @@ class TranslatorApp:
         w = max(MIN_RESIZE_WIDTH, int(w))
         h = max(MIN_RESIZE_HEIGHT, int(h))
         win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        self._remember_window_xy(win, int(x), int(y))
         # Rounded region is refreshed automatically by the window-proc subclass
         # on WM_WINDOWPOSCHANGED, so no manual (potentially stale) call here.
 
@@ -3858,8 +3968,11 @@ class TranslatorApp:
                 return
             w = _win()
             if w:
-                w.geometry(f"+{w.winfo_x() + e.x - off['x']}"
-                           f"+{w.winfo_y() + e.y - off['y']}")
+                wx, wy = self._window_xy(w)
+                nx = int(wx + e.x - off["x"])
+                ny = int(wy + e.y - off["y"])
+                w.geometry(f"+{nx}+{ny}")
+                self._remember_window_xy(w, nx, ny)
 
         for _w in widgets:
             _w.bind("<Button-1>", start)
@@ -4042,10 +4155,7 @@ class TranslatorApp:
             w, h = self._size_popup_stream_grow(win, message)
 
             if self._ss.monitor_rect is None:
-                try:
-                    cx0, cy0 = win.winfo_x(), win.winfo_y()
-                except Exception:
-                    cx0, cy0 = 0, 0
+                cx0, cy0 = self._window_xy(win)
                 rect0 = get_monitor_rect((cx0, cy0))
                 self._ss.monitor_rect = rect0 if rect0 else (
                     0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
@@ -4055,9 +4165,8 @@ class TranslatorApp:
             max_y = max(min_top, bottom - h - 8)
 
             if self._ss.origin_x is None or self._ss.origin_y is None:
-                try:
-                    cx, cy = win.winfo_x(), win.winfo_y()
-                except Exception:
+                cx, cy = self._window_xy(win)
+                if (cx, cy) == (0, 0):
                     cx, cy = left + 12, min_top
                 nx = max(left + 4, min(cx, right - w - 4))
                 min_visible = min(MIN_STREAM_VISIBLE_HEIGHT, max(80, bottom - top - 20))
@@ -4074,6 +4183,7 @@ class TranslatorApp:
                     self._ss.origin_y = ny
 
             win.geometry(f"{w}x{h}+{nx}+{ny}")
+            self._remember_window_xy(win, nx, ny)
             self._apply_window_rounding(win)
             return
         if not resize:
@@ -4084,9 +4194,10 @@ class TranslatorApp:
                 pass
             return
         w, h = self._size_popup(win, message)
-        cx, cy = win.winfo_x(), win.winfo_y()
+        cx, cy = self._window_xy(win)
         x, y = self._clamp_to_monitor(cx, cy, w, h, ref=(cx, cy))
         win.geometry(f"{w}x{h}+{x}+{y}")
+        self._remember_window_xy(win, x, y)
         self._apply_window_rounding(win)
 
     def _dismiss_loading_popup(self):
@@ -6155,12 +6266,25 @@ class TranslatorApp:
 
     def _reveal_rounded_window(self, win, w, h, x, y):
         self._apply_taskbar_identity(win)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        # Map and paint the rounded card OFF-SCREEN first, then move on-screen
+        # in a single painted step. Deiconifying at the final position before
+        # the canvas is drawn leaks one unpainted colour-key (near-black) frame
+        # — the "black flash" seen just before the loading / result card shows.
+        off = -4000
+        win.geometry(f"{w}x{h}+{off}+{off}")
         win.deiconify()
         win.update_idletasks()
         win._round_redraw()
-        win.lift()
-        win.focus_force()
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        self._remember_window_xy(win, x, y)
+        win.update_idletasks()
+        win._round_redraw()
+        # Use the same activation as re-focus: a plain lift() only reorders
+        # within our own app and leaves a borderless window un-activated, so it
+        # visually floats on top until clicked. _bring_to_front gives it a real
+        # OS activation (brief topmost pulse, then released) so clicking another
+        # app correctly sends this window behind.
+        self._bring_to_front(win)
 
     def _build_history_titlebar(self, card, win, *, bg, border, accent, hint,
                                 font):
