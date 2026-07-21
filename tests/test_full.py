@@ -1345,6 +1345,38 @@ class TestUiSmoke(unittest.TestCase):
         self.assertTrue(btn is not None and btn.winfo_exists(),
                         "quick input window should expose a visible translate button")
 
+    def test_result_popup_pin_toggle(self):
+        # Result popups default to NOT always-on-top; the header pushpin opts in.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        win = app._make_popup("hello world")
+
+        def _kill():
+            try:
+                if tr.tk.Toplevel.winfo_exists(win):
+                    win.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        self.assertFalse(getattr(win, "_pinned", None),
+                         "result popup should default to not pinned")
+        self.assertEqual(int(win.attributes("-topmost")), 0,
+                         "result popup must not be always-on-top by default")
+        pin_btn = getattr(win, "_pin_btn", None)
+        self.assertTrue(pin_btn is not None and pin_btn.winfo_exists(),
+                        "result popup header should expose a pin button")
+
+        app._toggle_popup_pin(win, pin_btn)
+        self.assertTrue(win._pinned)
+        self.assertEqual(int(win.attributes("-topmost")), 1,
+                         "clicking the pin should make the popup topmost")
+
+        app._toggle_popup_pin(win, pin_btn)
+        self.assertFalse(win._pinned)
+        self.assertEqual(int(win.attributes("-topmost")), 0,
+                         "clicking the pin again should release topmost")
+
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the
         window builders call on `self` must be a bound method, not missing."""

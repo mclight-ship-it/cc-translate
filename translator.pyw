@@ -3107,7 +3107,6 @@ class TranslatorApp:
         next to a muted label. Borderless, rounded, no toolbar/scrollbar."""
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
 
         popup_bg = self.theme.get("popup_bg", self.theme["bg"])
         popup_border = self.theme.get("popup_border", self.theme["border"])
@@ -3206,6 +3205,24 @@ class TranslatorApp:
 
         close_btn = _mk_btn("✕", self._destroy_popup, danger=True)
         close_btn.pack(side="right")
+
+        # Pushpin toggle: keep this result above other windows only when the
+        # user asks. Off by default (see _make_popup: win._pinned = False).
+        pin_btn = tk.Button(
+            bar, text="\uE718",
+            command=lambda: self._toggle_popup_pin(win, pin_btn),
+            bg=popup_bg, fg=hint, activebackground=popup_bg,
+            activeforeground=accent, relief="flat", bd=0, highlightthickness=0,
+            font=("Segoe MDL2 Assets", 10), cursor="hand2", padx=9, pady=1)
+        pin_btn.pack(side="right", padx=(0, 4))
+        pin_btn.bind("<Enter>", lambda e: pin_btn.config(fg=accent))
+        pin_btn.bind(
+            "<Leave>",
+            lambda e: pin_btn.config(
+                fg=(accent if getattr(win, "_pinned", False) else hint)))
+        win._pin_btn = pin_btn
+        self._make_tooltip(pin_btn, i18n.get("result.pin"))
+
         copy_btn = _mk_btn(i18n.get("result.copy"), self._copy_result)
         copy_btn.pack(side="right", padx=(0, 4))
         win._copy_btn = copy_btn
@@ -3222,6 +3239,21 @@ class TranslatorApp:
         # Dragging the header (but not the buttons) moves the window.
         self._make_draggable(tuple(drag_targets), lambda: self.popup,
                              guard=lambda: self._resize_mode)
+
+    def _toggle_popup_pin(self, win, pin_btn):
+        """Toggle whether a result popup stays above other windows. Off by
+        default; the header pushpin is the only way to turn it on. Failing to
+        set the attribute must never crash the popup."""
+        try:
+            win._pinned = not getattr(win, "_pinned", False)
+            win.attributes("-topmost", win._pinned)
+        except Exception as e:
+            log_error("toggle_pin", e)
+            return
+        t = self.theme
+        accent = t.get("accent", "#7aa2f7")
+        hint = t.get("popup_hint", t["hint_fg"])
+        pin_btn.config(fg=(accent if win._pinned else hint))
 
     def _build_popup_body(self, win, frame, *, popup_bg, is_error, highlight):
         body = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
@@ -3295,7 +3327,10 @@ class TranslatorApp:
         # correct. Withdrawn windows mis-measure and produce huge popups.
         win.attributes("-alpha", 0.0)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        # Result windows no longer force always-on-top. The user opts in per
+        # window via the pin button in the header (see _build_popup_header);
+        # default is off so results stop covering everything else.
+        win._pinned = False
 
         popup_bg = t.get("popup_bg", t["bg"])
         popup_border = t.get("popup_border", t["border"])
@@ -4443,7 +4478,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.diagnostics_win = win
 
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
@@ -4554,7 +4590,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.about_win = win
 
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
@@ -4828,7 +4865,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.support_win = win
 
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
@@ -5016,7 +5054,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.quick_input_win = win
 
         def _on_destroy(_e=None):
@@ -5630,7 +5669,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()   # reveal at final geometry (no flash/jump)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.settings_win = win
 
         FONT = "Microsoft YaHei UI"
@@ -6392,7 +6432,8 @@ class TranslatorApp:
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
+        win.lift()
+        win.focus_force()
         self.history_win = win
 
         # A larger centred card than the result/settings popups, so the richer
