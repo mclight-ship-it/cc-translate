@@ -13,6 +13,11 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
   <sub><b>Double-tap Ctrl+C</b> — select text and the translation pops up next to your cursor</sub>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="640"><br>
+  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (Claude vision or offline local OCR)</sub>
+</p>
+
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
@@ -22,6 +27,16 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-code.png" alt="Code-explanation mode" width="360"><br>
   <sub><b>Code-explanation mode</b>: code isn't force-translated — it's explained in plain language</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-summary.png" alt="Long-text summary" width="420"><br>
+  <sub><b>Long-text summary (Beta)</b>: long text leads with a key-point summary, then the full translation</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/quick-input.png" alt="Quick input translation" width="420"><br>
+  <sub><b>Quick input translation</b>: with nothing selected, double-tap Ctrl+C to type text in an input box</sub>
 </td>
 </tr>
 <tr>

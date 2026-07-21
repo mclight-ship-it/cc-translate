@@ -13,6 +13,11 @@
   <sub><b>双击 Ctrl+C</b> —— 选中文字，鼠标旁立刻弹出译文</sub>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="640"><br>
+  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持 Claude 视觉或离线本地 OCR）</sub>
+</p>
+
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
@@ -22,6 +27,16 @@
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-code.png" alt="代码解释模式" width="360"><br>
   <sub><b>代码解释模式</b>：选中代码不硬翻，用中文讲清它做什么</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-summary.png" alt="长文摘要" width="420"><br>
+  <sub><b>长文摘要（Beta）</b>：长文本先给要点摘要，再展示完整译文</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/quick-input.png" alt="快速输入翻译" width="420"><br>
+  <sub><b>快速输入翻译</b>：没选中文字时双击 Ctrl+C，弹出输入框手动输入</sub>
 </td>
 </tr>
 <tr>
