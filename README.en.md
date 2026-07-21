@@ -53,7 +53,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **Translation history**: open the history window from the tray — searchable and filterable by type
 - **Popup layout**: classic (screen-centered) or dynamic (follows the mouse), switchable in settings
 - **Themes**: follow system / light / dark
-- **System tray**: left-click for settings; right-click for quick translate / screenshot translate / history / check for updates / pause / quit
+- **System tray**: left-click runs a configurable action (default settings; also history / screenshot / quick translate); right-click for quick translate / screenshot translate / history / check for updates / pause / quit
 - **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and update — via a manual "Check for updates" or a nightly auto-update
 - Optional launch on startup
 

@@ -38,7 +38,7 @@ import time
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 2
-VERSION_MINOR = 3
+VERSION_MINOR = 4
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),

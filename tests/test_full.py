@@ -105,6 +105,7 @@ class TestCFGConstants(unittest.TestCase):
         "CLIPBOARD_PROTECTION_ENABLED",
         "AUTOSTART_INITIALIZED",
         "SUMMARY_ENABLED",
+        "TRAY_CLICK_ACTION",
     }
 
     def test_cfg_has_all_attributes(self):
@@ -514,6 +515,22 @@ class TestDirectionModes(unittest.TestCase):
         default_layout = tr.DEFAULT_CONFIG[tr.CFG.POPUP_LAYOUT]
         self.assertIn(default_layout, valid_layouts,
                       "DEFAULT_CONFIG popup_layout not in POPUP_LAYOUT_LABELS")
+
+    def test_tray_click_action_labels_and_default(self):
+        # The default tray-click action must be a valid, labelled key, and the
+        # zh/en label maps must expose the same set of action keys so no option
+        # is missing in either language.
+        default_action = tr.DEFAULT_CONFIG[tr.CFG.TRAY_CLICK_ACTION]
+        self.assertEqual(default_action, "settings",
+                         "default tray-click action should be Settings")
+        zh = set(tr.TRAY_CLICK_ACTION_LABELS_ZH.keys())
+        en = set(tr.TRAY_CLICK_ACTION_LABELS_EN.keys())
+        self.assertEqual(zh, en,
+                         "tray-click action labels must match across languages")
+        self.assertEqual(
+            zh, {"settings", "history", "screenshot", "quick_input"},
+            "tray-click action keys should be the four window actions")
+        self.assertIn(default_action, zh)
 
 
 # ============================================================
@@ -1486,6 +1503,40 @@ class TestUiSmoke(unittest.TestCase):
             time.sleep(0.02)
         self.assertEqual(int(win.attributes("-topmost")), 0,
                          "fallback topmost pulse must release itself")
+
+    def test_tray_click_action_dispatch_routes_to_configured_action(self):
+        # Left-clicking the tray icon must run the configured action, resolved
+        # live from config, and fall back to Settings for unknown/legacy values.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+
+        cases = {
+            "settings": "open_settings",
+            "history": "open_history",
+            "quick_input": "open_quick_input",
+            "screenshot": "_ocr_from_menu",   # dispatched via root.after
+            "some_unknown_value": "open_settings",   # legacy/invalid -> Settings
+        }
+        for action, expected_method in cases.items():
+            app.cfg[tr.CFG.TRAY_CLICK_ACTION] = action
+            with unittest.mock.patch.object(app, "open_settings") as m_settings, \
+                    unittest.mock.patch.object(app, "open_history") as m_history, \
+                    unittest.mock.patch.object(app, "open_quick_input") as m_quick, \
+                    unittest.mock.patch.object(app, "_ocr_from_menu") as m_ocr, \
+                    unittest.mock.patch.object(app.root, "after",
+                                               side_effect=lambda ms, fn: fn()):
+                app._run_tray_click_action()
+            called = {
+                "open_settings": m_settings.called,
+                "open_history": m_history.called,
+                "open_quick_input": m_quick.called,
+                "_ocr_from_menu": m_ocr.called,
+            }
+            self.assertTrue(called[expected_method],
+                            f"action {action!r} should call {expected_method}")
+            # Exactly one action should fire.
+            self.assertEqual(sum(called.values()), 1,
+                             f"action {action!r} should trigger exactly one handler")
 
     def test_result_popup_root_coords_follow_geometry(self):
         # Regression guard for the taskbar-style toggle: result popups must keep

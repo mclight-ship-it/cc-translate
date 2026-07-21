@@ -5,8 +5,9 @@ Local only. Reuses your Claude Code subscription (no separate API key).
 Trigger: press Ctrl+C twice quickly to translate the current selection.
 Rendering: floating popup near the cursor. Selectable text, copy button,
 draggable by the top bar, closes on Esc or the ✕ button.
-System tray icon: left-click opens Settings; right-click menu offers
-pause/resume translation and quit.
+System tray icon: left-click runs a configurable action (default Settings;
+also History / Screenshot / Quick translation, chosen in Settings); right-click
+menu offers pause/resume translation and quit.
 """
 
 import os
@@ -239,6 +240,7 @@ class CFG:
     CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
     AUTOSTART_INITIALIZED = "autostart_initialized"
     SUMMARY_ENABLED = "summary_enabled"
+    TRAY_CLICK_ACTION = "tray_click_action"
 
 
 DEFAULT_CONFIG = {
@@ -258,6 +260,7 @@ DEFAULT_CONFIG = {
     CFG.CLIPBOARD_PROTECTION_ENABLED: False,
     CFG.AUTOSTART_INITIALIZED: False,
     CFG.SUMMARY_ENABLED: False,
+    CFG.TRAY_CLICK_ACTION: "settings",
 }
 
 # Two colour palettes. Every UI surface reads from the active theme so the
@@ -393,6 +396,22 @@ OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉",
                         "local": "本地 OCR"}
 OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision",
                         "local": "Local OCR"}
+# What a single left-click on the tray icon does. Keys map to the four
+# window-opening actions the tray already exposes; the label is resolved by
+# app language. Non-window actions (pause / quit / update) are deliberately not
+# offered here — a single click should summon something, not toggle state.
+TRAY_CLICK_ACTION_LABELS_ZH = {
+    "settings": "设置",
+    "history": "历史记录",
+    "screenshot": "截图翻译",
+    "quick_input": "快速翻译",
+}
+TRAY_CLICK_ACTION_LABELS_EN = {
+    "settings": "Settings",
+    "history": "History",
+    "screenshot": "Screenshot translation",
+    "quick_input": "Quick translation",
+}
 LANGUAGE_LABELS = {"zh_CN": "中文", "en_US": "English"}
 HISTORY_FILTER_LABELS_ZH = {
     "all": "全部",
@@ -422,6 +441,11 @@ def get_ocr_engine_labels():
     return _labels_by_language(OCR_ENGINE_LABELS_ZH, OCR_ENGINE_LABELS_EN)
 
 
+def get_tray_click_action_labels():
+    return _labels_by_language(TRAY_CLICK_ACTION_LABELS_ZH,
+                               TRAY_CLICK_ACTION_LABELS_EN)
+
+
 def get_history_filter_labels():
     return _labels_by_language(HISTORY_FILTER_LABELS_ZH, HISTORY_FILTER_LABELS_EN)
 
@@ -430,6 +454,7 @@ def get_history_filter_labels():
 THEME_LABELS = THEME_LABELS_ZH.copy()
 POPUP_LAYOUT_LABELS = POPUP_LAYOUT_LABELS_ZH.copy()
 OCR_ENGINE_LABELS = OCR_ENGINE_LABELS_ZH.copy()
+TRAY_CLICK_ACTION_LABELS = TRAY_CLICK_ACTION_LABELS_ZH.copy()
 HISTORY_FILTER_LABELS = HISTORY_FILTER_LABELS_ZH.copy()
 
 SYSTEM_SUFFIX = (
@@ -5835,6 +5860,7 @@ class TranslatorApp:
         theme_labels = get_theme_labels()
         layout_labels = get_popup_layout_labels()
         ocr_engine_labels = get_ocr_engine_labels()
+        tray_click_labels = get_tray_click_action_labels()
 
         win = tk.Toplevel(self.root)
         win.withdraw()   # reveal at final geometry (no flash/jump)
@@ -6019,6 +6045,18 @@ class TranslatorApp:
                 font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
+        tray_click_var = tk.StringVar(
+            value=tray_click_labels.get(
+                self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings"),
+                tray_click_labels["settings"]))
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.tray_click_action"),
+            ttk.Combobox(
+                body, textvariable=tray_click_var, state="readonly", width=18,
+                style="CC.TCombobox", font=(FONT, 10),
+                values=list(tray_click_labels.values())),
+            bg=bg, fg=fg, font=FONT)
+
         max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
         self._settings_field(
             body, row_state, i18n.get("settings.label.max_chars"),
@@ -6166,6 +6204,7 @@ class TranslatorApp:
         label_to_theme = {v: k for k, v in theme_labels.items()}
         label_to_layout = {v: k for k, v in layout_labels.items()}
         label_to_ocr_engine = {v: k for k, v in ocr_engine_labels.items()}
+        label_to_tray_click = {v: k for k, v in tray_click_labels.items()}
         label_to_lang = {v: k for k, v in LANGUAGE_LABELS.items()}
 
         def apply_settings():
@@ -6175,6 +6214,8 @@ class TranslatorApp:
                 self.cfg[CFG.DIRECTION] = label_to_dir[dir_var.get()]
                 self.cfg[CFG.THEME] = label_to_theme[theme_var.get()]
                 self.cfg[CFG.POPUP_LAYOUT] = label_to_layout[layout_var.get()]
+                self.cfg[CFG.TRAY_CLICK_ACTION] = label_to_tray_click[
+                    tray_click_var.get()]
                 self.cfg[CFG.DOUBLE_PRESS_WINDOW] = float(gap_var.get())
                 self.cfg[CFG.FONT_SIZE] = int(font_var.get())
                 self.cfg[CFG.MAX_CHARS] = int(max_var.get())
@@ -6653,6 +6694,20 @@ class TranslatorApp:
                 log_error("load_tray_image", e)
         return self._make_cc_image(theme)
 
+    def _run_tray_click_action(self):
+        """Run the action the user chose for a single left-click on the tray
+        icon. Reads config live so a change in Settings takes effect without
+        rebuilding the tray menu. Unknown/legacy values fall back to Settings."""
+        action = self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings")
+        if action == "history":
+            self.open_history()
+        elif action == "screenshot":
+            self.root.after(0, self._ocr_from_menu)
+        elif action == "quick_input":
+            self.open_quick_input()
+        else:
+            self.open_settings()
+
     def _start_tray(self):
         import pystray
 
@@ -6684,12 +6739,24 @@ class TranslatorApp:
         def on_about(icon, item):
             self.open_about()
 
+        def on_default_click(icon, item):
+            # Left-clicking the tray icon runs the user-chosen action. Read the
+            # config at click-time (not menu-build time) so changing the setting
+            # takes effect without rebuilding the tray menu.
+            self._run_tray_click_action()
+
         def on_quit(icon, item):
             icon.stop()
             self.close_warm_pool()
             self.root.after(0, self.root.destroy)
 
         menu = pystray.Menu(
+            # Invisible default item: this is what a left-click activates. It
+            # dispatches to the user-configured action instead of being wired to
+            # a single fixed entry, while the visible items below stay complete
+            # so every feature remains reachable from the right-click menu.
+            pystray.MenuItem(
+                "default", on_default_click, default=True, visible=False),
             pystray.MenuItem(i18n.get("tray.history"), on_history),
             pystray.MenuItem(i18n.get("tray.quick_input"), on_quick_input),
             pystray.MenuItem(i18n.get("tray.screenshot_menu"), on_ocr),
@@ -6697,7 +6764,7 @@ class TranslatorApp:
                 lambda item: i18n.get("tray.resume") if self.paused else i18n.get("tray.pause"),
                 on_toggle_pause),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(i18n.get("tray.settings"), on_settings, default=True),
+            pystray.MenuItem(i18n.get("tray.settings"), on_settings),
             pystray.MenuItem(i18n.get("tray.diagnostics"), on_diagnostics),
             pystray.MenuItem(i18n.get("about.title"), on_about),
             pystray.MenuItem(i18n.get("tray.check_update"), on_check_update),
