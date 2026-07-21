@@ -6049,13 +6049,6 @@ class TranslatorApp:
             value=tray_click_labels.get(
                 self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings"),
                 tray_click_labels["settings"]))
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.tray_click_action"),
-            ttk.Combobox(
-                body, textvariable=tray_click_var, state="readonly", width=18,
-                style="CC.TCombobox", font=(FONT, 10),
-                values=list(tray_click_labels.values())),
-            bg=bg, fg=fg, font=FONT)
 
         max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
         self._settings_field(
@@ -6097,6 +6090,13 @@ class TranslatorApp:
             bg=bg, fg=fg, font=FONT,
             help_text=i18n.get("settings.label.clipboard_protection_help"),
             help_ring=hint, help_glyph=hint)
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.tray_click_action"),
+            ttk.Combobox(
+                body, textvariable=tray_click_var, state="readonly", width=18,
+                style="CC.TCombobox", font=(FONT, 10),
+                values=list(tray_click_labels.values())),
+            bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 更新 ----
         self._settings_section(
