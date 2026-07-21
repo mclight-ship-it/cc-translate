@@ -35,15 +35,9 @@
 </td>
 </tr>
 <tr>
-<td colspan="2" valign="top" align="center">
-  <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="460"><br>
-  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持 Claude 视觉或离线本地 OCR）</sub>
-</td>
-</tr>
-<tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/settings.png" alt="设置窗口" width="420"><br>
-  <sub><b>设置</b>：两列布局，模型 / 方向 / 主题 / 截图翻译 / 更新一屏可见</sub>
+  <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="420"><br>
+  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持 Claude 视觉或离线本地 OCR）</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="翻译历史" width="420"><br>

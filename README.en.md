@@ -35,15 +35,9 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 </td>
 </tr>
 <tr>
-<td colspan="2" valign="top" align="center">
-  <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="460"><br>
-  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (Claude vision or offline local OCR)</sub>
-</td>
-</tr>
-<tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/settings.png" alt="Settings window" width="420"><br>
-  <sub><b>Settings</b>: a two-column layout — model / direction / theme / OCR / updates at a glance</sub>
+  <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="420"><br>
+  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (Claude vision or offline local OCR)</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="Translation history" width="420"><br>
