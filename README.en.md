@@ -39,16 +39,21 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
+- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between Claude vision recognition or an offline local OCR engine
+- **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
+- **Long-text summary (Beta)**: when translating longer natural-language text, it leads with a short summary of the key points before the full translation
 - **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
 - **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click
+- **Rewrite & distill**: from the popup, rewrite the translation in a casual / formal / professional tone, or distill it to key points
 - **Streaming for long text**: long text reveals its translation progressively
-- **Translation history**: open the history window from the tray
+- **Smart selection detection**: automatically detects whether text is actually selected, so it won't mistranslate the whole field when nothing is selected in an input box (including cross-process apps like VS Code)
+- **Translation history**: open the history window from the tray — searchable and filterable by type
 - **Popup layout**: classic (screen-centered) or dynamic (follows the mouse), switchable in settings
 - **Themes**: follow system / light / dark
-- **System tray**: left-click for settings; right-click for history / check for updates / pause / quit
+- **System tray**: left-click for settings; right-click for quick translate / screenshot translate / history / check for updates / pause / quit
 - **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and update — via a manual "Check for updates" or a nightly auto-update
 - Optional launch on startup
 
