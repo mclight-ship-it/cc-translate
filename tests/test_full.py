@@ -1709,6 +1709,38 @@ class TestQuickInputFallback(unittest.TestCase):
         app._show_loading.assert_called_once_with("hello")
 
 
+class TestLoadingPopupDismiss(unittest.TestCase):
+    """The 'translating…' loading hint auto-dismisses when it loses focus, but
+    must ignore the focus churn that fires the instant it is revealed. Otherwise
+    closing the quick-input window (which hands the OS foreground to another
+    window, racing the popup's own activation) delivers a stray FocusOut that
+    would close the hint before the user ever sees it."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._dismiss_loading_popup = unittest.mock.Mock()
+        return app
+
+    def test_focus_out_before_armed_is_ignored(self):
+        app = self._app()
+        win = types.SimpleNamespace(_dismiss_armed=False)
+        app._on_loading_focus_out(win)
+        app._dismiss_loading_popup.assert_not_called()
+
+    def test_focus_out_after_armed_dismisses(self):
+        app = self._app()
+        win = types.SimpleNamespace(_dismiss_armed=True)
+        app._on_loading_focus_out(win)
+        app._dismiss_loading_popup.assert_called_once_with()
+
+    def test_missing_flag_defaults_to_not_dismissing(self):
+        # A window without the flag at all must not be dismissed (fail safe).
+        app = self._app()
+        win = types.SimpleNamespace()
+        app._on_loading_focus_out(win)
+        app._dismiss_loading_popup.assert_not_called()
+
+
 class _FakePipe:
     """Minimal stand-in for a Popen stdin pipe."""
     def __init__(self):

@@ -3195,9 +3195,36 @@ class TranslatorApp:
             y = self.root.winfo_pointery() + 18
             x, y = self._clamp_to_monitor(x, y, w, h)
         self._reveal_rounded_window(win, w, h, x, y)
-        # Clicking anywhere outside dismisses only the loading hint.
-        win.bind("<FocusOut>", lambda e: self._dismiss_loading_popup())
+        # Clicking anywhere outside dismisses only the loading hint — but arm
+        # that only after a short grace period. Revealing this popup activates
+        # it (see _bring_to_front); meanwhile closing the quick-input window
+        # hands the OS foreground to another window asynchronously, and that
+        # handoff races our activation. The stray FocusOut it delivers would
+        # otherwise dismiss the "translating…" hint the instant it appears, so
+        # the user never sees it. Only a genuine, later focus loss should close
+        # it.
+        win._dismiss_armed = False
+        win.bind("<FocusOut>", lambda e: self._on_loading_focus_out(win))
+
+        def _arm_loading_dismiss():
+            try:
+                if tk.Toplevel.winfo_exists(win):
+                    win._dismiss_armed = True
+            except Exception:
+                pass
+
+        try:
+            win.after(600, _arm_loading_dismiss)
+        except Exception:
+            win._dismiss_armed = True
         return win
+
+    def _on_loading_focus_out(self, win):
+        """Dismiss the loading hint when it loses focus — but ignore the focus
+        churn that immediately follows revealing it (see _make_loading_popup),
+        which would otherwise close the hint before the user ever sees it."""
+        if getattr(win, "_dismiss_armed", False):
+            self._dismiss_loading_popup()
 
     def _build_popup_header(self, win, frame, *, title, is_error, popup_bg,
                             popup_border, hint, accent, theme):
