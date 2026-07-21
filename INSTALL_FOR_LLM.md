@@ -51,10 +51,10 @@ claude --version
 ### 3. 安装 Python 依赖
 
 ```bash
-python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments
+python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments winsdk comtypes
 ```
 
-（`tkinter` 是 Python 自带的，无需安装；`Pygments` 用于代码块语法高亮，可选，缺失时自动降级。）
+（`tkinter` 是 Python 自带的，无需安装。后三个为可选增强，缺失时对应功能自动降级/关闭，不影响核心翻译：`Pygments` 用于代码块语法高亮；`winsdk` 用于截图翻译的离线本地 OCR（缺失时仍可用 Claude 视觉识别）；`comtypes` 用于智能选区识别，避免输入框内无选中时误翻整框。）
 
 验证：`python -c "import pynput, pyperclip, pystray, PIL, tkinter; print('ok')"`
 

@@ -116,8 +116,10 @@ claude   # on first run, follow the prompt to sign in via browser, then Ctrl+C t
 
 # 4. Install Python dependencies
 pip install pynput pyperclip pystray Pillow
-# Optional: code-block syntax highlighting (auto-degrades to monochrome code style when missing)
-pip install Pygments
+# Optional enhancements (each feature auto-degrades/turns off if missing; core translation is unaffected):
+pip install Pygments   # code-block syntax highlighting (falls back to monochrome code style when missing)
+pip install winsdk     # offline local OCR engine for screenshot translation (Claude vision still works without it)
+pip install comtypes   # smart selection detection, avoids mistranslating a whole input box when nothing is selected (incl. cross-process apps like VS Code)
 
 # 5. First run (make sure the current directory is the project root, cc-translate)
 pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in the Start Menu
