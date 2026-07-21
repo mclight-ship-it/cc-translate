@@ -38,7 +38,7 @@ import time
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 2
-VERSION_MINOR = 1
+VERSION_MINOR = 2
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
@@ -249,6 +249,16 @@ def _ps_squote(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
+def _log(tag, exc):
+    """Report an exception through the translator-provided hook, if wired up.
+    Lets otherwise-silent shortcut failures leave a diagnostic trail."""
+    if _log_error is not None:
+        try:
+            _log_error(tag, exc)
+        except Exception:
+            pass
+
+
 def _spawn_relauncher(pid=None, data_dir=None):
     """Write a small detached PowerShell helper that waits for THIS process to
     fully exit (which releases the single-instance mutex), then starts a fresh
@@ -325,11 +335,11 @@ def _create_shortcut(link_path):
     ps = (
         "$ErrorActionPreference = 'Stop'; "
         "$ws = New-Object -ComObject WScript.Shell; "
-        f"$l = $ws.CreateShortcut('{link_path}'); "
-        f"$l.TargetPath = '{PYTHONW}'; "
-        f"$l.Arguments = '\"{SCRIPT_PATH}\"'; "
-        f"$l.WorkingDirectory = '{APP_DIR}'; "
-        f"$l.IconLocation = '{ICON_PATH}'; "
+        f"$l = $ws.CreateShortcut({_ps_squote(link_path)}); "
+        f"$l.TargetPath = {_ps_squote(PYTHONW)}; "
+        f"$l.Arguments = {_ps_squote('\"' + SCRIPT_PATH + '\"')}; "
+        f"$l.WorkingDirectory = {_ps_squote(APP_DIR)}; "
+        f"$l.IconLocation = {_ps_squote(ICON_PATH)}; "
         "$l.Save()"
     )
     subprocess.run(["powershell", "-NoProfile", "-Command", ps],
@@ -340,8 +350,8 @@ def ensure_startmenu_shortcut():
     """Ensure Start Menu has a launch entry for this app."""
     try:
         _create_shortcut(STARTMENU_LNK)
-    except Exception:
-        pass
+    except Exception as e:
+        _log("ensure_startmenu_shortcut", e)
 
 
 def is_autostart_enabled():
@@ -358,8 +368,8 @@ def set_autostart(enable):
     if enable:
         try:
             _create_shortcut(STARTUP_LNK)
-        except Exception:
-            pass
+        except Exception as e:
+            _log("set_autostart_enable", e)
     else:
         try:
             if os.path.exists(STARTUP_LNK):

@@ -16,13 +16,14 @@ import json
 import time
 import dataclasses
 import queue
-import socket
 import threading
 import subprocess
 import shutil
+import tempfile
+import uuid
 import ctypes
-from urllib.parse import urlsplit
 from ctypes import wintypes
+from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
@@ -31,6 +32,8 @@ import pyperclip
 from pynput import keyboard
 
 import i18n
+import win32util
+from win32util import get_monitor_rect
 from cc_rich import (iter_rich_segments, highlight_code, _PYGMENTS_OK,
                      _iter_inline_segments, _flush_highlighted_fence,
                      _pyg_token_tag, _PygToken)
@@ -50,70 +53,11 @@ import cc_ocr
 
 
 def _enable_dpi_awareness():
-    """Declare per-monitor DPI awareness so Windows doesn't bitmap-stretch
-    (blur) our tkinter windows on high-DPI / scaled displays."""
-    try:
-        import ctypes
-        # Prefer Per-Monitor V2 when available: it gives better scaling behavior
-        # for IME/composition UI than older awareness modes.
-        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
-        if ctypes.windll.user32.SetProcessDpiAwarenessContext(
-                ctypes.c_void_p(-4)):
-            return
-    except Exception:
-        pass
-    try:
-        import ctypes
-        # PROCESS_PER_MONITOR_DPI_AWARE = 2
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
+    """Backwards-compatible shim → win32util.enable_dpi_awareness()."""
+    win32util.enable_dpi_awareness()
 
 
 _enable_dpi_awareness()
-
-
-def get_monitor_rect(point=None):
-    """Return (left, top, right, bottom) work area of the monitor containing
-    `point` (an (x, y) screen coord); defaults to the mouse cursor's monitor.
-    Falls back to None if the query fails.
-
-    tkinter's winfo_screenwidth/height only report the PRIMARY monitor, so on
-    a multi-monitor setup its bounds are wrong for a point on a secondary
-    screen and would shove the popup back onto the primary display."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        class RECT(ctypes.Structure):
-            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
-                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
-
-        class MONITORINFO(ctypes.Structure):
-            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT),
-                        ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]
-
-        pt = POINT()
-        if point is None:
-            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        else:
-            pt.x, pt.y = int(point[0]), int(point[1])
-        # MONITOR_DEFAULTTONEAREST = 2
-        hmon = ctypes.windll.user32.MonitorFromPoint(pt, 2)
-        mi = MONITORINFO()
-        mi.cbSize = ctypes.sizeof(MONITORINFO)
-        if ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-            r = mi.rcWork  # work area excludes the taskbar
-            return (r.left, r.top, r.right, r.bottom)
-    except Exception:
-        pass
-    return None
 
 
 APP_NAME = "CC Translate"
@@ -138,7 +82,7 @@ def _resolve_data_dir():
 DATA_DIR = _resolve_data_dir()
 
 
-def _user_data_path(name):
+def _user_data_path(name: str) -> str:
     """Resolve a user data file in DATA_DIR, migrating any legacy copy that
     still sits next to the program (APP_DIR) on first run after the move."""
     new = os.path.join(DATA_DIR, name)
@@ -731,6 +675,11 @@ def classify_selection(text):
 STREAM_MIN_CHARS = 400
 SUMMARY_MIN_CHARS = STREAM_MIN_CHARS
 
+# Hard cap on a single cold streaming round-trip. Mirrors cc_warm's
+# WARM_SEND_TIMEOUT_S so a hung Claude CLI can't wedge the translation thread
+# (or leak a child process) forever.
+STREAM_SEND_TIMEOUT_S = 90
+
 _LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
 _CONFIG_KV_LINE_RE = re.compile(
     r"^\s*(?:-\s*)?[a-z0-9_.-]{2,40}\s*:\s*(?:\S.*)?$")
@@ -819,11 +768,113 @@ def summary_instruction(app_language):
 
 
 
-def load_config():
-    cfg = dict(DEFAULT_CONFIG)
+class Config(dict):
+    """Typed, self-validating view over the user config.
+
+    Subclasses ``dict`` so every existing access pattern keeps working
+    unchanged — ``cfg[key]``, ``cfg.get(key)``, ``cfg[key] = v`` and
+    ``json.dump(cfg, ...)`` all behave exactly as before. On top of that it:
+
+      * merges ``DEFAULT_CONFIG`` so every known key is always present, and
+      * coerces each known key to the type of its default (a config file that
+        somehow holds a wrong-typed value can't crash the UI downstream), and
+      * exposes typed read-only properties for the hot keys so new code can
+        say ``cfg.model`` instead of ``cfg.get(CFG.MODEL, ...)`` with a
+        literal fallback repeated at every call site.
+
+    Unknown keys are preserved untouched for forward-compatibility."""
+
+    def __init__(self, data=None):
+        super().__init__(DEFAULT_CONFIG)
+        if data:
+            self.update(data)
+        self._coerce()
+
+    def _coerce(self):
+        """Force every known key to the type of its default; on mismatch that
+        can't be coerced, fall back to the default rather than keep a value
+        that would break a downstream widget."""
+        for key, default in DEFAULT_CONFIG.items():
+            if key not in self:
+                self[key] = default
+                continue
+            value = self[key]
+            try:
+                if isinstance(default, bool):
+                    # bool is a subclass of int, so test it before int.
+                    if isinstance(value, bool):
+                        continue
+                    if isinstance(value, (int, float)):
+                        self[key] = bool(value)
+                    elif isinstance(value, str):
+                        self[key] = value.strip().lower() in ("1", "true", "yes", "on")
+                    else:
+                        self[key] = default
+                elif isinstance(default, int):
+                    self[key] = int(value)
+                elif isinstance(default, float):
+                    self[key] = float(value)
+                elif isinstance(default, str):
+                    self[key] = value if isinstance(value, str) else str(value)
+            except (TypeError, ValueError):
+                self[key] = default
+
+    # ---- Typed accessors (optional convenience; the dict API still works) ----
+    @property
+    def model(self):
+        return self.get(CFG.MODEL, DEFAULT_CONFIG[CFG.MODEL])
+
+    @property
+    def direction(self):
+        return self.get(CFG.DIRECTION, DEFAULT_CONFIG[CFG.DIRECTION])
+
+    @property
+    def theme(self):
+        return self.get(CFG.THEME, DEFAULT_CONFIG[CFG.THEME])
+
+    @property
+    def font_size(self):
+        return self.get(CFG.FONT_SIZE, DEFAULT_CONFIG[CFG.FONT_SIZE])
+
+    @property
+    def max_chars(self):
+        return self.get(CFG.MAX_CHARS, DEFAULT_CONFIG[CFG.MAX_CHARS])
+
+    @property
+    def double_press_window(self):
+        return self.get(CFG.DOUBLE_PRESS_WINDOW,
+                        DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
+
+    @property
+    def popup_layout(self):
+        return self.get(CFG.POPUP_LAYOUT, DEFAULT_CONFIG[CFG.POPUP_LAYOUT])
+
+    @property
+    def language(self):
+        return self.get(CFG.LANGUAGE)
+
+    @property
+    def history_enabled(self):
+        return self.get(CFG.HISTORY_ENABLED, DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
+
+    @property
+    def history_limit(self):
+        return self.get(CFG.HISTORY_LIMIT, DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
+
+    @property
+    def ocr_engine(self):
+        return self.get(CFG.OCR_ENGINE, DEFAULT_CONFIG[CFG.OCR_ENGINE])
+
+    @property
+    def summary_enabled(self):
+        return self.get(CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
+
+
+def load_config() -> "Config":
+    cfg = Config()
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg.update(json.load(f))
+            cfg = Config(json.load(f))
     except FileNotFoundError:
         pass
     except Exception as e:
@@ -831,18 +882,44 @@ def load_config():
     return cfg
 
 
-def save_config(cfg):
+def _atomic_write_json(path: str, data: Any) -> None:
+    """Write JSON to ``path`` atomically.
+
+    Dumps to a uniquely-named temp file in the same directory, flushes+fsyncs it,
+    then ``os.replace()``s it over the target. Because the swap is atomic, a
+    crash or hard ``os._exit`` mid-write can never leave a truncated/corrupt
+    file — readers always see either the old complete file or the new one."""
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=d)
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def save_config(cfg: Dict[str, Any]) -> None:
+    try:
+        _atomic_write_json(CONFIG_PATH, cfg)
     except Exception as e:
         log_error("save_config", e)
 
 
 HISTORY_PATH = _user_data_path("history.json")
 
+# Serialises the read-modify-write in add_history so concurrent translation
+# workers (each may append a result) can't interleave and lose entries.
+_HISTORY_LOCK = threading.Lock()
 
-def load_history():
+
+def load_history() -> List[Dict[str, Any]]:
     try:
         with open(HISTORY_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -854,7 +931,8 @@ def load_history():
         return []
 
 
-def add_history(input_text, output_text, is_dict, limit, is_code=False, kind=None):
+def add_history(input_text: str, output_text: str, is_dict: bool, limit: int,
+                is_code: bool = False, kind: Optional[str] = None) -> None:
     if kind not in ("text", "dict", "code", "ocr"):
         if is_code:
             kind = "code"
@@ -862,29 +940,31 @@ def add_history(input_text, output_text, is_dict, limit, is_code=False, kind=Non
             kind = "dict"
         else:
             kind = "text"
-    entries = load_history()
-    entries.insert(0, {
-        "ts": time.strftime("%Y-%m-%d %H:%M"),
-        "input": input_text or "",
-        "output": output_text or "",
-        "is_dict": bool(is_dict),
-        "is_code": bool(is_code),
-        "kind": kind,
-    })
-    del entries[max(1, int(limit)):]
-    try:
-        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log_error("add_history", e)
+    with _HISTORY_LOCK:
+        entries = load_history()
+        entries.insert(0, {
+            "ts": time.strftime("%Y-%m-%d %H:%M"),
+            "input": input_text or "",
+            "output": output_text or "",
+            "is_dict": bool(is_dict),
+            "is_code": bool(is_code),
+            "kind": kind,
+        })
+        del entries[max(1, int(limit)):]
+        try:
+            _atomic_write_json(HISTORY_PATH, entries)
+        except Exception as e:
+            log_error("add_history", e)
 
 
-def clear_history():
+def clear_history() -> None:
     try:
         if os.path.exists(HISTORY_PATH):
             os.remove(HISTORY_PATH)
-    except Exception:
-        pass
+    except Exception as e:
+        # One-shot user action ("clear history"): if it fails the user gets no
+        # visible feedback, so leave a trace instead of swallowing silently.
+        log_error("clear_history", e)
 
 
 def history_entry_kind(entry):
@@ -935,80 +1015,19 @@ def filter_history_entries(entries, query="", kind="all"):
     return out
 
 
-def _load_json_object(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-        return {"__error__": i18n.get("diagnostics.json_root_not_object")}
-    except FileNotFoundError:
-        return None
-    except Exception as e:
-        return {"__error__": f"{type(e).__name__}: {e}"}
-
-
-def _redact_diag_value(name, value):
-    if value in (None, ""):
-        return ""
-    text = str(value)
-    low = (name or "").lower()
-    if any(k in low for k in ("api_key", "token", "auth")):
-        if text.strip() == "Powered by Agent Maestro":
-            return text
-        return i18n.get("diagnostics.value_set")
-    return text
-
-
-def infer_claude_backend(env):
-    env = dict(env or {})
-    base_url = (env.get("ANTHROPIC_BASE_URL") or "").strip()
-    api_key = (env.get("ANTHROPIC_API_KEY") or "").strip()
-    auth_token = (env.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
-    model = (env.get("ANTHROPIC_MODEL") or "").strip()
-    parsed = urlsplit(base_url) if base_url else None
-    host = (parsed.hostname or "").lower() if parsed else ""
-    port = parsed.port if parsed else None
-    if parsed and port is None:
-        port = 443 if parsed.scheme == "https" else 80 if parsed.scheme == "http" else None
-    if base_url:
-        if host in ("127.0.0.1", "localhost") and (
-                port == 23333 or "agent maestro" in auth_token.lower()):
-            label = i18n.get("diagnostics.backend.agent_maestro")
-            mode = "agent_maestro"
-        elif host.endswith("anthropic.com"):
-            label = i18n.get("diagnostics.backend.anthropic_api")
-            mode = "anthropic_api"
-        else:
-            label = i18n.get("diagnostics.backend.custom_endpoint")
-            mode = "custom_endpoint"
-    elif api_key or auth_token:
-        label = i18n.get("diagnostics.backend.api_token")
-        mode = "api_token"
-    else:
-        label = i18n.get("diagnostics.backend.subscription")
-        mode = "subscription"
-    return {
-        "mode": mode,
-        "label": label,
-        "base_url": base_url,
-        "host": host,
-        "port": port,
-        "model": model,
-        "has_api_key": bool(api_key),
-        "has_auth_token": bool(auth_token),
-    }
-
-
-def describe_model_routing(app_model, backend_mode, backend_model):
-    app_model = (app_model or "").strip() or i18n.get("diagnostics.model_not_set")
-    backend_model = (backend_model or "").strip()
-    if backend_model and backend_mode != "subscription":
-        if backend_model == app_model:
-            return i18n.get("diagnostics.routing.same_model")
-        return i18n.get("diagnostics.routing.proxy_override").format(
-            backend_model=backend_model)
-    return i18n.get("diagnostics.routing.no_proxy")
+# Diagnostics helpers live in diagnostics.py (pure, GUI-free, unit-tested).
+# Re-imported here so existing call sites (tr.infer_claude_backend, the private
+# _load_json_object/_redact_diag_value helpers, and the diagnostics window) keep
+# working unchanged.
+from diagnostics import (
+    load_json_object as _load_json_object,
+    redact_diag_value as _redact_diag_value,
+    infer_claude_backend,
+    describe_model_routing,
+    build_diagnostics_actions,
+    probe_base_url,
+    tail_text_file,
+)
 
 
 def fit_box_size(src_w, src_h, max_w, max_h):
@@ -1023,90 +1042,6 @@ def fit_box_size(src_w, src_h, max_w, max_h):
     return max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale))), scale
 
 
-def build_diagnostics_actions(snapshot):
-    snapshot = dict(snapshot or {})
-    backend = dict(snapshot.get("backend") or {})
-    login = dict(snapshot.get("login") or {})
-    cli = dict(snapshot.get("claude_cli") or {})
-    endpoint_probe = snapshot.get("endpoint_probe")
-    ps_policy = dict(snapshot.get("powershell_policy") or {})
-    last_result = dict(snapshot.get("last_result") or {})
-    detail = ((last_result.get("detail") or "") + "\n" +
-              (last_result.get("preview") or "")).casefold()
-
-    actions = []
-    if not cli.get("ok"):
-        actions.append(i18n.get("diagnostics.action.fix_cli"))
-    if backend.get("mode") == "subscription" and not login.get("ok"):
-        actions.append(i18n.get("diagnostics.action.login_subscription"))
-    if backend.get("mode") == "agent_maestro":
-        if endpoint_probe and not endpoint_probe.get("ok"):
-            actions.append(i18n.get("diagnostics.action.start_agent_maestro"))
-        else:
-            actions.append(i18n.get("diagnostics.action.keep_agent_maestro_running"))
-    elif (backend.get("mode") in ("custom_endpoint", "api_token", "anthropic_api")
-          and endpoint_probe and not endpoint_probe.get("ok")):
-        actions.append(i18n.get("diagnostics.action.check_endpoint"))
-    if ps_policy.get("value") in ("Restricted", "AllSigned"):
-        actions.append(i18n.get("diagnostics.action.use_claude_cmd"))
-
-    if last_result.get("ok") is False:
-        if any(k in detail for k in ("timeout", "超时")):
-            actions.append(i18n.get("diagnostics.action.retry_after_timeout"))
-        elif any(k in detail for k in ("rate limit", "429", "限流", "频率")):
-            actions.append(i18n.get("diagnostics.action.retry_after_rate_limit"))
-        elif any(k in detail for k in ("not logged in", "authentication",
-                                       "unauthorized", "login", "未登录", "登录")):
-            actions.append(i18n.get("diagnostics.action.retry_after_login"))
-        else:
-            actions.append(i18n.get("diagnostics.action.retry_generic"))
-
-    if not actions:
-        actions.append(i18n.get("diagnostics.action.no_action_needed"))
-
-    deduped = []
-    for item in actions:
-        if item not in deduped:
-            deduped.append(item)
-    return deduped
-
-
-def probe_base_url(base_url, timeout=1.5):
-    if not base_url:
-        return None
-    try:
-        parsed = urlsplit(base_url)
-    except Exception as e:
-        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.parse_failed").format(error=e)}
-    host = parsed.hostname
-    if not host:
-        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.missing_host")}
-    port = parsed.port
-    if port is None:
-        port = 443 if parsed.scheme == "https" else 80 if parsed.scheme == "http" else None
-    if port is None:
-        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.missing_port")}
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return {"ok": True, "summary": i18n.get("diagnostics.endpoint.reachable").format(host=host, port=port)}
-    except ConnectionRefusedError:
-        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.refused").format(host=host, port=port)}
-    except OSError as e:
-        return {"ok": False, "summary": i18n.get("diagnostics.endpoint.unreachable").format(host=host, port=port, error=e)}
-
-
-def tail_text_file(path, max_lines=8):
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return "".join(lines[-max_lines:]).strip()
-    except FileNotFoundError:
-        return ""
-    except Exception as e:
-        return i18n.get("diagnostics.read_failed").format(
-            error_type=type(e).__name__, error=e)
-
-
 # (autostart / shortcut / git-update helpers live in cc_update.py)
 
 def log_perf(stage, extra=None):
@@ -1115,7 +1050,7 @@ def log_perf(stage, extra=None):
     return
 
 
-def log_error(where, exc):
+def log_error(where: str, exc: BaseException) -> None:
     """Append a one-line record of a swallowed exception to error.log in the
     user data dir. Called only from except blocks, so it never touches the hot
     path; failures to log are themselves ignored to preserve the no-crash
@@ -1170,43 +1105,13 @@ _ROUND_REGISTRY = {}
 
 
 def _round_apply_region(hwnd, radius):
-    """Clip the window to a rounded rectangle matching its *current* real size."""
-    try:
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-        w = rect.right - rect.left
-        h = rect.bottom - rect.top
-        if w <= 0 or h <= 0:
-            return
-        r = max(0, int(radius))
-        user32.SetWindowRgn.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
-                                        ctypes.c_bool]
-        user32.SetWindowRgn.restype = ctypes.c_int
-        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
-        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
-        rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2)
-        if rgn:
-            # SetWindowRgn takes ownership of the region handle.
-            user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn),
-                                True)
-    except Exception:
-        pass
+    """Backwards-compatible shim → win32util.round_apply_region()."""
+    win32util.round_apply_region(hwnd, radius)
 
 
 def _round_prefer_dwm(hwnd):
-    """Ask Windows 11's DWM to prefer rounded corners too (harmless elsewhere)."""
-    try:
-        dwmapi = ctypes.windll.dwmapi
-        DWMWA_WINDOW_CORNER_PREFERENCE = 33
-        DWMWCP_ROUND = 2
-        pref = ctypes.c_int(DWMWCP_ROUND)
-        dwmapi.DwmSetWindowAttribute(
-            ctypes.c_void_p(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
-            ctypes.byref(pref), ctypes.sizeof(pref))
-    except Exception:
-        pass
+    """Backwards-compatible shim → win32util.prefer_dwm_rounded()."""
+    win32util.prefer_dwm_rounded(hwnd)
 
 
 def attach_rounded_corners(win, radius):
@@ -1371,6 +1276,11 @@ class TranslatorApp:
         self._ocr_queue = queue.Queue()   # Win+Shift+C requests → main thread
         self._ocr_selecting = False       # region-selector overlay is open
         self._ss = StreamSession()
+        # Monotonic in-flight job id. Every new translation/OCR request bumps
+        # this; stale worker threads compare against it before touching the UI
+        # or history, so a slow/hung request can never write its result into a
+        # newer request's popup or history ("latest request wins").
+        self._job_id = 0
         self._resize_mode = None
         self._resize_start = None
 
@@ -2064,6 +1974,17 @@ class TranslatorApp:
             log_error("restore_clipboard", e)
 
     # ---------- Translation ----------
+    def _begin_job(self):
+        """Start a new in-flight request and return its id. Bumping the counter
+        invalidates any still-running worker from a previous request."""
+        self._job_id += 1
+        return self._job_id
+
+    def _job_is_current(self, job_id):
+        """True when job_id is the most recently started request. Worker threads
+        call this (on the UI thread) before writing any popup/history state."""
+        return job_id == self._job_id
+
     def _cancel_stream_flush(self):
         """Cancel any pending after() flush job and clear the reference."""
         if self._ss.flush_job:
@@ -2080,10 +2001,26 @@ class TranslatorApp:
         self._last_class = classify_selection(text)
         self._cancel_stream_flush()
         self._ss = StreamSession()
+        job_id = self._begin_job()
+        # Snapshot the history metadata now, on the main thread, so a later
+        # request can't overwrite self._last_* before the worker persists this
+        # job's result (which would pair the new input with the old output).
+        meta = self._history_meta()
         self.popup = self._make_loading_popup()
         self._animate_loading(0)
-        threading.Thread(target=self._do_translate, args=(text,),
+        threading.Thread(target=self._do_translate, args=(text, job_id, meta),
                          daemon=True).start()
+
+    def _history_meta(self) -> Dict[str, Any]:
+        """Capture the per-job history fields from the current self._last_*
+        state. Must be called on the main thread at request start; the returned
+        dict is then owned by that job's worker thread."""
+        return {
+            "input": self._last_input,
+            "origin": self._last_origin,
+            "is_code": self._last_class == "code",
+            "kind": self._history_kind(),
+        }
 
     def _animate_loading(self, step):
         """Spin the accent indicator through LOADING_SPINNER frames."""
@@ -2274,7 +2211,9 @@ class TranslatorApp:
     def _capture_and_translate(self, x, y, w, h):
         """Grab the chosen region, then translate it via the configured OCR
         engine (Claude Vision by default, or offline Windows OCR)."""
-        img_path = os.path.join(DATA_DIR, "tmp_ocr.png")
+        # Unique temp file per capture so overlapping OCR requests can't clobber
+        # each other's screenshot (each path is cleaned up by its own worker).
+        img_path = os.path.join(DATA_DIR, "tmp_ocr_%s.png" % uuid.uuid4().hex)
         # The overlay is already destroyed; give the compositor one frame to
         # repaint the uncovered screen before we grab it.
         self.root.update_idletasks()
@@ -2296,7 +2235,25 @@ class TranslatorApp:
 
     def _ocr_translate_local(self, img_path):
         """Offline path: recognise text locally, then run it through the normal
-        translation pipeline (which reuses dictionary/sentence/code handling)."""
+        translation pipeline (which reuses dictionary/sentence/code handling).
+
+        Recognition runs on a worker thread (cc_ocr.ocr_local drives a
+        synchronous asyncio.run) so a slow or wedged Windows OCR call can never
+        freeze the tray app / hotkeys."""
+        self._destroy_popup()
+        self._last_input = None
+        self._last_origin = "ocr"
+        self._last_class = "ocr"
+        self._cancel_stream_flush()
+        self._ss = StreamSession()
+        job_id = self._begin_job()
+        self.popup = self._make_loading_popup()
+        self._animate_loading(0)
+        threading.Thread(target=self._do_ocr_local,
+                         args=(img_path, job_id), daemon=True).start()
+
+    def _do_ocr_local(self, img_path, job_id):
+        """Worker thread: run local OCR, then hand the result back to the UI."""
         text = ""
         try:
             text = cc_ocr.ocr_local(img_path)
@@ -2305,14 +2262,22 @@ class TranslatorApp:
         finally:
             self._cleanup_ocr_temp(img_path)
         text = (text or "").strip()
+        self.root.after(0, lambda: self._finish_ocr_local(text, job_id))
+
+    def _finish_ocr_local(self, text, job_id):
+        """UI thread: show the recognised text or an error, guarded by job id so
+        a superseded OCR request can't overwrite a newer popup."""
+        if not self._job_is_current(job_id):
+            return
+        self._stop_animation()
         if not text:
             self._last_input = None
             self._last_origin = "ocr"
             self._last_class = "ocr"
             self._destroy_popup()
             self.popup = self._make_popup(
-                i18n.get("error.no_text_detected"), is_error=True, title=i18n.get("tray.screenshot"),
-                highlight=False)
+                i18n.get("error.no_text_detected"), is_error=True,
+                title=i18n.get("tray.screenshot"), highlight=False)
             return
         text = text[: self.cfg[CFG.MAX_CHARS]]
         self._show_loading(text, origin="ocr")
@@ -2326,16 +2291,17 @@ class TranslatorApp:
         self._last_class = "ocr"
         self._cancel_stream_flush()
         self._ss = StreamSession()
+        job_id = self._begin_job()
         self.popup = self._make_loading_popup()
         self._animate_loading(0)
         threading.Thread(
-            target=self._do_translate_vision, args=(img_path,),
+            target=self._do_translate_vision, args=(img_path, job_id),
             daemon=True).start()
 
-    def _do_translate_vision(self, img_path):
+    def _do_translate_vision(self, img_path, job_id):
         ok, result = self._call_claude_vision(img_path)
         self._cleanup_ocr_temp(img_path)
-        self.root.after(0, lambda: self._show_result(ok, result))
+        self.root.after(0, lambda: self._show_result(ok, result, job_id))
 
     def _cleanup_ocr_temp(self, img_path):
         try:
@@ -2344,7 +2310,7 @@ class TranslatorApp:
         except Exception as e:
             log_error("ocr_temp_cleanup", e)
 
-    def _call_claude_vision(self, img_path):
+    def _call_claude_vision(self, img_path: str) -> Tuple[bool, str]:
         """One-shot Claude call that reads the image via the CLI's `@path`
         reference and returns only the translation. Mirrors _call_claude's
         subprocess/JSON handling.
@@ -2453,10 +2419,11 @@ class TranslatorApp:
         self._last_result_title = title or ""
         self._last_result_text = (text or "").strip()
 
-    def _do_translate(self, text):
+    def _do_translate(self, text, job_id, meta):
         # Long, non-dictionary text streams so the translation appears
         # progressively; short text uses the simpler one-shot path.
         t0 = time.perf_counter()
+        ss = self._ss   # bind this job's session; a newer job swaps self._ss
         dictionary = is_single_word(text)
         is_code = self._last_class == "code"
         # Summary mode needs a different system prompt than the warm process was
@@ -2470,7 +2437,7 @@ class TranslatorApp:
         # different system prompt the warm process wasn't spawned with. Any
         # failure falls through to the normal cold path below, so this is safe.
         if not dictionary and not is_code and not summarize:
-            if self._warm_translate(text):
+            if self._warm_translate(text, job_id, ss, meta):
                 log_perf("translate_done", {
                     "mode": "warm",
                     "chars": len(text),
@@ -2483,7 +2450,7 @@ class TranslatorApp:
         try:
             if len(text) >= STREAM_MIN_CHARS and not dictionary:
                 mode = "stream"
-                if self._stream_claude(text):
+                if self._stream_claude(text, job_id, ss, meta):
                     log_perf("translate_done", {
                         "mode": mode,
                         "chars": len(text),
@@ -2501,9 +2468,9 @@ class TranslatorApp:
             "wall_ms": int((time.perf_counter() - t0) * 1000),
             "ok": bool(ok),
         })
-        self.root.after(0, lambda: self._show_result(ok, result))
+        self.root.after(0, lambda: self._show_result(ok, result, job_id))
 
-    def _warm_translate(self, text):
+    def _warm_translate(self, text, job_id, ss, meta):
         """Translate using a pre-warmed process, streaming deltas through the
         same display pipeline as _stream_claude. Returns True on success, or
         False to fall back to the cold path. The warm process is consumed and a
@@ -2511,24 +2478,19 @@ class TranslatorApp:
         warm = self._take_warm()
         if warm is None:
             return False
-        self._ss.popup_ready = False
+        ss.popup_ready = False
         t0 = time.perf_counter()
         try:
             def on_delta(txt):
-                self._ss.queue.put(txt)
-                self.root.after(0, self._stream_flush)
+                ss.queue.put(txt)
+                self.root.after(0, lambda: self._stream_flush(job_id))
 
             final = warm.send_and_stream(text, on_delta)
             if not final:
                 return False
-            self.root.after(0, lambda: self._stream_finalize(final))
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                add_history(self._last_input or "", final,
-                            is_single_word(self._last_input),
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=(self._last_class == "code"),
-                            kind=self._history_kind())
+            self.root.after(0, lambda: self._stream_finalize(final, job_id))
+            self._record_history(job_id, meta, final,
+                                 is_dict=is_single_word(meta["input"]))
             log_perf("warm_cli_done", {
                 "chars": len(text),
                 "wall_ms": int((time.perf_counter() - t0) * 1000),
@@ -2544,13 +2506,36 @@ class TranslatorApp:
                 pass
             self._spawn_warm_async()   # keep one warm process ready
 
-    def _stream_claude(self, text):
+    def _record_history(self, job_id: int, meta: Dict[str, Any], final: str,
+                        is_dict: bool) -> None:
+        """Persist a completed translation using the job-bound metadata snapshot
+        (never live self._last_*), so a superseded request can't pair the new
+        input with this output. Skipped when the job is stale or history is off."""
+        if not self._job_is_current(job_id):
+            return
+        if not self.cfg.get(CFG.HISTORY_ENABLED, True):
+            return
+        if not (meta["input"] or meta["origin"] == "ocr"):
+            return
+        add_history(meta["input"] or "", final, is_dict,
+                    self.cfg.get(CFG.HISTORY_LIMIT, 100),
+                    is_code=meta["is_code"], kind=meta["kind"])
+
+    def _stream_claude(self, text: str, job_id: int, ss, meta: Dict[str, Any]) -> bool:
         """Stream a long translation via stream-json, updating the popup as
-        deltas arrive. Returns True on success, False to fall back to one-shot."""
+        deltas arrive. Returns True on success, False to fall back to one-shot.
+
+        Hardened like the warm path: a watchdog timer kills a runaway CLI, the
+        child process is always cleaned up, and only a non-error terminal
+        `result` event (or, failing that, accumulated deltas) counts as success
+        — a mid-stream abort no longer passes truncated text off as a result."""
         system_prompt = self._system_prompt_for(text)
         payload = f"<text>\n{text}\n</text>"
-        self._ss.popup_ready = False
+        ss.popup_ready = False
         t0 = time.perf_counter()
+        proc = None
+        killed = {"v": False}
+        timer = None
         try:
             proc = subprocess.Popen(
                 [CLAUDE_CMD, "-p", "--safe-mode", "--model", self.cfg[CFG.MODEL],
@@ -2564,10 +2549,23 @@ class TranslatorApp:
                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
+
+            def _watchdog(p=proc):
+                killed["v"] = True
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            timer = threading.Timer(STREAM_SEND_TIMEOUT_S, _watchdog)
+            timer.daemon = True
+            timer.start()
+
             proc.stdin.write(payload)
             proc.stdin.close()
 
             acc = []
+            result_text = None
+            is_error = False
 
             for line in proc.stdout:
                 line = line.strip()
@@ -2577,28 +2575,45 @@ class TranslatorApp:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("type") == "stream_event":
+                typ = obj.get("type")
+                if typ == "stream_event":
                     ev = obj.get("event", {})
                     if ev.get("type") == "content_block_delta":
                         delta = ev.get("delta", {})
                         txt = delta.get("text", "")
                         if txt:
                             acc.append(txt)
-                            self._ss.queue.put(txt)
-                            self.root.after(0, self._stream_flush)
+                            ss.queue.put(txt)
+                            self.root.after(
+                                0, lambda: self._stream_flush(job_id))
+                elif typ == "result":
+                    # Terminal envelope: trust its result and error flag over the
+                    # raw deltas so a failed run isn't shown as a translation.
+                    is_error = bool(obj.get("is_error"))
+                    if not is_error:
+                        r = (obj.get("result") or "").strip()
+                        if r:
+                            result_text = r
+                    break
             proc.wait()
 
-            final = "".join(acc).strip()
+            # A killed/timed-out or CLI-reported error run is a failure, even if
+            # some partial deltas arrived: fall back to the one-shot path.
+            if killed["v"] or is_error or proc.returncode not in (0, None):
+                log_perf("stream_cli_incomplete", {
+                    "chars": len(text),
+                    "killed": killed["v"],
+                    "is_error": is_error,
+                    "rc": proc.returncode,
+                })
+                return False
+
+            final = (result_text or "".join(acc)).strip()
             if not final:
                 log_perf("stream_cli_empty", {"chars": len(text)})
                 return False   # nothing streamed → fall back to one-shot
-            self.root.after(0, lambda: self._stream_finalize(final))
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                add_history(self._last_input or "", final, False,
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=(self._last_class == "code"),
-                            kind=self._history_kind())
+            self.root.after(0, lambda: self._stream_finalize(final, job_id))
+            self._record_history(job_id, meta, final, is_dict=False)
             log_perf("stream_cli_done", {
                 "chars": len(text),
                 "wall_ms": int((time.perf_counter() - t0) * 1000),
@@ -2608,9 +2623,28 @@ class TranslatorApp:
             log_perf("stream_cli_error", {"chars": len(text), "err": str(e)[:160]})
             log_error("stream_claude", e)
             return False
+        finally:
+            if timer is not None:
+                timer.cancel()
+            if proc is not None:
+                for stream in (proc.stdout, proc.stdin):
+                    try:
+                        if stream and not stream.closed:
+                            stream.close()
+                    except Exception:
+                        pass
+                try:
+                    if proc.poll() is None:
+                        proc.kill()
+                except Exception:
+                    pass
 
-    def _stream_flush(self):
-        """Batch stream chunks on the UI thread to reduce redraw churn/crashes."""
+    def _stream_flush(self, job_id=None):
+        """Batch stream chunks on the UI thread to reduce redraw churn/crashes.
+        A stale job_id (superseded by a newer request) is ignored so old deltas
+        can't leak into the current popup."""
+        if job_id is not None and not self._job_is_current(job_id):
+            return
         if self._ss.flush_job:
             return
 
@@ -2659,7 +2693,9 @@ class TranslatorApp:
             # UI can be destroyed while stream callbacks are in flight.
             return
 
-    def _stream_finalize(self, final):
+    def _stream_finalize(self, final, job_id=None):
+        if job_id is not None and not self._job_is_current(job_id):
+            return
         self._cancel_stream_flush()
         self._ss.accum = final
         try:
@@ -2693,7 +2729,7 @@ class TranslatorApp:
         except Exception as e:
             log_error("stream_finalize", e)
 
-    def _call_claude(self, text, system_prompt=None):
+    def _call_claude(self, text: str, system_prompt: Optional[str] = None) -> Tuple[bool, str]:
         if system_prompt is None:
             system_prompt = self._system_prompt_for(text)
         # Wrap the selection in tags so a bare word isn't mistaken for an
@@ -2749,7 +2785,7 @@ class TranslatorApp:
             log_error("call_claude", e)
             return False, i18n.get("error.unexpected").format(error=e)
 
-    def _humanize_error(self, stderr):
+    def _humanize_error(self, stderr: Optional[str]) -> str:
         s = (stderr or "").strip()
         low = s.lower()
         if any(k in low for k in ("not logged in", "authentication",
@@ -2761,7 +2797,9 @@ class TranslatorApp:
             return i18n.get("error.no_result")
         return i18n.get("error.translation_failed_with_reason").format(error=s[:200])
 
-    def _show_result(self, ok, result):
+    def _show_result(self, ok, result, job_id=None):
+        if job_id is not None and not self._job_is_current(job_id):
+            return
         self._stop_animation()
         anchor = None
         title = self._result_title(ok)
@@ -6384,8 +6422,10 @@ class TranslatorApp:
         if path:
             try:
                 return Image.open(path)
-            except Exception:
-                pass
+            except Exception as e:
+                # Fall back to the drawn glyph below, but record why the shipped
+                # icon didn't load (rare — only on theme change, not a hot loop).
+                log_error("load_tray_image", e)
         return self._make_cc_image(theme)
 
     def _start_tray(self):
@@ -6482,27 +6522,8 @@ class TranslatorApp:
 
 
 def _acquire_single_instance_mutex():
-    """Return a process-lifetime Win32 mutex handle, or None if another instance exists."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32
-        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-        kernel32.CreateMutexW.restype = wintypes.HANDLE
-        kernel32.GetLastError.restype = wintypes.DWORD
-
-        handle = kernel32.CreateMutexW(None, False, "Local\\CCTranslate.SingleInstance")
-        if not handle:
-            return object()
-        # ERROR_ALREADY_EXISTS = 183
-        if kernel32.GetLastError() == 183:
-            kernel32.CloseHandle(handle)
-            return None
-        return handle
-    except Exception:
-        # If mutex API is unavailable, fail open rather than block startup.
-        return object()
+    """Backwards-compatible shim → win32util.acquire_single_instance_mutex()."""
+    return win32util.acquire_single_instance_mutex()
 
 
 if __name__ == "__main__":

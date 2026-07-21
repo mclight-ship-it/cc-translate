@@ -148,16 +148,19 @@ else { Warn "  ⚠ 装完仍找不到 claude——请确认 npm 全局目录（%
 
 # ---------- 4. python deps ----------
 Step 4 "安装 Python 依赖"
-# winsdk（截图翻译的离线本地 OCR）与 comtypes（智能选区识别）为可选增强，缺失时
-# 对应功能自动降级/关闭，不影响核心翻译。
-Invoke-Or-DryRun "python -m pip install --user --upgrade pip pynput pyperclip pystray Pillow Pygments winsdk comtypes" {
+# 依赖清单集中在 requirements.txt（单一事实来源）。winsdk（截图翻译的离线本地
+# OCR）与 comtypes（智能选区识别）为可选增强，缺失时对应功能自动降级/关闭，不影响
+# 核心翻译。
+Invoke-Or-DryRun "python -m pip install --user --upgrade pip; python -m pip install --user -r requirements.txt" {
     # Try system-wide install first, fall back to --user if permission denied
-    python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments winsdk comtypes
+    python -m pip install --upgrade pip
+    python -m pip install --upgrade -r requirements.txt
     if ($LASTEXITCODE -ne 0) {
         Warn "  ⚠ 系统级安装失败（权限不足），改用用户级安装…"
-        python -m pip install --user --upgrade pip pynput pyperclip pystray Pillow Pygments winsdk comtypes
+        python -m pip install --user --upgrade pip
+        python -m pip install --user --upgrade -r requirements.txt
         if ($LASTEXITCODE -ne 0) {
-            throw "Python 依赖安装失败。请尝试：`n  1) 以管理员身份重新运行本脚本`n  2) 手动运行: python -m pip install --user pynput pyperclip pystray Pillow Pygments winsdk comtypes"
+            throw "Python 依赖安装失败。请尝试：`n  1) 以管理员身份重新运行本脚本`n  2) 手动运行: python -m pip install --user -r requirements.txt"
         }
     }
 }

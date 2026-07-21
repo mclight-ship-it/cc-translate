@@ -120,6 +120,7 @@ pip install pynput pyperclip pystray Pillow
 pip install Pygments   # code-block syntax highlighting (falls back to monochrome code style when missing)
 pip install winsdk     # offline local OCR engine for screenshot translation (Claude vision still works without it)
 pip install comtypes   # smart selection detection, avoids mistranslating a whole input box when nothing is selected (incl. cross-process apps like VS Code)
+# Or install everything at once (equivalent to all packages above): pip install -r requirements.txt
 
 # 5. First run (make sure the current directory is the project root, cc-translate)
 pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in the Start Menu

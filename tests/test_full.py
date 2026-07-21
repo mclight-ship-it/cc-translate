@@ -17,6 +17,7 @@ Covers the areas NOT exercised by the existing unit tests:
   - resolve_theme returns a dict with all required colour keys
   - DEFAULT_CONFIG completeness (every CFG.* attribute present)
 """
+import gc
 import json
 import os
 import sys
@@ -240,10 +241,62 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cfg[tr.CFG.MODEL], tr.DEFAULT_CONFIG[tr.CFG.MODEL])
 
 
+class TestConfigWrapper(unittest.TestCase):
+    """The Config wrapper must stay a drop-in dict while adding coercion and
+    typed accessors."""
+
+    def test_config_is_a_dict_subclass(self):
+        cfg = tr.Config()
+        self.assertIsInstance(cfg, dict)
+
+    def test_defaults_present_when_empty(self):
+        cfg = tr.Config()
+        for k, v in tr.DEFAULT_CONFIG.items():
+            self.assertEqual(cfg[k], v)
+
+    def test_unknown_keys_preserved(self):
+        cfg = tr.Config({"future_flag": "keep me"})
+        self.assertEqual(cfg["future_flag"], "keep me")
+
+    def test_json_serializable(self):
+        # save_config json.dumps the config; a dict subclass must serialize.
+        cfg = tr.Config({tr.CFG.THEME: "dark"})
+        restored = json.loads(json.dumps(cfg))
+        self.assertEqual(restored[tr.CFG.THEME], "dark")
+
+    def test_coerces_bool_from_int(self):
+        cfg = tr.Config({tr.CFG.SUMMARY_ENABLED: 1})
+        self.assertIs(cfg[tr.CFG.SUMMARY_ENABLED], True)
+
+    def test_coerces_bool_from_string(self):
+        cfg = tr.Config({tr.CFG.HISTORY_ENABLED: "false"})
+        self.assertIs(cfg[tr.CFG.HISTORY_ENABLED], False)
+
+    def test_coerces_int_from_numeric_string(self):
+        cfg = tr.Config({tr.CFG.FONT_SIZE: "16"})
+        self.assertEqual(cfg[tr.CFG.FONT_SIZE], 16)
+        self.assertIsInstance(cfg[tr.CFG.FONT_SIZE], int)
+
+    def test_bad_value_falls_back_to_default(self):
+        cfg = tr.Config({tr.CFG.MAX_CHARS: "not-a-number"})
+        self.assertEqual(cfg[tr.CFG.MAX_CHARS],
+                         tr.DEFAULT_CONFIG[tr.CFG.MAX_CHARS])
+
+    def test_typed_accessors_match_dict(self):
+        cfg = tr.Config({tr.CFG.MODEL: "sonnet", tr.CFG.THEME: "light"})
+        self.assertEqual(cfg.model, "sonnet")
+        self.assertEqual(cfg.theme, "light")
+        self.assertEqual(cfg.max_chars, cfg[tr.CFG.MAX_CHARS])
+
+    def test_language_absent_by_default(self):
+        # LANGUAGE is intentionally not in DEFAULT_CONFIG (set on first launch).
+        cfg = tr.Config()
+        self.assertIsNone(cfg.language)
+
+
 # ============================================================
 # History I/O
 # ============================================================
-
 class TestHistoryIO(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.NamedTemporaryFile(
@@ -319,6 +372,17 @@ class TestHistoryIO(unittest.TestCase):
         self.assertFalse(os.path.exists(self._path),
                          "clear_history should remove the history file")
         self.assertEqual(tr.load_history(), [])
+
+    def test_clear_history_logs_on_failure(self):
+        # A failed removal must leave a trace (log_error) rather than vanish.
+        self._use_tmp()
+        tr.add_history("x", "y", False, 100)
+        with unittest.mock.patch.object(tr.os, "remove",
+                                        side_effect=OSError("locked")), \
+                unittest.mock.patch.object(tr, "log_error") as log_error:
+            tr.clear_history()
+        log_error.assert_called_once()
+        self.assertEqual(log_error.call_args.args[0], "clear_history")
 
     def test_load_corrupt_returns_empty(self):
         with open(self._path, "w", encoding="utf-8") as f:
@@ -1157,19 +1221,46 @@ class TestDiagnosticsHelpers(unittest.TestCase):
 # user. If no display/Tk is available (e.g. a headless Linux CI box), the whole
 # class skips rather than failing spuriously.
 
+_SHARED_ROOT = None
+
+
+def _get_shared_root():
+    """Return one process-wide hidden Tk root, created lazily on the main
+    thread.
+
+    Reusing a single Tcl interpreter across every UI test avoids the
+    ``Tcl_AsyncDelete: async handler deleted by the wrong thread`` abort that
+    Tk raises when several interpreters are created and later finalized by the
+    garbage collector on a non-main thread. That abort left the interpreter
+    with a nonzero exit code even though all tests passed — which matters
+    because the auto-updater treats a nonzero test exit as a broken update and
+    rolls back. The root is torn down once in ``tearDownModule``."""
+    global _SHARED_ROOT
+    import tkinter as tk
+    if _SHARED_ROOT is not None:
+        try:
+            if _SHARED_ROOT.winfo_exists():
+                return _SHARED_ROOT
+        except Exception:
+            pass
+    root = tk.Tk()
+    root.withdraw()
+    _SHARED_ROOT = root
+    return _SHARED_ROOT
+
+
 def _make_headless_app():
     """Construct a TranslatorApp without running __init__ (which starts the
     hotkey listener, tray icon, warm pool and background threads). We only wire
     up the minimum state the window builders read, so building a dialog
     exercises the same code a user triggers."""
-    import tkinter as tk
     app = object.__new__(tr.TranslatorApp)
     app._fresh_install = False
     app.cfg = tr.load_config()
     lang = app.cfg.get(tr.CFG.LANGUAGE) or "en_US"
     tr.i18n.initialize(lang)
     app.theme = tr.resolve_theme(app.cfg)
-    app.root = tk.Tk()
+    app.root = _get_shared_root()
     app.root.withdraw()
     app.settings_win = None
     app.history_win = None
@@ -1190,9 +1281,7 @@ class TestUiSmoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
-            import tkinter as tk
-            root = tk.Tk()
-            root.destroy()
+            _get_shared_root()   # probe: create the shared root once, on main thread
         except Exception as e:   # no display / Tk unavailable
             raise unittest.SkipTest(f"Tk not available: {e}")
 
@@ -1204,6 +1293,11 @@ class TestUiSmoke(unittest.TestCase):
 
     @staticmethod
     def _safe_destroy(app):
+        """Destroy the dialog windows this app built and release any images it
+        cached, but leave the shared Tk root alive (it is torn down once in
+        ``tearDownModule``). Clearing the per-app image caches here lets the
+        PhotoImage objects be finalized while the interpreter is still alive on
+        the main thread, instead of during interpreter shutdown."""
         for name in (
                 "quick_input_win", "settings_win", "history_win",
                 "about_win", "support_win", "diagnostics_win"):
@@ -1215,12 +1309,15 @@ class TestUiSmoke(unittest.TestCase):
                     w.destroy()
             except Exception:
                 pass
+        for cache_attr in ("_logo_cache", "_emoji_cache", "_support_img_cache"):
+            try:
+                cache = getattr(app, cache_attr, None)
+                if isinstance(cache, dict):
+                    cache.clear()
+            except Exception:
+                pass
         try:
             app.root.update_idletasks()
-        except Exception:
-            pass
-        try:
-            app.root.destroy()
         except Exception:
             pass
 
@@ -1346,13 +1443,461 @@ class TestQuickInputFallback(unittest.TestCase):
 
     def test_trigger_translates_when_clipboard_updated(self):
         app = self._make_app()
+        # Mock the live Win32 focus probe so the test doesn't depend on whatever
+        # control happens to be focused during the run (returning None means
+        # "unknown", so _trigger falls through to the clipboard-sequence check).
         with unittest.mock.patch.object(tr.pyperclip, "paste",
                                         return_value="hello"), \
+                unittest.mock.patch.object(
+                    app, "_focused_control_has_selection", return_value=None), \
                 unittest.mock.patch.object(
                     app, "_clipboard_sequence", return_value=21):
             app._trigger()
         app._open_quick_input.assert_not_called()
         app._show_loading.assert_called_once_with("hello")
+
+
+class _FakePipe:
+    """Minimal stand-in for a Popen stdin pipe."""
+    def __init__(self):
+        self.closed = False
+        self.data = ""
+
+    def write(self, s):
+        self.data += s
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeStdout:
+    """Iterable stand-in for a Popen stdout pipe yielding pre-canned lines."""
+    def __init__(self, lines):
+        self._it = iter(lines)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProc:
+    """Minimal Popen stand-in for exercising _stream_claude deterministically."""
+    def __init__(self, lines, returncode=0):
+        self.stdin = _FakePipe()
+        self.stdout = _FakeStdout(lines)
+        self._rc = returncode
+        self.returncode = None
+
+    def wait(self):
+        self.returncode = self._rc
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+
+def _sse(text):
+    return json.dumps({"type": "stream_event",
+                       "event": {"type": "content_block_delta",
+                                 "delta": {"text": text}}})
+
+
+def _result_event(result, is_error=False):
+    return json.dumps({"type": "result", "is_error": is_error,
+                       "result": result})
+
+
+class TestStreamClaudeHardening(unittest.TestCase):
+    """Cover the hardened cold streaming path: watchdog/cleanup, terminal
+    success validation, and 'partial output is not success'. These paths drive
+    the highest-risk subprocess code and previously had no mocked coverage."""
+
+    def _make_app(self, job_id=7):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = {tr.CFG.MODEL: "sonnet",
+                   tr.CFG.HISTORY_ENABLED: True,
+                   tr.CFG.HISTORY_LIMIT: 100}
+        app._ss = tr.StreamSession()
+        app._job_id = job_id
+        app._last_input = "source text to translate"
+        app._last_origin = "text"
+        app._last_class = "text"
+        app.root = unittest.mock.Mock()
+        app._system_prompt_for = lambda text: "SP"
+        return app
+
+    def _run_stream(self, lines, returncode=0):
+        app = self._make_app()
+        meta = {"input": app._last_input, "origin": "text",
+                "is_code": False, "kind": "text"}
+        proc = _FakeProc(lines, returncode=returncode)
+        with unittest.mock.patch.object(tr.subprocess, "Popen",
+                                        return_value=proc) as popen, \
+                unittest.mock.patch.object(tr, "add_history") as add_history:
+            ok = app._stream_claude("x" * 500, app._job_id, app._ss, meta)
+        return app, proc, popen, add_history, ok
+
+    def test_success_uses_terminal_result_event(self):
+        lines = [_sse("Hello"), _sse(" world"),
+                 _result_event("Hello world")]
+        app, proc, popen, add_history, ok = self._run_stream(lines)
+        self.assertTrue(ok)
+        popen.assert_called_once()
+        add_history.assert_called_once()
+        # First positional arg is the original input text.
+        self.assertEqual(add_history.call_args.args[0], app._last_input)
+        # Pipes are cleaned up in the finally block.
+        self.assertTrue(proc.stdout.closed)
+        self.assertTrue(proc.stdin.closed)
+
+    def test_error_result_event_is_failure(self):
+        lines = [_sse("partial output"),
+                 _result_event("", is_error=True)]
+        app, proc, popen, add_history, ok = self._run_stream(lines)
+        self.assertFalse(ok)
+        add_history.assert_not_called()
+
+    def test_partial_output_with_nonzero_returncode_is_not_success(self):
+        # Deltas arrived but the CLI exited nonzero and never sent a result
+        # event: the truncated text must NOT be treated as a translation.
+        lines = [_sse("half a transl")]
+        app, proc, popen, add_history, ok = self._run_stream(
+            lines, returncode=1)
+        self.assertFalse(ok)
+        add_history.assert_not_called()
+
+    def test_malformed_lines_are_skipped(self):
+        lines = ["not json at all", "", _sse("Bonjour"),
+                 _result_event("Bonjour")]
+        app, proc, popen, add_history, ok = self._run_stream(lines)
+        self.assertTrue(ok)
+        add_history.assert_called_once()
+
+    def test_empty_stream_returns_false(self):
+        lines = [_result_event("")]   # no deltas, empty result
+        app, proc, popen, add_history, ok = self._run_stream(lines)
+        self.assertFalse(ok)
+        add_history.assert_not_called()
+
+    def test_history_skipped_when_disabled(self):
+        app = self._make_app()
+        app.cfg[tr.CFG.HISTORY_ENABLED] = False
+        meta = {"input": app._last_input, "origin": "text",
+                "is_code": False, "kind": "text"}
+        proc = _FakeProc([_sse("Hi"), _result_event("Hi")])
+        with unittest.mock.patch.object(tr.subprocess, "Popen",
+                                        return_value=proc), \
+                unittest.mock.patch.object(tr, "add_history") as add_history:
+            ok = app._stream_claude("x" * 500, app._job_id, app._ss, meta)
+        self.assertTrue(ok)
+        add_history.assert_not_called()
+
+    def test_record_history_uses_meta_not_live_state(self):
+        # Simulate a newer request having already overwritten live self._last_*;
+        # the persisted entry must still use this job's snapshot, so the input
+        # and output can't be mismatched.
+        app = self._make_app()
+        app._last_input = "the NEW request's text"
+        meta = {"input": "the OLD request's text", "origin": "text",
+                "is_code": False, "kind": "text"}
+        with unittest.mock.patch.object(tr, "add_history") as add_history:
+            app._record_history(app._job_id, meta, "old output", is_dict=False)
+        add_history.assert_called_once()
+        self.assertEqual(add_history.call_args.args[0], "the OLD request's text")
+
+    def test_record_history_skips_stale_job(self):
+        app = self._make_app(job_id=8)
+        meta = {"input": "x", "origin": "text", "is_code": False, "kind": "text"}
+        with unittest.mock.patch.object(tr, "add_history") as add_history:
+            app._record_history(3, meta, "out", is_dict=False)   # stale id
+        add_history.assert_not_called()
+
+
+class _FakeCompleted:
+    """Stand-in for subprocess.run's CompletedProcess."""
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+class TestCallClaudeOneShot(unittest.TestCase):
+    """Mock coverage for the one-shot _call_claude subprocess path: JSON
+    envelope, plain-text fallback, stderr → humanized error, and timeout.
+    This is the highest-risk untested path (external review r7)."""
+
+    def setUp(self):
+        tr.i18n.initialize("en_US")
+
+    def _make_app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = {tr.CFG.MODEL: "sonnet"}
+        app._system_prompt_for = lambda text: "SP"
+        return app
+
+    def _run(self, completed=None, side_effect=None):
+        app = self._make_app()
+        kw = {}
+        if side_effect is not None:
+            kw["side_effect"] = side_effect
+        else:
+            kw["return_value"] = completed
+        with unittest.mock.patch.object(tr.subprocess, "run", **kw) as run:
+            ok, result = app._call_claude("hello world")
+        return ok, result, run
+
+    def test_json_envelope_result(self):
+        ok, result, run = self._run(
+            _FakeCompleted(stdout=json.dumps({"result": "你好世界"})))
+        self.assertTrue(ok)
+        self.assertEqual(result, "你好世界")
+        # Payload is passed via stdin, not as an argv element.
+        self.assertEqual(run.call_args.kwargs["input"], "<text>\nhello world\n</text>")
+
+    def test_plain_text_fallback_when_not_json(self):
+        ok, result, run = self._run(_FakeCompleted(stdout="just plain text"))
+        self.assertTrue(ok)
+        self.assertEqual(result, "just plain text")
+
+    def test_empty_result_falls_to_error(self):
+        # Valid JSON but empty result, and empty stderr → "no result" error.
+        ok, result, run = self._run(
+            _FakeCompleted(stdout=json.dumps({"result": "   "})))
+        self.assertFalse(ok)
+        self.assertEqual(result, tr.i18n.get("error.no_result"))
+
+    def test_stderr_login_required_is_humanized(self):
+        ok, result, run = self._run(
+            _FakeCompleted(stdout="", stderr="Error: not logged in"))
+        self.assertFalse(ok)
+        self.assertEqual(result, tr.i18n.get("error.login_required"))
+
+    def test_stderr_rate_limited_is_humanized(self):
+        ok, result, run = self._run(
+            _FakeCompleted(stdout="", stderr="HTTP 429 rate limit exceeded"))
+        self.assertFalse(ok)
+        self.assertEqual(result, tr.i18n.get("error.rate_limited"))
+
+    def test_timeout_returns_timeout_message(self):
+        ok, result, run = self._run(
+            side_effect=tr.subprocess.TimeoutExpired(cmd="claude", timeout=60))
+        self.assertFalse(ok)
+        self.assertEqual(result, tr.i18n.get("error.translation_timeout"))
+
+    def test_unexpected_exception_is_caught(self):
+        ok, result, run = self._run(side_effect=RuntimeError("boom"))
+        self.assertFalse(ok)
+        self.assertIn("boom", result)
+
+
+class TestCallClaudeVision(unittest.TestCase):
+    """Mock coverage for the vision OCR one-shot path: JSON success, plain-text
+    fallback, bad/empty JSON → error, and timeout (external review r7)."""
+
+    def setUp(self):
+        tr.i18n.initialize("en_US")
+
+    def _make_app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = {tr.CFG.MODEL: "sonnet"}
+        return app
+
+    def _run(self, completed=None, side_effect=None):
+        app = self._make_app()
+        kw = {}
+        if side_effect is not None:
+            kw["side_effect"] = side_effect
+        else:
+            kw["return_value"] = completed
+        with unittest.mock.patch.object(tr.subprocess, "run", **kw) as run:
+            ok, result = app._call_claude_vision("C:\\x\\img.png")
+        return ok, result, run
+
+    def test_json_result_success(self):
+        ok, result, run = self._run(
+            _FakeCompleted(stdout=json.dumps({"result": "translated text"})))
+        self.assertTrue(ok)
+        self.assertEqual(result, "translated text")
+
+    def test_plain_text_fallback(self):
+        ok, result, run = self._run(_FakeCompleted(stdout="raw output"))
+        self.assertTrue(ok)
+        self.assertEqual(result, "raw output")
+
+    def test_empty_output_is_error(self):
+        ok, result, run = self._run(
+            _FakeCompleted(stdout="", stderr="something failed"))
+        self.assertFalse(ok)
+        self.assertEqual(result,
+                         tr.i18n.get("error.translation_failed_with_reason")
+                         .format(error="something failed"))
+
+    def test_timeout_returns_ocr_timeout_message(self):
+        ok, result, run = self._run(
+            side_effect=tr.subprocess.TimeoutExpired(cmd="claude", timeout=90))
+        self.assertFalse(ok)
+        self.assertEqual(result, tr.i18n.get("error.ocr_timeout"))
+
+    def test_unexpected_exception_is_caught(self):
+        ok, result, run = self._run(side_effect=RuntimeError("kaboom"))
+        self.assertFalse(ok)
+        self.assertIn("kaboom", result)
+
+
+class TestJobIsolation(unittest.TestCase):
+    """Cover the in-flight job guard that stops a superseded request from
+    writing its result into a newer request's popup or history."""
+
+    def _bare_app(self, job_id=5):
+        app = object.__new__(tr.TranslatorApp)
+        app._job_id = job_id
+        app._ss = tr.StreamSession()
+        app.root = unittest.mock.Mock()
+        return app
+
+    def test_begin_job_increments_and_reports_current(self):
+        app = self._bare_app(job_id=0)
+        jid = app._begin_job()
+        self.assertEqual(jid, 1)
+        self.assertTrue(app._job_is_current(1))
+        self.assertFalse(app._job_is_current(0))
+        jid2 = app._begin_job()
+        self.assertEqual(jid2, 2)
+        self.assertFalse(app._job_is_current(1))
+
+    def test_stream_flush_ignores_stale_job(self):
+        app = self._bare_app(job_id=5)
+        app._stream_flush(job_id=3)   # stale
+        self.assertIsNone(app._ss.flush_job)
+        app.root.after.assert_not_called()
+
+    def test_stream_finalize_ignores_stale_job(self):
+        app = self._bare_app(job_id=5)
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._stream_finalize("done", job_id=3)   # stale
+        app._cancel_stream_flush.assert_not_called()
+
+    def test_show_result_ignores_stale_job(self):
+        app = self._bare_app(job_id=5)
+        app._stop_animation = unittest.mock.Mock()
+        app._show_result(True, "translated", job_id=3)   # stale
+        app._stop_animation.assert_not_called()
+
+    def test_finish_ocr_local_ignores_stale_job(self):
+        app = self._bare_app(job_id=5)
+        app._stop_animation = unittest.mock.Mock()
+        app._show_loading = unittest.mock.Mock()
+        app._finish_ocr_local("recognised text", job_id=3)   # stale
+        app._stop_animation.assert_not_called()
+        app._show_loading.assert_not_called()
+
+
+class TestAtomicWrites(unittest.TestCase):
+    """Cover the temp-file + os.replace() atomic persistence that protects
+    config/history from truncation on a crash or hard os._exit mid-write."""
+
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        self._path = os.path.join(self._dir, "config.json")
+        self._orig = tr.CONFIG_PATH
+        tr.CONFIG_PATH = self._path
+
+    def tearDown(self):
+        tr.CONFIG_PATH = self._orig
+        try:
+            import shutil
+            shutil.rmtree(self._dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    def _leftover_tmps(self):
+        return [n for n in os.listdir(self._dir) if n.startswith(".tmp_")]
+
+    def test_save_config_writes_valid_json_no_temp_left(self):
+        tr.save_config({tr.CFG.THEME: "dark", tr.CFG.FONT_SIZE: 15})
+        with open(self._path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data[tr.CFG.THEME], "dark")
+        self.assertEqual(self._leftover_tmps(), [])
+
+    def test_failed_write_preserves_original_and_cleans_temp(self):
+        # Seed a good file, then make the JSON dump blow up mid-write.
+        tr.save_config({tr.CFG.THEME: "light"})
+        with unittest.mock.patch.object(
+                tr.json, "dump", side_effect=ValueError("boom")):
+            tr.save_config({tr.CFG.THEME: "dark"})   # swallowed by log_error
+        # Original content survives intact; no partial temp file left behind.
+        with open(self._path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data[tr.CFG.THEME], "light")
+        self.assertEqual(self._leftover_tmps(), [])
+
+    def test_atomic_write_json_roundtrip(self):
+        p = os.path.join(self._dir, "hist.json")
+        tr._atomic_write_json(p, [{"a": 1}, {"b": 2}])
+        with open(p, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), [{"a": 1}, {"b": 2}])
+
+
+class TestShortcutQuoting(unittest.TestCase):
+    """Cover that _create_shortcut escapes every interpolated path through
+    _ps_squote, so a user/path containing an apostrophe can't break (or inject
+    into) the generated PowerShell."""
+
+    def test_create_shortcut_uses_ps_squote_for_all_paths(self):
+        import cc_update
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return None
+
+        link = r"C:\Users\O'Brien\Start Menu\CC Translate.lnk"
+        with unittest.mock.patch.object(cc_update.subprocess, "run", fake_run), \
+                unittest.mock.patch.object(cc_update, "PYTHONW",
+                                           r"C:\Py'thon\pythonw.exe"), \
+                unittest.mock.patch.object(cc_update, "SCRIPT_PATH",
+                                           r"C:\App\translator.pyw"), \
+                unittest.mock.patch.object(cc_update, "APP_DIR", r"C:\App"), \
+                unittest.mock.patch.object(cc_update, "ICON_PATH",
+                                           r"C:\App\icon.ico"):
+            cc_update._create_shortcut(link)
+        ps = captured["cmd"][-1]
+        # The apostrophe paths must appear single-quote-doubled (escaped), never
+        # as a bare '...{value}...' that an apostrophe would terminate early.
+        self.assertIn("'C:\\Users\\O''Brien\\Start Menu\\CC Translate.lnk'", ps)
+        self.assertIn("'C:\\Py''thon\\pythonw.exe'", ps)
+        self.assertNotIn("O'Brien'", ps.replace("O''Brien", ""))
+
+
+def tearDownModule():
+    """Tear the shared Tk root down deterministically on the main thread and
+    force GC passes so no tkinter object is finalized during interpreter
+    shutdown. That shutdown-time finalization on a non-main thread is what
+    produced the ``Tcl_AsyncDelete: async handler deleted by the wrong thread``
+    abort (and nonzero exit code) even though every test passed."""
+    global _SHARED_ROOT
+    gc.collect()
+    root = _SHARED_ROOT
+    _SHARED_ROOT = None
+    if root is not None:
+        try:
+            root.update_idletasks()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+    gc.collect()
 
 
 if __name__ == "__main__":

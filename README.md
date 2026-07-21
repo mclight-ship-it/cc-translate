@@ -110,6 +110,7 @@ pip install pynput pyperclip pystray Pillow
 pip install Pygments   # 代码块语法高亮（缺失时降级为单色代码样式）
 pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用 Claude 视觉识别）
 pip install comtypes   # 智能选区识别，避免输入框内无选中时误翻整框（含 VS Code 等跨进程应用）
+# 或一键装全部（等价于上面所有包）：pip install -r requirements.txt
 
 # 5. 首次运行（确保当前目录是项目根目录 cc-translate）
 pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Translate”图标
