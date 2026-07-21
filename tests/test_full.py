@@ -1363,6 +1363,15 @@ class TestUiSmoke(unittest.TestCase):
                          "result popup should default to not pinned")
         self.assertEqual(int(win.attributes("-topmost")), 0,
                          "result popup must not be always-on-top by default")
+        # Regression guard for the "black corners" bug: the popup must round its
+        # corners with the transparent colour key (genuinely transparent), not
+        # SetWindowRgn region clipping (which rendered opaque/black here).
+        self.assertTrue(hasattr(win, "_round_redraw"),
+                        "result popup should use the colour-key rounded card")
+        self.assertEqual(
+            str(win.wm_attributes("-transparentcolor")).lower(),
+            tr.ROUND_KEY_COLOR.lower(),
+            "result popup must set its transparent colour key")
         pin_btn = getattr(win, "_pin_btn", None)
         self.assertTrue(pin_btn is not None and pin_btn.winfo_exists(),
                         "result popup header should expose a pin button")

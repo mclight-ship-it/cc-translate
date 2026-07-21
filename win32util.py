@@ -15,6 +15,7 @@ Public API used by translator.pyw:
     get_monitor_rect(point=None) -> (left, top, right, bottom) | None
     round_apply_region(hwnd, radius)
     prefer_dwm_rounded(hwnd)
+    set_taskbar_presence(hwnd, present)
     acquire_single_instance_mutex(name) -> handle | None
 """
 
@@ -127,6 +128,42 @@ def prefer_dwm_rounded(hwnd):
         dwmapi.DwmSetWindowAttribute(
             ctypes.c_void_p(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
             ctypes.byref(pref), ctypes.sizeof(pref))
+    except Exception:
+        pass
+
+
+def set_taskbar_presence(hwnd, present):
+    """Force a borderless (overrideredirect) window into or out of the Windows
+    taskbar via the WS_EX_APPWINDOW / WS_EX_TOOLWINDOW extended styles.
+
+    Tk's overrideredirect Toplevels are owned by the (hidden) root window, and
+    an owned window never gets its own taskbar button no matter what ex-style it
+    carries. So when ``present=True`` we both clear the owner and set
+    WS_EX_APPWINDOW, giving the result popup a real taskbar button the user can
+    always click back to. ``present=False`` sets WS_EX_TOOLWINDOW to keep helper
+    dialogs out of the taskbar. Ex-style changes only take effect the next time
+    the window is shown, so call this while the window is withdrawn/hidden,
+    before deiconify."""
+    try:
+        GWL_EXSTYLE = -20
+        GWLP_HWNDPARENT = -8
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_APPWINDOW = 0x00040000
+        user32 = ctypes.windll.user32
+        getf = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+        setf = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+        getf.restype = ctypes.c_ssize_t
+        getf.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        setf.restype = ctypes.c_ssize_t
+        setf.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        ex = getf(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+        if present:
+            ex = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+            # Detach from the owner so the taskbar will grant a button.
+            setf(ctypes.c_void_p(hwnd), GWLP_HWNDPARENT, ctypes.c_ssize_t(0))
+        else:
+            ex = (ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+        setf(ctypes.c_void_p(hwnd), GWL_EXSTYLE, ctypes.c_ssize_t(ex))
     except Exception:
         pass
 

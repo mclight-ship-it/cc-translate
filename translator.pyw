@@ -122,7 +122,7 @@ MIN_STREAM_VISIBLE_HEIGHT = 220
 MIN_RESIZE_WIDTH = 280
 MIN_RESIZE_HEIGHT = 150
 RESIZE_HIT = 18
-POPUP_SHELL_PAD = 1
+POPUP_SHELL_PAD = 1  # legacy 1px border inset; popups now use the rounded colour-key card
 POPUP_BAR_PAD_X = 12
 POPUP_BAR_PAD_TOP = 9
 POPUP_BAR_PAD_BOTTOM = 7
@@ -1295,6 +1295,16 @@ class TranslatorApp:
         self._warm_enabled = WARM_POOL_ENABLED
 
         self.root = tk.Tk()
+        # Give every window a real identity so the Windows taskbar / Alt-Tab
+        # preview shows "CC Translate" and the app icon instead of Tk's default
+        # "tk" title and feather icon. iconbitmap(default=...) also becomes the
+        # fallback icon for every Toplevel created afterwards.
+        self.root.title(APP_NAME)
+        try:
+            if os.path.exists(ICON_PATH):
+                self.root.iconbitmap(default=ICON_PATH)
+        except Exception as e:
+            log_error("root_iconbitmap", e)
         self.root.withdraw()
 
         # Match tk's logical scaling to the real screen DPI so text is crisp
@@ -3106,6 +3116,7 @@ class TranslatorApp:
         """A compact, modern 'translating' card: an accent-coloured spinner
         next to a muted label. Borderless, rounded, no toolbar/scrollbar."""
         win = tk.Toplevel(self.root)
+        win.withdraw()
         win.overrideredirect(True)
 
         popup_bg = self.theme.get("popup_bg", self.theme["bg"])
@@ -3113,13 +3124,12 @@ class TranslatorApp:
         popup_hint = self.theme.get("popup_hint", self.theme["hint_fg"])
         accent = self.theme.get("accent", "#7aa2f7")
 
-        shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
-        shell.pack(fill="both", expand=True)
-        frame = tk.Frame(shell, bg=popup_bg, bd=0, highlightthickness=0)
-        frame.pack(fill="both", expand=True,
-                   padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
+        # Rounded corners via a transparent colour key (genuinely transparent on
+        # this environment, unlike SetWindowRgn cut-outs which render black).
+        card = self._rounded_shell(win, LOADING_CORNER_RADIUS,
+                                   popup_bg, popup_border)
 
-        row = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
+        row = tk.Frame(card, bg=popup_bg, bd=0, highlightthickness=0)
         row.pack(padx=20, pady=14)
 
         spinner = tk.Label(
@@ -3146,7 +3156,9 @@ class TranslatorApp:
         win._hint_label = hint
 
         win.update_idletasks()
-        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        radius = LOADING_CORNER_RADIUS
+        w = card.winfo_reqwidth() + 2 * radius
+        h = card.winfo_reqheight() + 2 * radius
         if self._is_centered_layout():
             # Centre the small hint where the fixed result card will appear, so
             # there is no positional jump when the result replaces it.
@@ -3157,11 +3169,9 @@ class TranslatorApp:
             x = self.root.winfo_pointerx() + 12
             y = self.root.winfo_pointery() + 18
             x, y = self._clamp_to_monitor(x, y, w, h)
-        win.geometry(f"{w}x{h}+{x}+{y}")
-        self._setup_rounded_window(win, LOADING_CORNER_RADIUS)
+        self._reveal_rounded_window(win, w, h, x, y)
         # Clicking anywhere outside dismisses only the loading hint.
         win.bind("<FocusOut>", lambda e: self._dismiss_loading_popup())
-        win.focus_force()
         return win
 
     def _build_popup_header(self, win, frame, *, title, is_error, popup_bg,
@@ -3322,45 +3332,52 @@ class TranslatorApp:
                     highlight=False):
         t = self.theme
         win = tk.Toplevel(self.root)
-        # Map the window fully transparent instead of withdrawn: the text must
-        # be laid out (mapped) for displayline measurement in _size_popup to be
-        # correct. Withdrawn windows mis-measure and produce huge popups.
-        win.attributes("-alpha", 0.0)
+        win.withdraw()
         win.overrideredirect(True)
         # Result windows no longer force always-on-top. The user opts in per
         # window via the pin button in the header (see _build_popup_header);
         # default is off so results stop covering everything else.
         win._pinned = False
+        # Give the result popup a real taskbar button so it can always be found
+        # again when it isn't on top. Ex-style / owner changes must be applied
+        # while the window is hidden, before deiconify, to take effect.
+        try:
+            win.update_idletasks()
+            win32util.set_taskbar_presence(int(win.winfo_id()), True)
+        except Exception as e:
+            log_error("popup_taskbar", e)
 
         popup_bg = t.get("popup_bg", t["bg"])
         popup_border = t.get("popup_border", t["border"])
         hint = t.get("popup_hint", t["hint_fg"])
         accent = t.get("accent", "#7aa2f7")
 
-        shell = tk.Frame(win, bg=popup_border, bd=0, highlightthickness=0)
-        shell.pack(fill="both", expand=True)
-
-        frame = tk.Frame(shell, bg=popup_bg, bd=0, highlightthickness=0)
-        frame.pack(fill="both", expand=True,
-                   padx=POPUP_SHELL_PAD, pady=POPUP_SHELL_PAD)
+        # Rounded corners via a transparent colour key (genuinely transparent on
+        # this environment, unlike SetWindowRgn cut-outs which render black).
+        card = self._rounded_shell(win, POPUP_CORNER_RADIUS,
+                                   popup_bg, popup_border)
         self._build_popup_header(
-            win, frame, title=(title or i18n.get("result.title")),
+            win, card, title=(title or i18n.get("result.title")),
             is_error=is_error, popup_bg=popup_bg,
             popup_border=popup_border, hint=hint, accent=accent, theme=t)
         self._build_popup_body(
-            win, frame, popup_bg=popup_bg, is_error=is_error,
+            win, card, popup_bg=popup_bg, is_error=is_error,
             highlight=highlight)
 
-        # Ensure the window is mapped (still invisible via alpha) so the text
-        # widget is laid out and _size_popup can measure wrapped lines correctly.
+        # Park off-screen and map so the Text is laid out for displayline
+        # measurement in _size_popup, without a visible resize flash. Colour-key
+        # transparency is incompatible with -alpha, so we hide the measurement
+        # dance off-screen instead of behind an alpha fade.
+        win.geometry("+{}+{}".format(-4000, -4000))
         win.deiconify()
         win.update_idletasks()
         self._position_popup(win, message, anchor)
 
         self._bind_popup_window_events(win)
-        self._setup_rounded_window(win, POPUP_CORNER_RADIUS)
+        self._apply_taskbar_identity(win)
         win.update_idletasks()
-        win.attributes("-alpha", 1.0)   # reveal at final geometry (no flash)
+        win._round_redraw()
+        win.lift()
         win.focus_force()
         return win
 
@@ -3372,7 +3389,11 @@ class TranslatorApp:
         a max; tkinter then reports the precise pixel reqwidth/reqheight, and
         we read the true wrapped line count for the height."""
         text = win._text
-        shell_pad = POPUP_SHELL_PAD
+        # Content sits inside the rounded colour-key card, inset by the corner
+        # radius on every side, so the window must be that much larger than the
+        # measured text. (Cancels with the body pad exactly as the old shell-pad
+        # inset did, so effective wrapping width is unchanged.)
+        shell_pad = POPUP_CORNER_RADIUS
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
@@ -3433,7 +3454,8 @@ class TranslatorApp:
     def _size_popup_stream_grow(self, win, message):
         """Streaming mode: keep width fixed, only allow height to grow."""
         text = win._text
-        shell_pad = POPUP_SHELL_PAD
+        # Match _size_popup: colour-key card inset is the corner radius.
+        shell_pad = POPUP_CORNER_RADIUS
 
         rect = get_monitor_rect()
         if rect:
@@ -3512,6 +3534,41 @@ class TranslatorApp:
             self.popup._text.yview_scroll(int(-event.delta / 120), "units")
         return "break"
 
+    def _bring_to_front(self, win):
+        """Reliably raise an existing borderless window above other apps and
+        focus it, without leaving it permanently topmost. A plain lift() only
+        reorders within our own app's z-group, so a window sitting behind
+        another application would appear 'stuck' and re-pressing the hotkey
+        would feel like the feature failed to launch."""
+        try:
+            win.deiconify()
+        except Exception:
+            pass
+        try:
+            win.lift()
+            win.attributes("-topmost", True)
+            win.update_idletasks()
+            # Only the result popup (via its pin button) may stay on top.
+            if not getattr(win, "_pinned", False):
+                win.attributes("-topmost", False)
+            win.focus_force()
+        except Exception:
+            pass
+
+    def _apply_taskbar_identity(self, win, title=None):
+        """Give a borderless Toplevel a proper taskbar / Alt-Tab identity so its
+        hover preview shows the app name and icon rather than Tk's default
+        'tk' title and feather icon."""
+        try:
+            win.title(title or APP_NAME)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(ICON_PATH):
+                win.iconbitmap(ICON_PATH)
+        except Exception:
+            pass
+
     def _setup_rounded_window(self, win, radius):
         """Attach reliable rounded corners via window-proc subclassing. Windows
         re-applies the region on every real resize (WM_WINDOWPOSCHANGED), so the
@@ -3556,9 +3613,16 @@ class TranslatorApp:
         return card
 
     def _apply_window_rounding(self, win):
-        """Force an immediate region refresh at the window's current real size.
-        Rarely needed now that the subclass handles resizes, but kept so any
-        direct caller (e.g. an explicit post-geometry nudge) stays valid."""
+        """Force an immediate corner refresh at the window's current real size.
+        Colour-key windows (the common case now) just repaint their rounded
+        canvas; the few remaining region-clipped windows re-apply SetWindowRgn."""
+        redraw = getattr(win, "_round_redraw", None)
+        if redraw is not None:
+            try:
+                redraw()
+            except Exception:
+                pass
+            return
         radius = int(getattr(win, "_corner_radius", POPUP_CORNER_RADIUS))
         try:
             _round_apply_region(int(win.winfo_id()), radius)
@@ -4462,8 +4526,7 @@ class TranslatorApp:
 
     def _open_diagnostics(self):
         if self.diagnostics_win and tk.Toplevel.winfo_exists(self.diagnostics_win):
-            self.diagnostics_win.lift()
-            self.diagnostics_win.focus_force()
+            self._bring_to_front(self.diagnostics_win)
             self._refresh_diagnostics_window(self.diagnostics_win)
             return
 
@@ -4575,8 +4638,7 @@ class TranslatorApp:
 
     def _open_about(self):
         if self.about_win and tk.Toplevel.winfo_exists(self.about_win):
-            self.about_win.lift()
-            self.about_win.focus_force()
+            self._bring_to_front(self.about_win)
             return
 
         t = self.theme
@@ -4851,8 +4913,7 @@ class TranslatorApp:
 
     def _open_support_author(self):
         if self.support_win and tk.Toplevel.winfo_exists(self.support_win):
-            self.support_win.lift()
-            self.support_win.focus_force()
+            self._bring_to_front(self.support_win)
             return
 
         t = self.theme
@@ -5036,8 +5097,7 @@ class TranslatorApp:
 
     def _open_quick_input(self):
         if self.quick_input_win and tk.Toplevel.winfo_exists(self.quick_input_win):
-            self.quick_input_win.lift()
-            self.quick_input_win.focus_force()
+            self._bring_to_front(self.quick_input_win)
             text_widget = getattr(self.quick_input_win, "_quick_input_text", None)
             if text_widget and text_widget.winfo_exists():
                 text_widget.focus_set()
@@ -5650,8 +5710,7 @@ class TranslatorApp:
 
     def _open_settings(self):
         if self.settings_win and tk.Toplevel.winfo_exists(self.settings_win):
-            self.settings_win.lift()
-            self.settings_win.focus_force()
+            self._bring_to_front(self.settings_win)
             return
 
         t = self.theme
@@ -6095,6 +6154,7 @@ class TranslatorApp:
         self._reveal_rounded_window(win, w, h, x, y)
 
     def _reveal_rounded_window(self, win, w, h, x, y):
+        self._apply_taskbar_identity(win)
         win.geometry(f"{w}x{h}+{x}+{y}")
         win.deiconify()
         win.update_idletasks()
@@ -6417,8 +6477,7 @@ class TranslatorApp:
 
     def _open_history(self):
         if self.history_win and tk.Toplevel.winfo_exists(self.history_win):
-            self.history_win.lift()
-            self.history_win.focus_force()
+            self._bring_to_front(self.history_win)
             return
 
         t = self.theme
