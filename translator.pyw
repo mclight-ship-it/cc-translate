@@ -5817,15 +5817,6 @@ class TranslatorApp:
                 width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
-        hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.history_limit"),
-            ttk.Spinbox(
-                body, textvariable=hist_limit_var, from_=20, to=500,
-                increment=20, width=10, style="CC.TSpinbox",
-                font=(FONT, 10)),
-            bg=bg, fg=fg, font=FONT)
-
         # ---- Section: 系统 ----
         self._settings_section(
             body, row_state, i18n.get("settings.label.system_section"),
@@ -5837,6 +5828,16 @@ class TranslatorApp:
             self.cfg.get(CFG.HISTORY_ENABLED, True),
             i18n.get("settings.label.open_history"), self._open_history,
             bg=bg, fg=fg, font=FONT, theme=t)
+        # History count lives right under the "记录历史" toggle so both
+        # history-related settings sit together.
+        hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.history_limit"),
+            ttk.Spinbox(
+                body, textvariable=hist_limit_var, from_=20, to=500,
+                increment=20, width=10, style="CC.TSpinbox",
+                font=(FONT, 10)),
+            bg=bg, fg=fg, font=FONT)
         autostart_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_start_boot"), is_autostart_enabled(),
