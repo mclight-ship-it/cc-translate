@@ -2685,6 +2685,11 @@ class TranslatorApp:
 
         def do_flush():
             self._ss.flush_job = None
+            # A close/supersede between scheduling and running this flush must
+            # not repaint: the job may have been invalidated (see
+            # _user_close_popup), which _stream_update itself cannot detect.
+            if job_id is not None and not self._job_is_current(job_id):
+                return
             appended = []
             try:
                 while True:
@@ -3265,7 +3270,7 @@ class TranslatorApp:
                 font=("Microsoft YaHei UI", 9), padx=9, pady=1,
             )
 
-        close_btn = _mk_btn("✕", self._destroy_popup, danger=True)
+        close_btn = _mk_btn("✕", self._user_close_popup, danger=True)
         close_btn.pack(side="right")
 
         # Pushpin toggle: keep this result above other windows only when the
@@ -3409,7 +3414,7 @@ class TranslatorApp:
         win.bind("<ButtonPress-1>", self._popup_press)
         win.bind("<B1-Motion>", self._popup_drag)
         win.bind("<ButtonRelease-1>", self._popup_release)
-        win.bind("<Escape>", lambda e: self._destroy_popup())
+        win.bind("<Escape>", lambda e: self._user_close_popup())
 
     def _make_popup(self, message, anchor=None, is_error=False, title=None,
                     highlight=False):
@@ -4265,6 +4270,19 @@ class TranslatorApp:
         if self.popup is win:
             self.popup = None
         log_perf("loading_dismissed", {"has_stream_data": bool(self._ss.accum)})
+
+    def _user_close_popup(self):
+        """User explicitly closed the result/error window (✕ or Esc).
+
+        Closing must also invalidate the in-flight request. Otherwise a
+        translation that is still streaming keeps its worker alive, and the next
+        stream frame — or _stream_finalize when the response completes —
+        re-creates the very window the user just dismissed. Bumping the job id
+        makes every outstanding stream callback go stale (see _job_is_current),
+        so nothing repaints after the user closes the popup."""
+        self._begin_job()
+        self._cancel_stream_flush()
+        self._destroy_popup()
 
     def _destroy_popup(self):
         self._stop_animation()

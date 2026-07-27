@@ -2083,6 +2083,30 @@ class TestJobIsolation(unittest.TestCase):
         app._stop_animation.assert_not_called()
         app._show_loading.assert_not_called()
 
+    def test_user_close_invalidates_inflight_job(self):
+        # Closing the popup while a translation is streaming must invalidate the
+        # current job so later stream frames / _stream_finalize can't re-create
+        # the window the user just dismissed.
+        app = self._bare_app(job_id=5)
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._destroy_popup = unittest.mock.Mock()
+        app._user_close_popup()
+        self.assertFalse(app._job_is_current(5),
+                         "the streaming job must be stale after user close")
+        app._destroy_popup.assert_called_once_with()
+
+    def test_stream_finalize_no_repaint_after_user_close(self):
+        # End-to-end: a streaming job's final frame arrives AFTER the user closed
+        # the popup. It must not build a new popup.
+        app = self._bare_app(job_id=5)
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._destroy_popup = unittest.mock.Mock()
+        app._make_popup = unittest.mock.Mock()
+        job_id = app._job_id
+        app._user_close_popup()                 # user closes mid-stream
+        app._stream_finalize("done", job_id=job_id)   # late final frame
+        app._make_popup.assert_not_called()
+
 
 class TestAtomicWrites(unittest.TestCase):
     """Cover the temp-file + os.replace() atomic persistence that protects
