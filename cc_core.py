@@ -610,3 +610,32 @@ class StreamSession:
     user_scrolled: bool = False  # user moved the view; stop auto-pinning to top
     centered_ready: bool = False  # centred popup's fixed geometry/region already set
     rendered: str = ""  # raw text currently in the popup Text (for append-only streaming)
+
+
+# ---------------------------------------------------------------------------
+# Popup / window layout constants (logical pixels; DPI-scaled at runtime).
+# Shared by translator.pyw and the PopupMixin (cc_app_popup).
+# ---------------------------------------------------------------------------
+MIN_POPUP_HEIGHT = 150
+MIN_STREAM_VISIBLE_HEIGHT = 220
+MIN_RESIZE_WIDTH = 280
+MIN_RESIZE_HEIGHT = 150
+RESIZE_HIT = 18
+POPUP_BAR_PAD_X = 12
+POPUP_BAR_PAD_TOP = 9
+POPUP_BAR_PAD_BOTTOM = 7
+POPUP_BODY_PAD_X = 8
+POPUP_BODY_PAD_BOTTOM = 10
+POPUP_TEXT_PAD_X = 16
+POPUP_TEXT_PAD_Y = 12
+LOADING_CORNER_RADIUS = 11
+
+# Centred-layout popup and history-window sizes (see translator.pyw notes).
+CENTERED_POPUP_W = 552
+CENTERED_POPUP_H = 389
+HISTORY_WINDOW_W = 720
+HISTORY_WINDOW_H = 520
+
+# Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
+# on Windows; the animation cycles through them for a modern indeterminate look.
+LOADING_SPINNER = "◐◓◑◒"
