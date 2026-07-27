@@ -114,6 +114,12 @@ def tray_icon_path(taskbar_theme=None):
     return None
 
 
+# Corner radius (px) for the rounded window shells used by popups and the
+# About / Support / Settings / Uninstall dialogs. Shared so the mixin modules
+# that build those windows agree with the popup renderer in translator.pyw.
+POPUP_CORNER_RADIUS = 11
+
+
 def _user_data_path(name: str) -> str:
     """Resolve a user data file in DATA_DIR, migrating any legacy copy that
     still sits next to the program (APP_DIR) on first run after the move."""
