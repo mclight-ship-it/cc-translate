@@ -1946,6 +1946,106 @@ class TestLoadingPopupDismiss(unittest.TestCase):
         app._dismiss_loading_popup.assert_not_called()
 
 
+class TestStreamScrollPreservation(unittest.TestCase):
+    """Streaming rebuilds the result Text every frame (delete + reinsert), which
+    snaps the view to the top. The centred popup must (a) apply its fixed
+    geometry / rounded region only on the first frame — re-running them every
+    frame made the card look like it kept refreshing — and (b) restore the
+    user's scroll position each frame once they've scrolled to read along, so it
+    stops jumping back to the top mid-stream."""
+
+    class _FakeText:
+        def __init__(self, top="1.0", frac=(0.0, 1.0)):
+            self._top = top
+            self._frac = frac
+            self.yview_calls = []
+        def config(self, **k):
+            pass
+        def delete(self, *a):
+            pass
+        def insert(self, *a):
+            pass
+        def index(self, spec):
+            return self._top
+        def yview(self, *a):
+            if a:
+                self.yview_calls.append(a[0])
+                return None
+            return self._frac
+        def yview_moveto(self, f):
+            self.yview_calls.append(("moveto", f))
+        def bind(self, *a):
+            pass
+        def see(self, *a):
+            pass
+
+    class _FakeScroll:
+        def __init__(self, mapped=False):
+            self._mapped = mapped
+            self.packed = None
+        def winfo_ismapped(self):
+            return self._mapped
+        def pack(self, **k):
+            self.packed = True
+        def pack_forget(self):
+            self.packed = False
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._ss = tr.StreamSession()
+        app._centered_box = lambda: (400, 300, 10, 20)
+        app._remember_window_xy = unittest.mock.Mock()
+        app._fill_text = unittest.mock.Mock()
+        app._apply_window_rounding = unittest.mock.Mock()
+        app._on_mousewheel = unittest.mock.Mock()
+        return app
+
+    def _win(self, text):
+        return types.SimpleNamespace(
+            _text=text,
+            _scroll=self._FakeScroll(),
+            _scroll_body=unittest.mock.Mock(),
+            geometry=unittest.mock.Mock(),
+            update_idletasks=unittest.mock.Mock(),
+        )
+
+    def test_first_streaming_frame_sets_geometry_and_rounding(self):
+        app = self._app()
+        win = self._win(self._FakeText())
+        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
+        win.geometry.assert_called_once()
+        app._apply_window_rounding.assert_called_once()
+        self.assertTrue(app._ss.centered_ready)
+
+    def test_later_streaming_frame_skips_geometry_and_rounding(self):
+        app = self._app()
+        win = self._win(self._FakeText())
+        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
+        win.geometry.reset_mock()
+        app._apply_window_rounding.reset_mock()
+        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
+        win.geometry.assert_not_called()
+        app._apply_window_rounding.assert_not_called()
+
+    def test_scrolled_user_position_restored_not_pinned_to_top(self):
+        app = self._app()
+        app._ss.centered_ready = True   # mid-stream, first frame already done
+        app._ss.user_scrolled = True
+        text = self._FakeText(top="12.0")
+        win = self._win(text)
+        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
+        # The captured top line is restored, and the view is NOT yanked to top.
+        self.assertIn("12.0", text.yview_calls)
+        self.assertNotIn(("moveto", 0.0), text.yview_calls)
+
+    def test_non_scrolled_first_frame_pins_to_top(self):
+        app = self._app()
+        text = self._FakeText()
+        win = self._win(text)
+        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
+        self.assertIn(("moveto", 0.0), text.yview_calls)
+
+
 class _FakePipe:
     """Minimal stand-in for a Popen stdin pipe."""
     def __init__(self):
