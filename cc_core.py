@@ -275,6 +275,154 @@ DIRECTION_LABELS = DIRECTION_LABELS_ZH.copy()
 
 
 # ---------------------------------------------------------------------------
+# Settings-window leaf symbols (themes, labels, misc constants, image fit).
+# Moved here from translator.pyw so the SettingsMixin (cc_app_settings) can
+# import them from a real shared leaf module instead of importing translator.
+# translator.pyw re-exports every name below via ``from cc_core import ...``.
+# ---------------------------------------------------------------------------
+ROUND_KEY_COLOR = "#010101"
+SETTINGS_MIN_W = 1280
+SETTINGS_COL_MIN_W = 610
+SUPPORT_IMAGE_PATH = os.path.join(APP_DIR, "assets", "support-author.png")
+
+
+# Two colour palettes. Every UI surface reads from the active theme so the
+# whole app (popup, loading hint, scrollbar, settings, history) stays coherent.
+THEMES = {
+    "dark": {
+        "bg": "#1e2128", "fg": "#e6e9f0",
+        "bar_bg": "#242832", "btn_bg": "#242832",
+        "btn_active": "#2f3542", "btn_close_active": "#e5534b",
+        "border": "#363c47", "sel_bg": "#3b5b8c",
+        "popup_bg": "#22262e", "popup_border": "#374050",
+        "popup_hint": "#8b93a7", "accent": "#7aa2f7",
+        "scroll_thumb": "#3c4453", "scroll_thumb_active": "#586074",
+        "trough": "#22262e", "hint_fg": "#8b93a7",
+        "settings_bg": "#22262e", "settings_fg": "#e6e9f0",
+        "list_bg": "#1b1f27", "list_sel": "#2f3542",
+        "status_ok": "#7bd88f", "status_err": "#f07178",
+        # Rich-text (markdown-lite) semantic colours, VSCode-ish on dark.
+        "rich_code_fg": "#e6b673", "rich_code_bg": "#2b303b",
+        "rich_heading_fg": "#7aa2f7", "rich_bold_fg": "#e6e9f0",
+        "rich_url_fg": "#6cb6ff", "rich_bullet_fg": "#7aa2f7",
+        "rich_ident_fg": "#c8a2f7", "rich_string_fg": "#9ece6a",
+        "rich_number_fg": "#e6b673",
+        # Pygments token colours (Tokyo-Night-ish) for highlighted code blocks.
+        "rich_tok_keyword": "#bb9af7", "rich_tok_string": "#9ece6a",
+        "rich_tok_comment": "#565f89", "rich_tok_number": "#ff9e64",
+        "rich_tok_func": "#7aa2f7", "rich_tok_operator": "#89ddff",
+        "rich_tok_ident": "#c0caf5",
+    },
+    "light": {
+        "bg": "#ffffff", "fg": "#1f2430",
+        "bar_bg": "#ffffff", "btn_bg": "#ffffff",
+        "btn_active": "#eef2f9", "btn_close_active": "#ef4444",
+        "border": "#e2e6ee", "sel_bg": "#d3e3ff",
+        "popup_bg": "#ffffff", "popup_border": "#e2e6ee",
+        "popup_hint": "#7a8296", "accent": "#3b82f6",
+        "scroll_thumb": "#cdd5e2", "scroll_thumb_active": "#aeb8ca",
+        "trough": "#ffffff", "hint_fg": "#7a8296",
+        "settings_bg": "#f6f8fc", "settings_fg": "#1f2430",
+        "list_bg": "#ffffff", "list_sel": "#e6eefb",
+        "status_ok": "#16a34a", "status_err": "#dc2626",
+        # Rich-text (markdown-lite) semantic colours, VSCode-ish on light.
+        "rich_code_fg": "#b5610a", "rich_code_bg": "#eef1f6",
+        "rich_heading_fg": "#2f6feb", "rich_bold_fg": "#111827",
+        "rich_url_fg": "#0969da", "rich_bullet_fg": "#2f6feb",
+        "rich_ident_fg": "#8250df", "rich_string_fg": "#0a7d33",
+        "rich_number_fg": "#b5610a",
+        # Pygments token colours (GitHub-light-ish) for highlighted code blocks.
+        "rich_tok_keyword": "#cf222e", "rich_tok_string": "#0a3069",
+        "rich_tok_comment": "#6e7781", "rich_tok_number": "#0550ae",
+        "rich_tok_func": "#8250df", "rich_tok_operator": "#0550ae",
+        "rich_tok_ident": "#24292f",
+    },
+}
+
+
+def resolve_theme_name(cfg):
+    """Return the active theme name ('dark' or 'light') based on config."""
+    choice = cfg.get(CFG.THEME, "system")
+    if choice not in ("dark", "light"):
+        choice = detect_system_theme()
+    return choice
+
+
+def resolve_theme(cfg):
+    """Pick the active palette dict based on config ('system'/'dark'/'light')."""
+    return THEMES[resolve_theme_name(cfg)]
+
+
+THEME_LABELS_ZH = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
+THEME_LABELS_EN = {"system": "System", "light": "Light", "dark": "Dark"}
+
+# Popup layout choices shown in Settings (classic/centered listed first).
+POPUP_LAYOUT_LABELS_ZH = {"centered": "经典（居中固定）", "dynamic": "动态（跟随鼠标）"}
+POPUP_LAYOUT_LABELS_EN = {"centered": "Classic (Centered)", "dynamic": "Dynamic (Near Cursor)"}
+
+# OCR engine choices for screenshot translation. Claude Vision is the default
+# (sends the whole image to Claude to read + translate). Local OCR recognises
+# text on-device and sends only that text to Claude. Both translate via Claude
+# online; only the text-recognition step differs.
+OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉",
+                        "local": "本地 OCR"}
+OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision",
+                        "local": "Local OCR"}
+# What a single left-click on the tray icon does. Keys map to the four
+# window-opening actions the tray already exposes; the label is resolved by
+# app language. Non-window actions (pause / quit / update) are deliberately not
+# offered here — a single click should summon something, not toggle state.
+TRAY_CLICK_ACTION_LABELS_ZH = {
+    "settings": "设置",
+    "history": "历史记录",
+    "screenshot": "截图翻译",
+    "quick_input": "快速翻译",
+}
+TRAY_CLICK_ACTION_LABELS_EN = {
+    "settings": "Settings",
+    "history": "History",
+    "screenshot": "Screenshot translation",
+    "quick_input": "Quick translation",
+}
+LANGUAGE_LABELS = {"zh_CN": "中文", "en_US": "English"}
+
+
+def get_theme_labels():
+    return _labels_by_language(THEME_LABELS_ZH, THEME_LABELS_EN)
+
+
+def get_popup_layout_labels():
+    return _labels_by_language(POPUP_LAYOUT_LABELS_ZH, POPUP_LAYOUT_LABELS_EN)
+
+
+def get_ocr_engine_labels():
+    return _labels_by_language(OCR_ENGINE_LABELS_ZH, OCR_ENGINE_LABELS_EN)
+
+
+def get_tray_click_action_labels():
+    return _labels_by_language(TRAY_CLICK_ACTION_LABELS_ZH,
+                               TRAY_CLICK_ACTION_LABELS_EN)
+
+
+THEME_LABELS = THEME_LABELS_ZH.copy()
+POPUP_LAYOUT_LABELS = POPUP_LAYOUT_LABELS_ZH.copy()
+OCR_ENGINE_LABELS = OCR_ENGINE_LABELS_ZH.copy()
+TRAY_CLICK_ACTION_LABELS = TRAY_CLICK_ACTION_LABELS_ZH.copy()
+
+
+def fit_box_size(src_w, src_h, max_w, max_h):
+    """Fit a box into a max area while preserving aspect ratio."""
+    src_w = int(src_w)
+    src_h = int(src_h)
+    max_w = int(max_w)
+    max_h = int(max_h)
+    if src_w <= 0 or src_h <= 0 or max_w <= 0 or max_h <= 0:
+        return 0, 0, 0.0
+    scale = min(1.0, max_w / src_w, max_h / src_h)
+    return max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale))), scale
+
+
+# ---------------------------------------------------------------------------
 # Model prompts (system suffixes, dictionary/code-explain/result-action, OCR).
 # ---------------------------------------------------------------------------
 SYSTEM_SUFFIX = (

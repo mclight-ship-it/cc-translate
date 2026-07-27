@@ -1201,14 +1201,15 @@ class TestSupportAuthorWindow(unittest.TestCase):
             from PIL import Image, ImageChops
         except ImportError:
             self.skipTest("Pillow not installed")
-        orig = tr.ROUND_KEY_COLOR
+        import cc_app_settings
+        orig = cc_app_settings.ROUND_KEY_COLOR
         try:
-            tr.ROUND_KEY_COLOR = "#ff00ff"
+            cc_app_settings.ROUND_KEY_COLOR = "#ff00ff"
             img = Image.new("RGB", (2, 1), (0, 0, 0))
             out = tr.TranslatorApp._despeckle_key_color(img)
             self.assertIs(out, img)
         finally:
-            tr.ROUND_KEY_COLOR = orig
+            cc_app_settings.ROUND_KEY_COLOR = orig
 
 
 # ============================================================
