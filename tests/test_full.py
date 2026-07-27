@@ -1065,9 +1065,10 @@ class TestLogError(unittest.TestCase):
         tr.log_error("unicode_test", RuntimeError("错误：测试"))
 
     def test_log_error_writes_to_error_log(self):
-        orig_data_dir = tr.DATA_DIR
+        import cc_core
+        orig_data_dir = cc_core.DATA_DIR
         with tempfile.TemporaryDirectory() as tmpdir:
-            tr.DATA_DIR = tmpdir
+            cc_core.DATA_DIR = tmpdir
             tr.log_error("write_test", Exception("sentinel_error_xyz"))
             log_path = os.path.join(tmpdir, "error.log")
             self.assertTrue(os.path.exists(log_path),
@@ -1076,7 +1077,7 @@ class TestLogError(unittest.TestCase):
                 content = f.read()
             self.assertIn("write_test", content)
             self.assertIn("sentinel_error_xyz", content)
-        tr.DATA_DIR = orig_data_dir
+        cc_core.DATA_DIR = orig_data_dir
 
 
 # ============================================================
