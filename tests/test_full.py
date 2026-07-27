@@ -1947,24 +1947,32 @@ class TestLoadingPopupDismiss(unittest.TestCase):
 
 
 class TestStreamScrollPreservation(unittest.TestCase):
-    """Streaming rebuilds the result Text every frame (delete + reinsert), which
-    snaps the view to the top. The centred popup must (a) apply its fixed
-    geometry / rounded region only on the first frame — re-running them every
-    frame made the card look like it kept refreshing — and (b) restore the
-    user's scroll position each frame once they've scrolled to read along, so it
-    stops jumping back to the top mid-stream."""
+    """Streaming used to delete+reinsert the ENTIRE result Text every 50ms flush,
+    which repainted the whole card (flicker) and snapped the view to the top. The
+    centred popup now (a) applies its fixed geometry / rounded region only on the
+    first frame, (b) appends only the new text tail on later frames so the scroll
+    view never moves, and (c) on the final rich rebuild restores the user's
+    reading position instead of yanking them to the top."""
 
     class _FakeText:
-        def __init__(self, top="1.0", frac=(0.0, 1.0)):
+        def __init__(self, top="1.0"):
+            self.content = ""
             self._top = top
-            self._frac = frac
+            self._frac = (0.0, 1.0)
             self.yview_calls = []
+            self.insert_calls = []
         def config(self, **k):
             pass
         def delete(self, *a):
-            pass
-        def insert(self, *a):
-            pass
+            self.content = ""
+        def insert(self, index, s, *tags):
+            self.insert_calls.append((index, s))
+            if index == "end":
+                self.content += s
+            else:
+                self.content = s + self.content
+        def get(self, *a):
+            return self.content
         def index(self, spec):
             return self._top
         def yview(self, *a):
@@ -1995,7 +2003,12 @@ class TestStreamScrollPreservation(unittest.TestCase):
         app._ss = tr.StreamSession()
         app._centered_box = lambda: (400, 300, 10, 20)
         app._remember_window_xy = unittest.mock.Mock()
-        app._fill_text = unittest.mock.Mock()
+        # _fill_text stands in for the rich renderer; it writes the raw text so
+        # append/rebuild bookkeeping in the fake widget stays consistent.
+        def _fill(widget, msg):
+            widget.delete("1.0", "end")
+            widget.insert("1.0", msg)
+        app._fill_text = unittest.mock.Mock(side_effect=_fill)
         app._apply_window_rounding = unittest.mock.Mock()
         app._on_mousewheel = unittest.mock.Mock()
         return app
@@ -2016,6 +2029,7 @@ class TestStreamScrollPreservation(unittest.TestCase):
         win.geometry.assert_called_once()
         app._apply_window_rounding.assert_called_once()
         self.assertTrue(app._ss.centered_ready)
+        self.assertEqual(app._ss.rendered, "hello")
 
     def test_later_streaming_frame_skips_geometry_and_rounding(self):
         app = self._app()
@@ -2027,15 +2041,45 @@ class TestStreamScrollPreservation(unittest.TestCase):
         win.geometry.assert_not_called()
         app._apply_window_rounding.assert_not_called()
 
-    def test_scrolled_user_position_restored_not_pinned_to_top(self):
+    def test_streaming_frame_appends_only_the_new_tail(self):
         app = self._app()
-        app._ss.centered_ready = True   # mid-stream, first frame already done
-        app._ss.user_scrolled = True
-        text = self._FakeText(top="12.0")
+        app._ss.centered_ready = True
+        app._ss.rendered = "hello"
+        text = self._FakeText()
+        text.content = "hello"
         win = self._win(text)
         app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
-        # The captured top line is restored, and the view is NOT yanked to top.
-        self.assertIn("12.0", text.yview_calls)
+        # Only the delta was inserted (at the end); the doc was not rebuilt.
+        self.assertIn(("end", " world"), text.insert_calls)
+        self.assertEqual(text.content, "hello world")
+        self.assertEqual(app._ss.rendered, "hello world")
+
+    def test_scrolled_user_append_leaves_view_untouched(self):
+        app = self._app()
+        app._ss.centered_ready = True
+        app._ss.user_scrolled = True
+        app._ss.rendered = "hello"
+        text = self._FakeText(top="12.0")
+        text.content = "hello"
+        win = self._win(text)
+        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
+        # Append path never touches the view: no restore, no pin-to-top.
+        self.assertEqual(text.yview_calls, [])
+        self.assertIn(("end", " world"), text.insert_calls)
+
+    def test_final_rich_rebuild_restores_position_when_scrolled(self):
+        app = self._app()
+        app._ss.centered_ready = True
+        app._ss.user_scrolled = True
+        app._ss.rendered = "hello"
+        text = self._FakeText(top="7.0")
+        text.content = "hello"
+        win = self._win(text)
+        app._fit_centered(win, "hello world", scroll_top=True, streaming=True,
+                          full_rebuild=True)
+        # The final frame does a rich rebuild but restores the reading position.
+        app._fill_text.assert_called_once()
+        self.assertIn("7.0", text.yview_calls)
         self.assertNotIn(("moveto", 0.0), text.yview_calls)
 
     def test_non_scrolled_first_frame_pins_to_top(self):
@@ -2044,6 +2088,57 @@ class TestStreamScrollPreservation(unittest.TestCase):
         win = self._win(text)
         app._fit_centered(win, "hello", scroll_top=True, streaming=True)
         self.assertIn(("moveto", 0.0), text.yview_calls)
+
+
+class TestStreamFillText(unittest.TestCase):
+    """_stream_fill_text is the append-only core: it inserts just the new tail
+    when the message is a superset of what's shown, and only rebuilds the whole
+    Text on the final rich frame or a rare non-append change."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._ss = tr.StreamSession()
+        def _fill(widget, msg):
+            widget.delete("1.0", "end")
+            widget.insert("1.0", msg)
+        app._fill_text = unittest.mock.Mock(side_effect=_fill)
+        return app
+
+    def _text(self):
+        return TestStreamScrollPreservation._FakeText()
+
+    def test_append_inserts_only_delta(self):
+        app = self._app()
+        t = self._text()
+        app._stream_fill_text(t, "abc", rich=False)
+        app._stream_fill_text(t, "abcdef", rich=False)
+        self.assertEqual(t.content, "abcdef")
+        self.assertEqual(t.insert_calls[-1], ("end", "def"))
+        app._fill_text.assert_not_called()
+
+    def test_no_change_is_a_noop(self):
+        app = self._app()
+        t = self._text()
+        app._stream_fill_text(t, "abc", rich=False)
+        n = len(t.insert_calls)
+        app._stream_fill_text(t, "abc", rich=False)
+        self.assertEqual(len(t.insert_calls), n)  # nothing new inserted
+
+    def test_rich_frame_rebuilds_via_fill_text(self):
+        app = self._app()
+        t = self._text()
+        app._stream_fill_text(t, "abc", rich=False)
+        app._stream_fill_text(t, "abc **bold**", rich=True)
+        app._fill_text.assert_called_once()
+        self.assertEqual(app._ss.rendered, "abc **bold**")
+
+    def test_non_prefix_change_rebuilds_plain(self):
+        app = self._app()
+        t = self._text()
+        app._stream_fill_text(t, "hello world", rich=False)
+        app._stream_fill_text(t, "different", rich=False)
+        self.assertEqual(t.content, "different")
+        app._fill_text.assert_not_called()  # plain rebuild, not the rich path
 
 
 class _FakePipe:

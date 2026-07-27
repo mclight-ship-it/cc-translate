@@ -1254,6 +1254,7 @@ class StreamSession:
     monitor_rect: object = None  # (left, top, right, bottom) or None
     user_scrolled: bool = False  # user moved the view; stop auto-pinning to top
     centered_ready: bool = False  # centred popup's fixed geometry/region already set
+    rendered: str = ""  # raw text currently in the popup Text (for append-only streaming)
 
 
 class TranslatorApp:
@@ -2830,7 +2831,7 @@ class TranslatorApp:
                 # Final frame keeps stable stream geometry (no shrink/reposition jump).
                 if getattr(self.popup._text, "_rich", False):
                     self.popup._text._rich_highlight = True
-                self._set_popup_text(final, stream_grow=True)
+                self._set_popup_text(final, stream_grow=True, stream_final=True)
                 self._maybe_add_explain_button(self.popup)
                 self._maybe_add_result_actions_button(self.popup)
                 self._remember_result(True, self._result_title(True), final)
@@ -2848,7 +2849,7 @@ class TranslatorApp:
                                           title=self._result_title(),
                                           highlight=True)
             self._ss.popup_ready = True
-            self._set_popup_text(final, stream_grow=True)
+            self._set_popup_text(final, stream_grow=True, stream_final=True)
             self._maybe_add_explain_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
             self._remember_result(True, self._result_title(True), final)
@@ -3942,35 +3943,80 @@ class TranslatorApp:
         """A roomier centred box for the feature-rich history window."""
         return self._scaled_centered_box(HISTORY_WINDOW_W, HISTORY_WINDOW_H)
 
+    def _stream_fill_text(self, text_widget, message, rich):
+        """Update the streamed result Text with the least work possible.
+
+        Streamed output only ever grows, so on a normal frame we insert just the
+        new tail at the end. Inserting at the end never moves the scroll view and
+        never repaints the rest of the document, which is what killed the
+        per-frame flicker and the jump-to-top: the old path deleted and reinserted
+        the ENTIRE text ~20x/second (every 50ms flush), resetting the view to the
+        top each time. During streaming the tail is inserted as plain text; the
+        final frame (rich=True) does a single rich rebuild for markdown/inline
+        formatting. A rare non-append change (message isn't a superset of what's
+        shown) falls back to a full rebuild."""
+        prev = self._ss.rendered
+        if not rich and prev and message.startswith(prev):
+            if len(message) == len(prev):
+                return  # nothing new to show
+            try:
+                text_widget.config(state="normal")
+                text_widget.insert("end", message[len(prev):])
+                text_widget.config(state="disabled")
+                self._ss.rendered = message
+                return
+            except Exception:
+                pass  # fall through to a full rebuild
+        if rich:
+            self._fill_text(text_widget, message)
+        else:
+            try:
+                text_widget.config(state="normal")
+                text_widget.delete("1.0", "end")
+                text_widget.insert("1.0", message)
+                text_widget.config(state="disabled")
+            except Exception:
+                self._fill_text(text_widget, message)
+        self._ss.rendered = message
+
     def _fit_centered(self, win, message, scroll_end=False, scroll_top=False,
-                      streaming=False):
+                      streaming=False, full_rebuild=False):
         """Fill a fixed-size centred popup with text: the window keeps its fixed
         geometry, the Text stretches to fill it, and a scrollbar appears only
         when the content overflows. Used for both result and streaming frames.
 
         For streaming frames (streaming=True) the fixed geometry, rounded region
         and Text char-sizing are applied only on the FIRST frame; later frames
-        just refresh the text and toggle the scrollbar. Re-running win.geometry()
-        and the rounded-canvas redraw on every streamed frame made the card look
-        like it was constantly refreshing/flickering and pulled the view back to
-        the top each time."""
+        append just the new text tail (see _stream_fill_text) and toggle the
+        scrollbar. Re-running win.geometry(), the rounded-canvas redraw and a
+        whole-document delete+reinsert on every streamed frame made the card look
+        like it was constantly refreshing and pulled the view back to the top."""
         text = win._text
         first_setup = not (streaming and getattr(self._ss, "centered_ready", False))
-        # A streamed frame rebuilds the whole Text (delete + reinsert), which
-        # snaps the view back to the top. If the user has scrolled down to read
-        # along, capture their current top line first and restore it after the
-        # refill so the popup no longer jumps to the top on every frame.
+        # Predict whether this frame rebuilds the whole Text (first frame, the
+        # final rich rebuild, or a rare non-append change). Only a full rebuild
+        # snaps the view to the top, so only then must we capture/restore the
+        # user's reading position; a plain append leaves the view untouched.
+        will_rebuild = True
         prev_top = None
-        if streaming and getattr(self._ss, "user_scrolled", False):
-            try:
-                prev_top = text.index("@0,0")
-            except Exception:
-                prev_top = None
+        if streaming:
+            prev = self._ss.rendered
+            will_rebuild = (first_setup or full_rebuild
+                            or not (prev and message.startswith(prev)))
+            if will_rebuild and not first_setup and getattr(
+                    self._ss, "user_scrolled", False):
+                try:
+                    prev_top = text.index("@0,0")
+                except Exception:
+                    prev_top = None
         if first_setup:
             w, h, x, y = self._centered_box()
             win.geometry(f"{w}x{h}+{x}+{y}")
             self._remember_window_xy(win, x, y)
-        self._fill_text(text, message)
+        if streaming:
+            self._stream_fill_text(text, message, rich=full_rebuild)
+        else:
+            self._fill_text(text, message)
         if first_setup:
             # width/height in chars = 1 so pack(fill=both, expand) lets the Text
             # stretch to the window's fixed pixel size instead of its content size.
@@ -3985,7 +4031,7 @@ class TranslatorApp:
             except Exception:
                 pass
         elif prev_top is not None:
-            # Restore the user's reading position after the rebuild.
+            # Restore the user's reading position after a full rebuild.
             try:
                 text.yview(prev_top)
             except Exception:
@@ -3993,9 +4039,7 @@ class TranslatorApp:
         elif scroll_top:
             # Pin to the top only on the first frame. Streamed text is appended
             # below the fold, so once the view starts at the top it stays there
-            # on its own; re-pinning (and the geometry/region churn that came
-            # with it) is what made the popup jump/flicker every frame. Never
-            # fight a user who has scrolled themselves.
+            # on its own. Never fight a user who has scrolled themselves.
             if first_setup and not getattr(self._ss, "user_scrolled", False):
                 try:
                     text.yview_moveto(0.0)
@@ -4336,17 +4380,18 @@ class TranslatorApp:
                     1200,
                     lambda: self.popup and self.popup._copy_btn.config(text=i18n.get("result.copy")))
 
-    def _set_popup_text(self, message, resize=True, stream_grow=False):
+    def _set_popup_text(self, message, resize=True, stream_grow=False,
+                        stream_final=False):
         win = self.popup
         if not (win and getattr(win, "_text", None)):
             return
         if self._is_centered_layout():
             # Fixed centred card: never resize or reposition. Just refill the
             # text; overflow scrolls instead of growing the window. While
-            # streaming, stay pinned to the top so the reader follows along
-            # from the beginning rather than being yanked to the end.
+            # streaming, append the new tail so the reader isn't yanked around;
+            # the final frame does one rich rebuild for formatting.
             self._fit_centered(win, message, scroll_top=stream_grow,
-                               streaming=stream_grow)
+                               streaming=stream_grow, full_rebuild=stream_final)
             return
         if stream_grow:
             # The rebuild inside _size_popup_stream_grow (delete + reinsert)
@@ -4448,6 +4493,7 @@ class TranslatorApp:
         self._ss.origin_y = None
         self._ss.monitor_rect = None
         self._ss.centered_ready = False
+        self._ss.rendered = ""
         self._resize_mode = None
         self._resize_start = None
         if self.popup:
