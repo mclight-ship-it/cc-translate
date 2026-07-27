@@ -13,6 +13,8 @@ so existing ``tr.<name>`` references in the test-suite keep resolving.
 import os
 import time
 import shutil
+import queue
+import dataclasses
 
 import i18n
 
@@ -551,3 +553,33 @@ def vision_image_mention(img_path):
     forward slashes, which the CLI accepts on Windows."""
     posix_path = str(img_path).replace("\\", "/")
     return '@"' + posix_path + '"'
+
+
+# ---------------------------------------------------------------------------
+# Hotkey / trigger timing and streaming-session state.
+# ---------------------------------------------------------------------------
+# Hotkey handoff: the global keyboard listener runs on its own thread and must
+# never touch Tcl/Tk directly. It drops trigger requests into a queue that the
+# main thread drains on a timer (every TRIGGER_POLL_MS ms), which fixes the
+# "no response then a burst of translations" races seen right after startup.
+TRIGGER_POLL_MS = 40
+
+
+@dataclasses.dataclass
+class StreamSession:
+    """Holds all mutable state for a single streaming translation session.
+    Created fresh for each translation, replacing the 10 individual _stream_*
+    instance attributes that were scattered across TranslatorApp."""
+    popup_ready: bool = False
+    queue: object = dataclasses.field(default_factory=queue.Queue)
+    accum: str = ""
+    flush_job: object = None  # tkinter after() job ID; None when idle
+    cols: int = 0
+    fixed_w: int = 0
+    max_h: int = 0
+    origin_x: object = None  # int once the first frame is placed
+    origin_y: object = None  # int once the first frame is placed
+    monitor_rect: object = None  # (left, top, right, bottom) or None
+    user_scrolled: bool = False  # user moved the view; stop auto-pinning to top
+    centered_ready: bool = False  # centred popup's fixed geometry/region already set
+    rendered: str = ""  # raw text currently in the popup Text (for append-only streaming)
