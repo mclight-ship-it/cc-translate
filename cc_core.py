@@ -119,6 +119,10 @@ def tray_icon_path(taskbar_theme=None):
 # that build those windows agree with the popup renderer in translator.pyw.
 POPUP_CORNER_RADIUS = 11
 
+# Default size (px, unscaled) of the quick-input translation window.
+QUICK_INPUT_WINDOW_W = 560
+QUICK_INPUT_WINDOW_H = 320
+
 
 def _user_data_path(name: str) -> str:
     """Resolve a user data file in DATA_DIR, migrating any legacy copy that
