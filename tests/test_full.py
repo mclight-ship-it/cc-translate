@@ -808,9 +808,11 @@ class TestCCWarm(unittest.TestCase):
 
 
 class TestWarmPoolProfiles(unittest.TestCase):
-    """The warm pool keeps one pre-warmed process per profile so the common
-    cold paths (normal translation AND single-word dictionary lookups) skip the
-    ~2s CLI cold-start. Dictionary lookups used to always run cold."""
+    """The warm pool keeps up to WARM_POOL_DEPTH pre-warmed processes per
+    profile so the common cold paths (normal translation AND single-word
+    dictionary lookups) skip the ~2s CLI cold-start, and back-to-back requests
+    don't fall back to cold while a replacement warms. Dictionary lookups used
+    to always run cold."""
 
     def _app(self, model="haiku", direction="auto"):
         app = object.__new__(tr.TranslatorApp)
@@ -819,6 +821,7 @@ class TestWarmPoolProfiles(unittest.TestCase):
         app.cfg[tr.CFG.DIRECTION] = direction
         app._warm_lock = __import__("threading").Lock()
         app._warm_pool = {}
+        app._warm_pending = {}
         app._warm_enabled = True
         return app
 
@@ -839,17 +842,42 @@ class TestWarmPoolProfiles(unittest.TestCase):
         app = self._app()
         self.assertIsNone(app._warm_profile_spec("nope"))
 
+    def test_pool_depth_is_two(self):
+        # The user asked for depth 2; guard against an accidental regression.
+        self.assertEqual(tr.WARM_POOL_DEPTH, 2)
+
     def test_take_warm_returns_usable_process_for_profile(self):
         app = self._app()
+        app._spawn_warm_async = unittest.mock.Mock()
         key = app._warm_profile_spec("dictionary")[0]
         fake = unittest.mock.Mock()
         fake.usable.return_value = True
-        app._warm_pool["dictionary"] = fake
+        app._warm_pool["dictionary"] = [fake]
         got = app._take_warm("dictionary")
         self.assertIs(got, fake)
         fake.usable.assert_called_once_with(key)
         # Taken out of the pool so it isn't handed out twice.
-        self.assertIsNone(app._warm_pool["dictionary"])
+        self.assertEqual(app._warm_pool["dictionary"], [])
+        # Removing one triggers a refill toward depth.
+        app._spawn_warm_async.assert_called_once_with("dictionary")
+
+    def test_take_warm_leaves_second_ready_process_for_back_to_back(self):
+        # Depth 2: taking one usable process leaves the other in the pool so a
+        # rapid second request also hits warm.
+        app = self._app()
+        app._spawn_warm_async = unittest.mock.Mock()
+        key = app._warm_profile_spec("translate")[0]
+        a, b = unittest.mock.Mock(), unittest.mock.Mock()
+        a.usable.return_value = True
+        a.ready = True
+        a.key = key
+        b.usable.return_value = True
+        b.ready = True
+        b.key = key
+        app._warm_pool["translate"] = [a, b]
+        got = app._take_warm("translate")
+        self.assertIs(got, a)                      # takes exactly one
+        self.assertEqual(app._warm_pool["translate"], [b])   # keeps the other
 
     def test_take_warm_none_when_profile_empty(self):
         app = self._app()
@@ -858,8 +886,22 @@ class TestWarmPoolProfiles(unittest.TestCase):
     def test_take_warm_disabled_returns_none(self):
         app = self._app()
         app._warm_enabled = False
-        app._warm_pool["translate"] = unittest.mock.Mock()
+        app._warm_pool["translate"] = [unittest.mock.Mock()]
         self.assertIsNone(app._take_warm("translate"))
+
+    def test_take_warm_keeps_still_warming_process(self):
+        # A not-yet-ready process (usable False, ready False) must stay in the
+        # pool, not be evicted as stale.
+        app = self._app()
+        app._spawn_warm_async = unittest.mock.Mock()
+        warming = unittest.mock.Mock()
+        warming.usable.return_value = False
+        warming.ready = False
+        app._warm_pool["translate"] = [warming]
+        got = app._take_warm("translate")
+        self.assertIsNone(got)
+        self.assertEqual(app._warm_pool["translate"], [warming])
+        warming.close.assert_not_called()
 
     def test_take_warm_discards_wrong_key_and_refills(self):
         app = self._app()
@@ -867,22 +909,57 @@ class TestWarmPoolProfiles(unittest.TestCase):
         stale.usable.return_value = False
         stale.ready = True
         stale.key = ("translate", "haiku", "SOMETHING-ELSE")
-        app._warm_pool["translate"] = stale
+        app._warm_pool["translate"] = [stale]
         app._spawn_warm_async = unittest.mock.Mock()
         got = app._take_warm("translate")
         self.assertIsNone(got)
         stale.close.assert_called_once_with()
         app._spawn_warm_async.assert_called_once_with("translate")
 
-    def test_close_warm_pool_closes_every_profile(self):
+    def test_spawn_respects_depth_and_pending(self):
+        # Plan must fill to WARM_POOL_DEPTH accounting for what's already held
+        # and what's already in flight, never over-shooting.
         app = self._app()
-        a, b = unittest.mock.Mock(), unittest.mock.Mock()
-        app._warm_pool = {"translate": a, "dictionary": b}
+        started = []
+
+        class _FakeWarm:
+            def __init__(self, model, prompt, key):
+                self.key = key
+            def start(self):
+                started.append(self.key)
+                return True
+
+        with unittest.mock.patch.object(tr, "WarmClaude", _FakeWarm), \
+                unittest.mock.patch.object(tr.threading, "Thread") as Thread:
+            # Run the worker synchronously so we can assert on results.
+            Thread.side_effect = lambda target, daemon=None: type(
+                "T", (), {"start": staticmethod(target)})()
+            app._spawn_warm_async("translate")
+        # Empty pool, depth 2 → spawns exactly 2.
+        self.assertEqual(len(started), 2)
+        self.assertEqual(len(app._warm_pool["translate"]), 2)
+        self.assertEqual(app._warm_pending["translate"], 0)
+
+    def test_close_warm_pool_closes_every_process(self):
+        app = self._app()
+        a, b, c = (unittest.mock.Mock() for _ in range(3))
+        app._warm_pool = {"translate": [a, b], "dictionary": [c]}
         app.close_warm_pool()
-        a.close.assert_called_once_with()
-        b.close.assert_called_once_with()
+        for m in (a, b, c):
+            m.close.assert_called_once_with()
         self.assertFalse(app._warm_enabled)
         self.assertEqual(app._warm_pool, {})
+
+    def test_reset_warm_pool_closes_all_and_respawns(self):
+        app = self._app()
+        a, b = unittest.mock.Mock(), unittest.mock.Mock()
+        app._warm_pool = {"translate": [a], "dictionary": [b]}
+        app._spawn_warm_async = unittest.mock.Mock()
+        app._reset_warm_pool()
+        a.close.assert_called_once_with()
+        b.close.assert_called_once_with()
+        self.assertEqual(app._warm_pool, {})
+        app._spawn_warm_async.assert_called_once_with()
 
 
 class TestDoTranslateWarmRouting(unittest.TestCase):

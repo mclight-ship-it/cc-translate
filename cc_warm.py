@@ -77,6 +77,7 @@ CLAUDE_CMD = find_claude_cmd()
 # Pool configuration constants
 # ---------------------------------------------------------------------------
 WARM_POOL_ENABLED = True
+WARM_POOL_DEPTH = 2        # ready processes kept per profile (covers back-to-back use)
 WARM_UP_MS = 2000          # give the CLI this long to initialise before it's "ready"
 WARM_MAX_AGE_S = 480       # recycle a warm process older than this (stale-session guard)
 WARM_SEND_TIMEOUT_S = 60   # hard cap on a single warm translation

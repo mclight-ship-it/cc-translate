@@ -38,7 +38,7 @@ from win32util import get_monitor_rect
 from cc_rich import (iter_rich_segments, highlight_code, _PYGMENTS_OK,
                      _iter_inline_segments, _flush_highlighted_fence,
                      _pyg_token_tag, _PygToken)
-from cc_warm import (WarmClaude, CLAUDE_CMD, WARM_POOL_ENABLED,
+from cc_warm import (WarmClaude, CLAUDE_CMD, WARM_POOL_ENABLED, WARM_POOL_DEPTH,
                      WARM_UP_MS, WARM_MAX_AGE_S, WARM_SEND_TIMEOUT_S)
 import cc_warm as _cc_warm
 from cc_update import (
@@ -1252,6 +1252,7 @@ class StreamSession:
     origin_x: object = None  # int once the first frame is placed
     origin_y: object = None  # int once the first frame is placed
     monitor_rect: object = None  # (left, top, right, bottom) or None
+    user_scrolled: bool = False  # user moved the view; stop auto-pinning to top
 
 
 class TranslatorApp:
@@ -1315,12 +1316,15 @@ class TranslatorApp:
         self._settings_check = None   # set while the settings window is open
 
         # Warm process pool state (speed-up). Guarded by _warm_lock.
-        # One pre-warmed WarmClaude per "profile" so the common cold paths get
-        # the same head-start as normal translation: "translate" (direction
-        # prompt) and "dictionary" (single-word lookups, which used to always
-        # pay the full cold-start cost). Keyed by profile name → WarmClaude.
+        # One profile ("translate", "dictionary") keeps up to WARM_POOL_DEPTH
+        # pre-warmed WarmClaude processes ready, so the common cold paths get
+        # the same head-start as normal translation and back-to-back requests
+        # don't fall back to a ~2s cold start while a replacement warms up.
+        # _warm_pool: profile -> list[WarmClaude]; _warm_pending: profile -> int
+        # counts spawns in flight so refills never over-shoot the target depth.
         self._warm_lock = threading.Lock()
-        self._warm_pool = {}         # profile name -> pre-warmed WarmClaude
+        self._warm_pool = {}         # profile -> list of ready WarmClaude
+        self._warm_pending = {}      # profile -> number of spawns in flight
         self._warm_enabled = WARM_POOL_ENABLED
 
         self.root = tk.Tk()
@@ -1407,66 +1411,106 @@ class TranslatorApp:
         return None
 
     def _spawn_warm_async(self, profile=None):
-        """Create/replace the warm process for one profile, or every profile
-        when profile is None. Non-blocking (spawn happens in a thread)."""
+        """Top up one profile (or every profile when profile is None) to
+        WARM_POOL_DEPTH ready processes. Non-blocking (spawns run in a thread).
+        In-flight spawns are counted (_warm_pending) so repeated calls — e.g.
+        the post-use refill plus a concurrent stale-eviction — never over-shoot
+        the target depth."""
         if not self._warm_enabled:
             return
         profiles = (profile,) if profile is not None else self.WARM_PROFILES
-
-        def _work(profiles=profiles):
+        # Decide how many to spawn per profile under the lock, reserving the
+        # count in _warm_pending so a concurrent call sees the reservation.
+        plan = []   # list of profile names to spawn (one entry per process)
+        with self._warm_lock:
             for name in profiles:
+                if self._warm_profile_spec(name) is None:
+                    continue
+                have = len(self._warm_pool.get(name, ()))
+                pending = self._warm_pending.get(name, 0)
+                need = WARM_POOL_DEPTH - have - pending
+                for _ in range(max(0, need)):
+                    plan.append(name)
+                    self._warm_pending[name] = self._warm_pending.get(name, 0) + 1
+        if not plan:
+            return
+
+        def _work(plan=plan):
+            for name in plan:
+                w = None
                 try:
+                    # Recompute the spec at spawn time so a config change while
+                    # this spawn was queued produces a current-config process.
                     spec = self._warm_profile_spec(name)
-                    if spec is None:
-                        continue
-                    key, system_prompt = spec
-                    w = WarmClaude(key[1], system_prompt, key)
-                    if not w.start():
-                        continue
-                    with self._warm_lock:
-                        old, self._warm_pool[name] = self._warm_pool.get(name), w
-                    if old is not None:
-                        old.close()
+                    if spec is not None:
+                        key, system_prompt = spec
+                        cand = WarmClaude(key[1], system_prompt, key)
+                        if cand.start():
+                            w = cand
                 except Exception as e:
                     log_error("warm_refill", e)
+                    w = None
+                with self._warm_lock:
+                    self._warm_pending[name] = max(
+                        0, self._warm_pending.get(name, 0) - 1)
+                    if w is not None:
+                        self._warm_pool.setdefault(name, []).append(w)
         threading.Thread(target=_work, daemon=True).start()
 
     def _take_warm(self, profile):
-        """Return a ready warm process for this profile and remove it from the
-        pool, or None if none is ready. Triggers a refill when the held process
-        is unusable (dead / stale / wrong config)."""
+        """Return one ready warm process for this profile, removing it from the
+        pool, or None if none is ready. Evicts any stale-config processes it
+        finds and triggers a refill so the pool stays topped up."""
         if not self._warm_enabled:
             return None
         spec = self._warm_profile_spec(profile)
         if spec is None:
             return None
         key = spec[0]
+        chosen = None
+        discard = []
         with self._warm_lock:
-            w = self._warm_pool.get(profile)
-            if w is None:
-                return None
-            if w.usable(key):
-                self._warm_pool[profile] = None   # take it; refill after use
-                return w
-            # Present but not usable (still warming, wrong key, dead, stale).
-            if w.ready and w.key != key:
-                self._warm_pool[profile] = None    # config changed: rebuild
-            else:
-                return None
-        # Fell through the "discard" branch: retire it and refill.
-        try:
-            w.close()
-        except Exception:
-            pass
-        self._spawn_warm_async(profile)
-        return None
+            keep = []
+            for w in self._warm_pool.get(profile, ()):
+                if chosen is None and w.usable(key):
+                    chosen = w                       # take exactly one usable
+                elif w.ready and w.key != key:
+                    discard.append(w)                # stale config: evict
+                else:
+                    keep.append(w)                   # still warming — keep
+            self._warm_pool[profile] = keep
+        for w in discard:
+            try:
+                w.close()
+            except Exception:
+                pass
+        # Refill when we took one (pool dropped) or evicted stale ones, so the
+        # profile climbs back to WARM_POOL_DEPTH.
+        if chosen is not None or discard:
+            self._spawn_warm_async(profile)
+        return chosen
+
+    def _reset_warm_pool(self):
+        """Discard every pre-warmed process and re-warm all profiles for the
+        current config. Used when the model/direction changes so no process
+        keeps a now-wrong system prompt."""
+        with self._warm_lock:
+            procs = [w for lst in self._warm_pool.values() for w in lst]
+            self._warm_pool = {}
+        for w in procs:
+            try:
+                w.close()
+            except Exception:
+                pass
+        self._spawn_warm_async()
 
     def close_warm_pool(self):
         """Terminate every warm process. Called on quit."""
         self._warm_enabled = False
         with self._warm_lock:
-            procs = [p for p in self._warm_pool.values() if p is not None]
+            procs = [w for lst in self._warm_pool.values() for w in lst]
             self._warm_pool = {}
+            self._warm_pending = {}
         for w in procs:
             try:
                 w.close()
@@ -3391,7 +3435,15 @@ class TranslatorApp:
             height=1,
             yscrollcommand=scroll.set,
         )
-        scroll.config(command=text.yview)
+        def _on_scrollbar(*args):
+            # Dragging/clicking the scrollbar is a manual scroll too, so it must
+            # also opt out of stream auto-pin-to-top.
+            try:
+                self._ss.user_scrolled = True
+            except Exception:
+                pass
+            return text.yview(*args)
+        scroll.config(command=_on_scrollbar)
         text.pack(side="left", fill="both", expand=True)
         win._text = text
         win._scroll = scroll
@@ -3695,6 +3747,12 @@ class TranslatorApp:
 
     def _on_mousewheel(self, event):
         if self.popup and getattr(self.popup, "_text", None):
+            # A manual scroll opts the user out of stream auto-pin-to-top so a
+            # later frame (or the final frame) won't yank the view back up.
+            try:
+                self._ss.user_scrolled = True
+            except Exception:
+                pass
             self.popup._text.yview_scroll(int(-event.delta / 120), "units")
         return "break"
 
@@ -3906,11 +3964,15 @@ class TranslatorApp:
         elif scroll_top:
             # While streaming, keep the view pinned at the top so the reader
             # starts from the beginning instead of being dragged to the tail
-            # (which arrives far faster than anyone reads).
-            try:
-                win._text.yview_moveto(0.0)
-            except Exception:
-                pass
+            # (which arrives far faster than anyone reads). But once the user
+            # scrolls the popup themselves, respect their position — never yank
+            # them back to the top on the next frame or when the final frame
+            # lands (the "jumps to top when translation finishes" complaint).
+            if not getattr(self._ss, "user_scrolled", False):
+                try:
+                    win._text.yview_moveto(0.0)
+                except Exception:
+                    pass
         win.update_idletasks()
         first, last = 0.0, 1.0
         try:
@@ -6329,10 +6391,11 @@ class TranslatorApp:
                 # Re-resolve theme so new popups pick it up immediately.
                 self.theme = resolve_theme(self.cfg)
                 self._setup_scrollbar_style()
-                # Model/direction feed the warm process's fixed system prompt;
-                # rebuild the pool so the next translation uses the new config.
+                # Model/direction feed the warm processes' fixed system prompt;
+                # rebuild the whole pool so the next translation (and any
+                # pre-warmed depth) uses the new config, not a stale prompt.
                 if self._warm_key() != prev_warm_key:
-                    self._spawn_warm_async()
+                    self._reset_warm_pool()
                 
                 # If language changed, restart the app
                 if new_lang != old_lang:
