@@ -58,11 +58,24 @@
   纯 JSON 数据）可能误判。可补充信号（换行密度、缩进、括号配对）。
 - **建议**：先收集真实使用中的误判样本再调，避免过拟合。
 
-### 8. 单文件拆分 ⏸
-- `translator.pyw` 单文件约 2700+ 行，建议拆为
-  `config.py` / `themes.py` / `richtext.py` / `claude.py` / `ui.py` / `tray.py`。
-- 纯内部重构，对外行为零变化，提升可维护性与「给 AI 助手改」的友好度。
-- **建议**：功能稳定后集中做一次。
+### 8. 单文件拆分 ✅
+- **已完成**：`translator.pyw`（曾达 7072 行 / 188 方法的 `TranslatorApp` god class）
+  按功能拆入 11 个 mixin 模块，主文件回落到 **~1710 行**。纯机械搬迁，方法体零改动，
+  对外行为零变化，286 个测试逐步保持全绿。
+- **地基**：`cc_core.py`（GUI-free 叶子层——paths / logging / config keys /
+  direction & prompt 常量 / themes & labels / 弹窗布局常量 / `StreamSession` /
+  `fit_box_size` / `is_single_word` 等），translator.pyw `from cc_core import ...`
+  全部 re-export，测试中的 `tr.<name>` 引用照常解析。
+- **11 个 mixin**：`WarmMixin` / `UpdateMixin` / `TrayMixin` / `AboutMixin` /
+  `QuickInputMixin` / `DiagnosticsMixin` / `HistoryMixin` / `SettingsMixin` /
+  `OcrMixin` / `ResultActionsMixin` / `PopupMixin`。每个 mixin 只 import 叶子模块
+  （cc_core / cc_warm / cc_ocr / cc_update / win32util / cc_rich / i18n），绝不
+  import translator，避免 import 循环与「测试/生产双模块加载」陷阱。
+- **注意**：mixin 拆分不降低运行期耦合（仍是单个实例、`self.` 调用不变）；对象级
+  解耦是另一项高风险工作，本次不含。
+- 遗留可选清理：`HistoryMixin` 仍用 lazy `import translator as _tr`（可后续改为
+  cc_core 迁移 / wrapper）；config-IO 家族（CONFIG_PATH / load_config /
+  _atomic_write_json / Config）仍留 translator，可按需单独迁入 cc_core。
 
 ### 9. 单元测试 ✅
 - 纯函数（`classify_selection`、`code_ratio`、`iter_rich_segments`、`is_single_word`、
