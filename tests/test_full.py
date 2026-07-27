@@ -929,7 +929,8 @@ class TestWarmPoolProfiles(unittest.TestCase):
                 started.append(self.key)
                 return True
 
-        with unittest.mock.patch.object(tr, "WarmClaude", _FakeWarm), \
+        import cc_app_warm
+        with unittest.mock.patch.object(cc_app_warm, "WarmClaude", _FakeWarm), \
                 unittest.mock.patch.object(tr.threading, "Thread") as Thread:
             # Run the worker synchronously so we can assert on results.
             Thread.side_effect = lambda target, daemon=None: type(

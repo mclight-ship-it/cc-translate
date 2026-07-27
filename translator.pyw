@@ -66,6 +66,7 @@ from cc_core import (
     RESULT_SUMMARY_PROMPT, RESULT_ACTION_PROMPTS,
     OCR_STRUCTURE_HINT, OCR_VISION_PROMPT, vision_image_mention,
 )
+from cc_app_warm import WarmMixin
 
 
 def _enable_dpi_awareness():
@@ -987,7 +988,7 @@ class StreamSession:
     rendered: str = ""  # raw text currently in the popup Text (for append-only streaming)
 
 
-class TranslatorApp:
+class TranslatorApp(WarmMixin):
     def __init__(self):
         # Detect a fresh install *before* loading config: on first run the
         # config file doesn't exist yet. We use this to enable autostart by
@@ -1110,144 +1111,6 @@ class TranslatorApp:
         # If we just came back from an auto-update restart, confirm it with a
         # tray balloon once the icon has had a moment to register.
         self.root.after(2500, self._show_update_notice_if_any)
-
-    # ---------- Warm process pool ----------
-    # A "profile" is a distinct (system prompt, config) combination worth
-    # keeping a process warm for. We warm the two most common paths so they
-    # skip the ~2s CLI cold-start: normal translation and single-word
-    # dictionary lookups. Code-explain and summary stay cold (rarer, and each
-    # extra warm process is a resident node process).
-    WARM_PROFILES = ("translate", "dictionary")
-
-    def _warm_key(self):
-        """Config signature used to detect when the warm pool must be rebuilt
-        (model or direction change). Both affect the translate prompt."""
-        return (self.cfg.get(CFG.MODEL), self.cfg.get(CFG.DIRECTION))
-
-    def _warm_system_prompt(self):
-        mode = self.cfg.get(CFG.DIRECTION, "auto")
-        app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
-        return direction_prompt(mode, app_language) + SYSTEM_SUFFIX
-
-    def _warm_profile_spec(self, profile):
-        """Return (key, system_prompt) for a warm profile, or None if unknown.
-        The key is baked into the WarmClaude and re-checked at use time so a
-        process warmed for one config/profile is never handed to another."""
-        model = self.cfg.get(CFG.MODEL)
-        if profile == "translate":
-            direction = self.cfg.get(CFG.DIRECTION)
-            return (("translate", model, direction), self._warm_system_prompt())
-        if profile == "dictionary":
-            # Direction-independent (matches _system_prompt_for's DICTIONARY_PROMPT).
-            return (("dictionary", model), DICTIONARY_PROMPT)
-        return None
-
-    def _spawn_warm_async(self, profile=None):
-        """Top up one profile (or every profile when profile is None) to
-        WARM_POOL_DEPTH ready processes. Non-blocking (spawns run in a thread).
-        In-flight spawns are counted (_warm_pending) so repeated calls — e.g.
-        the post-use refill plus a concurrent stale-eviction — never over-shoot
-        the target depth."""
-        if not self._warm_enabled:
-            return
-        profiles = (profile,) if profile is not None else self.WARM_PROFILES
-        # Decide how many to spawn per profile under the lock, reserving the
-        # count in _warm_pending so a concurrent call sees the reservation.
-        plan = []   # list of profile names to spawn (one entry per process)
-        with self._warm_lock:
-            for name in profiles:
-                if self._warm_profile_spec(name) is None:
-                    continue
-                have = len(self._warm_pool.get(name, ()))
-                pending = self._warm_pending.get(name, 0)
-                need = WARM_POOL_DEPTH - have - pending
-                for _ in range(max(0, need)):
-                    plan.append(name)
-                    self._warm_pending[name] = self._warm_pending.get(name, 0) + 1
-        if not plan:
-            return
-
-        def _work(plan=plan):
-            for name in plan:
-                w = None
-                try:
-                    # Recompute the spec at spawn time so a config change while
-                    # this spawn was queued produces a current-config process.
-                    spec = self._warm_profile_spec(name)
-                    if spec is not None:
-                        key, system_prompt = spec
-                        cand = WarmClaude(key[1], system_prompt, key)
-                        if cand.start():
-                            w = cand
-                except Exception as e:
-                    log_error("warm_refill", e)
-                    w = None
-                with self._warm_lock:
-                    self._warm_pending[name] = max(
-                        0, self._warm_pending.get(name, 0) - 1)
-                    if w is not None:
-                        self._warm_pool.setdefault(name, []).append(w)
-        threading.Thread(target=_work, daemon=True).start()
-
-    def _take_warm(self, profile):
-        """Return one ready warm process for this profile, removing it from the
-        pool, or None if none is ready. Evicts any stale-config processes it
-        finds and triggers a refill so the pool stays topped up."""
-        if not self._warm_enabled:
-            return None
-        spec = self._warm_profile_spec(profile)
-        if spec is None:
-            return None
-        key = spec[0]
-        chosen = None
-        discard = []
-        with self._warm_lock:
-            keep = []
-            for w in self._warm_pool.get(profile, ()):
-                if chosen is None and w.usable(key):
-                    chosen = w                       # take exactly one usable
-                elif w.ready and w.key != key:
-                    discard.append(w)                # stale config: evict
-                else:
-                    keep.append(w)                   # still warming — keep
-            self._warm_pool[profile] = keep
-        for w in discard:
-            try:
-                w.close()
-            except Exception:
-                pass
-        # Refill when we took one (pool dropped) or evicted stale ones, so the
-        # profile climbs back to WARM_POOL_DEPTH.
-        if chosen is not None or discard:
-            self._spawn_warm_async(profile)
-        return chosen
-
-    def _reset_warm_pool(self):
-        """Discard every pre-warmed process and re-warm all profiles for the
-        current config. Used when the model/direction changes so no process
-        keeps a now-wrong system prompt."""
-        with self._warm_lock:
-            procs = [w for lst in self._warm_pool.values() for w in lst]
-            self._warm_pool = {}
-        for w in procs:
-            try:
-                w.close()
-            except Exception:
-                pass
-        self._spawn_warm_async()
-
-    def close_warm_pool(self):
-        """Terminate every warm process. Called on quit."""
-        self._warm_enabled = False
-        with self._warm_lock:
-            procs = [w for lst in self._warm_pool.values() for w in lst]
-            self._warm_pool = {}
-            self._warm_pending = {}
-        for w in procs:
-            try:
-                w.close()
-            except Exception:
-                pass
 
     def _prewarm_uia(self):
         """Pre-parse the UIAutomationCore typelib so the first cross-process
