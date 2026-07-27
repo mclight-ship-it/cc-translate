@@ -47,6 +47,73 @@ DATA_DIR = _resolve_data_dir()
 UPDATE_NOTICE_PATH = os.path.join(DATA_DIR, "update_notice.txt")
 
 
+# ---------------------------------------------------------------------------
+# Tray / window icons & Windows theme detection.
+# ---------------------------------------------------------------------------
+ICON_PATH = os.path.join(APP_DIR, "cc.ico")
+# Adaptive tray icons: two "CC" tile marks. cc-dark.ico is the darker tile (a
+# blue tile with a white mark); cc-light.ico is the lighter tile (white tile
+# with a blue mark). Both are packed from assets/icon-{dark,light}.png by
+# tools/make_icons.py. To stay legible in the system tray we show the *opposite*
+# tile from the taskbar theme (the darker tile on a light taskbar and vice
+# versa) so the icon always contrasts its background. The Start Menu / shortcut
+# launcher also uses cc-dark.ico (see cc_update.py). cc.ico (the legacy blue
+# tile) remains the fallback.
+ICON_PATH_DARK = os.path.join(APP_DIR, "cc-dark.ico")
+ICON_PATH_LIGHT = os.path.join(APP_DIR, "cc-light.ico")
+
+
+def detect_system_theme():
+    """Return 'light' or 'dark' from the Windows apps theme setting."""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        winreg.CloseKey(key)
+        return "light" if val == 1 else "dark"
+    except Exception:
+        return "dark"
+
+
+def detect_taskbar_theme():
+    """Return 'light' or 'dark' for the Windows *taskbar / tray*.
+
+    This reads SystemUsesLightTheme (which drives the taskbar colour), not
+    AppsUseLightTheme (which drives app windows) — the two can differ, and the
+    tray icon sits on the taskbar, so the taskbar signal is what keeps it
+    contrasting. Falls back to the apps theme, then to 'dark'.
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        val, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+        winreg.CloseKey(key)
+        return "light" if val == 1 else "dark"
+    except Exception:
+        return detect_system_theme()
+
+
+def tray_icon_path(taskbar_theme=None):
+    """Pick the tray icon file that contrasts the taskbar theme, with fallbacks.
+
+    To stay visible we show the *opposite* tile: a light taskbar gets the dark
+    tile (cc-dark.ico) and a dark taskbar gets the light tile (cc-light.ico). If
+    the theme-specific file is missing, fall back to the legacy tile (cc.ico); if
+    that is missing too, return None so the caller draws a glyph instead.
+    """
+    theme = taskbar_theme or detect_taskbar_theme()
+    primary = ICON_PATH_DARK if theme == "light" else ICON_PATH_LIGHT
+    if os.path.exists(primary):
+        return primary
+    if os.path.exists(ICON_PATH):
+        return ICON_PATH
+    return None
+
+
 def _user_data_path(name: str) -> str:
     """Resolve a user data file in DATA_DIR, migrating any legacy copy that
     still sits next to the program (APP_DIR) on first run after the move."""

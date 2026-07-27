@@ -57,6 +57,8 @@ import cc_ocr
 from cc_core import (
     APP_NAME, APP_DIR, DATA_DIR, _resolve_data_dir, _user_data_path,
     UPDATE_NOTICE_PATH,
+    ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
+    detect_system_theme, detect_taskbar_theme, tray_icon_path,
     log_perf, log_error,
     CFG, DEFAULT_CONFIG,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
@@ -69,6 +71,7 @@ from cc_core import (
 )
 from cc_app_warm import WarmMixin
 from cc_app_update import UpdateMixin
+from cc_app_tray import TrayMixin
 
 
 def _enable_dpi_awareness():
@@ -80,17 +83,6 @@ _enable_dpi_awareness()
 
 
 CONFIG_PATH = _user_data_path("config.json")
-ICON_PATH = os.path.join(APP_DIR, "cc.ico")
-# Adaptive tray icons: two "CC" tile marks. cc-dark.ico is the darker tile (a
-# blue tile with a white mark); cc-light.ico is the lighter tile (white tile
-# with a blue mark). Both are packed from assets/icon-{dark,light}.png by
-# tools/make_icons.py. To stay legible in the system tray we show the *opposite*
-# tile from the taskbar theme (the darker tile on a light taskbar and vice
-# versa) so the icon always contrasts its background. The Start Menu / shortcut
-# launcher also uses cc-dark.ico (see cc_update.py). cc.ico (the legacy blue
-# tile) remains the fallback.
-ICON_PATH_DARK = os.path.join(APP_DIR, "cc-dark.ico")
-ICON_PATH_LIGHT = os.path.join(APP_DIR, "cc-light.ico")
 SUPPORT_IMAGE_PATH = os.path.join(APP_DIR, "assets", "support-author.png")
 MIN_POPUP_HEIGHT = 150
 MIN_STREAM_VISIBLE_HEIGHT = 220
@@ -192,57 +184,6 @@ THEMES = {
         "rich_tok_ident": "#24292f",
     },
 }
-
-
-def detect_system_theme():
-    """Return 'light' or 'dark' from the Windows apps theme setting."""
-    try:
-        import winreg
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-        winreg.CloseKey(key)
-        return "light" if val == 1 else "dark"
-    except Exception:
-        return "dark"
-
-
-def detect_taskbar_theme():
-    """Return 'light' or 'dark' for the Windows *taskbar / tray*.
-
-    This reads SystemUsesLightTheme (which drives the taskbar colour), not
-    AppsUseLightTheme (which drives app windows) — the two can differ, and the
-    tray icon sits on the taskbar, so the taskbar signal is what keeps it
-    contrasting. Falls back to the apps theme, then to 'dark'.
-    """
-    try:
-        import winreg
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        val, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
-        winreg.CloseKey(key)
-        return "light" if val == 1 else "dark"
-    except Exception:
-        return detect_system_theme()
-
-
-def tray_icon_path(taskbar_theme=None):
-    """Pick the tray icon file that contrasts the taskbar theme, with fallbacks.
-
-    To stay visible we show the *opposite* tile: a light taskbar gets the dark
-    tile (cc-dark.ico) and a dark taskbar gets the light tile (cc-light.ico). If
-    the theme-specific file is missing, fall back to the legacy tile (cc.ico); if
-    that is missing too, return None so the caller draws a glyph instead.
-    """
-    theme = taskbar_theme or detect_taskbar_theme()
-    primary = ICON_PATH_DARK if theme == "light" else ICON_PATH_LIGHT
-    if os.path.exists(primary):
-        return primary
-    if os.path.exists(ICON_PATH):
-        return ICON_PATH
-    return None
 
 
 def resolve_theme_name(cfg):
@@ -985,7 +926,7 @@ class StreamSession:
     rendered: str = ""  # raw text currently in the popup Text (for append-only streaming)
 
 
-class TranslatorApp(WarmMixin, UpdateMixin):
+class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin):
     def __init__(self):
         # Detect a fresh install *before* loading config: on first run the
         # config file doesn't exist yet. We use this to enable autostart by
@@ -6298,136 +6239,6 @@ class TranslatorApp(WarmMixin, UpdateMixin):
 
         # ---- Reveal centred, staying above the (topmost) settings window ----
         self._reveal_rounded_window(win, w, h, x, y)
-
-    # ---------- Tray ----------
-    def _load_tray_image(self, taskbar_theme=None):
-        """Load the tray icon that matches the current taskbar theme."""
-        from PIL import Image
-        theme = taskbar_theme or detect_taskbar_theme()
-        path = tray_icon_path(theme)
-        if path:
-            try:
-                return Image.open(path)
-            except Exception as e:
-                # Fall back to the drawn glyph below, but record why the shipped
-                # icon didn't load (rare — only on theme change, not a hot loop).
-                log_error("load_tray_image", e)
-        return self._make_cc_image(theme)
-
-    def _run_tray_click_action(self):
-        """Run the action the user chose for a single left-click on the tray
-        icon. Reads config live so a change in Settings takes effect without
-        rebuilding the tray menu. Unknown/legacy values fall back to Settings."""
-        action = self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings")
-        if action == "history":
-            self.open_history()
-        elif action == "screenshot":
-            self.root.after(0, self._ocr_from_menu)
-        elif action == "quick_input":
-            self.open_quick_input()
-        else:
-            self.open_settings()
-
-    def _start_tray(self):
-        import pystray
-
-        self._tray_theme = detect_taskbar_theme()
-        image = self._load_tray_image(self._tray_theme)
-
-        def on_settings(icon, item):
-            self.open_settings()
-
-        def on_history(icon, item):
-            self.open_history()
-
-        def on_quick_input(icon, item):
-            self.open_quick_input()
-
-        def on_ocr(icon, item):
-            self.root.after(0, self._ocr_from_menu)
-
-        def on_toggle_pause(icon, item):
-            self.paused = not self.paused
-            icon.update_menu()
-
-        def on_check_update(icon, item):
-            self.check_update_via_settings()
-
-        def on_diagnostics(icon, item):
-            self.open_diagnostics()
-
-        def on_about(icon, item):
-            self.open_about()
-
-        def on_default_click(icon, item):
-            # Left-clicking the tray icon runs the user-chosen action. Read the
-            # config at click-time (not menu-build time) so changing the setting
-            # takes effect without rebuilding the tray menu.
-            self._run_tray_click_action()
-
-        def on_quit(icon, item):
-            icon.stop()
-            self.close_warm_pool()
-            self.root.after(0, self.root.destroy)
-
-        menu = pystray.Menu(
-            # Invisible default item: this is what a left-click activates. It
-            # dispatches to the user-configured action instead of being wired to
-            # a single fixed entry, while the visible items below stay complete
-            # so every feature remains reachable from the right-click menu.
-            pystray.MenuItem(
-                "default", on_default_click, default=True, visible=False),
-            pystray.MenuItem(i18n.get("tray.history"), on_history),
-            pystray.MenuItem(i18n.get("tray.quick_input"), on_quick_input),
-            pystray.MenuItem(i18n.get("tray.screenshot_menu"), on_ocr),
-            pystray.MenuItem(
-                lambda item: i18n.get("tray.resume") if self.paused else i18n.get("tray.pause"),
-                on_toggle_pause),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(i18n.get("tray.settings"), on_settings),
-            pystray.MenuItem(i18n.get("tray.diagnostics"), on_diagnostics),
-            pystray.MenuItem(i18n.get("about.title"), on_about),
-            pystray.MenuItem(i18n.get("tray.check_update"), on_check_update),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(i18n.get("tray.exit"), on_quit),
-        )
-        self.tray = pystray.Icon(APP_NAME, image, APP_NAME, menu)
-        threading.Thread(target=self.tray.run, daemon=True).start()
-        # Keep the tray glyph contrasting when the user flips the Windows
-        # taskbar between light and dark at runtime.
-        self.root.after(3000, self._watch_taskbar_theme)
-
-    def _watch_taskbar_theme(self):
-        """Swap the tray icon if the taskbar theme changed (polled)."""
-        try:
-            theme = detect_taskbar_theme()
-            if theme != getattr(self, "_tray_theme", None) and self.tray:
-                self._tray_theme = theme
-                self.tray.icon = self._load_tray_image(theme)
-        except Exception:
-            pass
-        self.root.after(3000, self._watch_taskbar_theme)
-
-    def _make_cc_image(self, taskbar_theme=None):
-        """Fallback glyph drawn in code when the .ico files are unavailable.
-
-        Mirrors the shipped icons: a transparent 'CC' tinted light for a dark
-        taskbar and brand-blue for a light one, so it stays visible either way.
-        """
-        from PIL import Image, ImageDraw, ImageFont
-        theme = taskbar_theme or detect_taskbar_theme()
-        colour = (37, 99, 235, 255) if theme == "light" else (245, 246, 248, 255)
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("seguibl.ttf", 40)
-        except Exception:
-            try:
-                font = ImageFont.truetype("arialbd.ttf", 40)
-            except Exception:
-                font = ImageFont.load_default()
-        draw.text((32, 32), "CC", font=font, fill=colour, anchor="mm")
-        return img
 
     def run(self):
         self.root.mainloop()
