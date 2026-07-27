@@ -1315,8 +1315,12 @@ class TranslatorApp:
         self._settings_check = None   # set while the settings window is open
 
         # Warm process pool state (speed-up). Guarded by _warm_lock.
+        # One pre-warmed WarmClaude per "profile" so the common cold paths get
+        # the same head-start as normal translation: "translate" (direction
+        # prompt) and "dictionary" (single-word lookups, which used to always
+        # pay the full cold-start cost). Keyed by profile name → WarmClaude.
         self._warm_lock = threading.Lock()
-        self._warm = None            # the next pre-warmed WarmClaude (or None)
+        self._warm_pool = {}         # profile name -> pre-warmed WarmClaude
         self._warm_enabled = WARM_POOL_ENABLED
 
         self.root = tk.Tk()
@@ -1372,7 +1376,16 @@ class TranslatorApp:
         self.root.after(2500, self._show_update_notice_if_any)
 
     # ---------- Warm process pool ----------
+    # A "profile" is a distinct (system prompt, config) combination worth
+    # keeping a process warm for. We warm the two most common paths so they
+    # skip the ~2s CLI cold-start: normal translation and single-word
+    # dictionary lookups. Code-explain and summary stay cold (rarer, and each
+    # extra warm process is a resident node process).
+    WARM_PROFILES = ("translate", "dictionary")
+
     def _warm_key(self):
+        """Config signature used to detect when the warm pool must be rebuilt
+        (model or direction change). Both affect the translate prompt."""
         return (self.cfg.get(CFG.MODEL), self.cfg.get(CFG.DIRECTION))
 
     def _warm_system_prompt(self):
@@ -1380,44 +1393,64 @@ class TranslatorApp:
         app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
         return direction_prompt(mode, app_language) + SYSTEM_SUFFIX
 
-    def _spawn_warm_async(self):
-        """Create and start a replacement warm process for the current config,
-        retiring any previous one. Non-blocking (spawn happens in a thread)."""
+    def _warm_profile_spec(self, profile):
+        """Return (key, system_prompt) for a warm profile, or None if unknown.
+        The key is baked into the WarmClaude and re-checked at use time so a
+        process warmed for one config/profile is never handed to another."""
+        model = self.cfg.get(CFG.MODEL)
+        if profile == "translate":
+            direction = self.cfg.get(CFG.DIRECTION)
+            return (("translate", model, direction), self._warm_system_prompt())
+        if profile == "dictionary":
+            # Direction-independent (matches _system_prompt_for's DICTIONARY_PROMPT).
+            return (("dictionary", model), DICTIONARY_PROMPT)
+        return None
+
+    def _spawn_warm_async(self, profile=None):
+        """Create/replace the warm process for one profile, or every profile
+        when profile is None. Non-blocking (spawn happens in a thread)."""
         if not self._warm_enabled:
             return
+        profiles = (profile,) if profile is not None else self.WARM_PROFILES
 
-        def _work():
-            try:
-                key = self._warm_key()
-                w = WarmClaude(key[0], self._warm_system_prompt(), key)
-                if not w.start():
-                    return
-                with self._warm_lock:
-                    old, self._warm = self._warm, w
-                if old is not None:
-                    old.close()
-            except Exception as e:
-                log_error("warm_refill", e)
+        def _work(profiles=profiles):
+            for name in profiles:
+                try:
+                    spec = self._warm_profile_spec(name)
+                    if spec is None:
+                        continue
+                    key, system_prompt = spec
+                    w = WarmClaude(key[1], system_prompt, key)
+                    if not w.start():
+                        continue
+                    with self._warm_lock:
+                        old, self._warm_pool[name] = self._warm_pool.get(name), w
+                    if old is not None:
+                        old.close()
+                except Exception as e:
+                    log_error("warm_refill", e)
         threading.Thread(target=_work, daemon=True).start()
 
-    def _take_warm(self):
-        """Return a ready warm process matching the current config and remove it
-        from the pool, or None if none is ready. Triggers a refill when the held
-        process is unusable (dead / stale / wrong config)."""
+    def _take_warm(self, profile):
+        """Return a ready warm process for this profile and remove it from the
+        pool, or None if none is ready. Triggers a refill when the held process
+        is unusable (dead / stale / wrong config)."""
         if not self._warm_enabled:
             return None
-        key = self._warm_key()
+        spec = self._warm_profile_spec(profile)
+        if spec is None:
+            return None
+        key = spec[0]
         with self._warm_lock:
-            w = self._warm
+            w = self._warm_pool.get(profile)
             if w is None:
                 return None
             if w.usable(key):
-                self._warm = None      # take it; refill happens after use
+                self._warm_pool[profile] = None   # take it; refill after use
                 return w
             # Present but not usable (still warming, wrong key, dead, stale).
             if w.ready and w.key != key:
-                # Config changed: discard and rebuild for the new config.
-                self._warm = None
+                self._warm_pool[profile] = None    # config changed: rebuild
             else:
                 return None
         # Fell through the "discard" branch: retire it and refill.
@@ -1425,15 +1458,16 @@ class TranslatorApp:
             w.close()
         except Exception:
             pass
-        self._spawn_warm_async()
+        self._spawn_warm_async(profile)
         return None
 
     def close_warm_pool(self):
-        """Terminate any warm process. Called on quit."""
+        """Terminate every warm process. Called on quit."""
         self._warm_enabled = False
         with self._warm_lock:
-            w, self._warm = self._warm, None
-        if w is not None:
+            procs = [p for p in self._warm_pool.values() if p is not None]
+            self._warm_pool = {}
+        for w in procs:
             try:
                 w.close()
             except Exception:
@@ -2467,12 +2501,20 @@ class TranslatorApp:
         summarize = self._should_summarize(text)
 
         # Fast path: a pre-warmed process already has the CLI initialised and
-        # the translate system prompt loaded, so we skip cold startup. Only for
-        # normal translation — dictionary, code-explain, and summary mode use a
-        # different system prompt the warm process wasn't spawned with. Any
-        # failure falls through to the normal cold path below, so this is safe.
-        if not dictionary and not is_code and not summarize:
-            if self._warm_translate(text, job_id, ss, meta):
+        # the right system prompt loaded, so we skip the ~2s cold startup.
+        # Normal translation and single-word dictionary lookups each have their
+        # own warm profile; code-explain and summary stay cold (rarer, and a
+        # different prompt). Any failure falls through to the cold path below,
+        # so this is always safe.
+        warm_profile = None
+        if summarize or is_code:
+            warm_profile = None
+        elif dictionary:
+            warm_profile = "dictionary"
+        else:
+            warm_profile = "translate"
+        if warm_profile is not None:
+            if self._warm_translate(text, job_id, ss, meta, warm_profile):
                 log_perf("translate_done", {
                     "mode": "warm",
                     "chars": len(text),
@@ -2505,12 +2547,12 @@ class TranslatorApp:
         })
         self.root.after(0, lambda: self._show_result(ok, result, job_id))
 
-    def _warm_translate(self, text, job_id, ss, meta):
-        """Translate using a pre-warmed process, streaming deltas through the
-        same display pipeline as _stream_claude. Returns True on success, or
-        False to fall back to the cold path. The warm process is consumed and a
-        replacement is spawned afterwards."""
-        warm = self._take_warm()
+    def _warm_translate(self, text, job_id, ss, meta, profile="translate"):
+        """Translate using a pre-warmed process for the given profile, streaming
+        deltas through the same display pipeline as _stream_claude. Returns True
+        on success, or False to fall back to the cold path. The warm process is
+        consumed and a replacement for the same profile is spawned afterwards."""
+        warm = self._take_warm(profile)
         if warm is None:
             return False
         ss.popup_ready = False
@@ -2539,7 +2581,7 @@ class TranslatorApp:
                 warm.close()
             except Exception:
                 pass
-            self._spawn_warm_async()   # keep one warm process ready
+            self._spawn_warm_async(profile)   # keep this profile warm
 
     def _record_history(self, job_id: int, meta: Dict[str, Any], final: str,
                         is_dict: bool) -> None:

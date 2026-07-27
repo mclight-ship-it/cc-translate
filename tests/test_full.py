@@ -807,6 +807,134 @@ class TestCCWarm(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestWarmPoolProfiles(unittest.TestCase):
+    """The warm pool keeps one pre-warmed process per profile so the common
+    cold paths (normal translation AND single-word dictionary lookups) skip the
+    ~2s CLI cold-start. Dictionary lookups used to always run cold."""
+
+    def _app(self, model="haiku", direction="auto"):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.load_config()
+        app.cfg[tr.CFG.MODEL] = model
+        app.cfg[tr.CFG.DIRECTION] = direction
+        app._warm_lock = __import__("threading").Lock()
+        app._warm_pool = {}
+        app._warm_enabled = True
+        return app
+
+    def test_profile_spec_translate_and_dictionary(self):
+        app = self._app(model="haiku", direction="auto")
+        tkey, tprompt = app._warm_profile_spec("translate")
+        self.assertEqual(tkey[0], "translate")
+        self.assertIn("haiku", tkey)
+        self.assertTrue(tprompt)
+        dkey, dprompt = app._warm_profile_spec("dictionary")
+        self.assertEqual(dkey[0], "dictionary")
+        # Dictionary prompt is direction-independent and is exactly the
+        # DICTIONARY_PROMPT used by the cold path (no direction in the key).
+        self.assertEqual(dprompt, tr.DICTIONARY_PROMPT)
+        self.assertNotIn("auto", dkey)
+
+    def test_profile_spec_unknown_is_none(self):
+        app = self._app()
+        self.assertIsNone(app._warm_profile_spec("nope"))
+
+    def test_take_warm_returns_usable_process_for_profile(self):
+        app = self._app()
+        key = app._warm_profile_spec("dictionary")[0]
+        fake = unittest.mock.Mock()
+        fake.usable.return_value = True
+        app._warm_pool["dictionary"] = fake
+        got = app._take_warm("dictionary")
+        self.assertIs(got, fake)
+        fake.usable.assert_called_once_with(key)
+        # Taken out of the pool so it isn't handed out twice.
+        self.assertIsNone(app._warm_pool["dictionary"])
+
+    def test_take_warm_none_when_profile_empty(self):
+        app = self._app()
+        self.assertIsNone(app._take_warm("translate"))
+
+    def test_take_warm_disabled_returns_none(self):
+        app = self._app()
+        app._warm_enabled = False
+        app._warm_pool["translate"] = unittest.mock.Mock()
+        self.assertIsNone(app._take_warm("translate"))
+
+    def test_take_warm_discards_wrong_key_and_refills(self):
+        app = self._app()
+        stale = unittest.mock.Mock()
+        stale.usable.return_value = False
+        stale.ready = True
+        stale.key = ("translate", "haiku", "SOMETHING-ELSE")
+        app._warm_pool["translate"] = stale
+        app._spawn_warm_async = unittest.mock.Mock()
+        got = app._take_warm("translate")
+        self.assertIsNone(got)
+        stale.close.assert_called_once_with()
+        app._spawn_warm_async.assert_called_once_with("translate")
+
+    def test_close_warm_pool_closes_every_profile(self):
+        app = self._app()
+        a, b = unittest.mock.Mock(), unittest.mock.Mock()
+        app._warm_pool = {"translate": a, "dictionary": b}
+        app.close_warm_pool()
+        a.close.assert_called_once_with()
+        b.close.assert_called_once_with()
+        self.assertFalse(app._warm_enabled)
+        self.assertEqual(app._warm_pool, {})
+
+
+class TestDoTranslateWarmRouting(unittest.TestCase):
+    """_do_translate must send single words to the dictionary warm profile,
+    normal text to the translate profile, and leave code/summary cold."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._ss = tr.StreamSession()
+        app._last_class = "text"
+        app._last_origin = "text"
+        app._should_summarize = lambda text: False
+        app._warm_enabled = True
+        app.root = unittest.mock.Mock()
+        app._warm_translate = unittest.mock.Mock(return_value=True)
+        return app
+
+    def _profile_of_call(self, app):
+        # _warm_translate(text, job_id, ss, meta, profile) — profile is last arg.
+        return app._warm_translate.call_args.args[-1]
+
+    def test_single_word_routes_to_dictionary_profile(self):
+        app = self._app()
+        app._do_translate("hello", job_id=1, meta={"input": "hello"})
+        app._warm_translate.assert_called_once()
+        self.assertEqual(self._profile_of_call(app), "dictionary")
+
+    def test_sentence_routes_to_translate_profile(self):
+        app = self._app()
+        app._do_translate("hello world, how are you today",
+                          job_id=1, meta={"input": "x"})
+        app._warm_translate.assert_called_once()
+        self.assertEqual(self._profile_of_call(app), "translate")
+
+    def test_code_stays_cold(self):
+        app = self._app()
+        app._last_class = "code"
+        app._call_claude = unittest.mock.Mock(return_value=(True, "explained"))
+        app._stream_claude = unittest.mock.Mock(return_value=False)
+        app._do_translate("print(x)", job_id=1, meta={"input": "print(x)"})
+        app._warm_translate.assert_not_called()
+
+    def test_summary_stays_cold(self):
+        app = self._app()
+        app._should_summarize = lambda text: True
+        app._call_claude = unittest.mock.Mock(return_value=(True, "summary"))
+        app._stream_claude = unittest.mock.Mock(return_value=False)
+        long_text = "This is a long sentence. " * 30
+        app._do_translate(long_text, job_id=1, meta={"input": long_text})
+        app._warm_translate.assert_not_called()
+
+
 # ============================================================
 # cc_update paths
 # ============================================================
