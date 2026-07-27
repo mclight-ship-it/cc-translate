@@ -1645,7 +1645,67 @@ class TestUiSmoke(unittest.TestCase):
         self.assertNotEqual((win.winfo_x(), win.winfo_y()), (-4000, -4000),
                             "centered popup must not remain parked off-screen")
 
-    def test_bring_to_front_activates_real_toplevel_and_skips_topmost(self):
+    def test_dynamic_stream_first_frame_reveals_once_without_size_jump(self):
+        # Regression guard for the popup flicker: in dynamic layout the first
+        # streaming frame used to reveal the window fitted to the tiny partial
+        # chunk (e.g. 150x150) and then immediately re-size/re-position to the
+        # stream-grow width (e.g. 630x132) — a visible flash + jump. The build
+        # step must now defer its reveal so the ONLY on-screen positioned frame
+        # is the single stream-grow geometry.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app._anim_job = None
+        app._last_class = "text"
+        app._last_origin = "text"
+        app._last_input = "hi"
+        app.popup = None
+        app._ss = tr.StreamSession()
+        app._ss.centered_ready = False
+        app.popup = app._make_loading_popup()
+
+        onscreen = []
+        orig_geo = tr.tk.Wm.wm_geometry
+
+        def spy(self, newGeometry=None):
+            r = orig_geo(self, newGeometry)
+            if newGeometry is not None and "+" in str(newGeometry):
+                try:
+                    self.update_idletasks()
+                    x = int(self.winfo_x())
+                    mapped = bool(self.winfo_ismapped())
+                except Exception:
+                    x, mapped = -99999, False
+                # Only count genuine on-screen frames (not the -4000 park).
+                if mapped and x > -3000:
+                    size = str(newGeometry).split("+", 1)[0]
+                    onscreen.append(size)
+            return r
+
+        tr.tk.Wm.wm_geometry = spy
+        tr.tk.Wm.geometry = spy
+        try:
+            app._stream_update("first partial chunk of streamed text arriving")
+        finally:
+            tr.tk.Wm.wm_geometry = orig_geo
+            tr.tk.Wm.geometry = orig_geo
+
+        def _kill():
+            try:
+                if app.popup is not None and app.popup.winfo_exists():
+                    app.popup.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        # The first streaming frame must produce exactly one on-screen size — no
+        # fitted-then-grow jump. (Position may still be clamped, but a second
+        # distinct on-screen SIZE is the visible flicker we are guarding against.)
+        distinct_sizes = list(dict.fromkeys(onscreen))
+        self.assertEqual(
+            len(distinct_sizes), 1,
+            f"dynamic stream first frame must reveal at one on-screen size, "
+            f"got sequence {onscreen}")
         # The 'stuck on top' bug: _bring_to_front must make the window the true
         # foreground window via its REAL top-level HWND (not Tk's inner frame),
         # and when that activation succeeds it must NOT leave a topmost pulse

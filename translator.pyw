@@ -2127,10 +2127,18 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     except Exception:
                         anchor = None
                 self._destroy_popup()
+                # Build the popup off-screen but DON'T reveal it yet: the fitted
+                # size of this first partial chunk differs from the stream-grow
+                # size/position, so revealing here then re-sizing in
+                # _set_popup_text would flash a wrong-sized frame (visible
+                # flicker + position jump in dynamic layout). Instead let the
+                # single _set_popup_text geometry move be the only on-screen frame.
                 self.popup = self._make_popup(current, anchor=anchor,
-                                              title=self._result_title())
+                                              title=self._result_title(),
+                                              reveal=False)
                 # First stream frame: lock width and initialize grow-only height.
                 self._set_popup_text(current, stream_grow=True)
+                self._bring_to_front(self.popup)
             else:
                 self._set_popup_text(current, stream_grow=True)
         except Exception:
@@ -2829,7 +2837,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         win.bind("<Escape>", lambda e: self._user_close_popup())
 
     def _make_popup(self, message, anchor=None, is_error=False, title=None,
-                    highlight=False):
+                    highlight=False, reveal=True):
         t = self.theme
         win = tk.Toplevel(self.root)
         win.withdraw()
@@ -2883,6 +2891,17 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._apply_taskbar_identity(win)
         win.update_idletasks()
         win._round_redraw()
+        # Cache the intended on-screen position so _window_xy can report it even
+        # while the window is still parked off-screen (needed by the deferred
+        # reveal path below, where the caller sizes/positions the window itself).
+        self._remember_window_xy(win, x, y)
+        if not reveal:
+            # Deferred reveal: leave the painted card parked off-screen and let
+            # the caller perform the sole on-screen geometry move. Used by the
+            # streaming first frame so the window appears directly at its
+            # stream-grow size/position instead of flashing the fitted size
+            # first and then jumping (a real flicker in dynamic layout).
+            return win
         # Reveal at the final position as the only on-screen frame.
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)
@@ -3060,6 +3079,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if isinstance(cached, tuple) and len(cached) == 2:
             cx, cy = int(cached[0]), int(cached[1])
             if (x, y) == (0, 0) and (cx, cy) != (0, 0):
+                return cx, cy
+            # While a popup is parked far off-screen (deferred reveal), Tk
+            # reports the park coordinates. Prefer the intended on-screen
+            # position we cached so stream anchoring/monitor detection is right.
+            if x <= -3000 and cx > -3000:
                 return cx, cy
         return x, y
 
