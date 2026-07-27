@@ -2889,6 +2889,16 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
         self._bind_popup_window_events(win)
         self._apply_taskbar_identity(win)
+        # Lock the final size while still parked off-screen. _size_popup (called
+        # inside _layout_popup_offscreen) leaves the window at its measurement
+        # geometry (req_w×1000). Moving on-screen without first correcting the
+        # size leaves DWM with a stale tall-window composite, which briefly
+        # flashes before the compositor refreshes to the real height. Follow
+        # _reveal_rounded_window's proven pattern: correct size off-screen →
+        # update/redraw → only position changes on the final reveal move (single
+        # DWM transition, no stale-composite flash for ANY layout or text length).
+        off = -4000
+        win.geometry(f"{w}x{h}+{off}+{off}")
         win.update_idletasks()
         win._round_redraw()
         # Cache the intended on-screen position so _window_xy can report it even
@@ -2902,7 +2912,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             # stream-grow size/position instead of flashing the fitted size
             # first and then jumping (a real flicker in dynamic layout).
             return win
-        # Reveal at the final position as the only on-screen frame.
+        # Move on-screen. Size is already locked at (w, h); only the position
+        # changes — matching _reveal_rounded_window's single-transition pattern.
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)
         win.update_idletasks()
@@ -3773,6 +3784,17 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 if self._ss.origin_y is not None:
                     self._ss.origin_y = ny
 
+            # Streaming first frame: the window is still parked off-screen at
+            # the fitted size (_make_popup's measurement left it at req_w×h_fit).
+            # Lock the stream-grow size off-screen before moving on-screen so
+            # only the position changes in the final geometry call — same
+            # single-transition pattern used by _reveal_rounded_window.
+            try:
+                if int(win.winfo_x()) <= -3000:
+                    win.geometry(f"{w}x{h}+-4000+-4000")
+                    win.update_idletasks()
+            except Exception:
+                pass
             win.geometry(f"{w}x{h}+{nx}+{ny}")
             self._remember_window_xy(win, nx, ny)
             self._apply_window_rounding(win)
