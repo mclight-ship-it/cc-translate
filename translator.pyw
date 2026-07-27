@@ -81,6 +81,7 @@ from cc_core import (
     THEME_LABELS, POPUP_LAYOUT_LABELS, OCR_ENGINE_LABELS, TRAY_CLICK_ACTION_LABELS,
     fit_box_size,
     TRIGGER_POLL_MS, StreamSession,
+    is_single_word,
 )
 from cc_app_warm import WarmMixin
 from cc_app_update import UpdateMixin
@@ -91,6 +92,7 @@ from cc_app_diagnostics import DiagnosticsMixin
 from cc_app_history import HistoryMixin
 from cc_app_settings import SettingsMixin
 from cc_app_ocr import OcrMixin
+from cc_app_results import ResultActionsMixin
 
 
 def _enable_dpi_awareness():
@@ -171,31 +173,7 @@ HISTORY_FILTER_LABELS = HISTORY_FILTER_LABELS_ZH.copy()
 
 # (rich-text rendering: iter_rich_segments, highlight_code etc. live in cc_rich.py)
 
-def is_single_word(text):
-    """True if the selection is a word or short term worth a dictionary entry
-    rather than a sentence translation. Allows short multi-word terms (e.g.
-    "machine learning", "New York") but rejects anything that looks like a
-    sentence (line breaks, trailing sentence punctuation, or too long/too many
-    tokens)."""
-    if not text:
-        return False
-    t = text.strip()
-    if not t or "\n" in t:
-        return False
-    # A trailing sentence terminator means it's a sentence, not a lookup term.
-    if t[-1] in ".!?…。！？，,;；:：":
-        return False
-    has_cjk = any(ord(c) > 0x2E7F for c in t)
-    if has_cjk:
-        # A short CJK term with no spaces (words/idioms up to 4 chars, e.g. 青提,
-        # 一丝不苟). Longer or spaced runs are treated as sentences.
-        return " " not in t and len(t) <= 4
-    # Latin: 1–2 alphabetic tokens forming a term (hyphen/apostrophe allowed
-    # inside a token), of reasonable length. Digits or a 3rd token → sentence.
-    parts = t.split()
-    if not (1 <= len(parts) <= 2) or len(t) > 30:
-        return False
-    return all(p and all(c.isalpha() or c in "-'" for c in p) for p in parts)
+# (is_single_word lives in cc_core.py, re-exported via the cc_core import above)
 
 
 # ---- Code detection (local, instant — never calls the model) ---------------
@@ -792,7 +770,7 @@ def _draw_round_rect(cv, x1, y1, x2, y2, r, **kwargs):
 
 class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     QuickInputMixin, DiagnosticsMixin, HistoryMixin,
-                    SettingsMixin, OcrMixin):
+                    SettingsMixin, OcrMixin, ResultActionsMixin):
     def __init__(self):
         # Detect a fresh install *before* loading config: on first run the
         # config file doesn't exist yet. We use this to enable autostart by
@@ -959,6 +937,16 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         translator.pyw — ``save_config`` stays in this module because it belongs
         to the config-IO family (CONFIG_PATH / Config / _atomic_write_json)."""
         save_config(cfg)
+
+    def _add_history(self, *args, **kwargs):
+        """Append a history entry via the module-level ``add_history``.
+
+        Thin instance wrapper so mixin modules (e.g. ResultActionsMixin in
+        cc_app_results) can record history through ``self`` without importing
+        translator.pyw — ``add_history`` stays in this module because it belongs
+        to the history-IO family (HISTORY_PATH / load_history / _atomic_write_json
+        / _HISTORY_LOCK)."""
+        return add_history(*args, **kwargs)
 
     def _is_busy(self):
         """True when yanking the app out for a restart would disrupt the user:
@@ -1854,285 +1842,6 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                         is_code=(self._last_class == "code"),
                         kind=self._history_kind())
 
-    def _maybe_add_explain_button(self, win):
-        """For a mixed prose+code selection, add a one-shot '解释代码' button to
-        the result popup's title bar. Clicking it explains the code portion in
-        Chinese and appends that below the existing translation (which is left
-        untouched)."""
-        if self._last_class != "mixed":
-            return
-        if not win or getattr(win, "_has_explain_btn", False):
-            return
-        bar = getattr(win, "_btn_bar", None)
-        mk = getattr(win, "_mk_bar_btn", None)
-        if bar is None or mk is None:
-            return
-        try:
-            btn = mk(i18n.get("result.explain"), self._explain_code_in_result)
-            # Sit to the left of 复制 / ✕ (packed right-to-left).
-            btn.pack(side="right", padx=(0, 4))
-            win._explain_btn = btn
-            win._has_explain_btn = True
-        except Exception:
-            pass
-
-    def _maybe_add_result_actions_button(self, win):
-        """Add a compact post-result actions menu for successful translations.
-
-        The menu groups together alternate target-language retranslation,
-        bilingual copy, and one-click rewrites (more concise / more formal /
-        key-point summary) so the title bar stays compact even as we add more
-        useful follow-up actions."""
-        if not win or getattr(win, "_has_actions_btn", False):
-            return
-        if self._last_class == "code":
-            return
-        if self._last_input and is_single_word(self._last_input):
-            return
-        bar = getattr(win, "_btn_bar", None)
-        mk = getattr(win, "_mk_bar_btn", None)
-        if bar is None or mk is None:
-            return
-        try:
-            t = self.theme
-            menu = tk.Menu(
-                win, tearoff=0,
-                bg=t.get("popup_bg", t["bg"]), fg=t["fg"],
-                activebackground=t["accent"], activeforeground="#ffffff",
-                bd=0, relief="flat",
-                font=("Microsoft YaHei UI", 9))
-            if self._last_input:
-                for code, (zh_name, en_name) in LANGUAGES.items():
-                    if i18n.get_language() == "en_US":
-                        lang_name = (i18n.get("result.language_chinese")
-                                     if code == "zh" else en_name)
-                    else:
-                        lang_name = zh_name
-                    menu.add_command(
-                        label=i18n.get("result.retranslate_to").format(language=lang_name),
-                        command=lambda c=code: self._retranslate_to(c))
-                menu.add_separator()
-                menu.add_command(label=i18n.get("result.copy_bilingual"), command=self._copy_bilingual_result)
-                menu.add_separator()
-            for mode in ("concise", "formal", "summary"):
-                label_key = RESULT_ACTION_PROMPTS[mode][0]
-                menu.add_command(
-                    label=i18n.get(label_key),
-                    command=lambda m=mode: self._transform_result(m))
-            btn = mk(i18n.get("result.actions"), lambda: self._show_result_actions_menu(win))
-            btn.pack(side="right", padx=(0, 4))
-            win._actions_btn = btn
-            win._actions_menu = menu
-            win._has_actions_btn = True
-        except Exception:
-            pass
-
-    def _show_result_actions_menu(self, win):
-        menu = getattr(win, "_actions_menu", None)
-        btn = getattr(win, "_actions_btn", None)
-        if menu is None or btn is None:
-            return
-        try:
-            x = btn.winfo_rootx()
-            y = btn.winfo_rooty() + btn.winfo_height()
-            menu.tk_popup(x, y)
-        finally:
-            try:
-                menu.grab_release()
-            except Exception:
-                pass
-
-    def _retranslate_to(self, code):
-        src = self._last_input
-        prompt = DIRECTION_MODES.get(f"to_{code}")
-        if not src or not prompt:
-            return
-        win = self.popup
-        btn = getattr(win, "_actions_btn", None) if win else None
-        if btn is not None:
-            try:
-                btn.config(
-                    text=i18n.get("result.processing"), state="disabled",
-                    cursor="watch")
-            except Exception:
-                pass
-        threading.Thread(
-            target=self._do_retranslate,
-            args=(src, prompt + SYSTEM_SUFFIX, code), daemon=True).start()
-
-    def _do_retranslate(self, src, prompt, code):
-        try:
-            ok, result = self._call_claude(src, prompt)
-        except Exception as e:
-            ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_retranslation(ok, result, code))
-
-    def _apply_retranslation(self, ok, result, code):
-        win = self.popup
-        if not win or not getattr(win, "_text", None):
-            return
-        btn = getattr(win, "_actions_btn", None)
-        if ok:
-            if getattr(win._text, "_rich", False):
-                win._text._rich_highlight = True
-            self._set_popup_text(result, resize=True)
-            self._remember_result(True, self._result_title(True), result)
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                add_history(self._last_input or "", result, False,
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=False, kind=self._history_kind())
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.actions"), state="normal",
-                           cursor="hand2")
-            except Exception:
-                pass
-
-    def _current_popup_text(self):
-        if self.popup and getattr(self.popup, "_text", None):
-            return self.popup._text.get("1.0", "end-1c")
-        return ""
-
-    def _copy_text_content(self, content):
-        try:
-            pyperclip.copy(content)
-            return True
-        except Exception as e:
-            log_error("copy_text", e)
-            return False
-
-    def _flash_popup_button(self, attr, busy_text, reset_text, delay=1200):
-        win = self.popup
-        btn = getattr(win, attr, None) if win else None
-        if btn is None:
-            return
-        try:
-            btn.config(text=busy_text)
-            win.after(delay, lambda: (
-                self.popup and getattr(self.popup, attr, None)
-                and getattr(self.popup, attr).config(text=reset_text)))
-        except Exception:
-            pass
-
-    def _copy_bilingual_result(self):
-        result = self._current_popup_text()
-        if not result:
-            return
-        if self._last_input:
-            content = (
-                f"{i18n.get('result.source_label')}:\n{self._last_input}\n\n"
-                f"{i18n.get('result.output_label')}:\n{result}"
-            )
-        else:
-            content = result
-        if self._copy_text_content(content):
-            self._flash_popup_button("_actions_btn", i18n.get("result.copied"), i18n.get("result.actions"))
-
-    def _transform_result(self, mode):
-        item = RESULT_ACTION_PROMPTS.get(mode)
-        current = self._current_popup_text()
-        if not item or not current:
-            return
-        win = self.popup
-        btn = getattr(win, "_actions_btn", None) if win else None
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get(item[0]) + "…", state="disabled",
-                           cursor="watch")
-            except Exception:
-                pass
-        threading.Thread(target=self._do_transform_result,
-                         args=(mode, current), daemon=True).start()
-
-    def _do_transform_result(self, mode, current):
-        prompt = RESULT_ACTION_PROMPTS.get(mode, ("", ""))[1]
-        try:
-            ok, result = self._call_claude(current, prompt)
-        except Exception as e:
-            ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_result_transform(ok, result))
-
-    def _apply_result_transform(self, ok, result):
-        win = self.popup
-        if not win or not getattr(win, "_text", None):
-            return
-        btn = getattr(win, "_actions_btn", None)
-        if ok:
-            if getattr(win._text, "_rich", False):
-                win._text._rich_highlight = True
-            self._set_popup_text(result, resize=True)
-            self._remember_result(True, self._result_title(True), result)
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                add_history(self._last_input or "", result,
-                            is_single_word(self._last_input),
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=(self._last_class == "code"),
-                            kind=self._history_kind())
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.actions"), state="normal", cursor="hand2")
-            except Exception:
-                pass
-
-    def _explain_code_in_result(self):
-        """Button handler: explain the code in the current result. Runs the
-        model off the main thread so the UI stays responsive; this is a
-        user-initiated action, not on the translation hot path, so it never
-        affects translation speed."""
-        win = self.popup
-        if not win or not getattr(win, "_text", None):
-            return
-        btn = getattr(win, "_explain_btn", None)
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.explaining"), state="disabled", cursor="watch")
-            except Exception:
-                pass
-        base = win._text.get("1.0", "end-1c")
-        src = self._last_input or base
-        threading.Thread(target=self._do_explain_code, args=(src, base),
-                         daemon=True).start()
-
-    def _do_explain_code(self, src, base):
-        try:
-            ok, explanation = self._call_claude(src, CODE_EXPLAIN_APPEND_PROMPT)
-        except Exception as e:
-            ok, explanation = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(
-            0, lambda: self._append_code_explanation(ok, base, explanation))
-
-    def _append_code_explanation(self, ok, base, explanation):
-        win = self.popup
-        if not win or not getattr(win, "_text", None):
-            return
-        btn = getattr(win, "_explain_btn", None)
-        if not ok:
-            if btn is not None:
-                try:
-                    btn.config(text=i18n.get("result.explain"), state="normal",
-                               cursor="hand2")
-                except Exception:
-                    pass
-            explanation = explanation or i18n.get("result.explain_failed")
-            return
-        divider = i18n.get("result.explain_divider")
-        combined = base + divider + explanation
-        # Final frame: highlight code blocks in the combined result.
-        if getattr(win._text, "_rich", False):
-            win._text._rich_highlight = True
-        # _set_popup_text branches on layout: centred refits, dynamic resizes.
-        self._set_popup_text(combined, resize=True)
-        self._remember_result(True, self._result_title(True), combined)
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.explained"), state="disabled",
-                           cursor="arrow")
-            except Exception:
-                pass
-
-    # ---------- Popup ----------
     def _make_loading_popup(self):
         """A compact, modern 'translating' card: an accent-coloured spinner
         next to a muted label. Borderless, rounded, no toolbar/scrollbar."""

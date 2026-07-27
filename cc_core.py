@@ -424,6 +424,33 @@ def fit_box_size(src_w, src_h, max_w, max_h):
     return max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale))), scale
 
 
+def is_single_word(text):
+    """True if the selection is a word or short term worth a dictionary entry
+    rather than a sentence translation. Allows short multi-word terms (e.g.
+    "machine learning", "New York") but rejects anything that looks like a
+    sentence (line breaks, trailing sentence punctuation, or too long/too many
+    tokens)."""
+    if not text:
+        return False
+    t = text.strip()
+    if not t or "\n" in t:
+        return False
+    # A trailing sentence terminator means it's a sentence, not a lookup term.
+    if t[-1] in ".!?…。！？，,;；:：":
+        return False
+    has_cjk = any(ord(c) > 0x2E7F for c in t)
+    if has_cjk:
+        # A short CJK term with no spaces (words/idioms up to 4 chars, e.g. 青提,
+        # 一丝不苟). Longer or spaced runs are treated as sentences.
+        return " " not in t and len(t) <= 4
+    # Latin: 1–2 alphabetic tokens forming a term (hyphen/apostrophe allowed
+    # inside a token), of reasonable length. Digits or a 3rd token → sentence.
+    parts = t.split()
+    if not (1 <= len(parts) <= 2) or len(t) > 30:
+        return False
+    return all(p and all(c.isalpha() or c in "-'" for c in p) for p in parts)
+
+
 # ---------------------------------------------------------------------------
 # Model prompts (system suffixes, dictionary/code-explain/result-action, OCR).
 # ---------------------------------------------------------------------------
