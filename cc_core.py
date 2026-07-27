@@ -42,6 +42,11 @@ def _resolve_data_dir():
 DATA_DIR = _resolve_data_dir()
 
 
+# Breadcrumb dropped just before an auto-update restart; the freshly launched
+# instance reads it to show a "已更新并重启" tray balloon, then deletes it.
+UPDATE_NOTICE_PATH = os.path.join(DATA_DIR, "update_notice.txt")
+
+
 def _user_data_path(name: str) -> str:
     """Resolve a user data file in DATA_DIR, migrating any legacy copy that
     still sits next to the program (APP_DIR) on first run after the move."""

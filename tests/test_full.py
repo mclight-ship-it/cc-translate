@@ -1857,9 +1857,10 @@ class TestUpdateStatusCopy(unittest.TestCase):
         def on_status(msg, kind):
             seen.append((msg, kind))
 
+        import cc_app_update
         with unittest.mock.patch.object(
                 app.root, "after", side_effect=lambda _ms, fn: fn()), \
-                unittest.mock.patch.object(tr, "is_git_deploy", return_value=True), \
+                unittest.mock.patch.object(cc_app_update, "is_git_deploy", return_value=True), \
                 unittest.mock.patch.object(
                     tr._cc_update, "fetch_remote_branch", return_value=(True, "")), \
                 unittest.mock.patch.object(
