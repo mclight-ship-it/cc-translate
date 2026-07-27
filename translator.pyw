@@ -2922,9 +2922,17 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
         # Step 1: deiconify at the correct final size, still off-screen.
         # DWM now has a composite at (w, h) — no default-size artefact.
+        # Use win.update() (not just update_idletasks) so the canvas
+        # <Configure> event fires and cv.winfo_width()/height() settle to
+        # their real values before _round_redraw() tries to paint.
+        # update_idletasks() only flushes idle tasks; the Configure event
+        # that sizes the canvas travels through the normal event queue and
+        # can be missed, leaving cv.winfo_width() == 1 so _round_redraw()
+        # returns early — the window then reaches the screen as an
+        # unpainted white rectangle.
         win.geometry(f"{w}x{h}+-4000+-4000")
         win.deiconify()
-        win.update_idletasks()
+        win.update()
         win._round_redraw()
 
         if not reveal:
