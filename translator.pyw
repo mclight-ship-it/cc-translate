@@ -2890,34 +2890,51 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             win, card, popup_bg=popup_bg, is_error=is_error,
             highlight=highlight)
 
-        # Measure, fill and paint the popup entirely off-screen, then move it
-        # on-screen in a single painted step. Colour-key transparency is
-        # incompatible with -alpha, so we can't fade the reveal; instead the
-        # whole measurement/rounding dance happens off-screen and the ONLY
-        # on-screen frame is the finished window. This kills the flash of an
-        # unpainted (near-black) colour-key card that appeared when the popup
-        # was revealed before its text was laid out or its corners drawn.
+        # Measure, fill and paint the popup while it is still WITHDRAWN, then
+        # reveal it with exactly the same two-step sequence that
+        # _reveal_rounded_window uses (the loading / history / settings windows
+        # use that helper and never flash).
+        #
+        # The flash bug: the old code did deiconify() first, THEN measured the
+        # text size.  DWM composited the window at its default/small size the
+        # moment it was deiconified; moving on-screen later briefly showed that
+        # stale composite → visible "small window first, then large" jump.
+        #
+        # Fix: keep the window WITHDRAWN for the entire measurement phase.
+        # _size_popup drives the text widget through a full update() cycle,
+        # which works on unmapped windows.  Once we know (w, h) we follow
+        # _reveal_rounded_window exactly:
+        #   1. geometry(w×h off-screen) + deiconify  → DWM first sees window
+        #      at the CORRECT size (no stale small thumbnail)
+        #   2. update_idletasks + _round_redraw       → paint rounded card
+        #   3. geometry(w×h on-screen)                → position-only move;
+        #      DWM composite is already correct, no size change on reveal
         win.geometry("+{}+{}".format(-4000, -4000))
-        win.deiconify()
-        win.update_idletasks()
+        win.update_idletasks()   # lay out widgets while still withdrawn
         w, h, x, y = self._layout_popup_offscreen(win, message, anchor)
 
         self._bind_popup_window_events(win)
         self._apply_taskbar_identity(win)
-        # Cache the intended on-screen position so _window_xy can report it even
-        # while the window is still parked off-screen (needed by the deferred
-        # reveal path below, where the caller sizes/positions the window itself).
+        # Cache the intended on-screen position so _window_xy can report it
+        # even while the window is still parked off-screen (needed by the
+        # deferred reveal path below, where the caller performs the reveal).
         self._remember_window_xy(win, x, y)
+
+        # Step 1: deiconify at the correct final size, still off-screen.
+        # DWM now has a composite at (w, h) — no default-size artefact.
+        win.geometry(f"{w}x{h}+-4000+-4000")
+        win.deiconify()
+        win.update_idletasks()
+        win._round_redraw()
+
         if not reveal:
-            # Deferred reveal: leave the painted card parked off-screen and let
-            # the caller perform the sole on-screen geometry move. Used by the
-            # streaming first frame so the window appears directly at its
-            # stream-grow size/position instead of flashing the fitted size
-            # first and then jumping (a real flicker in dynamic layout).
+            # Deferred reveal: window is mapped off-screen at its correct
+            # size; the caller (e.g. streaming first frame) performs the
+            # sole on-screen geometry move so no intermediate size is shown.
             return win
-        # Single combined resize+reposition: DWM sees one transition from the
-        # off-screen measurement geometry to the final on-screen size and
-        # position, with no intermediate painted frame visible to the user.
+
+        # Step 2: position-only move on-screen — size does not change, so
+        # DWM's existing composite is the correct final frame.
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)
         win.update_idletasks()
