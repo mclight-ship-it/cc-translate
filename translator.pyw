@@ -982,6 +982,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._job_id = 0
         self._resize_mode = None
         self._resize_start = None
+        self._pending_loading_job = None   # after() token for deferred loading popup
 
         # Self-update state.
         self._update_in_progress = False
@@ -1437,8 +1438,22 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # request can't overwrite self._last_* before the worker persists this
         # job's result (which would pair the new input with the old output).
         meta = self._history_meta()
-        self.popup = self._make_loading_popup()
-        self._animate_loading(0)
+        # Defer the loading popup so fast translations (common with the warm pool)
+        # skip it entirely.  The small loading card → larger result popup size jump
+        # is visible as a flash when translations complete in < 200 ms; with this
+        # guard the result popup appears directly without any intermediate card.
+        # If the translation takes longer than 200 ms the popup appears normally.
+        job_id_capture = job_id
+
+        def _show_loading_popup():
+            self._pending_loading_job = None
+            # Only show if nothing has arrived yet (popup is still None) and the
+            # job that kicked off this timer is still the current job.
+            if self.popup is None and self._job_is_current(job_id_capture):
+                self.popup = self._make_loading_popup()
+                self._animate_loading(0)
+
+        self._pending_loading_job = self.root.after(200, _show_loading_popup)
         threading.Thread(target=self._do_translate, args=(text, job_id, meta),
                          daemon=True).start()
 
@@ -2889,18 +2904,6 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
         self._bind_popup_window_events(win)
         self._apply_taskbar_identity(win)
-        # Lock the final size while still parked off-screen. _size_popup (called
-        # inside _layout_popup_offscreen) leaves the window at its measurement
-        # geometry (req_w×1000). Moving on-screen without first correcting the
-        # size leaves DWM with a stale tall-window composite, which briefly
-        # flashes before the compositor refreshes to the real height. Follow
-        # _reveal_rounded_window's proven pattern: correct size off-screen →
-        # update/redraw → only position changes on the final reveal move (single
-        # DWM transition, no stale-composite flash for ANY layout or text length).
-        off = -4000
-        win.geometry(f"{w}x{h}+{off}+{off}")
-        win.update_idletasks()
-        win._round_redraw()
         # Cache the intended on-screen position so _window_xy can report it even
         # while the window is still parked off-screen (needed by the deferred
         # reveal path below, where the caller sizes/positions the window itself).
@@ -2912,8 +2915,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             # stream-grow size/position instead of flashing the fitted size
             # first and then jumping (a real flicker in dynamic layout).
             return win
-        # Move on-screen. Size is already locked at (w, h); only the position
-        # changes — matching _reveal_rounded_window's single-transition pattern.
+        # Single combined resize+reposition: DWM sees one transition from the
+        # off-screen measurement geometry to the final on-screen size and
+        # position, with no intermediate painted frame visible to the user.
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)
         win.update_idletasks()
@@ -3848,6 +3852,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
     def _destroy_popup(self):
         self._stop_animation()
         self._cancel_stream_flush()
+        # Cancel any loading popup that hasn't appeared yet.
+        pending = getattr(self, '_pending_loading_job', None)
+        if pending is not None:
+            try:
+                self.root.after_cancel(pending)
+            except Exception:
+                pass
+            self._pending_loading_job = None
         self._ss.cols = 0
         self._ss.fixed_w = 0
         self._ss.max_h = 0
