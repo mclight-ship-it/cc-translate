@@ -1553,6 +1553,52 @@ class TestUiSmoke(unittest.TestCase):
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
 
+    def test_settings_restore_defaults_repopulates(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        # Seed non-default values so the restore has something visible to undo.
+        app.cfg[tr.CFG.MODEL] = "opus"
+        app.cfg[tr.CFG.FONT_SIZE] = 20
+        app._open_settings()
+        win = app.settings_win
+
+        def walk(w):
+            yield w
+            for child in w.winfo_children():
+                yield from walk(child)
+
+        widgets = list(walk(win))
+
+        # Locate the model combobox by its fixed value set.
+        model_combo = None
+        for w in widgets:
+            if isinstance(w, tr.ttk.Combobox):
+                try:
+                    vals = list(w.cget("values"))
+                except Exception:
+                    vals = []
+                if "haiku" in vals and "opus" in vals:
+                    model_combo = w
+                    break
+        self.assertIsNotNone(model_combo, "model combobox should exist")
+        self.assertEqual(model_combo.get(), "opus")
+
+        # Locate and click the Restore Defaults button.
+        label = tr.i18n.get("settings.label.restore_defaults")
+        restore_btn = None
+        for w in widgets:
+            if isinstance(w, tr.tk.Button) and w.cget("text") == label:
+                restore_btn = w
+                break
+        self.assertIsNotNone(restore_btn,
+                             "restore-defaults button should exist in footer")
+        restore_btn.invoke()
+
+        # The form now shows defaults; nothing is persisted until Save.
+        self.assertEqual(model_combo.get(), tr.DEFAULT_CONFIG[tr.CFG.MODEL])
+        self.assertEqual(app.cfg[tr.CFG.MODEL], "opus",
+                         "restore should not persist until Save is clicked")
+
     def test_about_window_builds(self):
         self._build("_open_about")
 

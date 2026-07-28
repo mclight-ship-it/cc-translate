@@ -31,7 +31,7 @@ import i18n
 from win32util import get_monitor_rect
 from cc_update import version_string, is_autostart_enabled, set_autostart
 from cc_core import (
-    CFG, POPUP_CORNER_RADIUS,
+    CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS,
     ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     ROUND_KEY_COLOR, SUPPORT_IMAGE_PATH, SETTINGS_MIN_W, SETTINGS_COL_MIN_W,
     fit_box_size, LANGUAGE_LABELS,
@@ -458,6 +458,12 @@ class SettingsMixin:
         c.bind("<Button-1>", toggle)
         draw()
         c.get = lambda: st["on"]
+
+        def _set(v):
+            st["on"] = bool(v)
+            draw()
+
+        c.set = _set
         return c
 
     def _settings_section(self, body, row_state, text_, *, bg, accent, font):
@@ -947,6 +953,34 @@ class SettingsMixin:
                     text=f"{i18n.get('settings.label.save_failed')}: {e}",
                     fg=t["status_err"])
 
+        def restore_defaults():
+            # Repopulate every form widget with its DEFAULT_CONFIG value without
+            # persisting — the user still clicks Save to commit, or Close to
+            # discard. Language is intentionally left untouched (it has no static
+            # default and changing it forces an app relaunch).
+            model_var.set(DEFAULT_CONFIG[CFG.MODEL])
+            dir_var.set(direction_labels[DEFAULT_CONFIG[CFG.DIRECTION]])
+            theme_var.set(theme_labels[DEFAULT_CONFIG[CFG.THEME]])
+            layout_var.set(layout_labels[DEFAULT_CONFIG[CFG.POPUP_LAYOUT]])
+            ocr_engine_var.set(ocr_engine_labels[DEFAULT_CONFIG[CFG.OCR_ENGINE]])
+            tray_click_var.set(
+                tray_click_labels[DEFAULT_CONFIG[CFG.TRAY_CLICK_ACTION]])
+            font_var.set(DEFAULT_CONFIG[CFG.FONT_SIZE])
+            max_var.set(DEFAULT_CONFIG[CFG.MAX_CHARS])
+            hist_limit_var.set(DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
+            gap_var.set(DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
+            summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
+            ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
+            history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
+            clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])
+            auto_update_sw.set(DEFAULT_CONFIG[CFG.AUTO_UPDATE_ENABLED])
+            # Autostart isn't stored in the config dict (it's OS state); a fresh
+            # install enables it, so that's the default we restore to.
+            autostart_sw.set(True)
+            status.config(
+                text=i18n.get("settings.label.defaults_restored"),
+                fg=t["status_ok"])
+
         def mk_btn(parent, text_, cmd, primary=False):
             if primary:
                 base_bg = accent
@@ -970,6 +1004,9 @@ class SettingsMixin:
         save_btn.pack(side="right")
         close2 = mk_btn(footer, i18n.get("settings.label.close"), win.destroy)
         close2.pack(side="right", padx=(0, 8))
+        restore_btn = mk_btn(
+            footer, i18n.get("settings.label.restore_defaults"), restore_defaults)
+        restore_btn.pack(side="right", padx=(0, 8))
 
         win.bind("<Escape>", lambda e: win.destroy())
 
