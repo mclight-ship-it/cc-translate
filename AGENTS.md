@@ -54,10 +54,10 @@ git push --no-verify
 
 本项目有两份 README，互为翻译，**必须成对维护**：
 
-- `README.md` — 简体中文（GitHub 默认展示）
-- `README.en.md` — English
+- `README.md` — English (GitHub 默认展示)
+- `README.zh.md` — 简体中文
 
-两者顶部都有语言切换链接（`[简体中文](README.md) | [English](README.en.md)`）。
+两者顶部都有语言切换链接（`[English](README.md) | [简体中文](README.zh.md)`）。
 GitHub 只渲染根目录的 `README.md`、且**没有内建的多语言切换**，这套双语完全靠手动维护。
 
 **约定**：任何改动只要涉及 README 的内容（新增/修改功能说明、安装步骤、
@@ -69,7 +69,7 @@ GitHub 只渲染根目录的 `README.md`、且**没有内建的多语言切换**
 1. 改代码。
 2. 若改动触及纯函数（`classify_selection`、`code_ratio`、`is_single_word`、
    `iter_rich_segments`、`highlight_code` 等），**同步更新或新增 `tests/` 用例**。
-3. 若改动涉及 README 内容，**中英两份（`README.md` 和 `README.en.md`）一起改**，保持一致。
+3. 若改动涉及 README 内容，**中英两份（`README.md` 和 `README.zh.md`）一起改**，保持一致。
 4. 跑 `python -m unittest discover -s tests`，确认全绿。
 5. 用个人账号 `mclight-ship-it` 提交并推送到 `origin master`
    （提交信息末尾加 `Co-authored-by: Copilot <...>`）。
@@ -80,7 +80,7 @@ GitHub 只渲染根目录的 `README.md`、且**没有内建的多语言切换**
 | 路径 | 作用 |
 |---|---|
 | `translator.pyw` | 主程序（GUI 只在 `__main__` 下启动，可安全 import） |
-| `README.md` / `README.en.md` | 双语说明文档，**必须成对维护** |
+| `README.md` / `README.zh.md` | 双语说明文档，**必须成对维护** |
 | `tests/` | 单元测试（`_tr.py` 负责按路径把主程序加载为可导入模块） |
 | `.githooks/pre-push` | 推送前自动跑测试的钩子（需 `core.hooksPath` 启用） |
 | `.gitattributes` | 保证钩子在所有平台保持 LF 行尾，可正常执行 |

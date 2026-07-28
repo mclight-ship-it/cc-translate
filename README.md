@@ -1,167 +1,178 @@
 # CC Translate
 
-[简体中文](README.md) | [English](README.en.md)
+[English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **使用前必看（必需）**：CC Translate 必须有可用的 Claude 能力——要么已登录 Claude 订阅（Pro/Max），要么接入兼容的本地代理端点（例如 Agent Maestro）。两者都没有时，App 将无法工作。
+> ⚠️ **Required before use:** CC Translate needs working Claude access — either a signed-in Claude subscription (Pro/Max) or a compatible local proxy endpoint (for example, Agent Maestro). Without either one, the app cannot translate and will not function.
 
-这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 能力，无需单独的 API key。
+An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI, it reuses your existing Claude capability and needs no separate API key.
 
-## 界面预览
+## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/popup-translate.png" alt="划词翻译弹窗" width="520"><br>
-  <sub><b>双击 Ctrl+C</b> —— 选中文字，鼠标旁立刻弹出译文</sub>
+  <img src="docs/screenshots/popup-translate.png" alt="Translation popup" width="520"><br>
+  <sub><b>Double-tap Ctrl+C</b> — select text and the translation pops up next to your cursor</sub>
 </p>
 
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/popup-dict.png" alt="词典模式" width="360"><br>
-  <sub><b>词典模式</b>：选中单个单词，返回音标 / 词性 / 释义 / 例句</sub>
+  <img src="docs/screenshots/popup-dict.png" alt="Dictionary mode" width="360"><br>
+  <sub><b>Dictionary mode</b>: a single word returns phonetics / part of speech / definitions / examples</sub>
 </td>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/popup-code.png" alt="代码解释模式" width="360"><br>
-  <sub><b>代码解释模式</b>：选中代码不硬翻，用中文讲清它做什么</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/popup-summary.png" alt="长文摘要" width="420"><br>
-  <sub><b>长文摘要（Beta）</b>：长文本先给要点摘要，再展示完整译文</sub>
-</td>
-<td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/quick-input.png" alt="快速输入翻译" width="420"><br>
-  <sub><b>快速输入翻译</b>：没选中文字时双击 Ctrl+C，弹出输入框手动输入</sub>
+  <img src="docs/screenshots/popup-code.png" alt="Code-explanation mode" width="360"><br>
+  <sub><b>Code-explanation mode</b>: code isn't force-translated — it's explained in plain language</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="420"><br>
-  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持 Claude 视觉或离线本地 OCR）</sub>
+  <img src="docs/screenshots/popup-summary.png" alt="Long-text summary" width="420"><br>
+  <sub><b>Long-text summary (Beta)</b>: long text leads with a key-point summary, then the full translation</sub>
 </td>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/history.png" alt="翻译历史" width="420"><br>
-  <sub><b>翻译历史</b>：托盘打开，左侧列表、右侧原文与结果</sub>
+  <img src="docs/screenshots/quick-input.png" alt="Quick input translation" width="420"><br>
+  <sub><b>Quick input translation</b>: with nothing selected, double-tap Ctrl+C to type text in an input box</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="420"><br>
+  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (Claude vision or offline local OCR)</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/history.png" alt="Translation history" width="420"><br>
+  <sub><b>History</b>: opened from the tray — list on the left, source &amp; result on the right</sub>
 </td>
 </tr>
 </table>
 
-## 功能
+## Features
 
-- **双击 Ctrl+C** 翻译剪贴板/选中文字，鼠标旁弹窗显示
-- **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持 Claude 视觉识别或离线本地 OCR 两种引擎
-- **快速输入翻译**：没有选中文字时双击 Ctrl+C，弹出输入框，手动输入要翻译的内容
-- **代码解释模式**：选中的是代码时，不强行翻译，而是用中文解释代码用途；文字与代码混排时正常翻译并保留代码原样
-- **词典模式**：选中单个单词时，返回中英双语词条（音标、词性、释义、例句）
-- **长文摘要（Beta）**：翻译较长的自然语言文本时，先给出一段要点摘要，再展示完整译文
-- **富文本排版**：结果弹窗支持轻量 Markdown，并像代码编辑器一样对代码分色显示；复制出的仍是纯文本
-- **多目标语言**：自动检测中↔英，或固定译成中/英/日/韩/法/德/西
-- **弹窗内换向重译**：弹窗提供「重译」菜单，一键把选中内容重译成其他语言
-- **改写与提炼**：弹窗内可把译文改写为口语 / 正式 / 专业风格，或提炼要点
-- **长文流式**：长文本逐步显现译文
-- **智能选区识别**：自动判断是否真的选中了文字，避免在输入框里没选中时误翻整框内容（含 VS Code 等跨进程应用）
-- **翻译历史**：托盘打开历史窗口，可搜索、按类型筛选
-- **弹窗布局**：经典（屏幕居中）或动态（跟随鼠标），可在设置中切换
-- **主题**：跟随系统 / 浅色 / 深色
-- **系统托盘**：左键点击可自定义（默认设置，也可选历史 / 截图翻译 / 快速翻译），右键快速翻译 / 截图翻译 / 历史 / 检查更新 / 暂停 / 退出
-- **自动更新**：app 本身即 `git clone` 部署，可从 GitHub 检查并更新，支持手动「检查更新」与夜间自动更新
-- 可设开机自启
+- **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
+- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between Claude vision recognition or an offline local OCR engine
+- **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
+- **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
+- **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
+- **Long-text summary (Beta)**: when translating longer natural-language text, it leads with a short summary of the key points before the full translation
+- **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
+- **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
+- **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click
+- **Rewrite & distill**: from the popup, rewrite the translation in a casual / formal / professional tone, or distill it to key points
+- **Streaming for long text**: long text reveals its translation progressively
+- **Smart selection detection**: automatically detects whether text is actually selected, so it won't mistranslate the whole field when nothing is selected in an input box (including cross-process apps like VS Code)
+- **Translation history**: open the history window from the tray — searchable and filterable by type
+- **Popup layout**: classic (screen-centered) or dynamic (follows the mouse), switchable in settings
+- **Themes**: follow system / light / dark
+- **System tray**: left-click runs a configurable action (default settings; also history / screenshot / quick translate); right-click for quick translate / screenshot translate / history / check for updates / pause / quit
+- **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and update — via a manual "Check for updates" or a nightly auto-update
+- Optional launch on startup
 
-## 运行环境
+## Requirements
 
-- Windows（用到 Windows API 做 DPI 感知、多屏定位、注册表读主题）
+- Windows (uses Windows APIs for DPI awareness, multi-monitor positioning, and reading the theme from the registry)
 - Python 3.12+
-- Node.js（用于安装 Claude Code CLI）
-- 可用的 Claude 能力：已登录 Claude 订阅（Pro/Max），或兼容的本地代理端点（例如 Agent Maestro）
-- ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
+- Node.js (used to install the Claude Code CLI)
+- Working Claude access: either a signed-in Claude subscription (Pro/Max), or a compatible local proxy endpoint (for example, Agent Maestro)
+- ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
-## 快速安装（推荐）
+## Quick install (recommended)
 
-在 **PowerShell** 里跑这一行，脚本会自动装好 git / Python / Node、拉取代码、安装 Claude CLI 与 Python 依赖，并启动程序：
+Run this one line in **PowerShell**. The script installs git / Python / Node as
+needed, clones the repo, installs the Claude CLI and Python dependencies, and
+launches the app:
 
 ```powershell
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-它会自动完成**除登录 Claude 以外**的所有步骤——登录是一次性的浏览器授权，任何脚本都无法代劳。装完后按提示跑一次 `claude` 登录即可（用你现有的 Claude 订阅，不额外收费）。
+It automates **everything except logging in to Claude** — that's a one-time
+browser OAuth no script can do for you. When it finishes, run `claude` once to
+sign in (uses your existing Claude subscription, no extra charge).
 
-> 可选环境变量（运行前设置）：`$env:CC_TRANSLATE_DIR` 指定安装目录（默认 `%USERPROFILE%\cc-translate`）；`$env:CC_TRANSLATE_DRYRUN="1"` 先“空跑”一遍，只显示每步会做什么、不做任何改动。
+> Optional environment variables (set before running): `$env:CC_TRANSLATE_DIR`
+> to choose the install location (default `%USERPROFILE%\cc-translate`);
+> `$env:CC_TRANSLATE_DRYRUN="1"` to do a dry run that only prints each step and
+> changes nothing.
 
-> 如果手动运行 `claude` 时报 **“running scripts is disabled on this system”**，是 PowerShell 默认执行策略（`Restricted`）挡住了 npm 的 `.ps1` 快捷方式。安装脚本会自动把当前用户策略设为 `RemoteSigned` 修复它；若仍遇到，手动执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`（回答 Y），或改用 `claude.cmd` 登录。这不影响 app 翻译，但会挡住手动登录，而没登录就无法翻译。
+> If running `claude` manually fails with **"running scripts is disabled on this
+> system"**, PowerShell's default `Restricted` execution policy is blocking npm's
+> `.ps1` shims. The installer automatically raises the current-user policy to
+> `RemoteSigned` to fix this; if you still hit it, run
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (answer Y), or log in with
+> `claude.cmd` instead. This does not affect the app's translation (it calls
+> `claude.cmd` via subprocess, unaffected by the policy), but it blocks the manual
+> login — and without logging in, translation can't work.
 
-想更透明地手动逐步安装，见下面的[安装（人工步骤）](#安装人工步骤)。
+Prefer to install step by step? See [Install (manual steps)](#install-manual-steps) below.
 
-## 卸载
-
-右键托盘 CC 图标 → **设置** → 滚到最底部 → 点左下角的**「卸载 CC Translate」**按钮。弹出确认框选择是否保留配置和历史记录，确认后会删除程序文件和快捷方式。
-
-> Python、Node.js 和 Claude CLI 等公共工具**不会被卸载**，这些可能被其他程序使用。
-
-## 安装（人工步骤）
+## Install (manual steps)
 
 ```bash
-# 1. 获取项目代码
+# 1. Get the project code
 git clone https://github.com/mclight-ship-it/cc-translate.git
 cd cc-translate
 
-# 2. 安装 Node.js 和 Python（若已装可跳过）
+# 2. Install Node.js and Python (skip if already installed)
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.12
 
-# 3. 安装/升级 Claude Code CLI 并登录（走浏览器 OAuth，用你的订阅，不额外收费）
-#    ⚠️ 即使之前装过，也务必跑这条升级到最新版——版本过旧会导致翻译失败或结果异常
+# 3. Install/upgrade the Claude Code CLI and sign in
+#    (browser OAuth, uses your subscription, no extra charge)
+#    ⚠️ Even if you installed it before, run this to upgrade to the latest —
+#       an outdated version causes translation failures or garbled output
 npm install -g @anthropic-ai/claude-code@latest
-claude --version   # 确认已是最新版；若明显偏旧，重跑上一行强制更新
-claude   # 首次运行按提示在浏览器登录，然后 Ctrl+C 退出交互模式
+claude --version   # confirm it's the latest; if clearly old, re-run the line above to force an update
+claude   # on first run, follow the prompt to sign in via browser, then Ctrl+C to exit interactive mode
 
-# 4. 安装 Python 依赖
+# 4. Install Python dependencies
 pip install pynput pyperclip pystray Pillow
-# 可选增强（缺失时对应功能自动降级/关闭，不影响核心翻译）：
-pip install Pygments   # 代码块语法高亮（缺失时降级为单色代码样式）
-pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用 Claude 视觉识别）
-pip install comtypes   # 智能选区识别，避免输入框内无选中时误翻整框（含 VS Code 等跨进程应用）
-# 或一键装全部（等价于上面所有包）：pip install -r requirements.txt
+# Optional enhancements (each feature auto-degrades/turns off if missing; core translation is unaffected):
+pip install Pygments   # code-block syntax highlighting (falls back to monochrome code style when missing)
+pip install winsdk     # offline local OCR engine for screenshot translation (Claude vision still works without it)
+pip install comtypes   # smart selection detection, avoids mistranslating a whole input box when nothing is selected (incl. cross-process apps like VS Code)
+# Or install everything at once (equivalent to all packages above): pip install -r requirements.txt
 
-# 5. 首次运行（确保当前目录是项目根目录 cc-translate）
-pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Translate”图标
+# 5. First run (make sure the current directory is the project root, cc-translate)
+pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in the Start Menu
 ```
 
-> ⚠️ **务必更新到最新版 Claude Code CLI**：本工具依赖较新的 `claude -p` 命令行参数，
-> 旧版会导致翻译报错或结果异常。**即使你之前已经装过 `claude`，安装本工具前也请再跑一次
-> `npm install -g @anthropic-ai/claude-code@latest` 升级到最新版**，并用 `claude --version` 确认。
+> ⚠️ **Make sure the Claude Code CLI is up to date**: this tool relies on newer `claude -p`
+> command-line arguments, and an old version causes translation errors or garbled output.
+> **Even if you already had `claude` installed, run `npm install -g @anthropic-ai/claude-code@latest`
+> again before installing this tool**, and confirm with `claude --version`.
 
-> 提示：`translator.pyw` 会自动探测 `claude` CLI 的位置（先查 PATH，再查 npm 全局目录）。
-> 若找不到，请确保 `claude` 在 PATH 中，或 npm 全局 bin 目录已加入 PATH。
+> Note: `translator.pyw` auto-detects the location of the `claude` CLI (checks PATH first, then the npm global directory).
+> If it can't be found, make sure `claude` is on PATH, or that the npm global bin directory has been added to PATH.
 
-## 启动方式
+## Launching
 
-首次运行后会自动在开始菜单创建 **CC Translate** 图标，后续可直接在开始菜单启动（无需命令行）。
+After the first run it auto-creates a **CC Translate** icon in the Start Menu; afterwards you can launch it straight from the Start Menu (no command line needed).
 
-## 开机自启（可选）
+## Launch on startup (optional)
 
-在应用的**设置**里勾选“开机自动启动”即可（会在启动文件夹创建快捷方式）。
-或手动把 `run.vbs` 的快捷方式放进启动文件夹。`run.vbs` 依赖 `pythonw.exe` 在 PATH 中。
+Check "Launch on startup" in the app's **Settings** (this creates a shortcut in the Startup folder).
+Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relies on `pythonw.exe` being on PATH.
 
-## 文件说明
+## Files
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `translator.pyw` | 主程序 |
-| `install.ps1` | 一行命令安装脚本（`irm ... \| iex`） |
-| `run.vbs` | 静默启动器（可移植，定位同目录的 translator.pyw） |
-| `cc-dark.ico` / `cc-light.ico` | 自适应托盘图标（深/浅色任务栏）；开始菜单/快捷方式用 `cc-dark.ico` |
-| `cc.ico` | 旧版图标（图标缺失时的回退） |
-| `config.json` | 用户配置（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
-| `history.json` | 翻译历史（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
+| `translator.pyw` | Main program |
+| `install.ps1` | One-line installer (`irm ... \| iex`) |
+| `run.vbs` | Silent launcher (portable, locates `translator.pyw` in the same directory) |
+| `cc-dark.ico` / `cc-light.ico` | Adaptive tray icons (dark/light taskbar); Start Menu / shortcut uses `cc-dark.ico` |
+| `cc.ico` | Legacy icon (fallback when the themed icons are missing) |
+| `config.json` | User config (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
+| `history.json` | Translation history (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
 
-## 给 AI 助手的一键安装说明
+## One-shot install instructions for AI assistants
 
-见 [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md)：把该文件内容交给新机器上的 Claude/AI 助手，它会按步骤完成依赖安装、登录、依赖库安装并启动。
+See [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md): hand that file's contents to a Claude/AI assistant on a new machine and it will install the dependencies, sign in, install the libraries, and launch the app step by step.
 
-## 开发 / 测试
+## Development / testing
 
-改动流程与约定见 [AGENTS.md](AGENTS.md)。要点：
+Change workflow and conventions are in [AGENTS.md](AGENTS.md). Key points:
 
-- 跑测试：`python -m unittest discover -s tests`（标准库，无需额外依赖）。
-- 仓库自带 pre-push 钩子，推送前会自动跑测试、失败即阻止推送。
-- **新 clone 后启用一次**：`git config core.hooksPath .githooks`。
+- Run the tests: `python -m unittest discover -s tests` (standard library, no extra dependencies).
+- The repo ships a pre-push hook that runs the tests before pushing and blocks the push on failure.
+- **Enable it once after a fresh clone**: `git config core.hooksPath .githooks`.
