@@ -307,7 +307,7 @@ class PopupMixin:
             bg=popup_bg, fg=hint, activebackground=popup_bg,
             activeforeground=accent, relief="flat", bd=0, highlightthickness=0,
             font=("Segoe MDL2 Assets", 10), cursor="hand2", padx=9, pady=1)
-        pin_btn.pack(side="right", padx=(0, 4))
+        pin_btn.pack(side="right", padx=(0, 4), pady=(4, 0))
         pin_btn.bind("<Enter>", lambda e: pin_btn.config(fg=accent))
         pin_btn.bind(
             "<Leave>",
