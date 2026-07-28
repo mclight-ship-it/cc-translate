@@ -21,6 +21,19 @@ class TestLooksLikeCodeLine(unittest.TestCase):
     def test_plain_english_is_not_code(self):
         self.assertFalse(tr._looks_like_code_line("Hello, how are you today?"))
 
+    def test_english_label_with_parenthetical_is_not_code(self):
+        # Regression: a form label like "Word (note)" must not read as code.
+        # A prose parenthetical has a space before "(", unlike a real call
+        # "foo(", and common English words (include/if/from...) sit in the
+        # code-keyword list — the two used to combine into a false positive.
+        for label in (
+                "Spouse's Full Name (include Maiden Name)",
+                "Date of Birth (MM/DD/YYYY)",
+                "Emergency Contact (Primary)",
+                "Annual Income (before taxes)",
+                "Country of Residence (if different)"):
+            self.assertFalse(tr._looks_like_code_line(label), label)
+
     def test_chinese_prose_is_not_code(self):
         # CJK-heavy lines are prose even with stray punctuation.
         self.assertFalse(tr._looks_like_code_line("这是一句中文。"))
@@ -54,6 +67,18 @@ class TestClassifySelection(unittest.TestCase):
         self.assertEqual(
             tr.classify_selection(
                 "这个函数 foo() 的作用是把 x 加一然后返回给调用方使用。"),
+            "text",
+        )
+
+    def test_english_form_label_is_text(self):
+        # Regression for the reported bug: English form labels with a
+        # parenthetical were misclassified as code and got a code explanation.
+        self.assertEqual(
+            tr.classify_selection("Spouse's Full Name (include Maiden Name)"),
+            "text",
+        )
+        self.assertEqual(
+            tr.classify_selection("Date of Birth (MM/DD/YYYY)"),
             "text",
         )
 

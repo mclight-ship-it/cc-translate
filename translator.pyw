@@ -170,7 +170,7 @@ _CODE_KEYWORD_RE = re.compile(
     r"if|elif|else|for|while|switch|case|foreach|try|catch|except|finally|"
     r"throw|throws|new|delete|null|nil|None|True|False|true|false|"
     r"println|printf|console\.log|System\.out)\b")
-_CODE_CALL_RE = re.compile(r"[A-Za-z_]\w*\s*\(")           # foo(  bar (
+_CODE_CALL_RE = re.compile(r"[A-Za-z_]\w*\(")             # foo(  bar(
 _CODE_OPERATOR_RE = re.compile(r"(?:=>|->|::|\+\+|--|==|!=|<=|>=|&&|\|\||"
                                r"\+=|-=|\*=|/=|:=)")
 _CODE_CAMEL_RE = re.compile(r"\b[a-z]+[A-Z]\w*\b")          # getUserById
