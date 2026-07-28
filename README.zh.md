@@ -144,7 +144,7 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 
 ## 给 AI 助手的一键安装说明
 
-见 [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md)：把该文件内容交给新机器上的 Claude/AI 助手，它会按步骤完成依赖安装、登录、依赖库安装并启动。
+见 [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md)：把该文件内容交给新机器上的 Claude/AI 助手，它会按步骤完成依赖安装、登录、依赖库安装并启动。
 
 ## 开发 / 测试
 

@@ -85,4 +85,4 @@ GitHub 只渲染根目录的 `README.md`、且**没有内建的多语言切换**
 | `.githooks/pre-push` | 推送前自动跑测试的钩子（需 `core.hooksPath` 启用） |
 | `.gitattributes` | 保证钩子在所有平台保持 LF 行尾，可正常执行 |
 | `requirements-dev.txt` | 可选的开发依赖（pytest，仅作更好看的测试运行器） |
-| `ROADMAP.md` | 迭代路线图与 backlog |
+| `docs/ROADMAP.md` | 迭代路线图与 backlog |

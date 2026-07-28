@@ -155,7 +155,7 @@ Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relie
 
 ## One-shot install instructions for AI assistants
 
-See [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md): hand that file's contents to a Claude/AI assistant on a new machine and it will install the dependencies, sign in, install the libraries, and launch the app step by step.
+See [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md): hand that file's contents to a Claude/AI assistant on a new machine and it will install the dependencies, sign in, install the libraries, and launch the app step by step.
 
 ## Development / testing
 
