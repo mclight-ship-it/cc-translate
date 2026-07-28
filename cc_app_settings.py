@@ -1003,17 +1003,18 @@ class SettingsMixin:
         save_btn = mk_btn(footer, i18n.get("ui.save"), apply_settings, primary=True)
         save_btn.pack(side="right")
         close2 = mk_btn(footer, i18n.get("settings.label.cancel"), win.destroy)
-        close2.pack(side="right", padx=(0, 8))
-        # Restore-defaults is a rare action, so it wears the same low-key text
-        # style as Uninstall rather than a full pill, keeping the Save/Cancel
-        # pair as the visual focus.
+        close2.pack(side="right", padx=(0, 12))
+        # Restore-defaults is a rare action, so it stays low-key via color only
+        # (hint text on a plain background). It keeps the SAME font/padding as
+        # Cancel/Save so its height matches theirs — otherwise the hover fill
+        # would reveal a shorter box and jump against the neighbors.
         self._pill_button(
             footer, i18n.get("settings.label.restore_defaults"),
             restore_defaults,
             bg=bg, fg=hint,
             hover_bg=t["list_bg"], hover_fg=fg,
             active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 9), padx=10, pady=6).pack(side="right", padx=(0, 8))
+            font=(FONT, 10), padx=20, pady=7).pack(side="right", padx=(0, 12))
 
         win.bind("<Escape>", lambda e: win.destroy())
 
