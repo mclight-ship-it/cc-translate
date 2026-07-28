@@ -142,18 +142,6 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 在应用的**设置**里勾选“开机自动启动”即可（会在启动文件夹创建快捷方式）。
 或手动把 `run.vbs` 的快捷方式放进启动文件夹。`run.vbs` 依赖 `pythonw.exe` 在 PATH 中。
 
-## 文件说明
-
-| 文件 | 作用 |
-|---|---|
-| `translator.pyw` | 主程序 |
-| `install.ps1` | 一行命令安装脚本（`irm ... \| iex`） |
-| `run.vbs` | 静默启动器（可移植，定位同目录的 translator.pyw） |
-| `cc-dark.ico` / `cc-light.ico` | 自适应托盘图标（深/浅色任务栏）；开始菜单/快捷方式用 `cc-dark.ico` |
-| `cc.ico` | 旧版图标（图标缺失时的回退） |
-| `config.json` | 用户配置（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
-| `history.json` | 翻译历史（存于 `%APPDATA%\CC Translate\`，本地生成，不入库） |
-
 ## 给 AI 助手的一键安装说明
 
 见 [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md)：把该文件内容交给新机器上的 Claude/AI 助手，它会按步骤完成依赖安装、登录、依赖库安装并启动。

@@ -153,18 +153,6 @@ After the first run it auto-creates a **CC Translate** icon in the Start Menu; a
 Check "Launch on startup" in the app's **Settings** (this creates a shortcut in the Startup folder).
 Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relies on `pythonw.exe` being on PATH.
 
-## Files
-
-| File | Purpose |
-|---|---|
-| `translator.pyw` | Main program |
-| `install.ps1` | One-line installer (`irm ... \| iex`) |
-| `run.vbs` | Silent launcher (portable, locates `translator.pyw` in the same directory) |
-| `cc-dark.ico` / `cc-light.ico` | Adaptive tray icons (dark/light taskbar); Start Menu / shortcut uses `cc-dark.ico` |
-| `cc.ico` | Legacy icon (fallback when the themed icons are missing) |
-| `config.json` | User config (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
-| `history.json` | Translation history (stored under `%APPDATA%\CC Translate\`, generated locally, not committed) |
-
 ## One-shot install instructions for AI assistants
 
 See [INSTALL_FOR_LLM.md](INSTALL_FOR_LLM.md): hand that file's contents to a Claude/AI assistant on a new machine and it will install the dependencies, sign in, install the libraries, and launch the app step by step.
