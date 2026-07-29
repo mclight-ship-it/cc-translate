@@ -1597,6 +1597,40 @@ class TestUiSmoke(unittest.TestCase):
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
 
+    def test_settings_comboboxes_share_width(self):
+        # Every settings dropdown must line up: they should all declare the same
+        # character width so no single field (e.g. the model picker) sticks out.
+        app = self._build("_open_settings")
+
+        def walk(w):
+            yield w
+            for child in w.winfo_children():
+                yield from walk(child)
+
+        widths = {int(w.cget("width"))
+                  for w in walk(app.settings_win)
+                  if isinstance(w, tr.ttk.Combobox)}
+        self.assertEqual(len(widths), 1,
+                         f"comboboxes should share one width, got {widths}")
+
+    def test_settings_dropdown_list_has_left_padding(self):
+        # The popdown listbox needs a flat background-coloured inset so item text
+        # isn't flush against the popup's left edge.
+        app = self._build("_open_settings")
+
+        def walk(w):
+            yield w
+            for child in w.winfo_children():
+                yield from walk(child)
+
+        combo = next((w for w in walk(app.settings_win)
+                      if isinstance(w, tr.ttk.Combobox)), None)
+        self.assertIsNotNone(combo, "a settings combobox should exist")
+        popdown = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+        listbox = f"{popdown}.f.l"
+        self.assertGreaterEqual(int(combo.tk.call(listbox, "cget", "-borderwidth")), 4)
+        self.assertEqual(str(combo.tk.call(listbox, "cget", "-relief")), "flat")
+
     def test_settings_restore_defaults_repopulates(self):
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))

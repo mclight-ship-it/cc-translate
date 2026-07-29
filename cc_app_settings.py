@@ -426,7 +426,12 @@ class SettingsMixin:
         self.root.option_add("*TCombobox*Listbox.foreground", fg)
         self.root.option_add("*TCombobox*Listbox.selectBackground", sel)
         self.root.option_add("*TCombobox*Listbox.selectForeground", fg)
-        self.root.option_add("*TCombobox*Listbox.borderWidth", 0)
+        # A flat background-coloured border acts as uniform inner padding so the
+        # item text isn't flush against the popup's left edge (a plain
+        # borderWidth of 0 made the text hug the side). relief=flat keeps it an
+        # invisible inset rather than a drawn border line.
+        self.root.option_add("*TCombobox*Listbox.relief", "flat")
+        self.root.option_add("*TCombobox*Listbox.borderWidth", 6)
         self.root.option_add("*TCombobox*Listbox.font", "{Microsoft YaHei UI} 10")
 
     def _make_toggle(self, parent, initial, bg):
@@ -633,7 +638,7 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.translate_model"),
             ttk.Combobox(
-                body, textvariable=model_var, state="readonly", width=20,
+                body, textvariable=model_var, state="readonly", width=18,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(model_labels.values())),
             bg=bg, fg=fg, font=FONT)
