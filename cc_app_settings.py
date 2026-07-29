@@ -855,7 +855,7 @@ class SettingsMixin:
         # then reset to the idle (empty / hidden) look.
         status_w = 0
         status_samples = [
-            (i18n.get("update.found_version").format(sha="bbbbbbb"), True),
+            (i18n.get("update.found_version").format(version="3.0.9999"), True),
             (i18n.get("update.no_update"), False),
         ]
         for sample_text, show_btn in status_samples:

@@ -2002,7 +2002,7 @@ class TestUiSmoke(unittest.TestCase):
 
 
 class TestUpdateStatusCopy(unittest.TestCase):
-    def _run_check_only_update(self, state):
+    def _run_check_only_update(self, state, remote_version=None):
         app = _make_headless_app()
         self.addCleanup(lambda: TestUiSmoke._safe_destroy(app))
         seen = []
@@ -2017,8 +2017,10 @@ class TestUpdateStatusCopy(unittest.TestCase):
                 unittest.mock.patch.object(
                     tr._cc_update, "fetch_remote_branch", return_value=(True, "")), \
                 unittest.mock.patch.object(
+                    tr._cc_update, "remote_version_string", return_value=remote_version), \
+                unittest.mock.patch.object(
                     tr._cc_update, "classify_update_state",
-                    return_value=(state, "localsha", "remotesha")):
+                    return_value=(state, "localsha", "remotesha1234567")):
             app._update_worker(silent=False, on_status=on_status, check_only=True)
         return seen
 
@@ -2029,6 +2031,23 @@ class TestUpdateStatusCopy(unittest.TestCase):
     def test_diverged_state_reports_known_latest(self):
         seen = self._run_check_only_update("diverged")
         self.assertEqual(seen, [(tr.i18n.get("update.no_update"), "ok")])
+
+    def test_behind_state_reports_numeric_version(self):
+        # A real update available shows the remote's numeric version, not a SHA.
+        seen = self._run_check_only_update("behind", remote_version="3.0.321")
+        self.assertEqual(
+            seen,
+            [(tr.i18n.get("update.found_version").format(version="3.0.321"),
+              "avail")])
+
+    def test_behind_state_falls_back_to_sha_when_version_unknown(self):
+        # If the remote commit count can't be read, fall back to a short SHA
+        # so the notice still says something concrete.
+        seen = self._run_check_only_update("behind", remote_version=None)
+        self.assertEqual(
+            seen,
+            [(tr.i18n.get("update.found_version").format(version="remotes"),
+              "avail")])
 
 
 class TestQuickInputFallback(unittest.TestCase):

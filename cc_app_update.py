@@ -105,7 +105,9 @@ class UpdateMixin:
 
             # There is a newer commit on the remote.
             if check_only:
-                report(i18n.get("update.found_version").format(sha=remote[:7]), "avail")
+                ver = _cc_update.remote_version_string() or remote[:7]
+                report(i18n.get("update.found_version").format(version=ver),
+                       "avail")
                 return
 
             # The fetched remote is strictly ahead of us, so a fast-forward

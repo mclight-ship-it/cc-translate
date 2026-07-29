@@ -121,14 +121,18 @@ def _local_commit_date():
     return out if rc == 0 and out else None
 
 
-def _local_commit_count():
-    rc, out, _ = _git(["rev-list", "--count", "HEAD"], timeout=8)
+def _commit_count(ref="HEAD"):
+    rc, out, _ = _git(["rev-list", "--count", ref], timeout=8)
     if rc != 0 or not out:
         return None
     try:
         return int(out.strip())
     except Exception:
         return None
+
+
+def _local_commit_count():
+    return _commit_count("HEAD")
 
 
 def remote_head():
@@ -237,6 +241,19 @@ def version_string():
         compact = date.replace("-", "")
         return f"{VERSION_MAJOR}.{VERSION_MINOR}.{compact}"
     return _format_numeric_version(0)
+
+
+def remote_version_string(remote_ref=None):
+    """Numeric version of the fetched remote branch, in the same
+    ``MAJOR.MINOR.build`` shape as :func:`version_string`. Callers fetch first
+    so the tracking ref is current. Returns None when the remote commit count
+    can't be determined (so callers can fall back to a short SHA)."""
+    if remote_ref is None:
+        remote_ref = f"{GIT_REMOTE}/{GIT_BRANCH}"
+    count = _commit_count(remote_ref)
+    if count is None:
+        return None
+    return _format_numeric_version(count)
 
 
 # ---------------------------------------------------------------------------
