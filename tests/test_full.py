@@ -2696,6 +2696,90 @@ class TestShortcutQuoting(unittest.TestCase):
         self.assertNotIn("O'Brien'", ps.replace("O''Brien", ""))
 
 
+class TestTranslateAsTextEscapeHatch(unittest.TestCase):
+    """The code-explain popup's '文字翻译' button re-runs the original input as a
+    plain-text translation, overriding the code heuristic. Exercises the
+    unbound mixin methods against a lightweight stub self."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._last_input = "print(x)"
+        app._last_origin = "text"
+        app._last_class = "code"
+        app._show_loading = unittest.mock.Mock()
+        return app
+
+    def test_translate_as_text_forces_text_class(self):
+        app = self._app()
+        app._translate_as_text()
+        app._show_loading.assert_called_once_with(
+            "print(x)", origin="text", force_class="text")
+
+    def test_translate_as_text_preserves_origin(self):
+        app = self._app()
+        app._last_origin = "ocr"
+        app._translate_as_text()
+        self.assertEqual(app._show_loading.call_args.kwargs["origin"], "ocr")
+
+    def test_translate_as_text_noop_without_input(self):
+        app = self._app()
+        app._last_input = ""
+        app._translate_as_text()
+        app._show_loading.assert_not_called()
+
+
+class TestMaybeAddAsTextButton(unittest.TestCase):
+    """The '文字翻译' escape-hatch button appears only on code-explain popups
+    and is added at most once."""
+
+    def _win(self):
+        made = {}
+
+        def mk(label, cmd):
+            btn = unittest.mock.Mock()
+            made["label"] = label
+            made["cmd"] = cmd
+            made["btn"] = btn
+            return btn
+
+        win = types.SimpleNamespace()
+        win._btn_bar = object()
+        win._mk_bar_btn = mk
+        return win, made
+
+    def test_added_for_code_class(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._last_class = "code"
+        app._translate_as_text = lambda: None
+        win, made = self._win()
+        app._maybe_add_as_text_button(win)
+        self.assertTrue(getattr(win, "_has_as_text_btn", False))
+        self.assertEqual(made["label"], tr.i18n.get("result.as_text"))
+        # The button's command is the escape-hatch handler.
+        self.assertEqual(made["cmd"], app._translate_as_text)
+
+    def test_skipped_for_non_code(self):
+        app = object.__new__(tr.TranslatorApp)
+        for cls in ("text", "mixed", "dict"):
+            app._last_class = cls
+            win, made = self._win()
+            app._maybe_add_as_text_button(win)
+            self.assertFalse(getattr(win, "_has_as_text_btn", False))
+            self.assertEqual(made, {})
+
+    def test_idempotent(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._last_class = "code"
+        app._translate_as_text = lambda: None
+        win, made = self._win()
+        app._maybe_add_as_text_button(win)
+        self.assertTrue(getattr(win, "_has_as_text_btn", False))
+        # A second pass must not build the button again.
+        made.clear()
+        app._maybe_add_as_text_button(win)
+        self.assertEqual(made, {})
+
+
 def tearDownModule():
     """Tear the shared Tk root down deterministically on the main thread and
     force GC passes so no tkinter object is finalized during interpreter

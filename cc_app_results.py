@@ -46,6 +46,37 @@ class ResultActionsMixin:
         except Exception:
             pass
 
+    def _maybe_add_as_text_button(self, win):
+        """For a selection detected as code, add a '文字翻译' escape-hatch button
+        to the code-explanation popup. Clicking it re-runs the original input as
+        a plain-text translation, overriding the code heuristic — the one-click
+        fix for a sentence that was wrongly explained as code."""
+        if self._last_class != "code":
+            return
+        if not win or getattr(win, "_has_as_text_btn", False):
+            return
+        bar = getattr(win, "_btn_bar", None)
+        mk = getattr(win, "_mk_bar_btn", None)
+        if bar is None or mk is None:
+            return
+        try:
+            btn = mk(i18n.get("result.as_text"), self._translate_as_text)
+            # Sit to the left of 复制 / ✕ (packed right-to-left).
+            btn.pack(side="right", padx=(0, 4))
+            win._as_text_btn = btn
+            win._has_as_text_btn = True
+        except Exception:
+            pass
+
+    def _translate_as_text(self):
+        """Re-translate the current input as plain text, overriding the code
+        classification. The escape hatch behind the code-explain popup's
+        '文字翻译' button; never on the hot path, so it adds no latency."""
+        src = self._last_input
+        if not src:
+            return
+        self._show_loading(src, origin=self._last_origin, force_class="text")
+
     def _maybe_add_result_actions_button(self, win):
         """Add a compact post-result actions menu for successful translations.
 

@@ -1139,11 +1139,13 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 pass
             self._ss.flush_job = None
 
-    def _show_loading(self, text, origin="text"):
+    def _show_loading(self, text, origin="text", force_class=None):
         self._destroy_popup()
         self._last_input = text
         self._last_origin = origin
-        self._last_class = classify_selection(text)
+        # force_class lets a user override the heuristic — e.g. the code-explain
+        # popup's "作为文字翻译" button re-runs a misclassified selection as text.
+        self._last_class = force_class or classify_selection(text)
         self._cancel_stream_flush()
         self._ss = StreamSession()
         job_id = self._begin_job()
@@ -1576,6 +1578,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     self.popup._text._rich_highlight = True
                 self._set_popup_text(final, stream_grow=True, stream_final=True)
                 self._maybe_add_explain_button(self.popup)
+                self._maybe_add_as_text_button(self.popup)
                 self._maybe_add_result_actions_button(self.popup)
                 self._remember_result(True, self._result_title(True), final)
                 return
@@ -1594,6 +1597,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             self._ss.popup_ready = True
             self._set_popup_text(final, stream_grow=True, stream_final=True)
             self._maybe_add_explain_button(self.popup)
+            self._maybe_add_as_text_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
             self._remember_result(True, self._result_title(True), final)
             log_perf("stream_finalize_popup_created", {"chars": len(final)})
@@ -1685,6 +1689,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                                       title=title, highlight=ok)
         self._maybe_add_explain_button(self.popup)
         if ok:
+            self._maybe_add_as_text_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
         if ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
                 self._last_input or self._last_origin == "ocr"):
