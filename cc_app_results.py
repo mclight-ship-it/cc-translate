@@ -227,7 +227,7 @@ class ResultActionsMixin:
         combined = base + divider + (addition or "")
         if getattr(win._text, "_rich", False):
             win._text._rich_highlight = True
-        self._set_popup_text(combined, resize=True)
+        self._set_popup_text(combined, resize=True, append=True)
         self._remember_result(True, self._result_title(True), combined)
 
     def _copy_text_content(self, content):
@@ -356,7 +356,8 @@ class ResultActionsMixin:
         if getattr(win._text, "_rich", False):
             win._text._rich_highlight = True
         # _set_popup_text branches on layout: centred refits, dynamic resizes.
-        self._set_popup_text(combined, resize=True)
+        # append=True keeps the reader's scroll position (grow downward, no jump).
+        self._set_popup_text(combined, resize=True, append=True)
         self._remember_result(True, self._result_title(True), combined)
         if btn is not None:
             try:

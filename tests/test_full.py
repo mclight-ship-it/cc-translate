@@ -2805,8 +2805,16 @@ class TestFollowUpAppend(unittest.TestCase):
         text = _FakeText(primary)
         win = types.SimpleNamespace(_text=text)
         app.popup = win
-        # _set_popup_text updates the fake store so a later read reflects it.
-        app._set_popup_text = lambda content, **kw: setattr(text, "_content", content)
+        # _set_popup_text updates the fake store so a later read reflects it,
+        # and records the kwargs so tests can assert append=True is forwarded
+        # (which drives the scroll-position-preserving path in cc_app_popup).
+        app._set_popup_kw = []
+
+        def _fake_set(content, **kw):
+            text._content = content
+            app._set_popup_kw.append(kw)
+
+        app._set_popup_text = _fake_set
         app._result_title = lambda ok=True: "结果"
         app._remembered = []
         app._remember_result = lambda ok, title, txt: app._remembered.append((ok, title, txt))
@@ -2819,6 +2827,14 @@ class TestFollowUpAppend(unittest.TestCase):
         app._append_result_section("译成日语", "NIHONGO")
         divider = tr.i18n.get("result.section_divider").format(label="译成日语")
         self.assertEqual(text._content, "ORIG" + divider + "NIHONGO")
+
+    def test_append_forwards_append_flag(self):
+        # append=True tells _set_popup_text to keep the reader's scroll position
+        # instead of snapping back to the top when the result grows.
+        app, win, text = self._app(primary="ORIG")
+        app._append_result_section("译成日语", "NIHONGO")
+        self.assertTrue(app._set_popup_kw)
+        self.assertTrue(app._set_popup_kw[-1].get("append"))
 
     def test_primary_snapshot_stable_across_appends(self):
         app, win, text = self._app(primary="ORIG")

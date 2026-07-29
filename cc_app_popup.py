@@ -959,7 +959,7 @@ class PopupMixin:
         self._ss.rendered = message
 
     def _fit_centered(self, win, message, scroll_end=False, scroll_top=False,
-                      streaming=False, full_rebuild=False):
+                      streaming=False, full_rebuild=False, preserve_scroll=False):
         """Fill a fixed-size centred popup with text: the window keeps its fixed
         geometry, the Text stretches to fill it, and a scrollbar appears only
         when the content overflows. Used for both result and streaming frames.
@@ -988,6 +988,15 @@ class PopupMixin:
                     prev_top = text.index("@0,0")
                 except Exception:
                     prev_top = None
+        elif preserve_scroll:
+            # Non-streaming append (follow-up rewrite / code explanation): the
+            # _fill_text rebuild below snaps the view to the top, so capture the
+            # reader's top line first and restore it after so appended sections
+            # only grow the document downward without yanking them back up.
+            try:
+                prev_top = text.index("@0,0")
+            except Exception:
+                prev_top = None
         if first_setup:
             w, h, x, y = self._centered_box()
             win.geometry(f"{w}x{h}+{x}+{y}")
@@ -1360,7 +1369,7 @@ class PopupMixin:
                     lambda: self.popup and self.popup._copy_btn.config(text=i18n.get("result.copy")))
 
     def _set_popup_text(self, message, resize=True, stream_grow=False,
-                        stream_final=False):
+                        stream_final=False, append=False):
         win = self.popup
         if not (win and getattr(win, "_text", None)):
             return
@@ -1370,7 +1379,8 @@ class PopupMixin:
             # streaming, append the new tail so the reader isn't yanked around;
             # the final frame does one rich rebuild for formatting.
             self._fit_centered(win, message, scroll_top=stream_grow,
-                               streaming=stream_grow, full_rebuild=stream_final)
+                               streaming=stream_grow, full_rebuild=stream_final,
+                               preserve_scroll=append)
             return
         if stream_grow:
             # The rebuild inside _size_popup_stream_grow (delete + reinsert)
@@ -1439,12 +1449,29 @@ class PopupMixin:
             except Exception:
                 pass
             return
+        # An append (e.g. a follow-up rewrite or code explanation) grows the
+        # existing result. _size_popup rebuilds the Text, which snaps the view
+        # to the top; capture the reader's top line beforehand and restore it so
+        # they stay where they were instead of being yanked back up. The base
+        # text is a prefix of the new message, so the captured line index stays
+        # valid after the rebuild.
+        prev_top = None
+        if append:
+            try:
+                prev_top = win._text.index("@0,0")
+            except Exception:
+                prev_top = None
         w, h = self._size_popup(win, message)
         cx, cy = self._window_xy(win)
         x, y = self._clamp_to_monitor(cx, cy, w, h, ref=(cx, cy))
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)
         self._apply_window_rounding(win)
+        if prev_top is not None:
+            try:
+                win._text.yview(prev_top)
+            except Exception:
+                pass
 
     def _dismiss_loading_popup(self):
         """Close only the temporary loading hint; keep translation pipeline alive."""
