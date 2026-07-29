@@ -2697,8 +2697,8 @@ class TestShortcutQuoting(unittest.TestCase):
 
 
 class TestTranslateAsTextEscapeHatch(unittest.TestCase):
-    """The code-explain popup's '文字翻译' button re-runs the original input as a
-    plain-text translation, overriding the code heuristic. Exercises the
+    """The code-explain popup's '作为文字翻译' button re-runs the original input as
+    a plain-text translation, overriding the code heuristic. Exercises the
     unbound mixin methods against a lightweight stub self."""
 
     def _app(self):
@@ -2729,7 +2729,7 @@ class TestTranslateAsTextEscapeHatch(unittest.TestCase):
 
 
 class TestMaybeAddAsTextButton(unittest.TestCase):
-    """The '文字翻译' escape-hatch button appears only on code-explain popups
+    """The '作为文字翻译' escape-hatch button appears only on code-explain popups
     and is added at most once."""
 
     def _win(self):
@@ -2778,6 +2778,120 @@ class TestMaybeAddAsTextButton(unittest.TestCase):
         made.clear()
         app._maybe_add_as_text_button(win)
         self.assertEqual(made, {})
+
+
+class _FakeText:
+    """Minimal stand-in for the popup's text widget: stores content and answers
+    .get(...) so the append helpers can read it back."""
+
+    def __init__(self, content=""):
+        self._content = content
+        self._rich = False
+
+    def get(self, a, b):
+        return self._content
+
+
+class TestFollowUpAppend(unittest.TestCase):
+    """Follow-up actions (retranslation + rewrites) append below the existing
+    translation with a labelled divider instead of replacing it, always
+    transforming the primary result snapshot, and never write history."""
+
+    def _app(self, primary="ORIG translation"):
+        app = object.__new__(tr.TranslatorApp)
+        app._last_input = "source text"
+        app._last_origin = "text"
+        app._last_class = "text"
+        text = _FakeText(primary)
+        win = types.SimpleNamespace(_text=text)
+        app.popup = win
+        # _set_popup_text updates the fake store so a later read reflects it.
+        app._set_popup_text = lambda content, **kw: setattr(text, "_content", content)
+        app._result_title = lambda ok=True: "结果"
+        app._remembered = []
+        app._remember_result = lambda ok, title, txt: app._remembered.append((ok, title, txt))
+        # If any path wrongly tried to write history, this would record it.
+        app._add_history = unittest.mock.Mock()
+        return app, win, text
+
+    def test_append_preserves_original_and_labels(self):
+        app, win, text = self._app(primary="ORIG")
+        app._append_result_section("译成日语", "NIHONGO")
+        divider = tr.i18n.get("result.section_divider").format(label="译成日语")
+        self.assertEqual(text._content, "ORIG" + divider + "NIHONGO")
+
+    def test_primary_snapshot_stable_across_appends(self):
+        app, win, text = self._app(primary="ORIG")
+        app._append_result_section("A", "aaa")
+        app._append_result_section("B", "bbb")
+        # The primary snapshot never changes as the visible text grows.
+        self.assertEqual(win._primary_result, "ORIG")
+        self.assertTrue(text._content.startswith("ORIG"))
+        self.assertIn("aaa", text._content)
+        self.assertIn("bbb", text._content)
+
+    def test_primary_text_returns_snapshot_after_growth(self):
+        app, win, text = self._app(primary="ORIG")
+        self.assertEqual(app._result_primary_text(win), "ORIG")
+        # Even if the visible text grows, the snapshot stays the original.
+        text._content = "ORIG + appended junk"
+        self.assertEqual(app._result_primary_text(win), "ORIG")
+
+    def test_append_remembers_combined_text(self):
+        app, win, text = self._app(primary="ORIG")
+        app._append_result_section("译成日语", "NIHONGO")
+        # Diagnostics 'last result' should reflect the full visible content.
+        self.assertTrue(app._remembered)
+        self.assertEqual(app._remembered[-1][2], text._content)
+
+    def test_append_does_not_write_history(self):
+        app, win, text = self._app()
+        app._append_result_section("译成日语", "NIHONGO")
+        app._add_history.assert_not_called()
+
+    def test_apply_transform_appends_with_label(self):
+        app, win, text = self._app()
+        app._append_result_section = unittest.mock.Mock()
+        app._apply_result_transform(True, "casual version", "改写为口语")
+        app._append_result_section.assert_called_once_with("改写为口语", "casual version")
+
+    def test_apply_transform_noop_on_failure(self):
+        app, win, text = self._app()
+        app._append_result_section = unittest.mock.Mock()
+        app._apply_result_transform(False, "err", "改写为口语")
+        app._append_result_section.assert_not_called()
+
+    def test_apply_retranslation_appends_with_label(self):
+        app, win, text = self._app()
+        app._append_result_section = unittest.mock.Mock()
+        app._apply_retranslation(True, "日本語訳", "译成日语")
+        app._append_result_section.assert_called_once_with("译成日语", "日本語訳")
+
+    def test_apply_retranslation_noop_on_failure(self):
+        app, win, text = self._app()
+        app._append_result_section = unittest.mock.Mock()
+        app._apply_retranslation(False, "err", "译成日语")
+        app._append_result_section.assert_not_called()
+
+    def test_transform_feeds_primary_to_worker(self):
+        # After a prior append grows the popup text, a rewrite must still send
+        # the PRIMARY translation (not the grown text) to the model.
+        import cc_app_results
+        app, win, text = self._app(primary="ORIG")
+        app._append_result_section("译成日语", "NIHONGO")  # grow the visible text
+        captured = {}
+
+        class _FakeThread:
+            def __init__(self, target, args, daemon):
+                captured["args"] = args
+
+            def start(self):
+                pass
+
+        with unittest.mock.patch.object(cc_app_results.threading, "Thread", _FakeThread):
+            app._transform_result("concise")
+        # _do_transform_result(mode, current, label) — 'current' is the input.
+        self.assertEqual(captured["args"][1], "ORIG")
 
 
 def tearDownModule():

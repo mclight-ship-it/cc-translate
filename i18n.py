@@ -40,7 +40,7 @@ TRANSLATIONS = {
         "result.rewrite_summary": "提炼要点",
         "result.explain": "解释代码",
         "result.explaining": "解释中…",
-        "result.as_text": "文字翻译",
+        "result.as_text": "作为文字翻译",
         "result.processing": "翻译中…",
         "result.processing_screenshot": "截图翻译中…",
         "result.explained": "已解释",
@@ -50,6 +50,7 @@ TRANSLATIONS = {
         "result.output_label": "结果",
         "result.explain_failed": "代码解释失败，请重试。",
         "result.explain_divider": "\n\n────────  代码解释  ────────\n\n",
+        "result.section_divider": "\n\n────────  {label}  ────────\n\n",
         "result.title_code": "代码解释",
         "result.title_dict": "词典",
 
@@ -338,7 +339,7 @@ TRANSLATIONS = {
         "result.rewrite_summary": "Key Points",
         "result.explain": "Explain",
         "result.explaining": "Explaining…",
-        "result.as_text": "As text",
+        "result.as_text": "Translate as text",
         "result.processing": "Processing…",
         "result.processing_screenshot": "OCR…",
         "result.explained": "Explained",
@@ -348,6 +349,7 @@ TRANSLATIONS = {
         "result.output_label": "Result",
         "result.explain_failed": "Explain failed, please retry.",
         "result.explain_divider": "\n\n────────  Code Explanation  ────────\n\n",
+        "result.section_divider": "\n\n────────  {label}  ────────\n\n",
         "result.title_code": "Code Explain",
         "result.title_dict": "Dictionary",
 

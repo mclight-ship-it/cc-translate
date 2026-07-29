@@ -1,14 +1,19 @@
 """cc_app_results — post-result action methods for TranslatorApp.
 
 Mixed into TranslatorApp as ResultActionsMixin. Pure mechanical extraction from
-translator.pyw of the 16 methods that operate on an already-shown translation
+translator.pyw of the methods that operate on an already-shown translation
 popup: the explain-code / result-actions buttons and menu, retranslate-to-language,
 tone/length transforms (concise / formal / summary), copy (plain + bilingual),
 and in-place code explanation.
 
+Follow-up actions (retranslation and rewrites) append their output below the
+existing translation with a labelled divider rather than replacing it, always
+transforming the primary result snapshot so chained actions never compound.
+These appended sections are annotations, not new translations, so they are not
+written to history.
+
 Imports only leaf modules (cc_core / i18n / pyperclip / stdlib), never translator,
-so there is no import cycle. History writes go through ``self._add_history`` (a thin
-translator-core wrapper) because the history-IO family stays in translator.pyw.
+so there is no import cycle.
 """
 
 import threading
@@ -17,7 +22,7 @@ import tkinter as tk
 import pyperclip
 import i18n
 from cc_core import (
-    CFG, DIRECTION_MODES, LANGUAGES,
+    DIRECTION_MODES, LANGUAGES,
     SYSTEM_SUFFIX, CODE_EXPLAIN_APPEND_PROMPT, RESULT_ACTION_PROMPTS,
     is_single_word, log_error,
 )
@@ -47,10 +52,10 @@ class ResultActionsMixin:
             pass
 
     def _maybe_add_as_text_button(self, win):
-        """For a selection detected as code, add a '文字翻译' escape-hatch button
-        to the code-explanation popup. Clicking it re-runs the original input as
-        a plain-text translation, overriding the code heuristic — the one-click
-        fix for a sentence that was wrongly explained as code."""
+        """For a selection detected as code, add a '作为文字翻译' escape-hatch
+        button to the code-explanation popup. Clicking it re-runs the original
+        input as a plain-text translation, overriding the code heuristic — the
+        one-click fix for a sentence that was wrongly explained as code."""
         if self._last_class != "code":
             return
         if not win or getattr(win, "_has_as_text_btn", False):
@@ -71,7 +76,7 @@ class ResultActionsMixin:
     def _translate_as_text(self):
         """Re-translate the current input as plain text, overriding the code
         classification. The escape hatch behind the code-explain popup's
-        '文字翻译' button; never on the hot path, so it adds no latency."""
+        '作为文字翻译' button; never on the hot path, so it adds no latency."""
         src = self._last_input
         if not src:
             return
@@ -104,11 +109,7 @@ class ResultActionsMixin:
                 font=("Microsoft YaHei UI", 9))
             if self._last_input:
                 for code, (zh_name, en_name) in LANGUAGES.items():
-                    if i18n.get_language() == "en_US":
-                        lang_name = (i18n.get("result.language_chinese")
-                                     if code == "zh" else en_name)
-                    else:
-                        lang_name = zh_name
+                    lang_name = self._language_display_name(code, zh_name, en_name)
                     menu.add_command(
                         label=i18n.get("result.retranslate_to").format(language=lang_name),
                         command=lambda c=code: self._retranslate_to(c))
@@ -148,6 +149,9 @@ class ResultActionsMixin:
         prompt = DIRECTION_MODES.get(f"to_{code}")
         if not src or not prompt:
             return
+        names = LANGUAGES.get(code, (code, code))
+        label = i18n.get("result.retranslate_to").format(
+            language=self._language_display_name(code, names[0], names[1]))
         win = self.popup
         btn = getattr(win, "_actions_btn", None) if win else None
         if btn is not None:
@@ -159,30 +163,24 @@ class ResultActionsMixin:
                 pass
         threading.Thread(
             target=self._do_retranslate,
-            args=(src, prompt + SYSTEM_SUFFIX, code), daemon=True).start()
+            args=(src, prompt + SYSTEM_SUFFIX, label), daemon=True).start()
 
-    def _do_retranslate(self, src, prompt, code):
+    def _do_retranslate(self, src, prompt, label):
         try:
             ok, result = self._call_claude(src, prompt)
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_retranslation(ok, result, code))
+        self.root.after(0, lambda: self._apply_retranslation(ok, result, label))
 
-    def _apply_retranslation(self, ok, result, code):
+    def _apply_retranslation(self, ok, result, label):
         win = self.popup
         if not win or not getattr(win, "_text", None):
             return
         btn = getattr(win, "_actions_btn", None)
         if ok:
-            if getattr(win._text, "_rich", False):
-                win._text._rich_highlight = True
-            self._set_popup_text(result, resize=True)
-            self._remember_result(True, self._result_title(True), result)
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                self._add_history(self._last_input or "", result, False,
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=False, kind=self._history_kind())
+            # Append below the existing translation with a labelled divider,
+            # preserving the original result (like the code-explanation flow).
+            self._append_result_section(label, result)
         if btn is not None:
             try:
                 btn.config(text=i18n.get("result.actions"), state="normal",
@@ -194,6 +192,43 @@ class ResultActionsMixin:
         if self.popup and getattr(self.popup, "_text", None):
             return self.popup._text.get("1.0", "end-1c")
         return ""
+
+    def _result_primary_text(self, win):
+        """The main translation, snapshotted before any follow-up section is
+        appended. Rewrites always transform this original result rather than the
+        growing popup text, so chaining actions never compounds earlier output.
+        Captured lazily on first use."""
+        val = getattr(win, "_primary_result", None)
+        if val is None:
+            val = self._current_popup_text()
+            win._primary_result = val
+        return val
+
+    def _language_display_name(self, code, zh_name, en_name):
+        """The menu-facing name for a target language, honouring the app UI
+        language (Chinese shown as 中文/Chinese, others by their own name)."""
+        if i18n.get_language() == "en_US":
+            return i18n.get("result.language_chinese") if code == "zh" else en_name
+        return zh_name
+
+    def _append_result_section(self, label, addition):
+        """Append a follow-up section (rewrite / retranslation) below the current
+        result with a labelled divider, mirroring the code-explanation flow: the
+        existing translation is preserved and the new output is added beneath it.
+        Follow-up sections are annotations, so they are not written to history."""
+        win = self.popup
+        if not win or not getattr(win, "_text", None):
+            return
+        # Snapshot the primary result before mutating the visible text so later
+        # rewrites still transform the original translation.
+        self._result_primary_text(win)
+        base = self._current_popup_text()
+        divider = i18n.get("result.section_divider").format(label=label)
+        combined = base + divider + (addition or "")
+        if getattr(win._text, "_rich", False):
+            win._text._rich_highlight = True
+        self._set_popup_text(combined, resize=True)
+        self._remember_result(True, self._result_title(True), combined)
 
     def _copy_text_content(self, content):
         try:
@@ -232,45 +267,42 @@ class ResultActionsMixin:
 
     def _transform_result(self, mode):
         item = RESULT_ACTION_PROMPTS.get(mode)
-        current = self._current_popup_text()
-        if not item or not current:
-            return
         win = self.popup
-        btn = getattr(win, "_actions_btn", None) if win else None
+        if not item or not win or not getattr(win, "_text", None):
+            return
+        # Rewrites transform the original translation (primary snapshot), not the
+        # growing popup text, so chaining actions never compounds earlier output.
+        primary = self._result_primary_text(win)
+        if not primary:
+            return
+        label = i18n.get(item[0])
+        btn = getattr(win, "_actions_btn", None)
         if btn is not None:
             try:
-                btn.config(text=i18n.get(item[0]) + "…", state="disabled",
+                btn.config(text=label + "…", state="disabled",
                            cursor="watch")
             except Exception:
                 pass
         threading.Thread(target=self._do_transform_result,
-                         args=(mode, current), daemon=True).start()
+                         args=(mode, primary, label), daemon=True).start()
 
-    def _do_transform_result(self, mode, current):
+    def _do_transform_result(self, mode, current, label):
         prompt = RESULT_ACTION_PROMPTS.get(mode, ("", ""))[1]
         try:
             ok, result = self._call_claude(current, prompt)
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_result_transform(ok, result))
+        self.root.after(0, lambda: self._apply_result_transform(ok, result, label))
 
-    def _apply_result_transform(self, ok, result):
+    def _apply_result_transform(self, ok, result, label):
         win = self.popup
         if not win or not getattr(win, "_text", None):
             return
         btn = getattr(win, "_actions_btn", None)
         if ok:
-            if getattr(win._text, "_rich", False):
-                win._text._rich_highlight = True
-            self._set_popup_text(result, resize=True)
-            self._remember_result(True, self._result_title(True), result)
-            if self.cfg.get(CFG.HISTORY_ENABLED, True) and (
-                    self._last_input or self._last_origin == "ocr"):
-                self._add_history(self._last_input or "", result,
-                            is_single_word(self._last_input),
-                            self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                            is_code=(self._last_class == "code"),
-                            kind=self._history_kind())
+            # Append below the existing translation with a labelled divider,
+            # preserving the original result (like the code-explanation flow).
+            self._append_result_section(label, result)
         if btn is not None:
             try:
                 btn.config(text=i18n.get("result.actions"), state="normal", cursor="hand2")
