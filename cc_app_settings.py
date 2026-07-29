@@ -37,7 +37,7 @@ from cc_core import (
     fit_box_size, LANGUAGE_LABELS,
     resolve_theme_name, resolve_theme,
     get_direction_labels, get_theme_labels, get_popup_layout_labels,
-    get_ocr_engine_labels, get_tray_click_action_labels,
+    get_ocr_engine_labels, get_tray_click_action_labels, get_model_labels,
 )
 
 
@@ -553,6 +553,7 @@ class SettingsMixin:
         layout_labels = get_popup_layout_labels()
         ocr_engine_labels = get_ocr_engine_labels()
         tray_click_labels = get_tray_click_action_labels()
+        model_labels = get_model_labels()
 
         win = tk.Toplevel(self.root)
         win.withdraw()   # reveal at final geometry (no flash/jump)
@@ -627,13 +628,14 @@ class SettingsMixin:
         self._settings_section(
             body, row_state, i18n.get("settings.label.translate_section"),
             bg=bg, accent=accent, font=FONT)
-        model_var = tk.StringVar(value=self.cfg[CFG.MODEL])
+        model_var = tk.StringVar(
+            value=model_labels.get(self.cfg[CFG.MODEL], self.cfg[CFG.MODEL]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.translate_model"),
             ttk.Combobox(
-                body, textvariable=model_var, state="readonly", width=18,
+                body, textvariable=model_var, state="readonly", width=20,
                 style="CC.TCombobox", font=(FONT, 10),
-                values=["haiku", "sonnet", "opus"]),
+                values=list(model_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
         dir_var = tk.StringVar(
@@ -898,11 +900,13 @@ class SettingsMixin:
         label_to_ocr_engine = {v: k for k, v in ocr_engine_labels.items()}
         label_to_tray_click = {v: k for k, v in tray_click_labels.items()}
         label_to_lang = {v: k for k, v in LANGUAGE_LABELS.items()}
+        label_to_model = {v: k for k, v in model_labels.items()}
 
         def apply_settings():
             try:
                 prev_warm_key = self._warm_key()
-                self.cfg[CFG.MODEL] = model_var.get()
+                self.cfg[CFG.MODEL] = label_to_model.get(
+                    model_var.get(), model_var.get())
                 self.cfg[CFG.DIRECTION] = label_to_dir[dir_var.get()]
                 self.cfg[CFG.THEME] = label_to_theme[theme_var.get()]
                 self.cfg[CFG.POPUP_LAYOUT] = label_to_layout[layout_var.get()]
@@ -958,7 +962,7 @@ class SettingsMixin:
             # persisting — the user still clicks Save to commit, or Close to
             # discard. Language is intentionally left untouched (it has no static
             # default and changing it forces an app relaunch).
-            model_var.set(DEFAULT_CONFIG[CFG.MODEL])
+            model_var.set(model_labels[DEFAULT_CONFIG[CFG.MODEL]])
             dir_var.set(direction_labels[DEFAULT_CONFIG[CFG.DIRECTION]])
             theme_var.set(theme_labels[DEFAULT_CONFIG[CFG.THEME]])
             layout_var.set(layout_labels[DEFAULT_CONFIG[CFG.POPUP_LAYOUT]])

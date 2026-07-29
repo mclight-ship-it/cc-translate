@@ -76,7 +76,7 @@ from cc_core import (
     TRAY_CLICK_ACTION_LABELS_ZH, TRAY_CLICK_ACTION_LABELS_EN,
     LANGUAGE_LABELS,
     get_theme_labels, get_popup_layout_labels, get_ocr_engine_labels,
-    get_tray_click_action_labels,
+    get_tray_click_action_labels, get_model_labels,
     THEME_LABELS, POPUP_LAYOUT_LABELS, OCR_ENGINE_LABELS, TRAY_CLICK_ACTION_LABELS,
     fit_box_size,
     TRIGGER_POLL_MS, StreamSession,

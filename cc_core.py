@@ -370,6 +370,16 @@ OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉",
                         "local": "本地 OCR"}
 OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision",
                         "local": "Local OCR"}
+# Translation model choices shown in Settings. The stored/routed value is the
+# bare model name (haiku/sonnet/opus); the parenthesised characteristic is a
+# display-only hint of the speed/quality trade-off so users don't have to know
+# the models by heart. Fast → balanced → most capable form a clear ladder.
+MODEL_LABELS_ZH = {"haiku": "haiku（快速）",
+                   "sonnet": "sonnet（均衡）",
+                   "opus": "opus（最强）"}
+MODEL_LABELS_EN = {"haiku": "haiku (fast)",
+                   "sonnet": "sonnet (balanced)",
+                   "opus": "opus (most capable)"}
 # What a single left-click on the tray icon does. Keys map to the four
 # window-opening actions the tray already exposes; the label is resolved by
 # app language. Non-window actions (pause / quit / update) are deliberately not
@@ -401,6 +411,10 @@ def get_ocr_engine_labels():
     return _labels_by_language(OCR_ENGINE_LABELS_ZH, OCR_ENGINE_LABELS_EN)
 
 
+def get_model_labels():
+    return _labels_by_language(MODEL_LABELS_ZH, MODEL_LABELS_EN)
+
+
 def get_tray_click_action_labels():
     return _labels_by_language(TRAY_CLICK_ACTION_LABELS_ZH,
                                TRAY_CLICK_ACTION_LABELS_EN)
@@ -410,6 +424,7 @@ THEME_LABELS = THEME_LABELS_ZH.copy()
 POPUP_LAYOUT_LABELS = POPUP_LAYOUT_LABELS_ZH.copy()
 OCR_ENGINE_LABELS = OCR_ENGINE_LABELS_ZH.copy()
 TRAY_CLICK_ACTION_LABELS = TRAY_CLICK_ACTION_LABELS_ZH.copy()
+MODEL_LABELS = MODEL_LABELS_ZH.copy()
 
 
 def fit_box_size(src_w, src_h, max_w, max_h):

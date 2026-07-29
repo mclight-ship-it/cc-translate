@@ -534,6 +534,50 @@ class TestDirectionModes(unittest.TestCase):
 
 
 # ============================================================
+# Model labels (settings dropdown display ↔ stored value)
+# ============================================================
+
+class TestModelLabels(unittest.TestCase):
+    def _labels(self):
+        prev = tr.i18n.get_language()
+        self.addCleanup(lambda: tr.i18n.set_language(prev))
+        return prev
+
+    def test_labels_cover_all_models(self):
+        for lang in ("zh_CN", "en_US"):
+            tr.i18n.set_language(lang)
+            labels = tr.get_model_labels()
+            self.assertEqual(set(labels), {"haiku", "sonnet", "opus"})
+
+    def test_label_keeps_bare_model_name_prefix(self):
+        # The stored/routed value is the bare model name, so each display label
+        # must start with it — the parenthesised hint is display-only.
+        self._labels()
+        for lang in ("zh_CN", "en_US"):
+            tr.i18n.set_language(lang)
+            for model, label in tr.get_model_labels().items():
+                self.assertTrue(label.startswith(model),
+                                f"{label!r} should start with {model!r}")
+
+    def test_label_to_value_roundtrip(self):
+        self._labels()
+        for lang in ("zh_CN", "en_US"):
+            tr.i18n.set_language(lang)
+            labels = tr.get_model_labels()
+            label_to_model = {v: k for k, v in labels.items()}
+            for model in ("haiku", "sonnet", "opus"):
+                self.assertEqual(label_to_model[labels[model]], model)
+
+    def test_english_and_chinese_labels_differ(self):
+        self._labels()
+        tr.i18n.set_language("zh_CN")
+        zh = tr.get_model_labels()
+        tr.i18n.set_language("en_US")
+        en = tr.get_model_labels()
+        self.assertNotEqual(zh["haiku"], en["haiku"])
+
+
+# ============================================================
 # Rich-text rendering: edge cases
 # ============================================================
 
@@ -1569,7 +1613,8 @@ class TestUiSmoke(unittest.TestCase):
 
         widgets = list(walk(win))
 
-        # Locate the model combobox by its fixed value set.
+        # Locate the model combobox by its fixed value set (now display labels).
+        model_labels = tr.get_model_labels()
         model_combo = None
         for w in widgets:
             if isinstance(w, tr.ttk.Combobox):
@@ -1577,11 +1622,11 @@ class TestUiSmoke(unittest.TestCase):
                     vals = list(w.cget("values"))
                 except Exception:
                     vals = []
-                if "haiku" in vals and "opus" in vals:
+                if model_labels["haiku"] in vals and model_labels["opus"] in vals:
                     model_combo = w
                     break
         self.assertIsNotNone(model_combo, "model combobox should exist")
-        self.assertEqual(model_combo.get(), "opus")
+        self.assertEqual(model_combo.get(), model_labels["opus"])
 
         # Locate and click the Restore Defaults button.
         label = tr.i18n.get("settings.label.restore_defaults")
@@ -1595,7 +1640,8 @@ class TestUiSmoke(unittest.TestCase):
         restore_btn.invoke()
 
         # The form now shows defaults; nothing is persisted until Save.
-        self.assertEqual(model_combo.get(), tr.DEFAULT_CONFIG[tr.CFG.MODEL])
+        self.assertEqual(model_combo.get(),
+                         model_labels[tr.DEFAULT_CONFIG[tr.CFG.MODEL]])
         self.assertEqual(app.cfg[tr.CFG.MODEL], "opus",
                          "restore should not persist until Save is clicked")
 
