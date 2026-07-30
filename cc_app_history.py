@@ -312,7 +312,7 @@ class HistoryMixin:
                 return
             origin = "ocr" if _tr.history_entry_kind(entry) == "ocr" else "text"
             win.destroy()
-            self._show_loading(src, origin=origin)
+            self._show_loading(src, origin=origin, use_cache=False)
 
         def hist_btn(text_, cmd, danger=False):
             hover = theme["btn_close_active"] if danger else theme["btn_active"]

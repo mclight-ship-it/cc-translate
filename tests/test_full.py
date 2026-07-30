@@ -3009,6 +3009,216 @@ class TestFollowUpAppend(unittest.TestCase):
         self.assertEqual(captured["args"][1], "ORIG")
 
 
+class TestTranslationCacheLookup(unittest.TestCase):
+    """Data layer for the instant-cache feature: an identical earlier selection
+    (same text, kind and settings signature) is served from history without a
+    re-translation."""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w", encoding="utf-8")
+        self._path = self._tmp.name
+        self._tmp.close()
+        os.unlink(self._path)
+        self._orig = tr.HISTORY_PATH
+        tr.HISTORY_PATH = self._path
+
+    def tearDown(self):
+        tr.HISTORY_PATH = self._orig
+        try:
+            os.unlink(self._path)
+        except Exception:
+            pass
+
+    def test_exact_hit_returns_output(self):
+        tr.add_history("Good morning", "OUT_A", False, 100, kind="text", sig="S")
+        self.assertEqual(
+            tr.find_cached_translation("Good morning", "text", "S"), "OUT_A")
+
+    def test_miss_on_different_signature(self):
+        tr.add_history("Good morning", "OUT_A", False, 100, kind="text", sig="S")
+        self.assertIsNone(
+            tr.find_cached_translation("Good morning", "text", "OTHER"))
+
+    def test_miss_on_different_kind(self):
+        tr.add_history("Good morning", "OUT_A", False, 100, kind="text", sig="S")
+        self.assertIsNone(
+            tr.find_cached_translation("Good morning", "dict", "S"))
+
+    def test_ocr_kind_never_matches(self):
+        tr.add_history("scanned", "OUT_A", False, 100, kind="ocr", sig="S")
+        self.assertIsNone(tr.find_cached_translation("scanned", "ocr", "S"))
+
+    def test_hit_ignores_surrounding_whitespace(self):
+        tr.add_history("hello world", "OUT_B", False, 100, kind="text", sig="S")
+        self.assertEqual(
+            tr.find_cached_translation("  hello world  ", "text", "S"), "OUT_B")
+
+    def test_empty_output_entry_is_skipped(self):
+        tr.add_history("blank", "", False, 100, kind="text", sig="S")
+        self.assertIsNone(tr.find_cached_translation("blank", "text", "S"))
+
+    def test_empty_query_returns_none(self):
+        self.assertIsNone(tr.find_cached_translation("   ", "text", "S"))
+
+    def test_legacy_entry_matches_empty_signature_only(self):
+        tr.add_history("legacy", "OUT_C", False, 100, kind="text")  # sig -> ""
+        self.assertEqual(
+            tr.find_cached_translation("legacy", "text", ""), "OUT_C")
+        self.assertIsNone(tr.find_cached_translation("legacy", "text", "S"))
+
+
+class TestCacheSignature(unittest.TestCase):
+    """The signature must change whenever a setting that changes a translation's
+    output changes, so a stale result is never served under new settings."""
+
+    def _app(self, **over):
+        app = object.__new__(tr.TranslatorApp)
+        cfg = {tr.CFG.DIRECTION: "auto", tr.CFG.MODEL: "haiku",
+               tr.CFG.SUMMARY_ENABLED: False, tr.CFG.LANGUAGE: "zh"}
+        cfg.update(over)
+        app.cfg = cfg
+        return app
+
+    def test_changes_with_direction(self):
+        self.assertNotEqual(
+            self._app()._cache_signature(),
+            self._app(**{tr.CFG.DIRECTION: "zh2en"})._cache_signature())
+
+    def test_changes_with_model(self):
+        self.assertNotEqual(
+            self._app()._cache_signature(),
+            self._app(**{tr.CFG.MODEL: "opus"})._cache_signature())
+
+    def test_changes_with_summary(self):
+        self.assertNotEqual(
+            self._app()._cache_signature(),
+            self._app(**{tr.CFG.SUMMARY_ENABLED: True})._cache_signature())
+
+    def test_changes_with_language(self):
+        self.assertNotEqual(
+            self._app()._cache_signature(),
+            self._app(**{tr.CFG.LANGUAGE: "en"})._cache_signature())
+
+    def test_stable_for_identical_settings(self):
+        self.assertEqual(
+            self._app()._cache_signature(), self._app()._cache_signature())
+
+
+class TestCacheShortCircuit(unittest.TestCase):
+    """_show_loading serves a cache hit instantly (no worker thread, no loading
+    popup) and bypasses the cache for retries, force_class and screenshots."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = {tr.CFG.HISTORY_ENABLED: True, tr.CFG.HISTORY_LIMIT: 100,
+                   tr.CFG.DIRECTION: "auto", tr.CFG.MODEL: "haiku",
+                   tr.CFG.SUMMARY_ENABLED: False, tr.CFG.LANGUAGE: "zh"}
+        app._job_id = 0
+        app._ss = tr.StreamSession()
+        app.root = unittest.mock.Mock()
+        app._destroy_popup = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        return app
+
+    def test_hit_shows_result_without_worker(self):
+        app = self._app()
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation", return_value="CACHED") as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread") as thread:
+            app._show_loading("hello world")
+        fc.assert_called_once()
+        thread.assert_not_called()
+        app.root.after.assert_not_called()
+        app._show_result.assert_called_once()
+        args, kwargs = app._show_result.call_args
+        self.assertEqual(args[0], True)
+        self.assertEqual(args[1], "CACHED")
+        self.assertFalse(kwargs.get("record", True))
+
+    def test_miss_starts_worker_thread(self):
+        app = self._app()
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation", return_value=None) as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread") as thread:
+            app._show_loading("hello world")
+        fc.assert_called_once()
+        thread.assert_called_once()
+        thread.return_value.start.assert_called_once()
+        app._show_result.assert_not_called()
+
+    def test_retry_bypasses_cache(self):
+        app = self._app()
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation") as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread"):
+            app._show_loading("hello world", use_cache=False)
+        fc.assert_not_called()
+
+    def test_force_class_bypasses_cache(self):
+        app = self._app()
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation") as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread"):
+            app._show_loading("hello world", force_class="text")
+        fc.assert_not_called()
+
+    def test_ocr_bypasses_cache(self):
+        app = self._app()
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation") as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread"):
+            app._show_loading("hello world", origin="ocr")
+        fc.assert_not_called()
+
+    def test_history_disabled_bypasses_cache(self):
+        app = self._app()
+        app.cfg[tr.CFG.HISTORY_ENABLED] = False
+        with unittest.mock.patch.object(
+                tr, "find_cached_translation") as fc, \
+                unittest.mock.patch.object(tr.threading, "Thread"):
+            app._show_loading("hello world")
+        fc.assert_not_called()
+
+
+class TestShowResultRecordFlag(unittest.TestCase):
+    """A cache hit reuses the normal result popup but must not re-record history;
+    a normal result still records, threading the settings signature through."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._job_id = 4
+        app.popup = None
+        app._last_input = "hello world"
+        app._last_origin = "text"
+        app._last_class = "text"
+        app.cfg = {tr.CFG.HISTORY_ENABLED: True, tr.CFG.HISTORY_LIMIT: 100,
+                   tr.CFG.DIRECTION: "auto", tr.CFG.MODEL: "haiku",
+                   tr.CFG.SUMMARY_ENABLED: False, tr.CFG.LANGUAGE: "zh"}
+        app._stop_animation = unittest.mock.Mock()
+        app._destroy_popup = unittest.mock.Mock()
+        app._make_popup = unittest.mock.Mock(return_value=unittest.mock.Mock())
+        app._maybe_add_explain_button = unittest.mock.Mock()
+        app._maybe_add_as_text_button = unittest.mock.Mock()
+        app._maybe_add_result_actions_button = unittest.mock.Mock()
+        return app
+
+    def test_record_false_skips_history(self):
+        app = self._app()
+        with unittest.mock.patch.object(tr, "add_history") as add_history:
+            app._show_result(True, "CACHED", job_id=4, record=False)
+        add_history.assert_not_called()
+
+    def test_record_true_writes_history_with_signature(self):
+        app = self._app()
+        with unittest.mock.patch.object(tr, "add_history") as add_history:
+            app._show_result(True, "FRESH", job_id=4)
+        add_history.assert_called_once()
+        self.assertEqual(
+            add_history.call_args.kwargs.get("sig"), app._cache_signature())
+
+
 def tearDownModule():
     """Tear the shared Tk root down deterministically on the main thread and
     force GC passes so no tkinter object is finalized during interpreter

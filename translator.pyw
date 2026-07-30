@@ -503,7 +503,8 @@ def load_history() -> List[Dict[str, Any]]:
 
 
 def add_history(input_text: str, output_text: str, is_dict: bool, limit: int,
-                is_code: bool = False, kind: Optional[str] = None) -> None:
+                is_code: bool = False, kind: Optional[str] = None,
+                sig: Optional[str] = None) -> None:
     if kind not in ("text", "dict", "code", "ocr"):
         if is_code:
             kind = "code"
@@ -520,12 +521,37 @@ def add_history(input_text: str, output_text: str, is_dict: bool, limit: int,
             "is_dict": bool(is_dict),
             "is_code": bool(is_code),
             "kind": kind,
+            "sig": sig or "",
         })
         del entries[max(1, int(limit)):]
         try:
             _atomic_write_json(HISTORY_PATH, entries)
         except Exception as e:
             log_error("add_history", e)
+
+
+def find_cached_translation(text: str, kind: str, sig: str):
+    """Return the stored output of an identical earlier translation, or None.
+
+    A hit requires the same stripped input, the same kind (text/dict/code --
+    never ocr, whose input is a screenshot's OCR text on a separate pipeline),
+    and the same settings signature, so the cached result is always faithful
+    to the current direction/model/summary/language. Lets the app skip a
+    re-translation of something the user already translated.
+    """
+    if not text or not text.strip():
+        return None
+    if kind not in ("text", "dict", "code"):
+        return None
+    key = text.strip()
+    for entry in load_history():
+        if (entry.get("kind") == kind
+                and (entry.get("sig") or "") == (sig or "")
+                and (entry.get("input") or "").strip() == key):
+            out = (entry.get("output") or "").strip()
+            if out:
+                return out
+    return None
 
 
 def clear_history() -> None:
@@ -1139,13 +1165,28 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 pass
             self._ss.flush_job = None
 
-    def _show_loading(self, text, origin="text", force_class=None):
+    def _show_loading(self, text, origin="text", force_class=None, use_cache=True):
         self._destroy_popup()
         self._last_input = text
         self._last_origin = origin
         # force_class lets a user override the heuristic — e.g. the code-explain
         # popup's "作为文字翻译" button re-runs a misclassified selection as text.
         self._last_class = force_class or classify_selection(text)
+        # Instant path: if an identical earlier selection (same text, kind and
+        # settings) is already in history, show that stored result immediately
+        # instead of paying for another translation. Skipped for explicit
+        # retries and translate-as-text overrides (force_class) and for
+        # screenshots (ocr), which take the vision pipeline.
+        if (use_cache and force_class is None and origin != "ocr"
+                and self.cfg.get(CFG.HISTORY_ENABLED, True)):
+            cached = find_cached_translation(
+                text, self._history_kind(), self._cache_signature())
+            if cached is not None:
+                job_id = self._begin_job()
+                log_perf("cache_hit", {"chars": len(text or ""),
+                                       "kind": self._history_kind()})
+                self._show_result(True, cached, job_id, record=False)
+                return
         self._cancel_stream_flush()
         self._ss = StreamSession()
         job_id = self._begin_job()
@@ -1181,6 +1222,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             "origin": self._last_origin,
             "is_code": self._last_class == "code",
             "kind": self._history_kind(),
+            "sig": self._cache_signature(),
         }
 
     def _animate_loading(self, step):
@@ -1207,7 +1249,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
     def _retry(self):
         if self._last_input:
-            self._show_loading(self._last_input, origin=self._last_origin)
+            self._show_loading(self._last_input, origin=self._last_origin,
+                               use_cache=False)
 
     def _should_summarize(self, text):
         """True if the long-text summary feature should apply to this selection:
@@ -1265,6 +1308,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if self._last_input and is_single_word(self._last_input):
             return "dict"
         return "text"
+
+    def _cache_signature(self) -> str:
+        """A compact fingerprint of the settings that change a translation's
+        output -- direction, model, summary and app language. A cached result
+        is only reused when this matches, so a stored translation is never
+        served under settings that would have produced a different one.
+        """
+        return "|".join((
+            str(self.cfg.get(CFG.DIRECTION, "auto")),
+            str(self.cfg.get(CFG.MODEL, "haiku")),
+            "sum1" if self.cfg.get(CFG.SUMMARY_ENABLED, False) else "sum0",
+            str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language()),
+        ))
 
     def _remember_result(self, ok, title, text):
         self._last_result_ok = bool(ok)
@@ -1379,7 +1435,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return
         add_history(meta["input"] or "", final, is_dict,
                     self.cfg.get(CFG.HISTORY_LIMIT, 100),
-                    is_code=meta["is_code"], kind=meta["kind"])
+                    is_code=meta["is_code"], kind=meta["kind"],
+                    sig=meta.get("sig", ""))
 
     def _stream_claude(self, text: str, job_id: int, ss, meta: Dict[str, Any]) -> bool:
         """Stream a long translation via stream-json, updating the popup as
@@ -1672,7 +1729,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return i18n.get("error.no_result")
         return i18n.get("error.translation_failed_with_reason").format(error=s[:200])
 
-    def _show_result(self, ok, result, job_id=None):
+    def _show_result(self, ok, result, job_id=None, record=True):
         if job_id is not None and not self._job_is_current(job_id):
             return
         self._stop_animation()
@@ -1691,13 +1748,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if ok:
             self._maybe_add_as_text_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
-        if ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
+        if record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
                 self._last_input or self._last_origin == "ocr"):
             add_history(self._last_input or "", result,
                         is_single_word(self._last_input),
                         self.cfg.get(CFG.HISTORY_LIMIT, 100),
                         is_code=(self._last_class == "code"),
-                        kind=self._history_kind())
+                        kind=self._history_kind(),
+                        sig=self._cache_signature())
 
     def run(self):
         self.root.mainloop()
