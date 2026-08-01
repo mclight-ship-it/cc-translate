@@ -13,6 +13,7 @@ _current_language: str = "en_US"
 TRANSLATIONS = {
     "zh_CN": {
         # Tray menu
+        "tray.recall_result": "重新显示上次结果",
         "tray.history": "历史记录",
         "tray.quick_input": "快速翻译",
         "tray.screenshot": "截图翻译",
@@ -312,6 +313,7 @@ TRANSLATIONS = {
 
     "en_US": {
         # Tray menu
+        "tray.recall_result": "Show last result",
         "tray.history": "History",
         "tray.quick_input": "Quick Translate",
         "tray.screenshot": "Screenshot",

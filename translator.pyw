@@ -1757,6 +1757,38 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                         kind=self._history_kind(),
                         sig=self._cache_signature())
 
+    def has_recallable_result(self):
+        """True when there is a stored result that can be re-displayed."""
+        return self._last_result_ok is not None
+
+    def _reshow_last_result(self):
+        """Re-display the last translation/explanation popup without
+        re-translating, re-recording history, or spending any tokens. Used to
+        recover a result the user accidentally dismissed or lost behind another
+        window. Reuses the stored ``_last_result_*`` state and the normal
+        _make_popup display path so the recalled window (and its action buttons)
+        looks exactly like the original. No-op when nothing has been translated
+        yet. Must run on the main Tk thread."""
+        if not self.has_recallable_result():
+            return False
+        anchor = None
+        if self.popup:
+            try:
+                anchor = self._window_xy(self.popup)
+            except Exception:
+                anchor = None
+        self._destroy_popup()
+        ok = self._last_result_ok
+        self.popup = self._make_popup(self._last_result_text, anchor=anchor,
+                                      is_error=not ok,
+                                      title=self._last_result_title,
+                                      highlight=ok)
+        self._maybe_add_explain_button(self.popup)
+        if ok:
+            self._maybe_add_as_text_button(self.popup)
+            self._maybe_add_result_actions_button(self.popup)
+        return True
+
     def run(self):
         self.root.mainloop()
 

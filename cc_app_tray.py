@@ -63,6 +63,11 @@ class TrayMixin:
         def on_settings(icon, item):
             self.open_settings()
 
+        def on_recall(icon, item):
+            # Re-show the last result on the main Tk thread (pystray calls this
+            # from its own thread). Grayed out when there's nothing to recall.
+            self.root.after(0, self._reshow_last_result)
+
         def on_history(icon, item):
             self.open_history()
 
@@ -103,6 +108,9 @@ class TrayMixin:
             # so every feature remains reachable from the right-click menu.
             pystray.MenuItem(
                 "default", on_default_click, default=True, visible=False),
+            pystray.MenuItem(
+                i18n.get("tray.recall_result"), on_recall,
+                enabled=lambda item: self.has_recallable_result()),
             pystray.MenuItem(i18n.get("tray.history"), on_history),
             pystray.MenuItem(i18n.get("tray.quick_input"), on_quick_input),
             pystray.MenuItem(i18n.get("tray.screenshot_menu"), on_ocr),

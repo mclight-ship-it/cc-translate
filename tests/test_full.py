@@ -3219,6 +3219,79 @@ class TestShowResultRecordFlag(unittest.TestCase):
             add_history.call_args.kwargs.get("sig"), app._cache_signature())
 
 
+class TestReshowLastResult(unittest.TestCase):
+    """Feature B — recall last result. Re-displaying the stored result must reuse
+    the normal popup path but never re-translate or re-record history, and must
+    be a safe no-op before anything has been translated."""
+
+    def _app(self, ok=True, title="Result", text="hello"):
+        app = object.__new__(tr.TranslatorApp)
+        app.popup = None
+        app._last_result_ok = ok
+        app._last_result_title = title
+        app._last_result_text = text
+        app._destroy_popup = unittest.mock.Mock()
+        app._window_xy = unittest.mock.Mock(return_value=(10, 20))
+        app._make_popup = unittest.mock.Mock(return_value=unittest.mock.Mock())
+        app._maybe_add_explain_button = unittest.mock.Mock()
+        app._maybe_add_as_text_button = unittest.mock.Mock()
+        app._maybe_add_result_actions_button = unittest.mock.Mock()
+        return app
+
+    def test_has_recallable_result_reflects_state(self):
+        app = self._app()
+        app._last_result_ok = None
+        self.assertFalse(app.has_recallable_result())
+        app._last_result_ok = True
+        self.assertTrue(app.has_recallable_result())
+        app._last_result_ok = False   # a stored error is still recallable
+        self.assertTrue(app.has_recallable_result())
+
+    def test_reshow_noop_when_nothing_translated(self):
+        app = self._app()
+        app._last_result_ok = None
+        self.assertFalse(app._reshow_last_result())
+        app._make_popup.assert_not_called()
+        app._destroy_popup.assert_not_called()
+
+    def test_reshow_rebuilds_popup_without_translating_or_recording(self):
+        app = self._app(ok=True, title="Result", text="stored body")
+        with unittest.mock.patch.object(tr, "add_history") as add_history:
+            self.assertTrue(app._reshow_last_result())
+        add_history.assert_not_called()
+        app._make_popup.assert_called_once()
+        args, kwargs = app._make_popup.call_args
+        self.assertEqual(args[0], "stored body")
+        self.assertFalse(kwargs["is_error"])
+        self.assertTrue(kwargs["highlight"])
+        self.assertEqual(kwargs["title"], "Result")
+
+    def test_reshow_success_readds_action_buttons(self):
+        app = self._app(ok=True)
+        app._reshow_last_result()
+        app._maybe_add_explain_button.assert_called_once()
+        app._maybe_add_as_text_button.assert_called_once()
+        app._maybe_add_result_actions_button.assert_called_once()
+
+    def test_reshow_error_omits_success_only_buttons(self):
+        app = self._app(ok=False, title="Error", text="it failed")
+        app._reshow_last_result()
+        args, kwargs = app._make_popup.call_args
+        self.assertTrue(kwargs["is_error"])
+        self.assertFalse(kwargs["highlight"])
+        app._maybe_add_explain_button.assert_called_once()
+        app._maybe_add_as_text_button.assert_not_called()
+        app._maybe_add_result_actions_button.assert_not_called()
+
+    def test_reshow_reuses_existing_popup_anchor(self):
+        app = self._app()
+        existing = unittest.mock.Mock()   # an existing window on screen
+        app.popup = existing
+        app._reshow_last_result()
+        app._window_xy.assert_called_once_with(existing)
+        self.assertEqual(app._make_popup.call_args.kwargs["anchor"], (10, 20))
+
+
 def tearDownModule():
     """Tear the shared Tk root down deterministically on the main thread and
     force GC passes so no tkinter object is finalized during interpreter
