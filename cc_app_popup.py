@@ -1502,25 +1502,37 @@ class PopupMixin:
 
             # Anchor (origin_x/origin_y) and monitor were fixed inside
             # _size_popup_stream_grow on the first frame; here we only read them
-            # and clamp x to the current width, then apply the single geometry
-            # move. No min-height math lives here anymore.
+            # and clamp x to the current width. No min-height math lives here.
             left, top, right, bottom = self._ss.monitor_rect
             nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
             ny = self._ss.origin_y
 
-            # Streaming first frame: the window is still parked off-screen at
-            # the fitted size (_make_popup's measurement left it at req_w×h_fit).
-            # Lock the stream-grow size off-screen before moving on-screen so
-            # only the position changes in the final geometry call — same
-            # single-transition pattern used by _reveal_rounded_window.
-            try:
-                if int(win.winfo_x()) <= -3000:
-                    win.geometry(f"{w}x{h}+-4000+-4000")
-                    win.update_idletasks()
-            except Exception:
-                pass
-            win.geometry(f"{w}x{h}+{nx}+{ny}")
-            self._remember_window_xy(win, nx, ny)
+            if not self._ss.placed:
+                # First on-screen frame: the window is still parked off-screen at
+                # the fitted size (_make_popup's measurement left it at
+                # req_w×h_fit). Lock the stream-grow size off-screen before moving
+                # on-screen so only the position changes in the final geometry
+                # call — same single-transition pattern as _reveal_rounded_window.
+                try:
+                    if int(win.winfo_x()) <= -3000:
+                        win.geometry(f"{w}x{h}+-4000+-4000")
+                        win.update_idletasks()
+                except Exception:
+                    pass
+                win.geometry(f"{w}x{h}+{nx}+{ny}")
+                self._remember_window_xy(win, nx, ny)
+                self._ss.placed = True
+            else:
+                # Every later streamed frame ONLY grows the window: change the
+                # size but not the position, so the top-left corner stays fixed
+                # (Tk keeps it) and the card simply extends downward. Re-applying
+                # the anchor here is what used to yank a window the user had
+                # dragged mid-stream back to origin every frame ("跳回去"); a
+                # size-only geometry lets the user drag/reposition freely while
+                # the translation is still streaming in.
+                win.geometry(f"{w}x{h}")
+                cx, cy = self._window_xy(win)
+                self._remember_window_xy(win, cx, cy)
             self._apply_window_rounding(win)
             if prev_top is not None:
                 try:
@@ -1602,6 +1614,7 @@ class PopupMixin:
         self._ss.max_h = 0
         self._ss.origin_x = None
         self._ss.origin_y = None
+        self._ss.placed = False
         self._ss.monitor_rect = None
         self._ss.centered_ready = False
         self._ss.rendered = ""

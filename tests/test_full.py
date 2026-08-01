@@ -2172,6 +2172,49 @@ class TestUiSmoke(unittest.TestCase):
                 f"low-cursor stream window should still open at the floor "
                 f"height ({floor}px), got {h}px")
 
+    def test_dynamic_stream_drag_survives_growth(self):
+        # Regression: while a follow-cursor popup streams in, every frame used to
+        # re-apply the anchor position, so a window the user dragged mid-stream
+        # snapped straight back to origin on the next frame ("跳回去"). Later
+        # frames now resize ONLY (size-only geometry) and keep the top-left where
+        # it is, so a mid-stream drag sticks and the card just grows downward.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app._ss = tr.StreamSession()
+        win = app._make_popup("摘要", anchor=(300, 300), reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        app.popup = win
+        # First streamed frame: positions the window at the anchor, placed=True.
+        app._set_popup_text("## 摘要\n第一段内容", stream_grow=True)
+        win.update_idletasks(); win.update()
+        self.assertTrue(app._ss.placed)
+        _x0, _y0 = app._window_xy(win)
+        h0 = win.winfo_height()
+        # User drags the window to a clearly different spot mid-stream.
+        drag_x, drag_y = _x0 + 220, _y0 + 140
+        win.geometry(f"+{drag_x}+{drag_y}")
+        win.update_idletasks(); win.update()
+        # A later, longer streamed frame arrives.
+        big = "## 摘要\n" + "\n".join(
+            "这是第%d行流式内容" % i for i in range(1, 30))
+        app._set_popup_text(big, stream_grow=True)
+        win.update_idletasks(); win.update()
+        nx, ny = app._window_xy(win)
+        # Position must stay where the user dragged it, NOT snap back to origin.
+        self.assertLess(
+            abs(nx - drag_x), 8,
+            f"streamed frame should keep the dragged X {drag_x}, got {nx} "
+            f"(snapped back toward origin)")
+        self.assertLess(
+            abs(ny - drag_y), 8,
+            f"streamed frame should keep the dragged Y {drag_y}, got {ny} "
+            f"(snapped back toward origin)")
+        # And the card should have grown downward (taller), never shrunk.
+        self.assertGreaterEqual(
+            win.winfo_height(), h0,
+            "streamed frame should grow the window height, not shrink it")
+
     def test_cycle_anchor_pins_result_to_trigger_cursor(self):
         # Issue 2: in follow-cursor layout every popup in a translate cycle must
         # anchor to the cursor captured at trigger time (_cycle_anchor), so the

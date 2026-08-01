@@ -621,6 +621,7 @@ class StreamSession:
     max_h: int = 0
     origin_x: object = None  # int once the first frame is placed
     origin_y: object = None  # int once the first frame is placed
+    placed: bool = False  # first on-screen stream frame done; later frames only resize
     monitor_rect: object = None  # (left, top, right, bottom) or None
     user_scrolled: bool = False  # user moved the view; stop auto-pinning to top
     centered_ready: bool = False  # centred popup's fixed geometry/region already set
