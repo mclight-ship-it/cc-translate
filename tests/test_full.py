@@ -2117,6 +2117,61 @@ class TestUiSmoke(unittest.TestCase):
             f"stream width should match the centred card ({centered}px), "
             f"got {w}px")
 
+    def test_dynamic_stream_opens_at_floor_height(self):
+        # Issue: the streaming popup used to hug the first tiny chunk, so it
+        # appeared as a thin sliver and grew line-by-line. Streaming only runs
+        # for long text, so it now OPENS at the centred card's height and only
+        # grows past it. DPI-independent: compare against _centered_height_px().
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app._ss = tr.StreamSession()
+        floor = app._centered_height_px()
+        win = app._make_popup("摘要", anchor=(300, 300), reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        # A single tiny first chunk must still open at the floor height.
+        _w, h1 = app._size_popup_stream_grow(win, "## 摘要")
+        self.assertGreaterEqual(
+            h1, floor * 0.95,
+            f"first streamed frame should open at the floor height "
+            f"({floor}px), got {h1}px (a small value means it hugged the tiny "
+            f"first chunk)")
+        # A later, much longer frame must grow beyond the floor, never shrink.
+        big = "## 摘要\n" + "\n".join(
+            "这是第%d行内容用于测试流式增长" % i for i in range(1, 40))
+        _w, h2 = app._size_popup_stream_grow(win, big)
+        self.assertGreaterEqual(
+            h2, h1, "streaming height must never shrink between frames")
+
+    def test_dynamic_stream_low_cursor_pushes_anchor_up(self):
+        # When the trigger cursor is near the screen bottom, the anchor must be
+        # pushed up so the floor-height window still fits on-screen instead of
+        # being crushed into a short strip above the taskbar. One number
+        # (_centered_height_px) drives both the floor and this push-up.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        floor = app._centered_height_px()
+        app._ss = tr.StreamSession()
+        screen_bottom = app.root.winfo_screenheight()
+        low_y = screen_bottom - 30
+        win = app._make_popup("摘要", anchor=(300, low_y), reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        _w, h = app._size_popup_stream_grow(win, "## 摘要\n2020年后经济环境变化")
+        # The monitor the code actually locked onto (may be a work-area rect).
+        _l, _t, _r, bottom = app._ss.monitor_rect
+        # The whole window (anchor + height) must fit above the screen bottom.
+        self.assertLessEqual(
+            app._ss.origin_y + h, bottom + 2,
+            f"low-cursor stream window (origin {app._ss.origin_y} + h {h}) "
+            f"should fit above monitor bottom {bottom}")
+        # And it must still open at (near) the floor height, not be crushed.
+        if bottom - 40 >= floor:  # only when the screen is tall enough
+            self.assertGreaterEqual(
+                h, floor * 0.95,
+                f"low-cursor stream window should still open at the floor "
+                f"height ({floor}px), got {h}px")
+
     def test_cycle_anchor_pins_result_to_trigger_cursor(self):
         # Issue 2: in follow-cursor layout every popup in a translate cycle must
         # anchor to the cursor captured at trigger time (_cycle_anchor), so the

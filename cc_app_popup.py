@@ -25,8 +25,8 @@ from cc_rich import iter_rich_segments
 from cc_core import (
     APP_NAME, CFG, ICON_PATH, POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
-    MIN_POPUP_HEIGHT, MIN_POPUP_HEIGHT_COMPACT,
-    MIN_STREAM_VISIBLE_HEIGHT, MIN_RESIZE_WIDTH,
+    MIN_POPUP_HEIGHT_COMPACT,
+    MIN_RESIZE_WIDTH,
     MIN_RESIZE_HEIGHT, RESIZE_HIT,
     POPUP_BAR_PAD_X, POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM,
     POPUP_BODY_PAD_X, POPUP_BODY_PAD_BOTTOM, POPUP_TEXT_PAD_X, POPUP_TEXT_PAD_Y,
@@ -652,18 +652,33 @@ class PopupMixin:
         return int(w), int(h)
 
     def _size_popup_stream_grow(self, win, message):
-        """Streaming mode: keep width fixed, only allow height to grow."""
+        """Streaming: width fixed, height grows down from a fixed anchor.
+
+        Streaming only runs for long text (>= STREAM_MIN_CHARS), so the result is
+        always tall. The window therefore OPENS at a comfortable floor height
+        (the centred card's height, DPI-scaled) and only grows past it — no
+        tiny-then-grow jitter. A SINGLE height (_centered_height_px) governs both
+        that floor AND how far the anchor is pushed up when the cursor is near the
+        screen bottom, so the reserved room and the real height can never
+        disagree. The monitor and anchor are locked on the first frame so a mouse
+        that drifts mid-stream never drags the window around."""
         text = win._text
         # Match _size_popup: colour-key card inset is the corner radius.
         shell_pad = POPUP_CORNER_RADIUS
 
-        rect = get_monitor_rect()
-        if rect:
-            left, top, right, bottom = rect
+        # Lock the monitor on the first frame; reuse it for the whole stream so a
+        # cursor that wanders onto another display can't shift the anchor.
+        if self._ss.monitor_rect is not None:
+            left, top, right, bottom = self._ss.monitor_rect
         else:
-            left, top = 0, 0
-            right = self.root.winfo_screenwidth()
-            bottom = self.root.winfo_screenheight()
+            rect = get_monitor_rect()
+            if rect:
+                left, top, right, bottom = rect
+            else:
+                left, top = 0, 0
+                right = self.root.winfo_screenwidth()
+                bottom = self.root.winfo_screenheight()
+            self._ss.monitor_rect = (left, top, right, bottom)
         mon_w = right - left
         mon_h = bottom - top
 
@@ -688,12 +703,26 @@ class PopupMixin:
         true_lines = max(true_lines, 1)
 
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
-        if self._ss.origin_y is not None:
-            # Once the stream anchor is fixed, height may only grow downward
-            # until the bottom edge is reached; never move the window upward.
-            max_popup_h = max(1, int(bottom - self._ss.origin_y - 8))
-        else:
-            max_popup_h = max(MIN_POPUP_HEIGHT, int(mon_h - 20))
+
+        # Fix the anchor ONCE. A single height governs BOTH how far the anchor is
+        # pushed up (cursor near the screen bottom) AND the opening/floor height,
+        # so reserved room and real height can never drift apart. (The old split
+        # reserved 220px for the anchor but let the height hug tiny content, so a
+        # low cursor reserved room that just sat empty — the "too short" bug.)
+        floor_h = min(self._centered_height_px(), max(120, mon_h - 20))
+        min_top = top + 12
+        if self._ss.origin_y is None or self._ss.origin_x is None:
+            cx, cy = self._window_xy(win)
+            if (cx, cy) == (0, 0):
+                cx, cy = left + 12, min_top
+            # Push up so at least floor_h fits below the anchor (or as much as a
+            # short screen allows).
+            max_origin_y = max(min_top, bottom - floor_h - 8)
+            self._ss.origin_y = min(max(cy, min_top), max_origin_y)
+            self._ss.origin_x = cx
+        # Height may only grow downward from the fixed anchor to the screen edge.
+        max_popup_h = max(1, int(bottom - self._ss.origin_y - 8))
+
         available_text_h = max(
             24, max_popup_h - bar_h - (shell_pad * 2) - POPUP_BODY_PAD_BOTTOM)
         line_px = max(win._text_font.metrics("linespace") + 6, 14)
@@ -716,20 +745,19 @@ class PopupMixin:
         # Include the body frame's bottom pad (pady=(0, POPUP_BODY_PAD_BOTTOM)):
         # like _size_popup, this gap sits inside the card but outside the Text's
         # reqheight, so leaving it out clipped the final streamed line.
-        h = text.winfo_reqheight() + bar_h + (shell_pad * 2) + POPUP_BODY_PAD_BOTTOM
+        content_h = (text.winfo_reqheight() + bar_h + (shell_pad * 2)
+                     + POPUP_BODY_PAD_BOTTOM)
 
         if not self._ss.fixed_w:
             self._ss.fixed_w = int(w)
+
+        # Open at the floor height, grow with content, never shrink during the
+        # stream, never spill past the screen edge below the anchor.
+        h = max(content_h, min(floor_h, max_popup_h))
         if self._ss.max_h:
-            h = max(int(h), self._ss.max_h)
-
-        h = min(int(h), max_popup_h)
+            h = max(h, self._ss.max_h)
+        h = min(h, max_popup_h)
         self._ss.max_h = int(h)
-
-        if self._ss.monitor_rect is None:
-            cx, cy = self._window_xy(win)
-            rect0 = get_monitor_rect((cx, cy))
-            self._ss.monitor_rect = rect0 if rect0 else (left, top, right, bottom)
 
         return int(self._ss.fixed_w), int(h)
 
@@ -970,6 +998,21 @@ class PopupMixin:
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
         return max(280, min(int(CENTERED_POPUP_W * scale), mon_w - 40))
+
+    def _centered_height_px(self):
+        """Physical height of the centred result card (DPI-scaled, clamped to the
+        monitor). Used as the streaming popup's opening/floor height: streaming
+        only runs for long text, so the result is always tall — opening at this
+        height (instead of hugging the first tiny chunk) removes the
+        tiny-then-grow jitter and gives streamed output a stable reading area."""
+        scale = 1.0
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            pass
+        rect = get_monitor_rect()
+        mon_h = (rect[3] - rect[1]) if rect else self.root.winfo_screenheight()
+        return max(150, min(int(CENTERED_POPUP_H * scale), mon_h - 40))
 
     def _wide_cols(self, win, shell_pad):
         """Column count whose rendered width matches the centred result card, so
@@ -1457,33 +1500,13 @@ class PopupMixin:
                     prev_top = None
             w, h = self._size_popup_stream_grow(win, message)
 
-            if self._ss.monitor_rect is None:
-                cx0, cy0 = self._window_xy(win)
-                rect0 = get_monitor_rect((cx0, cy0))
-                self._ss.monitor_rect = rect0 if rect0 else (
-                    0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
-
+            # Anchor (origin_x/origin_y) and monitor were fixed inside
+            # _size_popup_stream_grow on the first frame; here we only read them
+            # and clamp x to the current width, then apply the single geometry
+            # move. No min-height math lives here anymore.
             left, top, right, bottom = self._ss.monitor_rect
-            min_top = top + 12
-            max_y = max(min_top, bottom - h - 8)
-
-            if self._ss.origin_x is None or self._ss.origin_y is None:
-                cx, cy = self._window_xy(win)
-                if (cx, cy) == (0, 0):
-                    cx, cy = left + 12, min_top
-                nx = max(left + 4, min(cx, right - w - 4))
-                min_visible = min(MIN_STREAM_VISIBLE_HEIGHT, max(80, bottom - top - 20))
-                max_origin_y = max(min_top, bottom - min_visible - 8)
-                ny = min(max(cy, min_top), max_origin_y)
-                self._ss.origin_x, self._ss.origin_y = nx, ny
-            else:
-                nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
-                ny = self._ss.origin_y
-
-            if (bottom - ny - 8) < MIN_POPUP_HEIGHT:
-                ny = max(min_top, bottom - MIN_POPUP_HEIGHT - 8)
-                if self._ss.origin_y is not None:
-                    self._ss.origin_y = ny
+            nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
+            ny = self._ss.origin_y
 
             # Streaming first frame: the window is still parked off-screen at
             # the fitted size (_make_popup's measurement left it at req_w×h_fit).
