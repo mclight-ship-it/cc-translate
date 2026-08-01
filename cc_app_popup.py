@@ -223,8 +223,16 @@ class PopupMixin:
             x = bx + (bw - w) // 2
             y = by + (bh - h) // 2
         else:
-            x = self.root.winfo_pointerx() + 12
-            y = self.root.winfo_pointery() + 18
+            # Follow-cursor layout: use the anchor captured when this cycle was
+            # triggered (in _show_loading) so the hint and the result window land
+            # in the same place even if the mouse has since moved. Fall back to
+            # the live cursor if, for any reason, nothing was captured.
+            anchor = getattr(self, "_cycle_anchor", None)
+            if anchor is not None:
+                x, y = int(anchor[0]), int(anchor[1])
+            else:
+                x = self.root.winfo_pointerx() + 12
+                y = self.root.winfo_pointery() + 18
             x, y = self._clamp_to_monitor(x, y, w, h)
         self._reveal_rounded_window(win, w, h, x, y)
         # Clicking anywhere outside dismisses only the loading hint — but arm
@@ -566,12 +574,13 @@ class PopupMixin:
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
-        # Column cap: a comfortable reading width (~48 cols), but never wider
-        # than the monitor allows. Longer text wraps into a readable block
-        # instead of one very wide line.
+        # Column cap: long results may widen up to the centred card's width so
+        # they don't wrap into a tall, narrow column; short results still hug
+        # their own longest line (see `cols` below). Never wider than the
+        # monitor allows.
         avg_char_px = max(win._text_font.measure("0"), 7)
         screen_cap = max(24, int((mon_w * 0.9) / avg_char_px))
-        max_cols = min(48, screen_cap)
+        max_cols = min(self._wide_cols(win, shell_pad), screen_cap)
 
         # Longest logical line in display columns (CJK counts as 2).
         def line_cols(s):
@@ -660,8 +669,11 @@ class PopupMixin:
 
         avg_char_px = max(win._text_font.measure("0"), 7)
         screen_cap = max(24, int((mon_w * 0.9) / avg_char_px))
-        # Keep stream width stable and reasonably wide from the first frame.
-        preferred_cols = min(max(36, int(screen_cap * 0.7)), 48)
+        # Streamed output is long by definition, so from the first frame use the
+        # centred card's width (clamped to screen). This stops long translations
+        # from piling up in a tall, narrow column that scrolls forever. Width is
+        # locked for the whole stream via _ss.cols so it never wanders.
+        preferred_cols = min(max(36, self._wide_cols(win, shell_pad)), screen_cap)
         cols = self._ss.cols or preferred_cols
         self._ss.cols = cols
 
@@ -944,6 +956,30 @@ class PopupMixin:
         active monitor. Size is a DPI-scaled logical box (~2x the dynamic
         popup at a 4:3 ratio), clamped to fit the monitor."""
         return self._scaled_centered_box(CENTERED_POPUP_W, CENTERED_POPUP_H)
+
+    def _centered_width_px(self):
+        """Physical width of the centred result card (DPI-scaled, clamped to the
+        monitor). Used as the upper width bound for wide follow-cursor popups so
+        a long result reads at the same comfortable width as the fixed centred
+        layout instead of wrapping into a tall, narrow column."""
+        scale = 1.0
+        try:
+            scale = self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            pass
+        rect = get_monitor_rect()
+        mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
+        return max(280, min(int(CENTERED_POPUP_W * scale), mon_w - 40))
+
+    def _wide_cols(self, win, shell_pad):
+        """Column count whose rendered width matches the centred result card, so
+        a wide follow-cursor popup reads at the same comfortable width. Short
+        content stays narrow because the caller still clamps to the content's
+        own longest line; this only raises the ceiling."""
+        avg_char_px = max(win._text_font.measure("0"), 7)
+        text_px = (self._centered_width_px()
+                   - 2 * shell_pad - 2 * POPUP_TEXT_PAD_X)
+        return max(1, int(text_px / avg_char_px))
 
     def _history_box(self):
         """A roomier centred box for the feature-rich history window."""

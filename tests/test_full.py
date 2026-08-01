@@ -2062,6 +2062,96 @@ class TestUiSmoke(unittest.TestCase):
                 f"the missing pixels clip the last line's descenders. "
                 f"_size_popup must add POPUP_BODY_PAD_BOTTOM to the window height.")
 
+    def test_dynamic_long_result_widens_short_stays_compact(self):
+        # Issue 1: a long follow-cursor result must widen toward the centred
+        # card's width so it doesn't wrap into a tall, narrow column; a short
+        # result must still hug its content. DPI-independent: relative widths.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        centered = app._centered_width_px()
+
+        short = app._make_popup("hello world", anchor=(300, 300))
+        self.addCleanup(lambda w=short: self._safe_win_destroy(w))
+        short.update_idletasks()
+        short_w = short.winfo_width()
+
+        long_msg = (
+            "This is a fairly long non-streaming translation result that used "
+            "to be squeezed into a narrow column, making the popup very tall; "
+            "it should now widen toward the centred card width so the same text "
+            "reads across fewer, longer lines instead of many short ones.")
+        wide = app._make_popup(long_msg, anchor=(300, 300))
+        self.addCleanup(lambda w=wide: self._safe_win_destroy(w))
+        wide.update_idletasks()
+        wide_w = wide.winfo_width()
+
+        self.assertLess(
+            short_w, centered * 0.6,
+            f"a short result should stay compact, got {short_w}px "
+            f"(centred card is {centered}px)")
+        self.assertGreater(
+            wide_w, short_w,
+            "a long result must be wider than a short one")
+        self.assertGreaterEqual(
+            wide_w, centered * 0.85,
+            f"a long result should widen close to the centred card width "
+            f"({centered}px), got {wide_w}px")
+
+    def test_dynamic_stream_width_matches_centered_card(self):
+        # Issue 1: streaming width is locked to the centred card's width from the
+        # first frame so long streamed output doesn't scroll forever in a narrow
+        # column. DPI-independent: compare against _centered_width_px().
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app._ss = tr.StreamSession()
+        centered = app._centered_width_px()
+        win = app._make_popup("first streamed chunk", anchor=(300, 300),
+                              reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        w, _h = app._size_popup_stream_grow(
+            win, "first streamed chunk that keeps growing as the model streams")
+        self.assertGreaterEqual(
+            w, centered * 0.9,
+            f"stream width should match the centred card ({centered}px), "
+            f"got {w}px")
+
+    def test_cycle_anchor_pins_result_to_trigger_cursor(self):
+        # Issue 2: in follow-cursor layout every popup in a translate cycle must
+        # anchor to the cursor captured at trigger time (_cycle_anchor), so the
+        # result never jumps to wherever the mouse drifted mid-translation. The
+        # cycle call sites (_show_result / _stream_update / _stream_finalize) all
+        # route through _cycle_popup_anchor() -> _make_popup(anchor=...).
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app.popup = None
+        app._cycle_anchor = (640, 480)
+        # The shared anchor helper must hand back the captured trigger point.
+        self.assertEqual(app._cycle_popup_anchor(), (640, 480))
+        win = app._make_popup("done", anchor=app._cycle_popup_anchor())
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        win.update_idletasks()
+        x, y = app._window_xy(win)
+        # May be clamped to the monitor, but must track the trigger point — not
+        # the live pointer / a re-read cursor.
+        self.assertLess(
+            abs(x - 640), 400,
+            f"result X {x} should track the trigger anchor 640, not a re-read "
+            f"cursor")
+        self.assertLess(
+            abs(y - 480), 400,
+            f"result Y {y} should track the trigger anchor 480, not a re-read "
+            f"cursor")
+
+    def _safe_win_destroy(self, w):
+        try:
+            if tr.tk.Toplevel.winfo_exists(w):
+                w.destroy()
+        except Exception:
+            pass
+
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the
         window builders call on `self` must be a bound method, not missing."""

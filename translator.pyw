@@ -703,6 +703,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._resize_mode = None
         self._resize_start = None
         self._pending_loading_job = None   # after() token for deferred loading popup
+        # Cursor position captured once when a translation is triggered, in
+        # follow-cursor layout. Every popup in that cycle (the "translating"
+        # hint and the result window, streaming or not) anchors here so the
+        # result never jumps to a new spot when the mouse moves mid-flight.
+        self._cycle_anchor = None
 
         # Self-update state.
         self._update_in_progress = False
@@ -1167,6 +1172,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
     def _show_loading(self, text, origin="text", force_class=None, use_cache=True):
         self._destroy_popup()
+        # Capture the cursor ONCE, at the moment translation is triggered, so the
+        # whole cycle (loading hint + result window) anchors to where the user was
+        # working — not to wherever the mouse drifts while the request is in
+        # flight. Only meaningful in follow-cursor layout; the centred layout
+        # ignores it. Reads on the UI thread here, before any await/defer.
+        if not self._is_centered_layout():
+            try:
+                self._cycle_anchor = (self.root.winfo_pointerx() + 12,
+                                      self.root.winfo_pointery() + 18)
+            except Exception:
+                self._cycle_anchor = None
+        else:
+            self._cycle_anchor = None
         self._last_input = text
         self._last_origin = origin
         # force_class lets a user override the heuristic — e.g. the code-explain
@@ -1601,12 +1619,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             if not self._ss.popup_ready:
                 self._ss.popup_ready = True
                 self._stop_animation()
-                anchor = None
-                if self.popup:
-                    try:
-                        anchor = self._window_xy(self.popup)
-                    except Exception:
-                        anchor = None
+                anchor = self._cycle_popup_anchor()
                 self._destroy_popup()
                 # Build the popup off-screen but DON'T reveal it yet: the fitted
                 # size of this first partial chunk differs from the stream-grow
@@ -1643,12 +1656,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 self._remember_result(True, self._result_title(True), final)
                 return
 
-            anchor = None
-            if self.popup:
-                try:
-                    anchor = self._window_xy(self.popup)
-                except Exception:
-                    anchor = None
+            anchor = self._cycle_popup_anchor()
             self._stop_animation()
             self._destroy_popup()
             self.popup = self._make_popup(final, anchor=anchor,
@@ -1732,17 +1740,28 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return i18n.get("error.no_result")
         return i18n.get("error.translation_failed_with_reason").format(error=s[:200])
 
+    def _cycle_popup_anchor(self):
+        """Anchor shared by every popup in the current translate cycle: the
+        cursor captured once when translation was triggered (_show_loading), so
+        the loading hint and the result never jump apart if the mouse moves
+        while the translation is in flight. Falls back to the live loading
+        popup's position, then to None (let the popup read the live cursor)."""
+        a = getattr(self, "_cycle_anchor", None)
+        if a is not None:
+            return a
+        if self.popup:
+            try:
+                return self._window_xy(self.popup)
+            except Exception:
+                return None
+        return None
+
     def _show_result(self, ok, result, job_id=None, record=True):
         if job_id is not None and not self._job_is_current(job_id):
             return
         self._stop_animation()
-        anchor = None
         title = self._result_title(ok)
-        if self.popup:
-            try:
-                anchor = self._window_xy(self.popup)
-            except Exception:
-                anchor = None
+        anchor = self._cycle_popup_anchor()
         self._destroy_popup()
         self._remember_result(ok, title, result)
         self.popup = self._make_popup(result, anchor=anchor, is_error=not ok,
