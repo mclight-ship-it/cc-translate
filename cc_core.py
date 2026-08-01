@@ -632,6 +632,12 @@ class StreamSession:
 # Shared by translator.pyw and the PopupMixin (cc_app_popup).
 # ---------------------------------------------------------------------------
 MIN_POPUP_HEIGHT = 150
+# Follow-cursor result popups whose content is already final (non-streaming)
+# size to fit the text, so a one- or two-line translation shouldn't be padded
+# up to the streaming floor. This much smaller floor only guards degenerate
+# near-empty content; any real 1+ line result measures taller and uses its
+# natural height, leaving no dead space below the text.
+MIN_POPUP_HEIGHT_COMPACT = 96
 MIN_STREAM_VISIBLE_HEIGHT = 220
 MIN_RESIZE_WIDTH = 280
 MIN_RESIZE_HEIGHT = 150

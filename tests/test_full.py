@@ -1991,6 +1991,42 @@ class TestUiSmoke(unittest.TestCase):
             app._resize_mode,
             "interior click should not be misdetected as resize when root coords are stale")
 
+    def test_dynamic_popup_wrapped_line_does_not_inflate_height(self):
+        # Regression guard: a fresh non-streaming (follow-cursor) popup is
+        # measured while still withdrawn. If displaylines are counted before the
+        # window is mapped, the Text reports a 1px width, wrap="word" folds every
+        # character onto its own line, and the count explodes (a 2-line sentence
+        # measured as dozens of lines) — producing a hugely over-tall window with
+        # a big empty gap and a spurious scrollbar. _size_popup now maps the
+        # window off-screen before counting, so the wrapped-line count is real.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        # A single logical line long enough to wrap to ~2 display lines at the
+        # ~48-column cap (mirrors the reported screenshot).
+        msg = "Rather than streaming paths that are inherently short content"
+        win = app._make_popup(msg, anchor=(300, 300))
+
+        def _kill():
+            try:
+                if tr.tk.Toplevel.winfo_exists(win):
+                    win.destroy()
+            except Exception:
+                pass
+        self.addCleanup(_kill)
+
+        # The Text is configured to the true wrapped-line count, not the 22-line
+        # max cap. This is DPI-independent: buggy == 22, fixed == a few.
+        lines = int(win._text.cget("height"))
+        self.assertLess(
+            lines, 10,
+            f"wrapped short content should size to a few lines, got {lines} "
+            f"(a large value means displaylines were counted before mapping)")
+        # Such short content must not trigger the overflow scrollbar.
+        self.assertFalse(
+            win._scroll.winfo_ismapped(),
+            "a 2-line result should not show the overflow scrollbar")
+
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the
         window builders call on `self` must be a bound method, not missing."""

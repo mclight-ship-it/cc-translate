@@ -25,7 +25,8 @@ from cc_rich import iter_rich_segments
 from cc_core import (
     APP_NAME, CFG, ICON_PATH, POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
-    MIN_POPUP_HEIGHT, MIN_STREAM_VISIBLE_HEIGHT, MIN_RESIZE_WIDTH,
+    MIN_POPUP_HEIGHT, MIN_POPUP_HEIGHT_COMPACT,
+    MIN_STREAM_VISIBLE_HEIGHT, MIN_RESIZE_WIDTH,
     MIN_RESIZE_HEIGHT, RESIZE_HIT,
     POPUP_BAR_PAD_X, POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM,
     POPUP_BODY_PAD_X, POPUP_BODY_PAD_BOTTOM, POPUP_TEXT_PAD_X, POPUP_TEXT_PAD_Y,
@@ -586,11 +587,25 @@ class PopupMixin:
         text.config(width=cols, height=1)
         text.update_idletasks()
         # Pre-stretch the popup to the Text's requested width BEFORE counting
-        # wrapped lines. When reusing a popup (streaming), the window is still
-        # at its old narrow size, which squeezes the Text and miscounts a
-        # 1-line string as several — leaving the final window too tall.
+        # wrapped display lines, and make sure the window is actually MAPPED
+        # while we count.
+        #
+        # A withdrawn (unmapped) Toplevel reports a 1px-wide Text, so wrap="word"
+        # folds every single character onto its own line and the display-line
+        # count explodes — a 2-line translation gets measured as dozens of lines,
+        # then min(.., max_lines) leaves the window hugely too tall with a big
+        # empty gap below the text (and sometimes a spurious scrollbar). Fresh
+        # non-streaming popups are measured while still withdrawn, which is
+        # exactly when this bit. Mapping the window off-screen first makes the
+        # geometry take effect so the Text has its real width and the count is
+        # correct. (Streaming never hit this: it reuses an already-mapped window;
+        # the append path below is likewise already on-screen — hence the guard.)
         req_w = text.winfo_reqwidth() + (shell_pad * 2)
-        win.geometry(f"{req_w}x1000")
+        if win.winfo_ismapped():
+            win.geometry(f"{req_w}x1000")
+        else:
+            win.geometry(f"{req_w}x1000+-4000+-4000")
+            win.deiconify()
         text.update_idletasks()
         text.update()
         try:
@@ -616,7 +631,10 @@ class PopupMixin:
             w += win._scroll.winfo_reqwidth()
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
         h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
-        h = max(int(h), MIN_POPUP_HEIGHT)
+        # Final content already fits the text exactly; use the compact floor so a
+        # short result hugs its text instead of being padded to the streaming
+        # minimum.
+        h = max(int(h), MIN_POPUP_HEIGHT_COMPACT)
         return int(w), int(h)
 
     def _size_popup_stream_grow(self, win, message):
