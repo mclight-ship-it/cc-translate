@@ -630,7 +630,12 @@ class PopupMixin:
         if true_lines > max_lines:
             w += win._scroll.winfo_reqwidth()
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
-        h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
+        # The body frame is packed with pady=(0, POPUP_BODY_PAD_BOTTOM); that
+        # bottom gap lives inside the card but is NOT part of the Text's own
+        # reqheight, so it must be added explicitly. Omitting it squeezed the
+        # Text below its requested height and clipped the last line's descenders
+        # (e.g. the "p" in "unmapped" showed only its top half).
+        h = text.winfo_reqheight() + bar_h + (shell_pad * 2) + POPUP_BODY_PAD_BOTTOM
         # Final content already fits the text exactly; use the compact floor so a
         # short result hugs its text instead of being padded to the streaming
         # minimum.
@@ -677,7 +682,8 @@ class PopupMixin:
             max_popup_h = max(1, int(bottom - self._ss.origin_y - 8))
         else:
             max_popup_h = max(MIN_POPUP_HEIGHT, int(mon_h - 20))
-        available_text_h = max(24, max_popup_h - bar_h - (shell_pad * 2))
+        available_text_h = max(
+            24, max_popup_h - bar_h - (shell_pad * 2) - POPUP_BODY_PAD_BOTTOM)
         line_px = max(win._text_font.metrics("linespace") + 6, 14)
         max_lines_by_height = max(4, int(available_text_h / line_px))
 
@@ -695,7 +701,10 @@ class PopupMixin:
         w = text.winfo_reqwidth() + (shell_pad * 2)
         if true_lines > max_lines_by_height:
             w += win._scroll.winfo_reqwidth()
-        h = text.winfo_reqheight() + bar_h + (shell_pad * 2)
+        # Include the body frame's bottom pad (pady=(0, POPUP_BODY_PAD_BOTTOM)):
+        # like _size_popup, this gap sits inside the card but outside the Text's
+        # reqheight, so leaving it out clipped the final streamed line.
+        h = text.winfo_reqheight() + bar_h + (shell_pad * 2) + POPUP_BODY_PAD_BOTTOM
 
         if not self._ss.fixed_w:
             self._ss.fixed_w = int(w)

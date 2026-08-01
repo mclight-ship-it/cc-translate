@@ -2027,6 +2027,41 @@ class TestUiSmoke(unittest.TestCase):
             win._scroll.winfo_ismapped(),
             "a 2-line result should not show the overflow scrollbar")
 
+    def test_dynamic_popup_last_line_not_clipped(self):
+        # Regression guard: _size_popup must reserve the body frame's bottom pad
+        # (pady=(0, POPUP_BODY_PAD_BOTTOM)) in the window height. That gap sits
+        # inside the rounded card but is NOT part of the Text's own reqheight, so
+        # omitting it squeezed the Text below its requested height and clipped the
+        # last line's descenders (the "p" in "unmapped" showed only its top half).
+        # DPI-independent: the check is reqheight vs the height actually granted.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        for msg in (
+            'Real culprit: counting lines when the window is "unmapped"',
+            "The quick brown fox jumps over the lazy dog and keeps going until "
+            "it wraps onto a second display line for testing purposes",
+        ):
+            win = app._make_popup(msg, anchor=(300, 300))
+
+            def _kill(w=win):
+                try:
+                    if tr.tk.Toplevel.winfo_exists(w):
+                        w.destroy()
+                except Exception:
+                    pass
+            self.addCleanup(_kill)
+            win.update_idletasks()
+            win.update()
+            text = win._text
+            req = text.winfo_reqheight()
+            got = text.winfo_height()
+            self.assertGreaterEqual(
+                got, req,
+                f"Text was squeezed ({got}px < requested {req}px) for {msg!r}; "
+                f"the missing pixels clip the last line's descenders. "
+                f"_size_popup must add POPUP_BODY_PAD_BOTTOM to the window height.")
+
     def test_critical_ui_methods_exist(self):
         """Guard against orphaned/dropped method definitions: every method the
         window builders call on `self` must be a bound method, not missing."""
