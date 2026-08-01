@@ -1326,6 +1326,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._last_result_ok = bool(ok)
         self._last_result_title = title or ""
         self._last_result_text = (text or "").strip()
+        # Refresh the tray so the "recall last result" item un-grays right away
+        # rather than lagging until the next unrelated menu rebuild.
+        self._refresh_tray_menu()
 
     def _do_translate(self, text, job_id, meta):
         # Long, non-dictionary text streams so the translation appears

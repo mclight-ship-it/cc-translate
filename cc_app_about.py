@@ -123,6 +123,17 @@ class AboutMixin:
             font=(FONT, 10))
         version_lbl.pack(side="left")
 
+        # "Check for updates" lives here (moved off the tray menu to keep it
+        # short). It reuses the same in-Settings flow as before, so the update
+        # experience — status line + explicit "更新并重启" button — is unchanged.
+        update_lbl = tk.Label(
+            version_frame, text=i18n.get("about.check_update"), bg=bg,
+            fg=accent, font=(FONT, 10, "underline"), cursor="hand2")
+        update_lbl.pack(side="left", padx=(10, 0))
+        update_lbl.bind("<Button-1>", lambda e: self._about_check_update())
+        update_lbl.bind("<Enter>", lambda e: update_lbl.config(fg=t["status_ok"]))
+        update_lbl.bind("<Leave>", lambda e: update_lbl.config(fg=accent))
+
         github_url = "https://github.com/mclight-ship-it/cc-translate"
         github_frame = tk.Frame(info_group, bg=bg, bd=0, highlightthickness=0)
         github_frame.pack(pady=5)
@@ -392,6 +403,17 @@ class AboutMixin:
         x = left + (mon_w - w) // 2
         y = top + (mon_h - h) // 2
         self._reveal_rounded_window(win, w, h, x, y)
+
+    def _about_check_update(self):
+        """"Check for updates" from the About window: close About, then run the
+        same in-Settings check the tray used to trigger, so both paths share one
+        experience (status line + explicit "更新并重启" button)."""
+        try:
+            if self.about_win and tk.Toplevel.winfo_exists(self.about_win):
+                self.about_win.destroy()
+        except Exception:
+            pass
+        self.check_update_via_settings()
 
     def _open_url(self, url):
         """Open a URL in the default browser."""

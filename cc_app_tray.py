@@ -81,9 +81,6 @@ class TrayMixin:
             self.paused = not self.paused
             icon.update_menu()
 
-        def on_check_update(icon, item):
-            self.check_update_via_settings()
-
         def on_diagnostics(icon, item):
             self.open_diagnostics()
 
@@ -108,10 +105,12 @@ class TrayMixin:
             # so every feature remains reachable from the right-click menu.
             pystray.MenuItem(
                 "default", on_default_click, default=True, visible=False),
+            # Recall + history form one group: both surface a past result.
             pystray.MenuItem(
                 i18n.get("tray.recall_result"), on_recall,
                 enabled=lambda item: self.has_recallable_result()),
             pystray.MenuItem(i18n.get("tray.history"), on_history),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem(i18n.get("tray.quick_input"), on_quick_input),
             pystray.MenuItem(i18n.get("tray.screenshot_menu"), on_ocr),
             pystray.MenuItem(
@@ -121,7 +120,6 @@ class TrayMixin:
             pystray.MenuItem(i18n.get("tray.settings"), on_settings),
             pystray.MenuItem(i18n.get("tray.diagnostics"), on_diagnostics),
             pystray.MenuItem(i18n.get("about.title"), on_about),
-            pystray.MenuItem(i18n.get("tray.check_update"), on_check_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(i18n.get("tray.exit"), on_quit),
         )
@@ -130,6 +128,23 @@ class TrayMixin:
         # Keep the tray glyph contrasting when the user flips the Windows
         # taskbar between light and dark at runtime.
         self.root.after(3000, self._watch_taskbar_theme)
+
+    def _refresh_tray_menu(self):
+        """Rebuild the tray menu so dynamic item states re-evaluate immediately.
+
+        On Windows pystray bakes each item's enabled flag into the native HMENU
+        when the menu is (re)built and only rebuilds on ``update_menu()`` — it is
+        NOT re-evaluated every time the menu is opened. Without this the
+        "recall last result" item would stay grayed out until some other change
+        (e.g. toggling pause) happened to rebuild the menu, so it looked laggy.
+        Safe to call from any thread and before the tray exists (no-op)."""
+        tray = getattr(self, "tray", None)
+        if tray is None:
+            return
+        try:
+            tray.update_menu()
+        except Exception:
+            pass
 
     def _watch_taskbar_theme(self):
         """Swap the tray icon if the taskbar theme changed (polled)."""

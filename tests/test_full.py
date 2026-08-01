@@ -3292,6 +3292,51 @@ class TestReshowLastResult(unittest.TestCase):
         self.assertEqual(app._make_popup.call_args.kwargs["anchor"], (10, 20))
 
 
+class TestTrayMenuRefresh(unittest.TestCase):
+    """The tray's "recall last result" item is grayed via an enabled callable
+    that pystray only re-evaluates on update_menu(). _remember_result must poke
+    the tray so the item un-grays immediately instead of lagging."""
+
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._last_result_ok = None
+        app._last_result_title = ""
+        app._last_result_text = ""
+        return app
+
+    def test_remember_result_refreshes_tray(self):
+        app = self._app()
+        app.tray = unittest.mock.Mock()
+        app._remember_result(True, "Title", "  body  ")
+        self.assertTrue(app._last_result_ok)
+        self.assertEqual(app._last_result_title, "Title")
+        self.assertEqual(app._last_result_text, "body")   # stripped
+        app.tray.update_menu.assert_called_once()
+
+    def test_refresh_tray_menu_noop_without_tray(self):
+        app = self._app()
+        app.tray = None
+        app._refresh_tray_menu()   # must not raise
+
+    def test_refresh_tray_menu_swallows_errors(self):
+        app = self._app()
+        app.tray = unittest.mock.Mock()
+        app.tray.update_menu.side_effect = RuntimeError("boom")
+        app._refresh_tray_menu()   # must not raise
+
+
+class TestAboutCheckUpdate(unittest.TestCase):
+    """"Check for updates" moved from the tray to the About window; it must
+    close About and route through the shared in-Settings check."""
+
+    def test_about_check_update_closes_and_delegates(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.about_win = None
+        app.check_update_via_settings = unittest.mock.Mock()
+        app._about_check_update()
+        app.check_update_via_settings.assert_called_once()
+
+
 def tearDownModule():
     """Tear the shared Tk root down deterministically on the main thread and
     force GC passes so no tkinter object is finalized during interpreter
