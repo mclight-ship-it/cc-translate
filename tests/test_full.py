@@ -2215,6 +2215,49 @@ class TestUiSmoke(unittest.TestCase):
             win.winfo_height(), h0,
             "streamed frame should grow the window height, not shrink it")
 
+    def test_dynamic_stream_finalize_fits_content_not_floor(self):
+        # Root-cause regression (the "big empty hole" report): streaming is
+        # gated on INPUT length (>= STREAM_MIN_CHARS), but the OUTPUT can be
+        # short. A summary compresses a long selection into a few lines, so it
+        # streams (long input) yet renders short. The streaming floor
+        # (_centered_height_px) is fine WHILE streaming, but the FINAL frame
+        # must collapse to the real content height, or the window keeps the tall
+        # floor and leaves a big gap below the text. DPI-independent.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        floor = app._centered_height_px()
+
+        # SHORT streamed output (the summary case).
+        app._ss = tr.StreamSession()
+        short = "较短的摘要。\n只有两三行。\n没有更多内容。"
+        w1 = app._make_popup(short, anchor=(400, 300), reveal=False)
+        self.addCleanup(lambda w=w1: self._safe_win_destroy(w))
+        _x, h_open = app._size_popup_stream_grow(w1, short)
+        _x, h_short_final = app._size_popup_stream_grow(w1, short, final=True)
+        self.assertGreaterEqual(
+            h_open, floor * 0.95,
+            f"streaming should OPEN at the floor ({floor}px), got {h_open}px")
+        self.assertLess(
+            h_short_final, floor * 0.9,
+            f"a short summary must COLLAPSE below the floor ({floor}px) at "
+            f"finalize to fit its content, got {h_short_final}px (a value near "
+            f"the floor means the empty-gap bug is back)")
+
+        # LONG streamed output must stay tall at finalize (no over-shrink).
+        app._ss = tr.StreamSession()
+        longtxt = "\n".join(
+            "第%d行较长的翻译内容用于占满高度" % i
+            for i in range(1, 40))
+        w2 = app._make_popup(longtxt, anchor=(400, 80), reveal=False)
+        self.addCleanup(lambda w=w2: self._safe_win_destroy(w))
+        app._size_popup_stream_grow(w2, longtxt)
+        _x, h_long_final = app._size_popup_stream_grow(w2, longtxt, final=True)
+        self.assertGreater(
+            h_long_final, h_short_final * 1.5,
+            f"long streamed output must stay much taller than a short summary "
+            f"at finalize ({h_long_final}px vs {h_short_final}px)")
+
     def test_cycle_anchor_pins_result_to_trigger_cursor(self):
         # Issue 2: in follow-cursor layout every popup in a translate cycle must
         # anchor to the cursor captured at trigger time (_cycle_anchor), so the

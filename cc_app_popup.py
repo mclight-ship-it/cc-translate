@@ -651,7 +651,7 @@ class PopupMixin:
         h = max(int(h), MIN_POPUP_HEIGHT_COMPACT)
         return int(w), int(h)
 
-    def _size_popup_stream_grow(self, win, message):
+    def _size_popup_stream_grow(self, win, message, final=False):
         """Streaming: width fixed, height grows down from a fixed anchor.
 
         Streaming only runs for long text (>= STREAM_MIN_CHARS), so the result is
@@ -751,13 +751,26 @@ class PopupMixin:
         if not self._ss.fixed_w:
             self._ss.fixed_w = int(w)
 
-        # Open at the floor height, grow with content, never shrink during the
-        # stream, never spill past the screen edge below the anchor.
-        h = max(content_h, min(floor_h, max_popup_h))
-        if self._ss.max_h:
-            h = max(h, self._ss.max_h)
-        h = min(h, max_popup_h)
-        self._ss.max_h = int(h)
+        if final:
+            # Final frame: the full output is known, so fit the window to it
+            # (compact floor) and ALLOW it to shrink below the streaming floor.
+            # Streaming gates on INPUT length (>= STREAM_MIN_CHARS), but the
+            # OUTPUT can be short: a summary compresses a long selection into a
+            # few lines, and a terse translation of verbose source is short too.
+            # Holding those at the centred-card floor left a big empty gap below
+            # the text, so the last frame collapses to the real content height
+            # (never past the screen edge below the anchor).
+            h = max(content_h, MIN_POPUP_HEIGHT_COMPACT)
+            h = min(h, max_popup_h)
+            self._ss.max_h = int(h)
+        else:
+            # Streaming: open at the floor height, grow with content, never
+            # shrink mid-stream (avoids jitter), never spill past the screen edge.
+            h = max(content_h, min(floor_h, max_popup_h))
+            if self._ss.max_h:
+                h = max(h, self._ss.max_h)
+            h = min(h, max_popup_h)
+            self._ss.max_h = int(h)
 
         return int(self._ss.fixed_w), int(h)
 
@@ -1498,7 +1511,7 @@ class PopupMixin:
                     prev_top = win._text.index("@0,0")
                 except Exception:
                     prev_top = None
-            w, h = self._size_popup_stream_grow(win, message)
+            w, h = self._size_popup_stream_grow(win, message, final=stream_final)
 
             # Anchor (origin_x/origin_y) and monitor were fixed inside
             # _size_popup_stream_grow on the first frame; here we only read them
