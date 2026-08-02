@@ -265,6 +265,34 @@ def auto_direction_prompt(app_language):
             "English; otherwise translate to natural Simplified Chinese.")
 
 
+def resolve_target_lang(mode, app_language, text):
+    """Resolve the concrete target-language code (a LANGUAGES key) a translation
+    will produce, so the summary heading + body can be written in the SAME
+    language as the translation instead of the app's UI language.
+
+    - Explicit ``to_xx`` modes translate into a fixed language: return ``xx``.
+    - ``auto`` routes by the SOURCE language, so the target is only known once
+      we see the text. Mirror the auto routing prompt exactly:
+        * zh UI: Chinese source -> ``en``; anything else -> ``zh``.
+        * en UI: English (Latin) source -> ``zh``; anything else -> ``en``.
+      Source language is detected by CJK-vs-Latin character balance, the same
+      cheap heuristic used elsewhere (ord(c) > 0x2E7F ~= CJK)."""
+    if mode and mode.startswith("to_"):
+        code = mode[3:]
+        if code in LANGUAGES:
+            return code
+    t = text or ""
+    cjk = sum(1 for c in t if ord(c) > 0x2E7F)
+    letters = sum(1 for c in t if c.isalpha())
+    source_is_cjk = cjk >= max(2, letters)
+    if app_language == "en_US":
+        # English -> Chinese; otherwise -> English.
+        source_is_latin = letters > 0 and not source_is_cjk
+        return "zh" if source_is_latin else "en"
+    # zh UI (default): Chinese -> English; otherwise -> Chinese.
+    return "en" if source_is_cjk else "zh"
+
+
 def direction_prompt(mode, app_language):
     """Resolve the effective direction prompt for a mode and app language."""
     if mode == "auto":

@@ -63,7 +63,7 @@ from cc_core import (
     CFG, DEFAULT_CONFIG,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
-    auto_direction_prompt, direction_prompt,
+    auto_direction_prompt, direction_prompt, resolve_target_lang,
     SYSTEM_SUFFIX, SUMMARY_SUFFIX, DICTIONARY_PROMPT, CODE_EXPLAIN_PROMPT,
     CODE_EXPLAIN_APPEND_PROMPT, RESULT_CONCISE_PROMPT, RESULT_FORMAL_PROMPT,
     RESULT_SUMMARY_PROMPT, RESULT_ACTION_PROMPTS,
@@ -310,32 +310,51 @@ def is_summarizable_prose(text):
     return True
 
 
-def summary_headings(app_language):
-    """(summary_heading, translation_heading) text for the summary sections,
-    localized to the app UI language."""
-    if app_language == "en_US":
-        return ("Summary", "Translation")
-    return ("摘要", "译文")
+# Section headings for the long-text summary, in each SUPPORTED TARGET
+# language. The summary is written in the language the text is translated
+# INTO, so the heading must match that language too — never the app's UI
+# language. Unknown targets fall back to English.
+SUMMARY_HEADINGS = {
+    "zh": ("摘要", "译文"),
+    "en": ("Summary", "Translation"),
+    "ja": ("要約", "翻訳"),
+    "ko": ("요약", "번역"),
+    "fr": ("Résumé", "Traduction"),
+    "de": ("Zusammenfassung", "Übersetzung"),
+    "es": ("Resumen", "Traducción"),
+}
 
 
-def summary_instruction(app_language):
+def summary_headings(target_lang):
+    """(summary_heading, translation_heading) for the summary sections, in the
+    TARGET language (the language being translated INTO), so a zh->en summary
+    reads 'Summary'/'Translation' and an en->zh summary reads '摘要'/'译文'.
+    ``target_lang`` is a LANGUAGES code (see resolve_target_lang)."""
+    return SUMMARY_HEADINGS.get(target_lang, SUMMARY_HEADINGS["en"])
+
+
+def summary_instruction(target_lang):
     """Instruction appended to the translate prompt when the long-text summary
     feature is active. Asks the model to emit a short summary first, then the
     full translation, using two Markdown headings the renderer already styles.
 
-    Strongly emphasizes that BOTH sections must be written in the target
-    language (the language being translated INTO), since otherwise smaller
-    models tend to write the summary in the source language."""
-    sm, tr = summary_headings(app_language)
+    The summary MUST be in the target language (the language being translated
+    INTO), the same language as the translation — otherwise the two halves come
+    out in different languages (e.g. a Chinese summary above an English
+    translation). Naming the concrete target language explicitly makes smaller
+    models comply far more reliably than a generic 'the target language'."""
+    sm, tr = summary_headings(target_lang)
+    lang_name = LANGUAGES.get(target_lang, (None, "the target language"))[1]
     return (
         " IMPORTANT OUTPUT FORMAT: because the text is long, structure your "
         "ENTIRE response as exactly two Markdown sections. FIRST, a line with "
         f"the heading `## {sm}` followed by a brief summary of 3-5 short lines "
         f"capturing the key points. THEN, a line with the heading `## {tr}` "
         "followed by the full translation. Use level-2 `##` headings with "
-        "exactly those two heading texts. CRITICAL: write BOTH the summary and "
-        "the translation in the TARGET language (the language you are "
-        "translating INTO), never in the source language.")
+        f"exactly those two heading texts. CRITICAL: write EVERYTHING — the "
+        f"heading words, the summary, AND the translation — in {lang_name}. The "
+        f"summary must be in {lang_name}, the SAME language as the translation, "
+        "never in the source language.")
 
 
 
@@ -1303,7 +1322,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if self._last_origin == "ocr":
             base_prompt += OCR_STRUCTURE_HINT
         if self._should_summarize(text):
-            return base_prompt + summary_instruction(app_language) + SUMMARY_SUFFIX
+            # Summary + translation must share ONE language: the language this
+            # text is translated INTO, not the app UI language. In auto mode
+            # that depends on the source, so resolve it from mode + text.
+            target_lang = resolve_target_lang(mode, app_language, text)
+            return base_prompt + summary_instruction(target_lang) + SUMMARY_SUFFIX
         return base_prompt + SYSTEM_SUFFIX
 
     def _result_title(self, ok=True):

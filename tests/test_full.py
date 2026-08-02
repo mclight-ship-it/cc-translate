@@ -739,16 +739,63 @@ class TestSummaryHelpers(unittest.TestCase):
         self.assertFalse(tr.is_summarizable_prose(cfg))
 
     def test_summary_headings_localized(self):
-        self.assertEqual(tr.summary_headings("en_US"), ("Summary", "Translation"))
-        self.assertEqual(tr.summary_headings("zh_CN"), ("摘要", "译文"))
+        # Headings are keyed to the TARGET language (what the text is translated
+        # INTO), not the app UI language, so a zh->en summary reads in English.
+        self.assertEqual(tr.summary_headings("en"), ("Summary", "Translation"))
+        self.assertEqual(tr.summary_headings("zh"), ("摘要", "译文"))
+        self.assertEqual(tr.summary_headings("ja"), ("要約", "翻訳"))
+        # Unknown target falls back to English headings, never crashes.
+        self.assertEqual(tr.summary_headings("xx"), ("Summary", "Translation"))
 
     def test_summary_instruction_contains_headings(self):
-        instr = tr.summary_instruction("zh_CN")
+        # zh target: Chinese headings + names Simplified Chinese as the language.
+        instr = tr.summary_instruction("zh")
         self.assertIn("## 摘要", instr)
         self.assertIn("## 译文", instr)
-        instr_en = tr.summary_instruction("en_US")
+        self.assertIn("Simplified Chinese", instr)
+        # en target: English headings + names English as the one output language.
+        instr_en = tr.summary_instruction("en")
         self.assertIn("## Summary", instr_en)
         self.assertIn("## Translation", instr_en)
+        self.assertIn("English", instr_en)
+
+    def test_resolve_target_lang_auto_zh_ui(self):
+        # zh UI, auto: Chinese source -> English target; English source -> zh.
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "zh_CN", "这是一段中文内容需要翻译"),
+            "en")
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "zh_CN", "This is English prose."),
+            "zh")
+
+    def test_resolve_target_lang_auto_en_ui(self):
+        # en UI, auto: English source -> Chinese target; Chinese source -> en.
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "en_US", "This is English prose."),
+            "zh")
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "en_US", "这是一段中文内容需要翻译"),
+            "en")
+
+    def test_resolve_target_lang_explicit_mode(self):
+        # Explicit to_xx modes translate into a fixed language regardless of src.
+        self.assertEqual(
+            tr.resolve_target_lang("to_ja", "zh_CN", "任意内容"), "ja")
+        self.assertEqual(
+            tr.resolve_target_lang("to_en", "zh_CN", "任意内容"), "en")
+
+    def test_summary_language_matches_translation_zh_to_en(self):
+        # Regression (the reported bug): a zh-UI user selecting CHINESE text
+        # gets an English translation, so the summary must ALSO be English —
+        # not Chinese. The prompt must therefore carry English headings and
+        # name English as the sole output language.
+        target = tr.resolve_target_lang("auto", "zh_CN", "这是一段较长的中文内容。")
+        self.assertEqual(target, "en")
+        instr = tr.summary_instruction(target)
+        self.assertIn("## Summary", instr)
+        self.assertIn("## Translation", instr)
+        self.assertNotIn("## 摘要", instr)
+        self.assertIn("English", instr)
 
     def test_summary_default_off(self):
         self.assertFalse(tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED])
