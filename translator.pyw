@@ -64,6 +64,7 @@ from cc_core import (
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
     auto_direction_prompt, direction_prompt, resolve_target_lang,
+    source_is_cjk, source_has_english, CJK_SOURCE_RATIO,
     SYSTEM_SUFFIX, SUMMARY_SUFFIX, DICTIONARY_PROMPT, CODE_EXPLAIN_PROMPT,
     CODE_EXPLAIN_APPEND_PROMPT, RESULT_CONCISE_PROMPT, RESULT_FORMAL_PROMPT,
     RESULT_SUMMARY_PROMPT, RESULT_ACTION_PROMPTS,

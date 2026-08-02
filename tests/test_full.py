@@ -783,6 +783,24 @@ class TestSummaryHelpers(unittest.TestCase):
             tr.resolve_target_lang("to_ja", "zh_CN", "任意内容"), "ja")
         self.assertEqual(
             tr.resolve_target_lang("to_en", "zh_CN", "任意内容"), "en")
+    def test_resolve_target_lang_mixed_chinese_with_english_terms(self):
+        # THE reported bug: a zh-UI user selects a Chinese paragraph that embeds
+        # English technical terms / code. str.isalpha() counts CJK as alphabetic,
+        # so the old ``cjk >= letters`` test flipped to non-CJK the moment ANY
+        # English letter appeared -> the text was "translated" back into Chinese.
+        # A Chinese-dominant mixed selection must route to English.
+        mixed = ("你的判断完全正确，这是个真 bug。根因：摘要的标题和正文语言原来是按"
+                 "应用界面语言定的，而不是这次翻译的目标语言。在 auto 模式下目标语言是"
+                 "动态的（中文界面选中文，目标是英文），新增 resolve_target_lang() 来"
+                 "确定这次翻译真正的目标语言。")
+        self.assertEqual(tr.resolve_target_lang("auto", "zh_CN", mixed), "en")
+
+    def test_resolve_target_lang_stray_cjk_stays_english(self):
+        # Guard the other side: a predominantly-English paragraph with a single
+        # stray CJK token must NOT flip to a Chinese source; it still -> zh.
+        english = ("This is a mostly English paragraph about software design "
+                   "with a single stray token 中文 in the middle for testing.")
+        self.assertEqual(tr.resolve_target_lang("auto", "zh_CN", english), "zh")
 
     def test_summary_language_matches_translation_zh_to_en(self):
         # Regression (the reported bug): a zh-UI user selecting CHINESE text

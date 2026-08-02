@@ -259,10 +259,54 @@ def get_direction_labels():
 def auto_direction_prompt(app_language):
     """Build the auto-mode routing prompt from app UI language."""
     if app_language == "en_US":
-        return ("Translate the user's text. If it is English, translate to natural "
-                "Simplified Chinese; otherwise translate to natural English.")
-    return ("Translate the user's text. If it is Chinese, translate to natural "
-            "English; otherwise translate to natural Simplified Chinese.")
+        return ("Translate the user's text. If it contains any meaningful "
+                "English prose, translate the WHOLE text into natural Simplified "
+                "Chinese. Only if it has essentially no English (e.g. it is "
+                "Chinese or another language) translate it into natural English.")
+    return ("Translate the user's text. If it contains any meaningful Chinese "
+            "(even when mixed with English words, code or punctuation), translate "
+            "the WHOLE text into natural English. Only if it has essentially no "
+            "Chinese translate it into natural Simplified Chinese.")
+
+
+# Auto-routing treats text as a CJK (Chinese) source when CJK characters are at
+# least this fraction of the ASCII-Latin letters. Chinese prose routinely embeds
+# English terms/code, so requiring CJK to OUTNUMBER Latin letters mis-routed
+# such text to Chinese ("selected Chinese, got Chinese"). A small fraction still
+# marks it CJK; a stray CJK glyph in otherwise-English text does not.
+CJK_SOURCE_RATIO = 0.34
+
+
+def _cjk_latin_counts(text):
+    """(cjk, latin) character counts. `latin` is ASCII English letters ONLY;
+    note str.isalpha() also counts CJK as alphabetic, so it cannot be used to
+    tell the two scripts apart."""
+    t = text or ""
+    cjk = sum(1 for c in t if ord(c) > 0x2E7F)
+    latin = sum(1 for c in t if ("a" <= c <= "z") or ("A" <= c <= "Z"))
+    return cjk, latin
+
+
+def source_is_cjk(text):
+    """True if `text` reads as a CJK (Chinese) source for auto-routing.
+
+    Robust to English words/code embedded in Chinese prose: CJK need only be a
+    meaningful fraction of the Latin letters, not outnumber them. (The old
+    ``cjk >= letters`` test flipped to non-CJK the moment ANY English letter
+    appeared, so a Chinese selection peppered with code got translated back
+    into Chinese.) A stray CJK glyph in otherwise-English text still reads as
+    English via the relative floor."""
+    cjk, latin = _cjk_latin_counts(text)
+    return cjk >= 2 and cjk >= latin * CJK_SOURCE_RATIO
+
+
+def source_has_english(text):
+    """True if `text` has a meaningful amount of Latin (English) prose. The
+    en-UI auto pivot is English -> Chinese; else -> English, so predominantly-
+    English text (even with embedded CJK) routes to Chinese. Symmetric to
+    source_is_cjk."""
+    cjk, latin = _cjk_latin_counts(text)
+    return latin >= 2 and latin >= cjk * CJK_SOURCE_RATIO
 
 
 def resolve_target_lang(mode, app_language, text):
@@ -281,16 +325,11 @@ def resolve_target_lang(mode, app_language, text):
         code = mode[3:]
         if code in LANGUAGES:
             return code
-    t = text or ""
-    cjk = sum(1 for c in t if ord(c) > 0x2E7F)
-    letters = sum(1 for c in t if c.isalpha())
-    source_is_cjk = cjk >= max(2, letters)
     if app_language == "en_US":
-        # English -> Chinese; otherwise -> English.
-        source_is_latin = letters > 0 and not source_is_cjk
-        return "zh" if source_is_latin else "en"
-    # zh UI (default): Chinese -> English; otherwise -> Chinese.
-    return "en" if source_is_cjk else "zh"
+        # en UI pivot: any meaningful English -> Chinese; else -> English.
+        return "zh" if source_has_english(text) else "en"
+    # zh UI pivot: any meaningful Chinese -> English; else -> Chinese.
+    return "en" if source_is_cjk(text) else "zh"
 
 
 def direction_prompt(mode, app_language):
