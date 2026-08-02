@@ -393,25 +393,34 @@ class SettingsMixin:
             scale = 1.0
 
         for name in ("CC.TCombobox", "CC.TSpinbox"):
-            # clam draws the field border as a 1px bordercolor rectangle plus a
-            # 1px light(top/left)/dark(bottom/right) bevel. When a child element
-            # (our chevron) is packed against the right edge, clam clips the
-            # right bevel pixel, so the right border renders 1px while the other
-            # sides render 2px — an asymmetric highlight on hover. Collapsing the
-            # bevel into the field background leaves a single uniform 1px border
-            # on all four sides, so the accent highlight wraps evenly.
+            # clam's field border is composited from two colours: bordercolor
+            # draws the outer rectangle on the top/left/bottom edges, and
+            # lightcolor draws the right edge plus an inner bevel highlight on the
+            # top/left. Because our chevron image element is packed against the
+            # field's right edge, clam never draws bordercolor's right pixel
+            # there, so bordercolor covers only three sides while lightcolor is
+            # the *only* colour that reaches all four. Mapping bordercolor to the
+            # accent therefore lights three sides fully but leaves the right edge
+            # thin/dark, and stacking both colours makes the left render 2px while
+            # the right stays 1px — the asymmetry the earlier attempts hit.
+            #
+            # Fix: draw the entire border with lightcolor alone (bordercolor kept
+            # invisible at the field background). lightcolor renders a clean,
+            # uniform 1px rectangle on all four sides, so both the resting grey
+            # border and the accent hover/focus highlight wrap evenly. darkcolor
+            # is unused by the field element but pinned to the background too.
             style.configure(
                 name,
                 fieldbackground=field_bg, background=field_bg,
                 foreground=fg,
-                bordercolor=border, lightcolor=field_bg, darkcolor=field_bg,
+                bordercolor=field_bg, lightcolor=border, darkcolor=field_bg,
                 relief="flat", borderwidth=1, padding=6,
             )
             style.map(
                 name,
                 fieldbackground=[("readonly", field_bg), ("disabled", field_bg)],
                 foreground=[("disabled", hint)],
-                bordercolor=[("focus", accent), ("hover", accent)],
+                lightcolor=[("focus", accent), ("hover", accent)],
             )
 
         # Modern chevron dropdown indicator (falls back to a scaled triangle if
