@@ -415,29 +415,25 @@ class PopupMixin:
         moved on-screen here: the caller performs a single geometry move once
         the rounded card has been painted, so the reveal never flashes an
         unpainted colour-key (near-black) frame or a mid-measurement resize."""
-        off = -4000
-        if self._is_centered_layout():
-            w, h, x, y = self._centered_box()
-            win.geometry(f"{w}x{h}+{off}+{off}")
-            self._fill_text(win._text, message)
-            try:
-                win._text.config(width=1, height=1)
-            except Exception:
-                pass
-            win.update_idletasks()
-            first, last = 0.0, 1.0
-            try:
-                first, last = win._text.yview()
-            except Exception:
-                pass
-            if last < 1.0 - 1e-6 or first > 1e-6:
-                win._scroll.pack(side="right", fill="y")
-                win._text.bind("<MouseWheel>", self._on_mousewheel)
-                win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
-            else:
-                win._scroll.pack_forget()
-            return w, h, x, y
         w, h = self._size_popup(win, message)
+        if self._is_centered_layout():
+            # Unified layout: the popup is sized by the SAME content-driven
+            # measurement as follow-cursor mode (_size_popup); "centred" only
+            # changes WHERE it lands — horizontally and vertically centred on
+            # the active monitor. A final result's size is known, so it can be
+            # centred exactly; streaming opens centred then grows down (see
+            # _size_popup_stream_grow).
+            rect = get_monitor_rect()
+            if rect:
+                left, top, right, bottom = rect
+            else:
+                left, top = 0, 0
+                right = self.root.winfo_screenwidth()
+                bottom = self.root.winfo_screenheight()
+            x = left + ((right - left) - w) // 2
+            y = top + ((bottom - top) - h) // 2
+            x, y = self._clamp_to_monitor(x, y, w, h, ref=(x, y))
+            return w, h, x, y
         if anchor is not None:
             x, y = int(anchor[0]), int(anchor[1])
             try:
@@ -722,14 +718,31 @@ class PopupMixin:
         reserve_h = min(self._centered_height_px(), max(120, mon_h - 20))
         min_top = top + 12
         if self._ss.origin_y is None or self._ss.origin_x is None:
-            cx, cy = self._window_xy(win)
-            if (cx, cy) == (0, 0):
-                cx, cy = left + 12, min_top
-            # Push up so at least reserve_h fits below the anchor (or as much as
-            # a short screen allows).
-            max_origin_y = max(min_top, bottom - reserve_h - 8)
-            self._ss.origin_y = min(max(cy, min_top), max_origin_y)
-            self._ss.origin_x = cx
+            if self._is_centered_layout():
+                # Centred layout (方案1): OPEN centred on the monitor, then grow
+                # downward — same content-driven sizing/rendering as follow-cursor
+                # mode, only positioned centrally. The opening frame is vertically
+                # centred so it lands exactly where the centred loading hint was
+                # (no jump when the result replaces it); the fixed top then lets
+                # later frames extend downward without a per-frame recentre. No
+                # cursor is read, so a low mouse can't shrink it. origin_x is
+                # recomputed from the locked width each frame in _set_popup_text.
+                line_px_est = max(win._text_font.metrics("linespace") + 6, 14)
+                open_h_est = (bar_h + (shell_pad * 2) + POPUP_BODY_PAD_BOTTOM
+                              + STREAM_OPEN_MIN_LINES * line_px_est)
+                max_origin_y = max(min_top, bottom - open_h_est - 8)
+                self._ss.origin_y = max(
+                    min_top, min(top + (mon_h - open_h_est) // 2, max_origin_y))
+                self._ss.origin_x = left
+            else:
+                cx, cy = self._window_xy(win)
+                if (cx, cy) == (0, 0):
+                    cx, cy = left + 12, min_top
+                # Push up so at least reserve_h fits below the anchor (or as
+                # much as a short screen allows).
+                max_origin_y = max(min_top, bottom - reserve_h - 8)
+                self._ss.origin_y = min(max(cy, min_top), max_origin_y)
+                self._ss.origin_x = cx
         # Height may only grow downward from the fixed anchor to the screen edge.
         max_popup_h = max(1, int(bottom - self._ss.origin_y - 8))
 
@@ -1045,138 +1058,6 @@ class PopupMixin:
     def _history_box(self):
         """A roomier centred box for the feature-rich history window."""
         return self._scaled_centered_box(HISTORY_WINDOW_W, HISTORY_WINDOW_H)
-
-    def _stream_fill_text(self, text_widget, message, rich):
-        """Update the streamed result Text with the least work possible.
-
-        Streamed output only ever grows, so on a normal frame we insert just the
-        new tail at the end. Inserting at the end never moves the scroll view and
-        never repaints the rest of the document, which is what killed the
-        per-frame flicker and the jump-to-top: the old path deleted and reinserted
-        the ENTIRE text ~20x/second (every 50ms flush), resetting the view to the
-        top each time. During streaming the tail is inserted as plain text; the
-        final frame (rich=True) does a single rich rebuild for markdown/inline
-        formatting. A rare non-append change (message isn't a superset of what's
-        shown) falls back to a full rebuild."""
-        prev = self._ss.rendered
-        if not rich and prev and message.startswith(prev):
-            if len(message) == len(prev):
-                return  # nothing new to show
-            try:
-                text_widget.config(state="normal")
-                text_widget.insert("end", message[len(prev):])
-                text_widget.config(state="disabled")
-                self._ss.rendered = message
-                return
-            except Exception:
-                pass  # fall through to a full rebuild
-        if rich:
-            self._fill_text(text_widget, message)
-        else:
-            try:
-                text_widget.config(state="normal")
-                text_widget.delete("1.0", "end")
-                text_widget.insert("1.0", message)
-                text_widget.config(state="disabled")
-            except Exception:
-                self._fill_text(text_widget, message)
-        self._ss.rendered = message
-
-    def _fit_centered(self, win, message, scroll_end=False, scroll_top=False,
-                      streaming=False, full_rebuild=False, preserve_scroll=False):
-        """Fill a fixed-size centred popup with text: the window keeps its fixed
-        geometry, the Text stretches to fill it, and a scrollbar appears only
-        when the content overflows. Used for both result and streaming frames.
-
-        For streaming frames (streaming=True) the fixed geometry, rounded region
-        and Text char-sizing are applied only on the FIRST frame; later frames
-        append just the new text tail (see _stream_fill_text) and toggle the
-        scrollbar. Re-running win.geometry(), the rounded-canvas redraw and a
-        whole-document delete+reinsert on every streamed frame made the card look
-        like it was constantly refreshing and pulled the view back to the top."""
-        text = win._text
-        first_setup = not (streaming and getattr(self._ss, "centered_ready", False))
-        # Predict whether this frame rebuilds the whole Text (first frame, the
-        # final rich rebuild, or a rare non-append change). Only a full rebuild
-        # snaps the view to the top, so only then must we capture/restore the
-        # user's reading position; a plain append leaves the view untouched.
-        will_rebuild = True
-        prev_top = None
-        if streaming:
-            prev = self._ss.rendered
-            will_rebuild = (first_setup or full_rebuild
-                            or not (prev and message.startswith(prev)))
-            if will_rebuild and not first_setup and getattr(
-                    self._ss, "user_scrolled", False):
-                try:
-                    prev_top = text.index("@0,0")
-                except Exception:
-                    prev_top = None
-        elif preserve_scroll:
-            # Non-streaming append (follow-up rewrite / code explanation): the
-            # _fill_text rebuild below snaps the view to the top, so capture the
-            # reader's top line first and restore it after so appended sections
-            # only grow the document downward without yanking them back up.
-            try:
-                prev_top = text.index("@0,0")
-            except Exception:
-                prev_top = None
-        if first_setup:
-            w, h, x, y = self._centered_box()
-            win.geometry(f"{w}x{h}+{x}+{y}")
-            self._remember_window_xy(win, x, y)
-        if streaming:
-            self._stream_fill_text(text, message, rich=full_rebuild)
-        else:
-            self._fill_text(text, message)
-        if first_setup:
-            # width/height in chars = 1 so pack(fill=both, expand) lets the Text
-            # stretch to the window's fixed pixel size instead of its content size.
-            try:
-                text.config(width=1, height=1)
-            except Exception:
-                pass
-        win.update_idletasks()
-        if scroll_end:
-            try:
-                text.see("end-1c")
-            except Exception:
-                pass
-        elif prev_top is not None:
-            # Restore the user's reading position after a full rebuild.
-            try:
-                text.yview(prev_top)
-            except Exception:
-                pass
-        elif scroll_top:
-            # Pin to the top only on the first frame. Streamed text is appended
-            # below the fold, so once the view starts at the top it stays there
-            # on its own. Never fight a user who has scrolled themselves.
-            if first_setup and not getattr(self._ss, "user_scrolled", False):
-                try:
-                    text.yview_moveto(0.0)
-                except Exception:
-                    pass
-        first, last = 0.0, 1.0
-        try:
-            first, last = text.yview()
-        except Exception:
-            pass
-        overflow = last < 1.0 - 1e-6 or first > 1e-6
-        try:
-            mapped = bool(win._scroll.winfo_ismapped())
-        except Exception:
-            mapped = False
-        if overflow and not mapped:
-            win._scroll.pack(side="right", fill="y")
-            win._text.bind("<MouseWheel>", self._on_mousewheel)
-            win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
-        elif not overflow and mapped:
-            win._scroll.pack_forget()
-        if first_setup:
-            self._apply_window_rounding(win)
-            if streaming:
-                self._ss.centered_ready = True
 
     def _resize_hit(self, win, x, y):
         w, h = win.winfo_width(), win.winfo_height()
@@ -1497,15 +1378,6 @@ class PopupMixin:
         win = self.popup
         if not (win and getattr(win, "_text", None)):
             return
-        if self._is_centered_layout():
-            # Fixed centred card: never resize or reposition. Just refill the
-            # text; overflow scrolls instead of growing the window. While
-            # streaming, append the new tail so the reader isn't yanked around;
-            # the final frame does one rich rebuild for formatting.
-            self._fit_centered(win, message, scroll_top=stream_grow,
-                               streaming=stream_grow, full_rebuild=stream_final,
-                               preserve_scroll=append)
-            return
         if stream_grow:
             # The rebuild inside _size_popup_stream_grow (delete + reinsert)
             # snaps the view to the top. Preserve the user's reading position
@@ -1522,7 +1394,14 @@ class PopupMixin:
             # _size_popup_stream_grow on the first frame; here we only read them
             # and clamp x to the current width. No min-height math lives here.
             left, top, right, bottom = self._ss.monitor_rect
-            nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
+            if self._is_centered_layout():
+                # Centred: horizontally centre using the locked stream width
+                # so the card stays centred as it grows down (width is fixed
+                # after the first frame, so this x is stable frame-to-frame).
+                nx = left + ((right - left) - w) // 2
+                nx = max(left + 4, min(nx, right - w - 4))
+            else:
+                nx = max(left + 4, min(self._ss.origin_x, right - w - 4))
             ny = self._ss.origin_y
 
             if not self._ss.placed:

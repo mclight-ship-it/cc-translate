@@ -1812,9 +1812,10 @@ class TestUiSmoke(unittest.TestCase):
                          "clicking the pin again should release topmost")
 
     def test_centered_popup_reveals_on_screen(self):
-        # Regression guard for the off-screen measure/paint reveal: a centered
-        # popup must end up at its on-screen centered box, never left parked at
-        # the off-screen (-4000) measurement position.
+        # Regression guard for the off-screen measure/paint reveal and the
+        # unified layout: a centered popup must end up on-screen, horizontally
+        # centred on the monitor, never left parked at the off-screen (-4000)
+        # measurement position.
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         app.cfg[tr.CFG.POPUP_LAYOUT] = "centered"
@@ -1828,14 +1829,23 @@ class TestUiSmoke(unittest.TestCase):
                 pass
         self.addCleanup(_kill)
 
-        bw, bh, bx, by = app._centered_box()
-        self.assertEqual((win.winfo_x(), win.winfo_y()), (bx, by),
-                         "centered popup should reveal at its centered box, not off-screen")
+        win.update_idletasks()
+        wx, wy = win.winfo_x(), win.winfo_y()
         # The off-screen measurement park is at -4000; the popup must have been
-        # moved to its real (possibly negative on a left-of-primary monitor)
-        # centered box, never left at the park.
-        self.assertNotEqual((win.winfo_x(), win.winfo_y()), (-4000, -4000),
+        # moved to its real on-screen position, never left at the park.
+        self.assertNotEqual((wx, wy), (-4000, -4000),
                             "centered popup must not remain parked off-screen")
+        # Unified layout: a centred popup is sized by the SAME content-driven
+        # measurement as follow-cursor mode; only its POSITION is centred. So
+        # assert it is horizontally centred on the active monitor for its
+        # actual (content) width rather than pinned to a fixed centred box.
+        rect = tr.get_monitor_rect()
+        if rect:
+            left, top, right, bottom = rect
+            expected_x = left + ((right - left) - win.winfo_width()) // 2
+            self.assertLessEqual(
+                abs(wx - expected_x), 4,
+                "centered popup should be horizontally centred on the monitor")
 
     def test_dynamic_stream_first_frame_reveals_once_without_size_jump(self):
         # Regression guard for the popup flicker: in dynamic layout the first
@@ -2372,6 +2382,92 @@ class TestUiSmoke(unittest.TestCase):
             f"result Y {y} should track the trigger anchor 480, not a re-read "
             f"cursor")
 
+    def test_centered_stream_is_centered_and_grows_down(self):
+        # Unified layout: centred streaming reuses the SAME content-driven
+        # stream-grow sizing as follow-cursor mode; only the POSITION differs
+        # — the card is horizontally centred and grows DOWN from a fixed top
+        # (方案1: open centred, then extend downward, no recentre jitter).
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "centered"
+        app._ss = tr.StreamSession()
+        win = app._make_popup("摘要", reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        app.popup = win
+        app._set_popup_text("## 摘要\n第一段内容", stream_grow=True)
+        win.update_idletasks(); win.update()
+        x0, y0 = app._window_xy(win)
+        h0 = win.winfo_height()
+        left, top, right, bottom = app._ss.monitor_rect
+        expected_x = left + ((right - left) - win.winfo_width()) // 2
+        self.assertLess(
+            abs(x0 - expected_x), 6,
+            f"centred stream should be horizontally centred: x={x0} "
+            f"expected~{expected_x}")
+        # A much longer frame grows DOWN: taller, same top, still centred.
+        big = "## 摘要\n" + "\n".join("第%d行内容" % i for i in range(1, 40))
+        app._set_popup_text(big, stream_grow=True)
+        win.update_idletasks(); win.update()
+        x1, y1 = app._window_xy(win)
+        self.assertGreater(
+            win.winfo_height(), h0, "centred stream must grow taller")
+        self.assertLess(
+            abs(y1 - y0), 8,
+            f"centred stream top must stay fixed (grow down), y {y0}->{y1}")
+        exp1 = left + ((right - left) - win.winfo_width()) // 2
+        self.assertLess(
+            abs(x1 - exp1), 6,
+            "centred stream must stay horizontally centred as it grows")
+
+    def test_centered_and_dynamic_stream_width_is_identical(self):
+        # The whole point of the unification: both layouts share ONE sizing
+        # path, so the SAME content yields the SAME (locked) stream width —
+        # only the position differs.
+        content = ("## 摘要\n"
+                   + "\n".join("第%d行内容用于测试" % i for i in range(1, 25)))
+
+        def measure(layout):
+            app = _make_headless_app()
+            self.addCleanup(lambda a=app: self._safe_destroy(a))
+            app.cfg[tr.CFG.POPUP_LAYOUT] = layout
+            app._ss = tr.StreamSession()
+            win = app._make_popup("摘要", anchor=(400, 200), reveal=False)
+            self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+            return app._size_popup_stream_grow(win, content)
+
+        wc, _hc = measure("centered")
+        wd, _hd = measure("dynamic")
+        self.assertEqual(
+            wc, wd,
+            f"unified stream width should match: centred {wc} vs dynamic {wd}")
+
+    def test_centered_stream_rich_renders_each_frame(self):
+        # The user's explicit ask: centred mode must live-render markdown PER
+        # frame like follow-cursor mode, not buffer plain text until the final
+        # frame. The unified path calls the rich renderer (_fill_text) on every
+        # streamed frame.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "centered"
+        app._ss = tr.StreamSession()
+        win = app._make_popup("摘要", reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        app.popup = win
+        real_fill = app._fill_text
+        calls = []
+
+        def spy(widget, msg):
+            calls.append(msg)
+            return real_fill(widget, msg)
+
+        app._fill_text = spy
+        # A NON-final streamed frame must already rich-render (not defer).
+        app._set_popup_text("## 摘要\n**加粗**的内容", stream_grow=True)
+        self.assertTrue(
+            calls,
+            "centred streaming must rich-render each frame, not defer to the "
+            "final frame")
+
     def _safe_win_destroy(self, w):
         try:
             if tr.tk.Toplevel.winfo_exists(w):
@@ -2541,201 +2637,6 @@ class TestLoadingPopupDismiss(unittest.TestCase):
         win = types.SimpleNamespace()
         app._on_loading_focus_out(win)
         app._dismiss_loading_popup.assert_not_called()
-
-
-class TestStreamScrollPreservation(unittest.TestCase):
-    """Streaming used to delete+reinsert the ENTIRE result Text every 50ms flush,
-    which repainted the whole card (flicker) and snapped the view to the top. The
-    centred popup now (a) applies its fixed geometry / rounded region only on the
-    first frame, (b) appends only the new text tail on later frames so the scroll
-    view never moves, and (c) on the final rich rebuild restores the user's
-    reading position instead of yanking them to the top."""
-
-    class _FakeText:
-        def __init__(self, top="1.0"):
-            self.content = ""
-            self._top = top
-            self._frac = (0.0, 1.0)
-            self.yview_calls = []
-            self.insert_calls = []
-        def config(self, **k):
-            pass
-        def delete(self, *a):
-            self.content = ""
-        def insert(self, index, s, *tags):
-            self.insert_calls.append((index, s))
-            if index == "end":
-                self.content += s
-            else:
-                self.content = s + self.content
-        def get(self, *a):
-            return self.content
-        def index(self, spec):
-            return self._top
-        def yview(self, *a):
-            if a:
-                self.yview_calls.append(a[0])
-                return None
-            return self._frac
-        def yview_moveto(self, f):
-            self.yview_calls.append(("moveto", f))
-        def bind(self, *a):
-            pass
-        def see(self, *a):
-            pass
-
-    class _FakeScroll:
-        def __init__(self, mapped=False):
-            self._mapped = mapped
-            self.packed = None
-        def winfo_ismapped(self):
-            return self._mapped
-        def pack(self, **k):
-            self.packed = True
-        def pack_forget(self):
-            self.packed = False
-
-    def _app(self):
-        app = object.__new__(tr.TranslatorApp)
-        app._ss = tr.StreamSession()
-        app._centered_box = lambda: (400, 300, 10, 20)
-        app._remember_window_xy = unittest.mock.Mock()
-        # _fill_text stands in for the rich renderer; it writes the raw text so
-        # append/rebuild bookkeeping in the fake widget stays consistent.
-        def _fill(widget, msg):
-            widget.delete("1.0", "end")
-            widget.insert("1.0", msg)
-        app._fill_text = unittest.mock.Mock(side_effect=_fill)
-        app._apply_window_rounding = unittest.mock.Mock()
-        app._on_mousewheel = unittest.mock.Mock()
-        return app
-
-    def _win(self, text):
-        return types.SimpleNamespace(
-            _text=text,
-            _scroll=self._FakeScroll(),
-            _scroll_body=unittest.mock.Mock(),
-            geometry=unittest.mock.Mock(),
-            update_idletasks=unittest.mock.Mock(),
-        )
-
-    def test_first_streaming_frame_sets_geometry_and_rounding(self):
-        app = self._app()
-        win = self._win(self._FakeText())
-        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
-        win.geometry.assert_called_once()
-        app._apply_window_rounding.assert_called_once()
-        self.assertTrue(app._ss.centered_ready)
-        self.assertEqual(app._ss.rendered, "hello")
-
-    def test_later_streaming_frame_skips_geometry_and_rounding(self):
-        app = self._app()
-        win = self._win(self._FakeText())
-        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
-        win.geometry.reset_mock()
-        app._apply_window_rounding.reset_mock()
-        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
-        win.geometry.assert_not_called()
-        app._apply_window_rounding.assert_not_called()
-
-    def test_streaming_frame_appends_only_the_new_tail(self):
-        app = self._app()
-        app._ss.centered_ready = True
-        app._ss.rendered = "hello"
-        text = self._FakeText()
-        text.content = "hello"
-        win = self._win(text)
-        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
-        # Only the delta was inserted (at the end); the doc was not rebuilt.
-        self.assertIn(("end", " world"), text.insert_calls)
-        self.assertEqual(text.content, "hello world")
-        self.assertEqual(app._ss.rendered, "hello world")
-
-    def test_scrolled_user_append_leaves_view_untouched(self):
-        app = self._app()
-        app._ss.centered_ready = True
-        app._ss.user_scrolled = True
-        app._ss.rendered = "hello"
-        text = self._FakeText(top="12.0")
-        text.content = "hello"
-        win = self._win(text)
-        app._fit_centered(win, "hello world", scroll_top=True, streaming=True)
-        # Append path never touches the view: no restore, no pin-to-top.
-        self.assertEqual(text.yview_calls, [])
-        self.assertIn(("end", " world"), text.insert_calls)
-
-    def test_final_rich_rebuild_restores_position_when_scrolled(self):
-        app = self._app()
-        app._ss.centered_ready = True
-        app._ss.user_scrolled = True
-        app._ss.rendered = "hello"
-        text = self._FakeText(top="7.0")
-        text.content = "hello"
-        win = self._win(text)
-        app._fit_centered(win, "hello world", scroll_top=True, streaming=True,
-                          full_rebuild=True)
-        # The final frame does a rich rebuild but restores the reading position.
-        app._fill_text.assert_called_once()
-        self.assertIn("7.0", text.yview_calls)
-        self.assertNotIn(("moveto", 0.0), text.yview_calls)
-
-    def test_non_scrolled_first_frame_pins_to_top(self):
-        app = self._app()
-        text = self._FakeText()
-        win = self._win(text)
-        app._fit_centered(win, "hello", scroll_top=True, streaming=True)
-        self.assertIn(("moveto", 0.0), text.yview_calls)
-
-
-class TestStreamFillText(unittest.TestCase):
-    """_stream_fill_text is the append-only core: it inserts just the new tail
-    when the message is a superset of what's shown, and only rebuilds the whole
-    Text on the final rich frame or a rare non-append change."""
-
-    def _app(self):
-        app = object.__new__(tr.TranslatorApp)
-        app._ss = tr.StreamSession()
-        def _fill(widget, msg):
-            widget.delete("1.0", "end")
-            widget.insert("1.0", msg)
-        app._fill_text = unittest.mock.Mock(side_effect=_fill)
-        return app
-
-    def _text(self):
-        return TestStreamScrollPreservation._FakeText()
-
-    def test_append_inserts_only_delta(self):
-        app = self._app()
-        t = self._text()
-        app._stream_fill_text(t, "abc", rich=False)
-        app._stream_fill_text(t, "abcdef", rich=False)
-        self.assertEqual(t.content, "abcdef")
-        self.assertEqual(t.insert_calls[-1], ("end", "def"))
-        app._fill_text.assert_not_called()
-
-    def test_no_change_is_a_noop(self):
-        app = self._app()
-        t = self._text()
-        app._stream_fill_text(t, "abc", rich=False)
-        n = len(t.insert_calls)
-        app._stream_fill_text(t, "abc", rich=False)
-        self.assertEqual(len(t.insert_calls), n)  # nothing new inserted
-
-    def test_rich_frame_rebuilds_via_fill_text(self):
-        app = self._app()
-        t = self._text()
-        app._stream_fill_text(t, "abc", rich=False)
-        app._stream_fill_text(t, "abc **bold**", rich=True)
-        app._fill_text.assert_called_once()
-        self.assertEqual(app._ss.rendered, "abc **bold**")
-
-    def test_non_prefix_change_rebuilds_plain(self):
-        app = self._app()
-        t = self._text()
-        app._stream_fill_text(t, "hello world", rich=False)
-        app._stream_fill_text(t, "different", rich=False)
-        self.assertEqual(t.content, "different")
-        app._fill_text.assert_not_called()  # plain rebuild, not the rich path
 
 
 class _FakePipe:
