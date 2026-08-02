@@ -405,7 +405,8 @@ class SettingsMixin:
                 fieldbackground=[("readonly", field_bg), ("disabled", field_bg)],
                 foreground=[("disabled", hint)],
                 bordercolor=[("focus", accent), ("hover", accent)],
-                lightcolor=[("focus", accent)], darkcolor=[("focus", accent)],
+                lightcolor=[("focus", accent), ("hover", accent)],
+                darkcolor=[("focus", accent), ("hover", accent)],
             )
 
         # Modern chevron dropdown indicator (falls back to a scaled triangle if
