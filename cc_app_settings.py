@@ -393,11 +393,18 @@ class SettingsMixin:
             scale = 1.0
 
         for name in ("CC.TCombobox", "CC.TSpinbox"):
+            # clam draws the field border as a 1px bordercolor rectangle plus a
+            # 1px light(top/left)/dark(bottom/right) bevel. When a child element
+            # (our chevron) is packed against the right edge, clam clips the
+            # right bevel pixel, so the right border renders 1px while the other
+            # sides render 2px — an asymmetric highlight on hover. Collapsing the
+            # bevel into the field background leaves a single uniform 1px border
+            # on all four sides, so the accent highlight wraps evenly.
             style.configure(
                 name,
                 fieldbackground=field_bg, background=field_bg,
                 foreground=fg,
-                bordercolor=border, lightcolor=border, darkcolor=border,
+                bordercolor=border, lightcolor=field_bg, darkcolor=field_bg,
                 relief="flat", borderwidth=1, padding=6,
             )
             style.map(
@@ -405,8 +412,6 @@ class SettingsMixin:
                 fieldbackground=[("readonly", field_bg), ("disabled", field_bg)],
                 foreground=[("disabled", hint)],
                 bordercolor=[("focus", accent), ("hover", accent)],
-                lightcolor=[("focus", accent), ("hover", accent)],
-                darkcolor=[("focus", accent), ("hover", accent)],
             )
 
         # Modern chevron dropdown indicator (falls back to a scaled triangle if
