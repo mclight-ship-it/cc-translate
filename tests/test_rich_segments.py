@@ -87,6 +87,25 @@ class TestBlocks(unittest.TestCase):
         self.assertIn("二", reconstruct(segs))
         self.assertIn("三", reconstruct(segs))
 
+    def test_unicode_bullet_empty_marker_absorbs_orphaned_text(self):
+        # The model often emits U+2022 bullets ("•"), sometimes as a bare marker
+        # with the text on the next line. Treat it exactly like "- ".
+        md = "• \n移除了“极光线”视觉元素\n• 调整了布局结构"
+        segs = tr.iter_rich_segments(md)
+        bullets = [c for c, t in segs if t == "rich_bullet"]
+        self.assertEqual(len(bullets), 2)
+        idx = next(i for i, (c, _) in enumerate(segs)
+                   if c == "移除了“极光线”视觉元素")
+        self.assertEqual(segs[idx - 1][1], "rich_bullet")
+
+    def test_unicode_bullet_without_space_is_supported(self):
+        segs = tr.iter_rich_segments("•\n通过添加白色框自动检测器修复问题")
+        bullets = [c for c, t in segs if t == "rich_bullet"]
+        self.assertEqual(len(bullets), 1)
+        idx = next(i for i, (c, _) in enumerate(segs)
+                   if c == "通过添加白色框自动检测器修复问题")
+        self.assertEqual(segs[idx - 1][1], "rich_bullet")
+
 
 class TestStreamSafety(unittest.TestCase):
     def test_unclosed_bold_is_literal(self):

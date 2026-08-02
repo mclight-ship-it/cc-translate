@@ -133,7 +133,8 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 # A list item: optional indent, a -, *, + or "N." marker, then whitespace and
 # (possibly empty) content. Kept permissive so a marker whose text the model
 # put on the FOLLOWING line still matches (content group is then empty).
-_BULLET_RE = re.compile(r"^(\s*)(?:[-*+]|\d+\.)\s+(.*)$")
+_BULLET_RE = re.compile(
+    r"^(\s*)(?:[-*+]|\d+\.|[•●◦▪▫‣·])(?:\s+(.*)|\s*)$")
 
 
 def _is_block_start(line):
@@ -198,7 +199,7 @@ def iter_rich_segments(message, highlight=False):
             continue
         m = _BULLET_RE.match(line)
         if m:
-            indent, content = m.group(1), m.group(2)
+            indent, content = m.group(1), (m.group(2) or "")
             if content.strip() == "":
                 # The model emitted a bare marker ("- ") and put the item's
                 # text on the FOLLOWING line(s) with no marker. Rendered as-is
