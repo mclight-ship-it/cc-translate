@@ -516,6 +516,19 @@ class TestDirectionModes(unittest.TestCase):
         self.assertIn(default_layout, valid_layouts,
                       "DEFAULT_CONFIG popup_layout not in POPUP_LAYOUT_LABELS")
 
+    def test_popup_layout_default_is_dynamic(self):
+        # The default popup layout is follow-cursor ("dynamic"); the classic
+        # centered mode is opt-in.
+        self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.POPUP_LAYOUT], "dynamic")
+
+    def test_popup_layout_dynamic_listed_before_centered(self):
+        # Settings renders the layout Combobox from the label dict's order, so
+        # the default (dynamic / near-cursor) must appear before centered.
+        for labels in (tr.POPUP_LAYOUT_LABELS_ZH, tr.POPUP_LAYOUT_LABELS_EN):
+            keys = list(labels.keys())
+            self.assertLess(keys.index("dynamic"), keys.index("centered"),
+                            "dynamic must be listed before centered")
+
     def test_tray_click_action_labels_and_default(self):
         # The default tray-click action must be a valid, labelled key, and the
         # zh/en label maps must expose the same set of action keys so no option

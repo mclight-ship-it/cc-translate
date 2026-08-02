@@ -700,8 +700,8 @@ class SettingsMixin:
 
         layout_var = tk.StringVar(
             value=layout_labels.get(
-                self.cfg.get(CFG.POPUP_LAYOUT, "centered"),
-                layout_labels["centered"]))
+                self.cfg.get(CFG.POPUP_LAYOUT, "dynamic"),
+                layout_labels["dynamic"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.popup_layout"),
             ttk.Combobox(

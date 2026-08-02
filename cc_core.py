@@ -203,7 +203,7 @@ DEFAULT_CONFIG = {
     CFG.DIRECTION: "auto",
     CFG.MAX_CHARS: 5000,
     CFG.THEME: "system",
-    CFG.POPUP_LAYOUT: "centered",
+    CFG.POPUP_LAYOUT: "dynamic",
     CFG.HISTORY_ENABLED: True,
     CFG.HISTORY_LIMIT: 100,
     CFG.AUTO_UPDATE_ENABLED: True,
@@ -425,9 +425,10 @@ def resolve_theme(cfg):
 THEME_LABELS_ZH = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
 THEME_LABELS_EN = {"system": "System", "light": "Light", "dark": "Dark"}
 
-# Popup layout choices shown in Settings (classic/centered listed first).
-POPUP_LAYOUT_LABELS_ZH = {"centered": "经典（居中固定）", "dynamic": "动态（跟随鼠标）"}
-POPUP_LAYOUT_LABELS_EN = {"centered": "Classic (Centered)", "dynamic": "Dynamic (Near Cursor)"}
+# Popup layout choices shown in Settings (dynamic/near-cursor is the default
+# and listed first; classic/centered second).
+POPUP_LAYOUT_LABELS_ZH = {"dynamic": "动态（跟随鼠标）", "centered": "经典（居中固定）"}
+POPUP_LAYOUT_LABELS_EN = {"dynamic": "Dynamic (Near Cursor)", "centered": "Classic (Centered)"}
 
 # OCR engine choices for screenshot translation. Claude Vision is the default
 # (sends the whole image to Claude to read + translate). Local OCR recognises

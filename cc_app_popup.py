@@ -985,7 +985,7 @@ class PopupMixin:
         return x, y
 
     def _is_centered_layout(self):
-        return self.cfg.get(CFG.POPUP_LAYOUT, "centered") == "centered"
+        return self.cfg.get(CFG.POPUP_LAYOUT, "dynamic") == "centered"
 
     def _scaled_centered_box(self, logical_w, logical_h, min_w=280, min_h=150):
         """Scale a logical window size by DPI and centre it on the active monitor."""
