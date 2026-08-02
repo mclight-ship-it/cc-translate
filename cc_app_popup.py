@@ -26,6 +26,7 @@ from cc_core import (
     APP_NAME, CFG, ICON_PATH, POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
     MIN_POPUP_HEIGHT_COMPACT,
+    STREAM_OPEN_MIN_LINES,
     MIN_RESIZE_WIDTH,
     MIN_RESIZE_HEIGHT, RESIZE_HIT,
     POPUP_BAR_PAD_X, POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM,
@@ -651,17 +652,25 @@ class PopupMixin:
         h = max(int(h), MIN_POPUP_HEIGHT_COMPACT)
         return int(w), int(h)
 
-    def _size_popup_stream_grow(self, win, message, final=False):
+    def _size_popup_stream_grow(self, win, message):
         """Streaming: width fixed, height grows down from a fixed anchor.
 
-        Streaming only runs for long text (>= STREAM_MIN_CHARS), so the result is
-        always tall. The window therefore OPENS at a comfortable floor height
-        (the centred card's height, DPI-scaled) and only grows past it — no
-        tiny-then-grow jitter. A SINGLE height (_centered_height_px) governs both
-        that floor AND how far the anchor is pushed up when the cursor is near the
-        screen bottom, so the reserved room and the real height can never
-        disagree. The monitor and anchor are locked on the first frame so a mouse
-        that drifts mid-stream never drags the window around."""
+        TWO heights, deliberately decoupled:
+
+        * The OPENING height is modest — STREAM_OPEN_MIN_LINES of text (DPI-
+          scaled from the live font). The window opens near its real size and
+          only ever grows past it with content; it never shrinks. So a short
+          streamed output (a summary compresses a long selection into a few
+          lines, and streaming is gated on INPUT length, not output length)
+          opens small and stays small — no "先大再小" balloon-then-collapse —
+          while a long translation grows smoothly downward.
+        * The RESERVED room — how far the anchor is pushed up when the cursor
+          sits near the screen bottom — uses the taller centred-card height so
+          a long stream has somewhere to grow into. This only shifts a short
+          popup's *position* slightly higher; it never inflates its height.
+
+        The monitor and anchor are locked on the first frame so a mouse that
+        drifts mid-stream never drags the window around."""
         text = win._text
         # Match _size_popup: colour-key card inset is the corner radius.
         shell_pad = POPUP_CORNER_RADIUS
@@ -704,20 +713,21 @@ class PopupMixin:
 
         bar_h = win._bar.winfo_reqheight() if getattr(win, "_bar", None) else 26
 
-        # Fix the anchor ONCE. A single height governs BOTH how far the anchor is
-        # pushed up (cursor near the screen bottom) AND the opening/floor height,
-        # so reserved room and real height can never drift apart. (The old split
-        # reserved 220px for the anchor but let the height hug tiny content, so a
-        # low cursor reserved room that just sat empty — the "too short" bug.)
-        floor_h = min(self._centered_height_px(), max(120, mon_h - 20))
+        # Fix the anchor ONCE. Reserve room below it using the TALLER centred
+        # card height so a long stream has space to grow into when the cursor is
+        # near the screen bottom. This is RESERVATION ONLY (positioning) — it is
+        # decoupled from the modest opening height below, so a short summary that
+        # never fills this room isn't inflated to it; the anchor just sits a
+        # little higher on a low cursor, which is harmless.
+        reserve_h = min(self._centered_height_px(), max(120, mon_h - 20))
         min_top = top + 12
         if self._ss.origin_y is None or self._ss.origin_x is None:
             cx, cy = self._window_xy(win)
             if (cx, cy) == (0, 0):
                 cx, cy = left + 12, min_top
-            # Push up so at least floor_h fits below the anchor (or as much as a
-            # short screen allows).
-            max_origin_y = max(min_top, bottom - floor_h - 8)
+            # Push up so at least reserve_h fits below the anchor (or as much as
+            # a short screen allows).
+            max_origin_y = max(min_top, bottom - reserve_h - 8)
             self._ss.origin_y = min(max(cy, min_top), max_origin_y)
             self._ss.origin_x = cx
         # Height may only grow downward from the fixed anchor to the screen edge.
@@ -751,26 +761,21 @@ class PopupMixin:
         if not self._ss.fixed_w:
             self._ss.fixed_w = int(w)
 
-        if final:
-            # Final frame: the full output is known, so fit the window to it
-            # (compact floor) and ALLOW it to shrink below the streaming floor.
-            # Streaming gates on INPUT length (>= STREAM_MIN_CHARS), but the
-            # OUTPUT can be short: a summary compresses a long selection into a
-            # few lines, and a terse translation of verbose source is short too.
-            # Holding those at the centred-card floor left a big empty gap below
-            # the text, so the last frame collapses to the real content height
-            # (never past the screen edge below the anchor).
-            h = max(content_h, MIN_POPUP_HEIGHT_COMPACT)
-            h = min(h, max_popup_h)
-            self._ss.max_h = int(h)
-        else:
-            # Streaming: open at the floor height, grow with content, never
-            # shrink mid-stream (avoids jitter), never spill past the screen edge.
-            h = max(content_h, min(floor_h, max_popup_h))
-            if self._ss.max_h:
-                h = max(h, self._ss.max_h)
-            h = min(h, max_popup_h)
-            self._ss.max_h = int(h)
+        # Opening floor is a few LINES of text (DPI-scaled via the live font),
+        # NOT the tall centred-card height reserved above for positioning. The
+        # window opens near its real size and only grows: a short summary opens
+        # small and stays small (no balloon-then-collapse), a long translation
+        # grows downward into the reserved room. Growth is monotonic (max_h) so
+        # it never shrinks — no "先大再小" flicker, and a mid-stream drag stays
+        # put. The final frame runs the same path (grow-only lands exactly on
+        # the final content height because content only ever appends).
+        open_floor = (bar_h + (shell_pad * 2) + POPUP_BODY_PAD_BOTTOM
+                      + STREAM_OPEN_MIN_LINES * line_px)
+        h = max(content_h, min(open_floor, max_popup_h))
+        if self._ss.max_h:
+            h = max(h, self._ss.max_h)
+        h = min(h, max_popup_h)
+        self._ss.max_h = int(h)
 
         return int(self._ss.fixed_w), int(h)
 
@@ -1511,7 +1516,7 @@ class PopupMixin:
                     prev_top = win._text.index("@0,0")
                 except Exception:
                     prev_top = None
-            w, h = self._size_popup_stream_grow(win, message, final=stream_final)
+            w, h = self._size_popup_stream_grow(win, message)
 
             # Anchor (origin_x/origin_y) and monitor were fixed inside
             # _size_popup_stream_grow on the first frame; here we only read them

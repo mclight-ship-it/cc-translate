@@ -2117,11 +2117,12 @@ class TestUiSmoke(unittest.TestCase):
             f"stream width should match the centred card ({centered}px), "
             f"got {w}px")
 
-    def test_dynamic_stream_opens_at_floor_height(self):
-        # Issue: the streaming popup used to hug the first tiny chunk, so it
-        # appeared as a thin sliver and grew line-by-line. Streaming only runs
-        # for long text, so it now OPENS at the centred card's height and only
-        # grows past it. DPI-independent: compare against _centered_height_px().
+    def test_dynamic_stream_opens_modest_then_grows(self):
+        # Contract: a streamed popup must OPEN at a modest few-line height — not
+        # a one-line sliver, and NOT the tall centred-card height (which would
+        # balloon a short summary and then force a collapse). It then only ever
+        # grows downward with content, never shrinks. DPI-independent: bound the
+        # opening height by line metrics and the centred-card height.
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
@@ -2129,35 +2130,48 @@ class TestUiSmoke(unittest.TestCase):
         floor = app._centered_height_px()
         win = app._make_popup("摘要", anchor=(300, 300), reveal=False)
         self.addCleanup(lambda w=win: self._safe_win_destroy(w))
-        # A single tiny first chunk must still open at the floor height.
+        # A tiny first chunk opens at the modest few-line floor, NOT a sliver
+        # and NOT the tall centred-card height.
         _w, h1 = app._size_popup_stream_grow(win, "## 摘要")
+        line_px = max(win._text_font.metrics("linespace") + 6, 14)
         self.assertGreaterEqual(
-            h1, floor * 0.95,
-            f"first streamed frame should open at the floor height "
-            f"({floor}px), got {h1}px (a small value means it hugged the tiny "
-            f"first chunk)")
-        # A later, much longer frame must grow beyond the floor, never shrink.
+            h1, 2 * line_px,
+            f"first streamed frame should not be a one-line sliver, got {h1}px")
+        self.assertLess(
+            h1, floor * 0.8,
+            f"first streamed frame should open MODEST (a few lines), not at the "
+            f"tall centred-card height ({floor}px), got {h1}px")
+        # A later, much longer frame must grow beyond the opening, never shrink.
         big = "## 摘要\n" + "\n".join(
             "这是第%d行内容用于测试流式增长" % i for i in range(1, 40))
         _w, h2 = app._size_popup_stream_grow(win, big)
+        self.assertGreater(
+            h2, h1, "a longer streamed frame must grow the window")
         self.assertGreaterEqual(
             h2, h1, "streaming height must never shrink between frames")
 
-    def test_dynamic_stream_low_cursor_pushes_anchor_up(self):
+    def test_dynamic_stream_low_cursor_reserves_room_to_grow(self):
         # When the trigger cursor is near the screen bottom, the anchor must be
-        # pushed up so the floor-height window still fits on-screen instead of
-        # being crushed into a short strip above the taskbar. One number
-        # (_centered_height_px) drives both the floor and this push-up.
+        # pushed up so there is ROOM to grow into (reservation uses the taller
+        # centred-card height) — even though a short first chunk opens modest.
+        # So: (1) the window always fits above the screen bottom, and (2) a long
+        # stream can grow to near the reserved height instead of being crushed
+        # into a short strip above the taskbar.
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
-        floor = app._centered_height_px()
+        reserve = app._centered_height_px()
         app._ss = tr.StreamSession()
         screen_bottom = app.root.winfo_screenheight()
         low_y = screen_bottom - 30
         win = app._make_popup("摘要", anchor=(300, low_y), reveal=False)
         self.addCleanup(lambda w=win: self._safe_win_destroy(w))
-        _w, h = app._size_popup_stream_grow(win, "## 摘要\n2020年后经济环境变化")
+        # Short first chunk: opens modest but the anchor is already reserved.
+        app._size_popup_stream_grow(win, "## 摘要\n2020年后经济环境变化")
+        # A long stream then grows into the reserved room.
+        big = "## 摘要\n" + "\n".join(
+            "第%d行较长的翻译内容用于占满高度" % i for i in range(1, 40))
+        _w, h = app._size_popup_stream_grow(win, big)
         # The monitor the code actually locked onto (may be a work-area rect).
         _l, _t, _r, bottom = app._ss.monitor_rect
         # The whole window (anchor + height) must fit above the screen bottom.
@@ -2165,12 +2179,13 @@ class TestUiSmoke(unittest.TestCase):
             app._ss.origin_y + h, bottom + 2,
             f"low-cursor stream window (origin {app._ss.origin_y} + h {h}) "
             f"should fit above monitor bottom {bottom}")
-        # And it must still open at (near) the floor height, not be crushed.
-        if bottom - 40 >= floor:  # only when the screen is tall enough
+        # And room was reserved: a long stream grows to near the reserved height
+        # instead of being crushed into a short strip.
+        if bottom - 40 >= reserve:  # only when the screen is tall enough
             self.assertGreaterEqual(
-                h, floor * 0.95,
-                f"low-cursor stream window should still open at the floor "
-                f"height ({floor}px), got {h}px")
+                h, reserve * 0.9,
+                f"low-cursor stream should reserve room to grow into "
+                f"(~{reserve}px), long content only reached {h}px")
 
     def test_dynamic_stream_drag_survives_growth(self):
         # Regression: while a follow-cursor popup streams in, every frame used to
@@ -2215,14 +2230,13 @@ class TestUiSmoke(unittest.TestCase):
             win.winfo_height(), h0,
             "streamed frame should grow the window height, not shrink it")
 
-    def test_dynamic_stream_finalize_fits_content_not_floor(self):
-        # Root-cause regression (the "big empty hole" report): streaming is
-        # gated on INPUT length (>= STREAM_MIN_CHARS), but the OUTPUT can be
-        # short. A summary compresses a long selection into a few lines, so it
-        # streams (long input) yet renders short. The streaming floor
-        # (_centered_height_px) is fine WHILE streaming, but the FINAL frame
-        # must collapse to the real content height, or the window keeps the tall
-        # floor and leaves a big gap below the text. DPI-independent.
+    def test_dynamic_stream_short_output_stays_compact(self):
+        # Root-cause regression (the "先大再小" report): streaming is gated on
+        # INPUT length (>= STREAM_MIN_CHARS), but the OUTPUT can be short — a
+        # summary compresses a long selection into a few lines, so it streams
+        # (long input) yet renders short. It must OPEN compact and STAY compact
+        # (grow-only lands exactly on the small content height) — never balloon
+        # to the tall centred-card height and then collapse. DPI-independent.
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
@@ -2234,17 +2248,24 @@ class TestUiSmoke(unittest.TestCase):
         w1 = app._make_popup(short, anchor=(400, 300), reveal=False)
         self.addCleanup(lambda w=w1: self._safe_win_destroy(w))
         _x, h_open = app._size_popup_stream_grow(w1, short)
-        _x, h_short_final = app._size_popup_stream_grow(w1, short, final=True)
-        self.assertGreaterEqual(
-            h_open, floor * 0.95,
-            f"streaming should OPEN at the floor ({floor}px), got {h_open}px")
+        _x, h_short_final = app._size_popup_stream_grow(w1, short)
         self.assertLess(
-            h_short_final, floor * 0.9,
-            f"a short summary must COLLAPSE below the floor ({floor}px) at "
-            f"finalize to fit its content, got {h_short_final}px (a value near "
-            f"the floor means the empty-gap bug is back)")
+            h_open, floor * 0.8,
+            f"short streamed output must OPEN compact, not at the tall "
+            f"centred-card height ({floor}px), got {h_open}px")
+        # Grow-only: the last frame must never be SMALLER than the opening
+        # (no visible shrink), and must stay compact (no big empty gap).
+        self.assertGreaterEqual(
+            h_short_final, h_open,
+            f"streaming must never shrink: open {h_open}px -> final "
+            f"{h_short_final}px")
+        self.assertLess(
+            h_short_final, floor * 0.8,
+            f"a short summary must stay compact ({floor}px floor); got "
+            f"{h_short_final}px (a value near the floor means the empty-gap or "
+            f"balloon bug is back)")
 
-        # LONG streamed output must stay tall at finalize (no over-shrink).
+        # LONG streamed output must stay tall (grows into reserved room).
         app._ss = tr.StreamSession()
         longtxt = "\n".join(
             "第%d行较长的翻译内容用于占满高度" % i
@@ -2252,11 +2273,11 @@ class TestUiSmoke(unittest.TestCase):
         w2 = app._make_popup(longtxt, anchor=(400, 80), reveal=False)
         self.addCleanup(lambda w=w2: self._safe_win_destroy(w))
         app._size_popup_stream_grow(w2, longtxt)
-        _x, h_long_final = app._size_popup_stream_grow(w2, longtxt, final=True)
+        _x, h_long_final = app._size_popup_stream_grow(w2, longtxt)
         self.assertGreater(
             h_long_final, h_short_final * 1.5,
             f"long streamed output must stay much taller than a short summary "
-            f"at finalize ({h_long_final}px vs {h_short_final}px)")
+            f"({h_long_final}px vs {h_short_final}px)")
 
     def test_cycle_anchor_pins_result_to_trigger_cursor(self):
         # Issue 2: in follow-cursor layout every popup in a translate cycle must

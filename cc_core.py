@@ -639,9 +639,21 @@ MIN_POPUP_HEIGHT = 150  # legacy floor; kept for API/back-compat (see below)
 # near-empty content; any real 1+ line result measures taller and uses its
 # natural height, leaving no dead space below the text.
 MIN_POPUP_HEIGHT_COMPACT = 96
-# Superseded: the streaming popup's opening/floor height and its
-# cursor-near-bottom push-up are now BOTH driven by the centred card's height
-# (_centered_height_px, DPI-scaled) in one place — see
+# Streaming opening floor, in TEXT LINES (not pixels — the physical height is
+# derived from the live font's linespace so it is DPI-correct). A streamed
+# popup OPENS at this many lines so the first painted frame reads as a real
+# card, not a one-line sliver, then grows downward with content and never
+# shrinks. Crucially this is DECOUPLED from how far the anchor is pushed up
+# when the cursor is near the screen bottom (that reservation still uses the
+# taller centred-card height): a short streamed output — e.g. a summary that
+# compresses a long selection into a few lines — opens near its real small
+# size instead of ballooning to the centred-card height and then collapsing
+# ("先大再小"), while a long translation still has full room to grow into
+# below the anchor. See cc_app_popup._size_popup_stream_grow.
+STREAM_OPEN_MIN_LINES = 3
+# Superseded: the streaming popup's cursor-near-bottom push-up (how far the
+# anchor is reserved above the screen bottom) is driven by the centred card's
+# height (_centered_height_px, DPI-scaled) — see
 # cc_app_popup._size_popup_stream_grow. This physical-px constant is retained
 # only for backwards compatibility / the module-constant smoke test.
 MIN_STREAM_VISIBLE_HEIGHT = 220
