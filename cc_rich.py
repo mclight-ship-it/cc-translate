@@ -129,6 +129,21 @@ def _flush_highlighted_fence(segs, fence_lines, lang):
 # ---------------------------------------------------------------------------
 # Block-level + inline combined parser
 # ---------------------------------------------------------------------------
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+# A list item: optional indent, a -, *, + or "N." marker, then whitespace and
+# (possibly empty) content. Kept permissive so a marker whose text the model
+# put on the FOLLOWING line still matches (content group is then empty).
+_BULLET_RE = re.compile(r"^(\s*)(?:[-*+]|\d+\.)\s+(.*)$")
+
+
+def _is_block_start(line):
+    """True if `line` begins a NEW block (heading, list item or code fence), so
+    it must not be absorbed as the continuation of an empty bullet marker."""
+    return bool(
+        _HEADING_RE.match(line)
+        or _BULLET_RE.match(line)
+        or line.lstrip().startswith("```"))
+
 
 def iter_rich_segments(message, highlight=False):
     """Parse markdown-lite text into a flat list of (text, tag) segments,
@@ -145,7 +160,10 @@ def iter_rich_segments(message, highlight=False):
     in_fence = False
     fence_lang = None
     fence_lines = []
-    for line in lines:
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
         stripped = line.lstrip()
         if stripped.startswith("```"):
             if highlight:
@@ -161,6 +179,7 @@ def iter_rich_segments(message, highlight=False):
             else:
                 # Toggle a fenced code block; the fence line isn't rendered.
                 in_fence = not in_fence
+            i += 1
             continue
         if in_fence:
             if highlight:
@@ -168,21 +187,46 @@ def iter_rich_segments(message, highlight=False):
             else:
                 segs.append((line, "rich_codeblock"))
                 segs.append(("\n", None))
+            i += 1
             continue
-        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        m = _HEADING_RE.match(line)
         if m:
             level = min(len(m.group(1)), 3)
             segs.append((m.group(2), f"rich_h{level}"))
             segs.append(("\n", None))
+            i += 1
             continue
-        m = re.match(r"^(\s*)(?:[-*+]|\d+\.)\s+(.*)$", line)
+        m = _BULLET_RE.match(line)
         if m:
-            segs.append((m.group(1) + "•  ", "rich_bullet"))
-            segs.extend(_iter_inline_segments(m.group(2)))
+            indent, content = m.group(1), m.group(2)
+            if content.strip() == "":
+                # The model emitted a bare marker ("- ") and put the item's
+                # text on the FOLLOWING line(s) with no marker. Rendered as-is
+                # that leaves a lone "•" with its text orphaned on a plain,
+                # un-indented line below it (ugly). Absorb the following plain
+                # continuation line(s) — up to the next blank line or new block —
+                # so the bullet reads as one normal item.
+                parts = []
+                j = i + 1
+                while j < n and lines[j].strip() != "" and not _is_block_start(
+                        lines[j]):
+                    parts.append(lines[j].strip())
+                    j += 1
+                content = "".join(parts)
+                i = j
+                if content == "":
+                    # A genuinely empty marker (nothing follows): drop it rather
+                    # than render a lone bullet dot.
+                    continue
+            else:
+                i += 1
+            segs.append((indent + "•  ", "rich_bullet"))
+            segs.extend(_iter_inline_segments(content))
             segs.append(("\n", None))
             continue
         segs.extend(_iter_inline_segments(line))
         segs.append(("\n", None))
+        i += 1
     # An unterminated fence (still streaming, or malformed) renders literally.
     if highlight and in_fence and fence_lines:
         for ln in fence_lines:
