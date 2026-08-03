@@ -353,7 +353,7 @@ def _brand_border_row(w):
     return row
 
 
-def bake_border_ring(w, h, radius, scale=1.0, stroke_pts=1.4, alpha=160):
+def bake_border_ring(w, h, radius, scale=1.0, stroke_pts=1.4, alpha=120):
     """A transparent RGBA (w×h) carrying ONLY a thin brand-gradient stroke along
     the rounded-rectangle perimeter — the v2 popup's slim, subtly-graded frame.
     Composited over the flat navy face by :meth:`GradientBackground.rounded_face`.
