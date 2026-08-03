@@ -193,8 +193,12 @@ class QuickInputMixin:
 
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
+        # v2: align the logo's left edge with the input field's rounded-left
+        # (the field is inset by ~this margin inside its canvas), so the icon,
+        # the field box and the footer text all share one left column.
+        field_inset = ccv2.scaled(11, scale) if (v2on and ccv2 is not None) else 0
         if v2on and ccv2 is not None:
-            logo_img = self._v2_badge_image(24)
+            logo_img = self._v2_logo_image(22) or self._v2_badge_image(24)
         else:
             logo_img = self._logo_image(18)
         drag_targets = [bar]
@@ -202,7 +206,7 @@ class QuickInputMixin:
             logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 8))
+            logo_lbl.pack(side="left", padx=(field_inset, 8), anchor="center")
             drag_targets.append(logo_lbl)
         title_text = i18n.get("quick_input.title")
         title_img = None
@@ -219,18 +223,11 @@ class QuickInputMixin:
         else:
             title_lbl = tk.Label(bar, text=title_text, bg=bg,
                                  fg=accent, font=(FONT, 11, "bold"))
-        # Bottom-align the title image and the hint text so they share a baseline
-        # (a centred image title + centred text label sat at different heights).
-        title_anchor = "s" if (v2on and title_img is not None) else "center"
-        title_lbl.pack(side="left", anchor=title_anchor)
+        # Header is now just logo + title (the usage hint moved to the footer,
+        # left of the Translate button, so it's less prominent); centre-anchor
+        # both so the icon and title share one vertical centre.
+        title_lbl.pack(side="left", anchor="center")
         drag_targets.append(title_lbl)
-        hint_lbl = tk.Label(
-            bar, text=i18n.get("quick_input.hint"),
-            bg=bg, fg=hint, font=(FONT, 9))
-        hint_lbl.pack(side="left", padx=(8, 0),
-                      anchor=("s" if v2on else "center"),
-                      pady=(0, 2) if v2on else 0)
-        drag_targets.append(hint_lbl)
         if v2on and ccv2 is not None:
             close_btn = self._v2_ghost_button(
                 bar, lambda: win.destroy(), icon="close", danger=True)
@@ -345,29 +342,44 @@ class QuickInputMixin:
         editor.bind("<Button-1>", _sync_ime_font, add="+")
 
         bottom = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        # Align the footer with the field's glowing rim: the baked field insets
-        # its rounded border by ~9px, so pad the footer the same amount past the
-        # body's 16px so 翻译's right edge lines up with the field's right edge.
-        _foot_pad = (16 + ccv2.scaled(9, scale)) if (v2on and ccv2 is not None) else 16
+        # Align the footer with the field's glowing rim: pad it by the same inset
+        # as the field, so the usage hint (left) starts at the field's left edge
+        # and 翻译's right edge lines up with the field's right edge.
+        _foot_pad = (16 + field_inset) if (v2on and ccv2 is not None) else 16
         bottom.pack(side="bottom", fill="x", padx=_foot_pad,
-                    pady=(4, 12) if v2on else (6, 14))
+                    pady=(6, 12) if v2on else (6, 14))
 
-        status = tk.Label(
-            bottom, text="", bg=bg, fg=t["status_err"], anchor="w",
-            font=(FONT, 9))
-        status.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        # One label serves double duty: the subtle usage hint by default, and the
+        # red "please enter text" error on an empty submit (reverting as soon as
+        # the user types). Kept small + dim so it never competes with the field.
+        hint_text = i18n.get("quick_input.hint")
+        info_lbl = tk.Label(
+            bottom, text=hint_text if v2on else "", bg=bg,
+            fg=hint if v2on else t["status_err"], anchor="w",
+            font=(FONT, 8) if v2on else (FONT, 9))
+        info_lbl.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        status = info_lbl  # legacy code paths below reference `status`
 
         def submit(_e=None):
             text = editor.get("1.0", "end-1c").strip()
             if not text:
-                status.config(text=i18n.get("quick_input.empty"))
+                status.config(text=i18n.get("quick_input.empty"),
+                              fg=t["status_err"])
                 editor.focus_set()
                 return "break"
-            status.config(text="")
+            status.config(text=hint_text if v2on else "",
+                          fg=hint if v2on else t["status_err"])
             text = text[: self.cfg[CFG.MAX_CHARS]]
             win.destroy()
             self._show_loading(text)
             return "break"
+
+        if v2on:
+            # Revert the error back to the neutral hint as soon as the user types.
+            def _reset_info(_e=None):
+                if status.cget("text") != hint_text:
+                    status.config(text=hint_text, fg=hint)
+            editor.bind("<Key>", _reset_info, add="+")
 
         translate_text = i18n.get("quick_input.translate")
         pill_img = None

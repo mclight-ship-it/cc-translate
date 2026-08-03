@@ -122,7 +122,7 @@ def tray_icon_path(taskbar_theme=None):
 POPUP_CORNER_RADIUS = 11
 # The v2 dark-launch skin uses a larger radius for a softer, more modern card.
 # Plumbed only into v2 windows (win._corner_radius); legacy stays at 11.
-V2_CORNER_RADIUS = 19
+V2_CORNER_RADIUS = 24
 
 # Default size (px, unscaled) of the quick-input translation window.
 QUICK_INPUT_WINDOW_W = 560

@@ -595,13 +595,15 @@ def brand_badge(size_pt, palette, scale=1.0):
 
 
 def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
-              hover=False, caret=False):
+              hover=False, caret=False, min_w=0):
     """A soft translucent rounded pill button (RGBA) — the concept's primary
     top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
     ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
     pill radius and a gentle white fill that brightens on ``hover``. Every pill
     bakes to the SAME height (``SOFT_BTN_H_PTS``) regardless of whether it has an
-    icon, so 复制 and 操作 are the same size and sit on the same line."""
+    icon, so 复制 and 操作 are the same size and sit on the same line. ``min_w``
+    (device px) floors the width so sibling pills match; the content is centred
+    in the extra room."""
     if not PIL_OK:
         return None
     pw = scaled(12, scale)
@@ -620,7 +622,8 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     cgap = gap if (iw and tw) else 0
     cw = scaled(8, scale) if caret else 0
     ccgap = scaled(5, scale) if caret else 0
-    W = max(1, iw + cgap + tw + ccgap + cw + pw * 2)
+    content_w = iw + cgap + tw + ccgap + cw
+    W = max(1, content_w + pw * 2, int(min_w))
     H = scaled(SOFT_BTN_H_PTS, scale)
     is_dark = palette["is_dark"]
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -632,7 +635,9 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
         fill = (20, 30, 70, 26 if hover else 12)
         ink = (28, 35, 64, 255) if hover else (90, 100, 135, 255)
     d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
-    ox = pw
+    # Centre the icon+text+caret block horizontally (so a min_w-floored pill
+    # keeps its content centred, not left-hugging).
+    ox = max(pw, (W - content_w) // 2)
     if glyph and ifont:
         b = probe.textbbox((0, 0), glyph, font=ifont)
         d.text((ox - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont, fill=ink)
@@ -695,16 +700,19 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
         return None, 0
     w = max(1, int(w))
     h = max(1, int(h))
-    inset = scaled(9, scale)
+    inset = scaled(11, scale)
     x0, y0, x1, y1 = inset, inset, w - 1 - inset, h - 1 - inset
     if x1 <= x0 or y1 <= y0:
         return Image.new("RGBA", (w, h), (0, 0, 0, 0)), inset
     gcol = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    # Two blurred layers (wide+faint under tight+stronger) = a smooth bloom that
-    # falls off gently instead of a crisp glowing rectangle.
-    for grow, alpha_f, blur in ((scaled(3, scale), (0.18, 0.34), 11),
-                                (0, (0.30, 0.55), 6)):
+    # Three blurred layers (wide+faint under mid under tight+strong) = a smooth
+    # but clearly-visible violet bloom that falls off gently instead of a crisp
+    # glowing rectangle. Alphas are (unfocused, focused).
+    for grow, alpha_f, blur in (
+            (scaled(6, scale), (0.30, 0.42), 15),
+            (scaled(3, scale), (0.42, 0.62), 9),
+            (0, (0.60, 0.85), 5)):
         glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
         ImageDraw.Draw(glow).rounded_rectangle(
@@ -716,7 +724,7 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
     d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
                         fill=tuple(palette["field"]))
     d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
-                        outline=gcol + (150 if focused else 70,),
+                        outline=gcol + (190 if focused else 110,),
                         width=max(1, scaled(1, scale)))
     return canvas, inset
 

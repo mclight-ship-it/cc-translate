@@ -24,7 +24,7 @@ import win32util
 from win32util import get_monitor_rect
 from cc_rich import iter_rich_segments
 from cc_core import (
-    APP_NAME, CFG, ICON_PATH,
+    APP_NAME, CFG, ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     POPUP_CORNER_RADIUS, V2_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
     MIN_POPUP_HEIGHT_COMPACT,
@@ -55,6 +55,10 @@ except Exception:
 # as a lighter "solid border". Kept as a named knob in case a small inset is
 # ever wanted again. DPI-scaled at use.
 V2_HALO_PTS = 0
+
+# v2 top-right action pills (操作 / 复制) bake to at least this design width so
+# they're a matched pair rather than two different sizes. DPI-scaled at use.
+V2_ACTION_BTN_MIN_W_PTS = 74
 
 
 # ---------------------------------------------------------------------------
@@ -305,24 +309,26 @@ class PopupMixin:
         scale = self._ui_scale()
 
         drag_targets = [bar]
-        # v2 shows the brand badge (gradient rounded 'CC' + soft glow) — the
-        # concept's designed mark. Legacy keeps the real .ico logo.
+        # v2 shows the REAL app logo (dark tile on the navy card); legacy also
+        # uses the real .ico. Fall back to the drawn gradient badge only if the
+        # icon file/PIL is unavailable.
         if v2on:
-            logo_img = self._v2_badge_image(24)
+            logo_img = self._v2_logo_image(22) or self._v2_badge_image(24)
         else:
             logo_img = self._logo_image(15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
-            # v2: the badge is cropped flush-left, so indent it to the body-text
-            # column (POPUP_BODY_PAD_X + POPUP_TEXT_PAD_X, measured from card;
-            # the bar already sits at POPUP_BAR_PAD_X) so the icon's left edge
-            # lines up exactly with the translation text below it.
+            # v2: indent the logo to the body-text column (POPUP_BODY_PAD_X +
+            # POPUP_TEXT_PAD_X, measured from the card; the bar already sits at
+            # POPUP_BAR_PAD_X) so its left edge lines up with the translation
+            # text below. Centre-anchor so it shares the title's vertical centre.
             if v2on:
                 left_pad = (POPUP_BODY_PAD_X + POPUP_TEXT_PAD_X
                             - POPUP_BAR_PAD_X)
-                logo_lbl.pack(side="left", padx=(max(0, left_pad), 8))
+                logo_lbl.pack(side="left", padx=(max(0, left_pad), 8),
+                              anchor="center")
             else:
                 logo_lbl.pack(side="left", padx=(0, 6))
             drag_targets.append(logo_lbl)
@@ -343,14 +349,19 @@ class PopupMixin:
             title_lbl = tk.Label(bar, text=title if logo_img else "●  " + title,
                                  bg=popup_bg, fg=title_color,
                                  font=("Microsoft YaHei UI", 9, "bold"))
-        title_lbl.pack(side="left")
+        title_lbl.pack(side="left", anchor="center")
         drag_targets.append(title_lbl)
+
+        # v2: 操作 and 复制 must be the SAME width (and height) — bake both to at
+        # least this device width so they read as a matched pair, not two random
+        # sizes. Height is already unified via SOFT_BTN_H_PTS.
+        action_min_w = ccv2.scaled(V2_ACTION_BTN_MIN_W_PTS, scale) if ccv2 else 0
 
         def _mk_btn(txt, cmd, danger=False):
             # v2 success popups get soft translucent pills (the concept's 操作 /
             # dynamic-action style); everything else keeps the legacy text pill.
             if v2on and not is_error and not danger:
-                return self._v2_soft_button(bar, txt, cmd)
+                return self._v2_soft_button(bar, txt, cmd, min_w=action_min_w)
             active_bg = (theme["btn_close_active"] if danger
                          else theme["btn_active"])
             active_fg = "#ffffff" if danger else theme["fg"]
@@ -377,7 +388,8 @@ class PopupMixin:
             win._pin_btn = pin_btn
 
             copy_btn = self._v2_soft_button(
-                bar, i18n.get("result.copy"), self._copy_result, icon="copy")
+                bar, i18n.get("result.copy"), self._copy_result, icon="copy",
+                min_w=action_min_w)
             copy_btn.pack(side="right", padx=(6, 6))
             win._copy_btn = copy_btn
             win._copy_set = getattr(copy_btn, "_chip_set", None)
@@ -1268,14 +1280,44 @@ class PopupMixin:
             return tile.crop((pad, pad, tile.width - pad, tile.height))
         return self._v2_photo(("badge", size_pt, round(scale, 2)), _bake)
 
+    def _v2_logo_image(self, size_pt):
+        """The REAL app logo (cc*.ico) as a cached square PhotoImage for the v2
+        header — NOT a drawn gradient mark. Dark mode uses the dark-blue tile
+        (cc-dark.ico) so it sits harmoniously on the deep-navy card; light mode
+        uses the light tile. A plain square (no glow margin) so it centres
+        cleanly against the title text. Returns None if PIL/the icon is missing
+        (caller falls back to the gradient badge)."""
+        scale = self._ui_scale()
+        s = max(12, ccv2.scaled(size_pt, scale)) if ccv2 else max(12, size_pt)
+        is_dark = self._v2_palette()["is_dark"]
+        path = ICON_PATH_DARK if is_dark else ICON_PATH_LIGHT
+        if not os.path.exists(path):
+            path = ICON_PATH
+        key = ("v2logo", path, s)
+        cache = getattr(self, "_v2_photo_cache", None)
+        if cache is None:
+            cache = self._v2_photo_cache = {}
+        if key in cache:
+            return cache[key]
+        try:
+            from PIL import Image
+            with Image.open(path) as im:
+                img = im.convert("RGBA").resize((s, s), Image.LANCZOS)
+            photo = ccv2.to_photo(img, master=self.root)
+        except Exception:
+            photo = None
+        cache[key] = photo
+        return photo
+
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
-                        tooltip=None):
+                        tooltip=None, min_w=0):
         """A soft translucent pill button (concept's 复制 / 操作 style) as a
         tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
         re-bake the label (copy-feedback / processing text). Falls back to a
         plain text pill if the renderer can't build the image. A trailing caret
         glyph in the label (e.g. i18n's "操作 ▾") is stripped and drawn as a real
-        triangle, so it never renders as a tofu box in the baked image."""
+        triangle, so it never renders as a tofu box in the baked image. ``min_w``
+        (device px) floors the baked width so sibling pills match (操作/复制)."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
@@ -1293,10 +1335,10 @@ class PopupMixin:
             lbl, has_caret = _clean(label)
             font = ccv2.load_font("reg", 10, scale) if lbl else None
             return self._v2_photo(
-                ("soft", lbl, icon, has_caret, hover, round(scale, 2)),
+                ("soft", lbl, icon, has_caret, hover, min_w, round(scale, 2)),
                 lambda: ccv2.soft_pill(text=lbl, icon=icon, font=font,
                                        palette=pal, scale=scale, hover=hover,
-                                       caret=has_caret))
+                                       caret=has_caret, min_w=min_w))
 
         normal = _bake(text, False)
         hover = _bake(text, True)
