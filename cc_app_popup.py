@@ -13,6 +13,7 @@ never translator, so there is no import cycle.
 
 import os
 import ctypes
+import re
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk
@@ -24,7 +25,7 @@ from win32util import get_monitor_rect
 from cc_rich import iter_rich_segments
 from cc_core import (
     APP_NAME, CFG, ICON_PATH,
-    POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
+    POPUP_CORNER_RADIUS, V2_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
     MIN_POPUP_HEIGHT_COMPACT,
     STREAM_OPEN_MIN_LINES,
@@ -307,14 +308,23 @@ class PopupMixin:
         # v2 shows the brand badge (gradient rounded 'CC' + soft glow) — the
         # concept's designed mark. Legacy keeps the real .ico logo.
         if v2on:
-            logo_img = self._v2_badge_image(28)
+            logo_img = self._v2_badge_image(24)
         else:
             logo_img = self._logo_image(15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 8 if v2on else 6))
+            # v2: the badge is cropped flush-left, so indent it to the body-text
+            # column (POPUP_BODY_PAD_X + POPUP_TEXT_PAD_X, measured from card;
+            # the bar already sits at POPUP_BAR_PAD_X) so the icon's left edge
+            # lines up exactly with the translation text below it.
+            if v2on:
+                left_pad = (POPUP_BODY_PAD_X + POPUP_TEXT_PAD_X
+                            - POPUP_BAR_PAD_X)
+                logo_lbl.pack(side="left", padx=(max(0, left_pad), 8))
+            else:
+                logo_lbl.pack(side="left", padx=(0, 6))
             drag_targets.append(logo_lbl)
 
         if v2on and not is_error:
@@ -353,12 +363,12 @@ class PopupMixin:
             )
 
         if v2on and not is_error:
-            # v2: soft-pill primary actions + light ghost-icon window controls,
-            # generously spaced — the concept's airy top-right cluster (not a row
-            # of hard chips crammed together).
+            # v2: soft-pill primary action + light ghost-icon window controls,
+            # all baked to the same height so they share one baseline (no
+            # floating-high pushpin). Airy, even spacing — the concept's cluster.
             close_btn = self._v2_ghost_button(
                 bar, self._user_close_popup, icon="close", danger=True)
-            close_btn.pack(side="right")
+            close_btn.pack(side="right", padx=(0, 2))
 
             pin_btn = self._v2_ghost_button(
                 bar, lambda: self._toggle_popup_pin(win, pin_btn), icon="pin",
@@ -368,7 +378,7 @@ class PopupMixin:
 
             copy_btn = self._v2_soft_button(
                 bar, i18n.get("result.copy"), self._copy_result, icon="copy")
-            copy_btn.pack(side="right", padx=(6, 8))
+            copy_btn.pack(side="right", padx=(6, 6))
             win._copy_btn = copy_btn
             win._copy_set = getattr(copy_btn, "_chip_set", None)
         else:
@@ -573,8 +583,12 @@ class PopupMixin:
             accent = v2c["accent"]
 
         # Rounded corners via a transparent colour key (genuinely transparent on
-        # this environment, unlike SetWindowRgn cut-outs which render black).
-        card = self._rounded_shell(win, POPUP_CORNER_RADIUS,
+        # this environment, unlike SetWindowRgn cut-outs which render black). v2
+        # uses a larger radius for a softer, more modern card; the sizing math
+        # below reads win._corner_radius so the inset stays in sync.
+        radius = V2_CORNER_RADIUS if win._v2 else POPUP_CORNER_RADIUS
+        win._corner_radius = radius
+        card = self._rounded_shell(win, radius,
                                    popup_bg, popup_border)
         self._build_popup_header(
             win, card, title=(title or i18n.get("result.title")),
@@ -658,7 +672,8 @@ class PopupMixin:
         # measured text. (Cancels with the body pad exactly as the old shell-pad
         # inset did, so effective wrapping width is unchanged.) The v2 skin adds
         # its glow-halo margin on top, so the shared math reserves room for it.
-        shell_pad = POPUP_CORNER_RADIUS + self._v2_margin()
+        shell_pad = int(getattr(win, "_corner_radius",
+                                POPUP_CORNER_RADIUS)) + self._v2_margin()
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
@@ -761,7 +776,8 @@ class PopupMixin:
         text = win._text
         # Match _size_popup: colour-key card inset is the corner radius (+ the
         # v2 glow-halo margin when the v2 skin is active).
-        shell_pad = POPUP_CORNER_RADIUS + self._v2_margin()
+        shell_pad = int(getattr(win, "_corner_radius",
+                                POPUP_CORNER_RADIUS)) + self._v2_margin()
 
         # Lock the monitor on the first frame; reuse it for the whole stream so a
         # cursor that wanders onto another display can't shift the anchor.
@@ -1238,30 +1254,49 @@ class PopupMixin:
 
     def _v2_badge_image(self, size_pt):
         """The v2 brand badge (gradient rounded 'CC' + soft glow) as a cached
-        PhotoImage, replacing the flat-.ico-on-blob logo. Returns None if the
-        renderer is unavailable (caller falls back to the plain logo)."""
+        PhotoImage. The left AND top glow pads are CROPPED so the badge's visual
+        top-left is flush with the tile — the glow then bleeds only DOWN and to
+        the RIGHT (a soft glow *beneath* the icon, per the concept). Flush edges
+        also let the header align the badge deterministically with the body-text
+        column. Returns None if the renderer is unavailable (caller falls back)."""
         scale = self._ui_scale()
-        return self._v2_photo(
-            ("badge", size_pt, round(scale, 2)),
-            lambda: ccv2.brand_badge(size_pt, self._v2_palette(), scale)[0])
+
+        def _bake():
+            tile, pad = ccv2.brand_badge(size_pt, self._v2_palette(), scale)
+            if tile is None:
+                return None
+            return tile.crop((pad, pad, tile.width - pad, tile.height))
+        return self._v2_photo(("badge", size_pt, round(scale, 2)), _bake)
 
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
                         tooltip=None):
         """A soft translucent pill button (concept's 复制 / 操作 style) as a
         tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
         re-bake the label (copy-feedback / processing text). Falls back to a
-        plain text pill if the renderer can't build the image."""
+        plain text pill if the renderer can't build the image. A trailing caret
+        glyph in the label (e.g. i18n's "操作 ▾") is stripped and drawn as a real
+        triangle, so it never renders as a tofu box in the baked image."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
 
+        def _clean(label):
+            # Strip a trailing dropdown glyph ("▾"/"▼"/"⌄"/"v") + turn on caret.
+            if not label:
+                return label, caret
+            m = re.search(r"\s*[\u25be\u25bc\u2304\u02c5]\s*$", label)
+            if m:
+                return label[:m.start()], True
+            return label, caret
+
         def _bake(label, hover):
-            font = ccv2.load_font("reg", 10, scale) if label else None
+            lbl, has_caret = _clean(label)
+            font = ccv2.load_font("reg", 10, scale) if lbl else None
             return self._v2_photo(
-                ("soft", label, icon, caret, hover, round(scale, 2)),
-                lambda: ccv2.soft_pill(text=label, icon=icon, font=font,
+                ("soft", lbl, icon, has_caret, hover, round(scale, 2)),
+                lambda: ccv2.soft_pill(text=lbl, icon=icon, font=font,
                                        palette=pal, scale=scale, hover=hover,
-                                       caret=caret))
+                                       caret=has_caret))
 
         normal = _bake(text, False)
         hover = _bake(text, True)

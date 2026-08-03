@@ -57,7 +57,7 @@ from cc_core import (
     UPDATE_NOTICE_PATH,
     ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     detect_system_theme, detect_taskbar_theme, tray_icon_path,
-    POPUP_CORNER_RADIUS,
+    POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
     log_perf, log_error,
     CFG, DEFAULT_CONFIG,

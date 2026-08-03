@@ -23,7 +23,7 @@ from tkinter import font as tkfont
 import i18n
 
 from cc_core import (
-    CFG, log_error, POPUP_CORNER_RADIUS,
+    CFG, log_error, POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
 )
 
@@ -188,7 +188,8 @@ class QuickInputMixin:
         win.bind("<Destroy>", _on_destroy, add="+")
 
         win._v2 = v2on
-        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+        _radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+        card = self._rounded_shell(win, _radius, bg, border)
 
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
@@ -218,12 +219,17 @@ class QuickInputMixin:
         else:
             title_lbl = tk.Label(bar, text=title_text, bg=bg,
                                  fg=accent, font=(FONT, 11, "bold"))
-        title_lbl.pack(side="left")
+        # Bottom-align the title image and the hint text so they share a baseline
+        # (a centred image title + centred text label sat at different heights).
+        title_anchor = "s" if (v2on and title_img is not None) else "center"
+        title_lbl.pack(side="left", anchor=title_anchor)
         drag_targets.append(title_lbl)
         hint_lbl = tk.Label(
             bar, text=i18n.get("quick_input.hint"),
             bg=bg, fg=hint, font=(FONT, 9))
-        hint_lbl.pack(side="left", padx=(8, 0))
+        hint_lbl.pack(side="left", padx=(8, 0),
+                      anchor=("s" if v2on else "center"),
+                      pady=(0, 2) if v2on else 0)
         drag_targets.append(hint_lbl)
         if v2on and ccv2 is not None:
             close_btn = self._v2_ghost_button(
@@ -339,7 +345,12 @@ class QuickInputMixin:
         editor.bind("<Button-1>", _sync_ime_font, add="+")
 
         bottom = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bottom.pack(side="bottom", fill="x", padx=16, pady=(6, 14))
+        # Align the footer with the field's glowing rim: the baked field insets
+        # its rounded border by ~9px, so pad the footer the same amount past the
+        # body's 16px so 翻译's right edge lines up with the field's right edge.
+        _foot_pad = (16 + ccv2.scaled(9, scale)) if (v2on and ccv2 is not None) else 16
+        bottom.pack(side="bottom", fill="x", padx=_foot_pad,
+                    pady=(4, 12) if v2on else (6, 14))
 
         status = tk.Label(
             bottom, text="", bg=bg, fg=t["status_err"], anchor="w",
@@ -395,9 +406,10 @@ class QuickInputMixin:
 
         if v2on:
             # Single-line field needs far less height than the legacy multi-line
-            # editor, so the v2 window is a compact, tight card.
+            # editor, so the v2 window is a compact, tight card. Keep it short so
+            # the field is the hero (no big slack above/below it).
             w, h, x, y = self._scaled_centered_box(
-                QUICK_INPUT_WINDOW_W, 188, min_w=440, min_h=176)
+                QUICK_INPUT_WINDOW_W, 150, min_w=440, min_h=144)
         else:
             w, h, x, y = self._scaled_centered_box(
                 QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H, min_w=420,

@@ -156,9 +156,12 @@ class TestV2ResultPopup(unittest.TestCase):
         v2_w = vw.winfo_width()
 
         # Allow a small delta for the gradient-title image vs plain-text title
-        # metrics, but nothing like the old ~2x margin inflation.
+        # metrics, plus the intentional bigger v2 corner radius (the content card
+        # is inset by the radius on each side, so a larger radius legitimately
+        # widens the window a little) — but nothing like the old ~2x halo margin.
+        radius_delta = 2 * (tr.V2_CORNER_RADIUS - tr.POPUP_CORNER_RADIUS)
         self.assertLessEqual(
-            v2_w, legacy_w + 12,
+            v2_w, legacy_w + 12 + radius_delta,
             "v2 popup should no longer be widened by a glow-halo margin")
 
     def test_v2_streaming_grows_downward(self):

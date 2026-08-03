@@ -547,30 +547,42 @@ def status_dot(color, size=8, scale=1.0):
 # ---------------------------------------------------------------------------
 # Concept-polish pieces: brand badge, soft pill / ghost-icon buttons, field.
 # ---------------------------------------------------------------------------
+# Every top-right control (soft pill + ghost icon) bakes to this device height
+# so Copy / pin / close line up perfectly (same centre, same top) — no more one
+# button sitting taller or a pushpin floating high.
+SOFT_BTN_H_PTS = 30
+
+
 def brand_badge(size_pt, palette, scale=1.0):
-    """The concept's brand mark: a brand-gradient rounded square with a white
-    "CC", sitting on a soft violet glow. Returns ``(tile, pad)`` where ``pad``
-    is the transparent glow margin around the badge (device px) — a tk.Label
-    (bg = navy panel) shows it correctly via alpha. This replaces pasting the
-    flat .ico on a blurry blob, which read as a "weird box", not a logo."""
+    """The concept's brand mark: a tri-colour brand-gradient rounded square with
+    a white "CC" floating on a soft violet bloom. Returns ``(tile, pad)`` where
+    ``pad`` is the transparent glow margin (device px) AND the LEFT/TOP offset of
+    the badge inside the tile, so a caller can shift the label left by ``pad`` to
+    align the badge's visual edge with a text column. The bloom is deliberately
+    stronger than a flat icon so it reads as a *designed*, lit mark — not the
+    plain .ico app icon."""
     if not PIL_OK:
         return None, 0
     s = scaled(size_pt, scale)
-    r = int(s * 0.30)
-    pad = int(s * 0.42)
+    r = int(s * 0.32)
+    pad = int(s * 0.34)
     W = s + pad * 2
     tile = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    # Soft glow beneath: a rounded, blurred violet — rounded + blurred means no
-    # boxy artefact (the old radial-behind-square trick left a hard square edge).
-    glow = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    gy = pad + int(s * 0.10)
-    ImageDraw.Draw(glow).rounded_rectangle(
-        (pad, gy, pad + s, gy + s), radius=r, fill=(150, 120, 255, 130))
-    tile.alpha_composite(glow.filter(ImageFilter.GaussianBlur(int(s * 0.28))))
+    # Two stacked blurred violet blooms (wide+faint under a tighter+brighter one)
+    # give a soft, obvious halo with no boxy edge.
+    for spread, alpha, blur, dy in (
+            (0.12, 70, 0.55, 0.16), (0.0, 150, 0.30, 0.12)):
+        glow = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+        gx = pad - int(s * spread)
+        gy = pad + int(s * dy)
+        ImageDraw.Draw(glow).rounded_rectangle(
+            (gx, gy, gx + s + int(s * spread * 2), gy + s),
+            radius=r, fill=(150, 120, 255, alpha))
+        tile.alpha_composite(glow.filter(ImageFilter.GaussianBlur(int(s * blur))))
     badge = gradient_round(s, s, r, stops=BRAND, angle=135)
     hl = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(hl).rounded_rectangle((0, 0, s - 1, int(s * 0.5)), radius=r,
-                                         fill=(255, 255, 255, 34))
+                                         fill=(255, 255, 255, 40))
     badge.alpha_composite(hl.filter(ImageFilter.GaussianBlur(int(s * 0.10))))
     f = load_font("bold", max(6, int(size_pt * 0.46)), scale)
     d = ImageDraw.Draw(badge)
@@ -587,11 +599,12 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     """A soft translucent rounded pill button (RGBA) — the concept's primary
     top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
     ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
-    pill radius and a gentle white fill that brightens on ``hover``."""
+    pill radius and a gentle white fill that brightens on ``hover``. Every pill
+    bakes to the SAME height (``SOFT_BTN_H_PTS``) regardless of whether it has an
+    icon, so 复制 and 操作 are the same size and sit on the same line."""
     if not PIL_OK:
         return None
     pw = scaled(12, scale)
-    ph = scaled(7, scale)
     gap = scaled(6, scale)
     icon_px = scaled(15, scale)
     ifont = icon_font(icon_px) if icon else None
@@ -605,10 +618,10 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
         b = probe.textbbox((0, 0), glyph, font=ifont)
         iw, ih = b[2] - b[0], b[3] - b[1]
     cgap = gap if (iw and tw) else 0
-    cw = scaled(9, scale) if caret else 0
+    cw = scaled(8, scale) if caret else 0
     ccgap = scaled(5, scale) if caret else 0
     W = max(1, iw + cgap + tw + ccgap + cw + pw * 2)
-    H = max(1, max(th, ih, icon_px) + ph * 2)
+    H = scaled(SOFT_BTN_H_PTS, scale)
     is_dark = palette["is_dark"]
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -640,20 +653,19 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
 def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
     """An icon-only window control (RGBA): fully transparent at rest so it reads
     as light-weight, gaining a soft round fill on ``hover`` (a subtle red wash
-    when ``danger``, i.e. the close button). Used for pin / close next to the
-    soft-pill primary actions, so the header stays airy, not a row of hard
-    chips crammed together."""
+    when ``danger``, i.e. the close button). Bakes to the SAME height as
+    ``soft_pill`` (and a matching square-ish width) so pin / close line up with
+    Copy — same centre, no floating-high pushpin."""
     if not PIL_OK:
         return None
     icon_px = scaled(15, scale)
     ifont = icon_font(icon_px)
     glyph = _MDL2_GLYPHS.get(icon, icon)
-    pad = scaled(7, scale)
     probe = ImageDraw.Draw(Image.new("L", (4, 4)))
     b = probe.textbbox((0, 0), glyph, font=ifont)
     iw, ih = b[2] - b[0], b[3] - b[1]
-    W = iw + pad * 2
-    H = icon_px + pad * 2
+    H = scaled(SOFT_BTN_H_PTS, scale)
+    W = max(H, iw + scaled(13, scale))
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     ink = (206, 212, 235, 255) if palette["is_dark"] else (90, 100, 135, 255)
@@ -666,38 +678,45 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
                             fill=(255, 255, 255, 30) if palette["is_dark"]
                             else (20, 30, 70, 22))
         ink = (238, 241, 255, 255) if palette["is_dark"] else (28, 35, 64, 255)
-    d.text((pad - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont, fill=ink)
+    d.text(((W - iw) / 2 - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont,
+           fill=ink)
     return img
 
 
 def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
     """Bake a glowing rounded input field (RGBA, transparent outside the glow):
-    a soft violet halo bleeds from the field edge, a dark rounded fill sits on
-    top, and a violet hairline outlines it — brighter when ``focused``. Returns
-    ``(image, inset)`` where ``inset`` is the transparent margin (device px)
-    reserved around the field for the glow; place the text widget at that
-    offset. Mirrors the popup shell so the field reads as its own lit surface."""
+    a soft violet bloom bleeds from the field edge, a dark rounded fill sits on
+    top, and a *subtle* violet hairline outlines it — brighter when ``focused``.
+    Returns ``(image, inset)`` where ``inset`` is the transparent margin (device
+    px) reserved around the field for the glow; place the text widget at that
+    offset. The bloom is layered + wide so it reads as a soft glow, not a hard
+    coloured border."""
     if not PIL_OK:
         return None, 0
     w = max(1, int(w))
     h = max(1, int(h))
-    inset = scaled(7, scale)
+    inset = scaled(9, scale)
     x0, y0, x1, y1 = inset, inset, w - 1 - inset, h - 1 - inset
     if x1 <= x0 or y1 <= y0:
         return Image.new("RGBA", (w, h), (0, 0, 0, 0)), inset
     gcol = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).rounded_rectangle(
-        (x0, y0, x1, y1), radius=int(radius),
-        fill=gcol + (int(255 * (0.5 if focused else 0.28)),))
-    canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
-        scaled(6 if focused else 5, scale))))
+    # Two blurred layers (wide+faint under tight+stronger) = a smooth bloom that
+    # falls off gently instead of a crisp glowing rectangle.
+    for grow, alpha_f, blur in ((scaled(3, scale), (0.18, 0.34), 11),
+                                (0, (0.30, 0.55), 6)):
+        glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
+        ImageDraw.Draw(glow).rounded_rectangle(
+            (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
+            radius=int(radius) + grow, fill=gcol + (a,))
+        canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
+            scaled(blur, scale))))
     d = ImageDraw.Draw(canvas)
     d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
                         fill=tuple(palette["field"]))
     d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
-                        outline=gcol + (210 if focused else 120,),
+                        outline=gcol + (150 if focused else 70,),
                         width=max(1, scaled(1, scale)))
     return canvas, inset
 
