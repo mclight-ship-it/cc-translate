@@ -132,7 +132,7 @@ Phase 0  v2 皮肤地基 (cc_ui_v2.py)
 
 | 阶段 | 任务 | 状态 |
 |---|---|---|
-| Phase 0 | v2 皮肤地基 `cc_ui_v2.py` | 🔄 |
+| Phase 0 | v2 皮肤地基 `cc_ui_v2.py` | ✅ |
 | Phase 1 | 译文弹窗 `_make_popup_v2`（含流式） | ⬜ |
 | Phase 2 | 快速翻译 v2 | ⬜ |
 | Phase 3 | 历史记录 v2 | ⬜ |
