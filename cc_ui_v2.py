@@ -332,6 +332,38 @@ _STREAM_HI_UP_PTS = 150     # cool glow centre this far ABOVE the top edge
 _STREAM_LO_DOWN_PTS = 130   # warm glow centre this far BELOW the top edge
 
 
+_panel_match_cache = {}
+
+
+def panel_match_color(palette, scale=1.0):
+    """Representative flat colour of the streaming FACE — the navy the shell
+    actually paints across its body (glows excluded). The v2 popup's solid
+    content panel uses THIS (not the darker raw ``solid`` stop) so the panel and
+    the surrounding shell are the same tone: the glow-halo margin then reads as a
+    soft luminous rim, never a brightness step ("solid border"). Sampled from a
+    real bake so it stays in sync with the gradient; cached per palette/scale."""
+    if not PIL_OK:
+        return palette["panel"]
+    key = (id(palette), round(scale, 3))
+    hit = _panel_match_cache.get(key)
+    if hit is not None:
+        return hit
+    # Sample a column below the top glow (so the glow doesn't skew the average)
+    # over a tall-ish bake, then average — this is the flat body navy.
+    face = bake_stream_face(8, scaled(240, scale), palette, scale=scale)
+    px = face.convert("RGB").load()
+    W, H = face.size
+    y0, y1 = int(H * 0.45), int(H * 0.9)
+    n = 0
+    r = g = b = 0
+    for y in range(y0, y1):
+        pr, pg, pb = px[W // 2, y]
+        r += pr; g += pg; b += pb; n += 1
+    col = (r // n, g // n, b // n) if n else palette["panel"]
+    _panel_match_cache[key] = col
+    return col
+
+
 class GradientBackground:
     """Caches a height-stable card FACE and serves per-frame crops cheaply.
 

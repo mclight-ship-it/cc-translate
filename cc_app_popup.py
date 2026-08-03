@@ -46,11 +46,11 @@ except Exception:
     ccv2 = None
 
 # Width (design points) of the glowing gradient halo the v2 result popup shows
-# between the rounded shell edge and the solid content card. Kept small so it
-# reads as a soft luminous rim (an edge-glow hugging the card), NOT a second
-# opaque frame around it — an earlier, fatter halo (with a hairline border) read
-# as a redundant "ring". DPI-scaled at use.
-V2_HALO_PTS = 7
+# between the rounded shell edge and the solid content card. The panel colour is
+# matched to the shell's flat navy (see _v2_tk_colors), so this margin is NOT a
+# brightness step / border — it's the width of the soft corner-glow rim that
+# bleeds around the content. DPI-scaled at use.
+V2_HALO_PTS = 11
 
 
 # ---------------------------------------------------------------------------
@@ -1157,9 +1157,15 @@ class PopupMixin:
 
     def _v2_tk_colors(self):
         """v2 result-popup colours as tk hex strings (card/border/hint/accent),
-        derived from the cc_ui_v2 palette. Body text keeps the theme fg."""
+        derived from the cc_ui_v2 palette. Body text keeps the theme fg.
+
+        ``panel`` is matched to the SHELL gradient's flat body tone (not the raw
+        dark ``solid`` stop) so the content card is the same navy as the shell
+        around it — that's what makes the glow-halo margin read as a soft rim
+        instead of a lighter "solid border" framing a darker plate."""
         pal = self._v2_palette()
-        panel = ccv2.rgb_to_hex(pal["panel"])
+        scale = self._ui_scale()
+        panel = ccv2.rgb_to_hex(ccv2.panel_match_color(pal, scale))
         sub = ccv2.rgb_to_hex(pal["sub"])
         # A subtle border a touch lighter than the panel (hairline on navy).
         if pal["is_dark"]:
