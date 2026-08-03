@@ -178,6 +178,23 @@ def linear_gradient(w, h, stops, angle=135):
     return strip.crop((left, top, left + w, top + h)).convert("RGBA")
 
 
+def flat_base(palette):
+    """The single flat navy the v2 card uses as its base — the AVERAGE of the
+    palette's ``solid`` gradient stops. The v2 shell fills a FLAT base (not a
+    top-to-bottom gradient) and the content panel uses this exact colour, so the
+    two are identical everywhere along the card boundary. That's what stops the
+    glow-halo margin from reading as a lighter/darker "solid border": with a
+    gradient base the top edge was ~+9 luminance brighter than the flat panel (a
+    visible frame); a flat base makes that step ~0 and leaves only the soft
+    radial corner glows, which fall off gently and read as glow, not an edge."""
+    stops = palette["solid"]
+    n = len(stops)
+    r = sum(c[1][0] for c in stops) / n
+    g = sum(c[1][1] for c in stops) / n
+    b = sum(c[1][2] for c in stops) / n
+    return (int(round(r)), int(round(g)), int(round(b)))
+
+
 def radial_glow(size, color, strength=1.0):
     """A soft round glow (RGBA). Inset ellipse + blur avoids a hard edge."""
     size = max(2, int(size))
@@ -299,35 +316,33 @@ def bake_stream_face(w, h, palette, scale=1.0):
 
     This is the streaming variant of :func:`bake_face`. The result popup grows
     downward ~20x/second, and the anti-flicker guarantee is that a top-anchored
-    crop is identical frame to frame. :func:`bake_face` cannot provide that —
-    its diagonal gradient (``hypot(w, h)``) and h-relative glow offsets shift the
-    top region whenever the bake height changes. Here the base is a vertical
-    gradient over a FIXED reference height and both glows are anchored to the top
-    (offsets independent of ``h``), so baking taller only appends rows and every
-    ``crop((0, 0, w, h'))`` for ``h' <= h`` is byte-identical to a shorter bake."""
+    crop is identical frame to frame. The base is a FLAT navy (:func:`flat_base`)
+    — identical to the content panel colour, so the halo margin shows no
+    brightness step / border — over which two soft glows are composited, both
+    anchored to the TOP (offsets independent of ``h``), so baking taller only
+    appends identical rows and every ``crop((0, 0, w, h'))`` for ``h' <= h`` is
+    byte-identical to a shorter bake."""
     w = max(1, int(w))
     h = max(1, int(h))
-    # Vertical navy base over a fixed reference height: row y's colour is a pure
-    # function of y, so it is the same in a 200px bake and a 1600px bake.
-    ref = max(1, scaled(_STREAM_REF_PTS, scale))
-    col = Image.new("RGB", (1, h))
-    cpx = col.load()
-    for y in range(h):
-        cpx[0, y] = sample_stops(palette["solid"], min(1.0, y / ref))
-    face = col.resize((w, h)).convert("RGBA")
+    # Flat navy base = the panel colour: no top-to-bottom gradient means the card
+    # edge never steps against the panel (that step was the "solid border").
+    face = Image.new("RGBA", (w, h), tuple(flat_base(palette)) + (255,))
     # Cool glow pinned to the top-left; warm glow pinned a fixed distance below
-    # the top. Both offsets are constants (× scale), never × h.
-    hi = radial_glow(int(w * 1.05), palette["glow_hi"],
-                     0.14 if palette["is_dark"] else 0.07)
-    face.alpha_composite(hi, (-int(w * 0.3), -scaled(_STREAM_HI_UP_PTS, scale)))
-    lo = radial_glow(int(w * 0.95), palette["glow_lo"],
-                     0.12 if palette["is_dark"] else 0.06)
-    face.alpha_composite(lo, (int(w * 0.5), scaled(_STREAM_LO_DOWN_PTS, scale)))
+    # the top. Both offsets are constants (× scale), never × h. Kept subtle: the
+    # glow is only ever seen in the thin halo margin (the opaque panel covers the
+    # interior), so a strong glow there just reads as a coloured border. Gentle
+    # values keep the rim's brightness within ~±2 of the panel — a whisper of
+    # cool/warm at the corners, never a frame.
+    hi = radial_glow(int(w * 1.15), palette["glow_hi"],
+                     0.055 if palette["is_dark"] else 0.035)
+    face.alpha_composite(hi, (-int(w * 0.35), -scaled(_STREAM_HI_UP_PTS, scale)))
+    lo = radial_glow(int(w * 1.05), palette["glow_lo"],
+                     0.05 if palette["is_dark"] else 0.03)
+    face.alpha_composite(lo, (int(w * 0.55), scaled(_STREAM_LO_DOWN_PTS, scale)))
     return face
 
 
 # Fixed geometry for the height-stable streaming bake (design points).
-_STREAM_REF_PTS = 520       # vertical gradient reaches the deep navy by here
 _STREAM_HI_UP_PTS = 150     # cool glow centre this far ABOVE the top edge
 _STREAM_LO_DOWN_PTS = 130   # warm glow centre this far BELOW the top edge
 
@@ -336,30 +351,36 @@ _panel_match_cache = {}
 
 
 def panel_match_color(palette, scale=1.0):
-    """Representative flat colour of the streaming FACE — the navy the shell
-    actually paints across its body (glows excluded). The v2 popup's solid
-    content panel uses THIS (not the darker raw ``solid`` stop) so the panel and
-    the surrounding shell are the same tone: the glow-halo margin then reads as a
-    soft luminous rim, never a brightness step ("solid border"). Sampled from a
-    real bake so it stays in sync with the gradient; cached per palette/scale."""
+    """The flat navy the v2 content panel must use so its brightness equals the
+    SHELL's (flat base + the broad glow wash). The shell isn't just ``flat_base``
+    — the two soft glows lift the whole face by a few luminance levels — so a
+    panel painted at the raw base sits a touch DARKER than the surrounding shell
+    and the halo margin still reads as a faint uniform border. We therefore
+    return the MEAN colour of a representative baked face (base + glow wash), so
+    the panel matches the ring's actual brightness; the only remaining
+    difference is the glow's gentle ±1 variation across the ring, which is
+    imperceptible and reads as a soft rim, never an edge. Cached per palette."""
     if not PIL_OK:
         return palette["panel"]
     key = (id(palette), round(scale, 3))
     hit = _panel_match_cache.get(key)
     if hit is not None:
         return hit
-    # Sample a column below the top glow (so the glow doesn't skew the average)
-    # over a tall-ish bake, then average — this is the flat body navy.
-    face = bake_stream_face(8, scaled(240, scale), palette, scale=scale)
-    px = face.convert("RGB").load()
-    W, H = face.size
-    y0, y1 = int(H * 0.45), int(H * 0.9)
+    # Representative popup size (px): glow spread scales with width, so bake a
+    # typical width; the mean over the whole face is the level the ring sits at.
+    w = scaled(360, scale)
+    h = scaled(300, scale)
+    face = bake_stream_face(w, h, palette, scale=scale).convert("RGB")
+    px = face.load()
     n = 0
     r = g = b = 0
-    for y in range(y0, y1):
-        pr, pg, pb = px[W // 2, y]
-        r += pr; g += pg; b += pb; n += 1
-    col = (r // n, g // n, b // n) if n else palette["panel"]
+    step = max(1, w // 40)
+    for yy in range(0, h, step):
+        for xx in range(0, w, step):
+            pr, pg, pb = px[xx, yy]
+            r += pr; g += pg; b += pb; n += 1
+    col = ((r + n // 2) // n, (g + n // 2) // n, (b + n // 2) // n) if n \
+        else flat_base(palette)
     _panel_match_cache[key] = col
     return col
 
