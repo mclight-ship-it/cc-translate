@@ -106,6 +106,7 @@ class TestCFGConstants(unittest.TestCase):
         "AUTOSTART_INITIALIZED",
         "SUMMARY_ENABLED",
         "TRAY_CLICK_ACTION",
+        "UI_V2",
     }
 
     def test_cfg_has_all_attributes(self):
@@ -144,6 +145,52 @@ class TestCFGConstants(unittest.TestCase):
         self.assertGreater(dc[tr.CFG.MAX_CHARS], 0)
         self.assertIsInstance(dc[tr.CFG.HISTORY_ENABLED], bool)
         self.assertIsInstance(dc[tr.CFG.AUTO_UPDATE_ENABLED], bool)
+
+
+# ============================================================
+# v2 UI dark-launch flag
+# ============================================================
+
+class TestUiV2Flag(unittest.TestCase):
+    def setUp(self):
+        # Never let an ambient CC_UI_V2 in the dev shell leak into assertions.
+        self._saved_env = os.environ.pop(tr.UI_V2_ENV, None)
+
+    def tearDown(self):
+        os.environ.pop(tr.UI_V2_ENV, None)
+        if self._saved_env is not None:
+            os.environ[tr.UI_V2_ENV] = self._saved_env
+
+    def test_defaults_off_in_production(self):
+        # Ships to everyone via auto-update but must stay dark by default.
+        self.assertFalse(tr.DEFAULT_CONFIG[tr.CFG.UI_V2])
+        self.assertFalse(tr.ui_v2_enabled({}))
+        self.assertFalse(tr.ui_v2_enabled(None))
+
+    def test_config_opt_in_enables(self):
+        self.assertTrue(tr.ui_v2_enabled({tr.CFG.UI_V2: True}))
+        self.assertFalse(tr.ui_v2_enabled({tr.CFG.UI_V2: False}))
+
+    def test_env_forces_on_regardless_of_config(self):
+        for val in ("1", "true", "yes", "on", "TRUE", "On"):
+            os.environ[tr.UI_V2_ENV] = val
+            self.assertTrue(
+                tr.ui_v2_enabled({tr.CFG.UI_V2: False}),
+                f"CC_UI_V2={val!r} should force the v2 UI on")
+
+    def test_env_forces_off_over_config(self):
+        # An explicit off in the env beats an opt-in config, so a developer can
+        # pin the legacy UI for one run even if the setting is saved on.
+        for val in ("0", "false", "no", "off", ""):
+            os.environ[tr.UI_V2_ENV] = val
+            self.assertFalse(
+                tr.ui_v2_enabled({tr.CFG.UI_V2: True}),
+                f"CC_UI_V2={val!r} should force the v2 UI off")
+
+    def test_unrecognized_env_falls_through_to_config(self):
+        os.environ[tr.UI_V2_ENV] = "maybe"
+        self.assertTrue(tr.ui_v2_enabled({tr.CFG.UI_V2: True}))
+        self.assertFalse(tr.ui_v2_enabled({tr.CFG.UI_V2: False}))
 
 
 # ============================================================

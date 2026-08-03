@@ -194,6 +194,11 @@ class CFG:
     AUTOSTART_INITIALIZED = "autostart_initialized"
     SUMMARY_ENABLED = "summary_enabled"
     TRAY_CLICK_ACTION = "tray_click_action"
+    # Dark-launch flag for the v2 UI redesign. Ships to everyone (auto-update)
+    # but stays OFF by default, so the new UI can be merged to master and
+    # dogfooded in the real app without exposing unfinished pages to users.
+    # Flip via the CC_UI_V2 env var (dev-only) or this config key (opt-in).
+    UI_V2 = "ui_v2"
 
 
 DEFAULT_CONFIG = {
@@ -214,7 +219,47 @@ DEFAULT_CONFIG = {
     CFG.AUTOSTART_INITIALIZED: False,
     CFG.SUMMARY_ENABLED: False,
     CFG.TRAY_CLICK_ACTION: "settings",
+    CFG.UI_V2: False,
 }
+
+
+# ---------------------------------------------------------------------------
+# v2 UI dark-launch flag.
+# ---------------------------------------------------------------------------
+# Environment variable that force-enables the v2 UI for the current process,
+# independent of the saved config. Intended for the developer to dogfood the
+# new UI in the real installed app without persisting a setting (and without
+# any surface a normal user could stumble into).
+UI_V2_ENV = "CC_UI_V2"
+
+
+def ui_v2_enabled(cfg=None):
+    """True when the v2 UI redesign should render instead of the legacy UI.
+
+    Resolution order (first decisive wins):
+      1. CC_UI_V2 env var — "1"/"true"/"yes"/"on" forces ON, "0"/"false"/"no"/
+         "off" forces OFF. Lets a developer flip the new UI on (or explicitly
+         off) for one run without touching saved config.
+      2. The saved config flag CFG.UI_V2 (opt-in for internal testers).
+      3. Off by default, so production users are unaffected even though the v2
+         code ships to everyone via auto-update.
+    """
+    raw = os.environ.get(UI_V2_ENV)
+    if raw is not None:
+        val = raw.strip().lower()
+        if val in ("1", "true", "yes", "on"):
+            return True
+        if val in ("0", "false", "no", "off", ""):
+            return False
+        # Any other value is ignored (fall through to config), so a typo can't
+        # silently pin the flag one way.
+    if cfg is None:
+        return False
+    try:
+        return bool(cfg.get(CFG.UI_V2, False))
+    except AttributeError:
+        # Allow a plain dict-less caller (defensive; cfg is normally a mapping).
+        return False
 
 
 # ---------------------------------------------------------------------------

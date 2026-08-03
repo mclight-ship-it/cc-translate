@@ -61,6 +61,7 @@ from cc_core import (
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
     log_perf, log_error,
     CFG, DEFAULT_CONFIG,
+    UI_V2_ENV, ui_v2_enabled,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
     auto_direction_prompt, direction_prompt, resolve_target_lang,
