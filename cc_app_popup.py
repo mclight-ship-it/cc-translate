@@ -46,8 +46,11 @@ except Exception:
     ccv2 = None
 
 # Width (design points) of the glowing gradient halo the v2 result popup shows
-# between the rounded shell edge and the solid content card. DPI-scaled at use.
-V2_HALO_PTS = 13
+# between the rounded shell edge and the solid content card. Kept small so it
+# reads as a soft luminous rim (an edge-glow hugging the card), NOT a second
+# opaque frame around it — an earlier, fatter halo (with a hairline border) read
+# as a redundant "ring". DPI-scaled at use.
+V2_HALO_PTS = 7
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +317,7 @@ class PopupMixin:
             title_img = self._v2_photo(
                 ("title", title, round(scale, 2)),
                 lambda: ccv2.gradient_text(
-                    title, ccv2.load_font("bold", 10, scale)))
+                    title, ccv2.load_font("bold", 13, scale)))
         else:
             title_img = None
         if title_img is not None:
@@ -1090,10 +1093,11 @@ class PopupMixin:
                 _draw_round_rect(cv, 0, 0, w, h, radius, fill=card_bg,
                                  outline=card_bg, tags="cc_shell")
             # Layer 2: the solid, readable content card, inset by the halo so the
-            # glow shows around it. Its square corners hide inside this rounded
-            # rect exactly as legacy hides the card frame inside the shell rect.
+            # glow shows around it. NO hard outline here — a crisp border made the
+            # halo read as a redundant second frame; letting the card edge melt
+            # into the gradient keeps the rim reading as a soft glow instead.
             _draw_round_rect(cv, margin, margin, w - margin, h - margin, radius,
-                             fill=card_bg, outline=border, tags="cc_shell")
+                             fill=card_bg, outline=card_bg, tags="cc_shell")
             cv.tag_lower("cc_shell")
             cv.coords(item, radius + margin, radius + margin)
             cv.itemconfigure(item, width=w - 2 * (radius + margin),
