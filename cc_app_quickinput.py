@@ -27,6 +27,15 @@ from cc_core import (
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
 )
 
+# The v2 skin (cc_ui_v2) is optional (needs Pillow). Import it guarded so a
+# missing Pillow never breaks the quick-input window; every v2 path also gates
+# on self._v2_popup_on(), which requires BOTH the UI_V2 flag AND a working
+# renderer. Flag off -> the legacy window below is built byte-for-byte.
+try:
+    import cc_ui_v2 as ccv2
+except Exception:
+    ccv2 = None
+
 
 class QuickInputMixin:
     """Quick-input translation window (mixed into TranslatorApp)."""
@@ -137,6 +146,25 @@ class QuickInputMixin:
         accent = t["accent"]
         FONT = "Microsoft YaHei UI"
 
+        # v2 dark-launch skin: when the UI_V2 flag is on AND the renderer is
+        # available, reskin to the deep-navy palette (gradient title + gradient
+        # Translate pill + violet input field). Legacy is untouched otherwise.
+        v2on = self._v2_popup_on()
+        scale = self._ui_scale() if v2on else 1.0
+        if v2on:
+            pal = self._v2_palette()
+            v2c = self._v2_tk_colors()
+            bg = v2c["panel"]
+            border = v2c["border"]
+            hint = v2c["hint"]
+            accent = v2c["accent"]
+            fg = ccv2.rgb_to_hex(pal["fg"])
+            field_bg = ccv2.rgb_to_hex(pal["field"])
+            field_frame_bg = ccv2.rgb_to_hex(pal["field_brd"])
+        else:
+            field_bg = t["list_bg"]
+            field_frame_bg = border
+
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
@@ -149,11 +177,12 @@ class QuickInputMixin:
                 self.quick_input_win = None
         win.bind("<Destroy>", _on_destroy, add="+")
 
+        win._v2 = v2on
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
 
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
-        logo_img = self._logo_image(18)
+        logo_img = self._logo_image(20 if v2on else 18)
         drag_targets = [bar]
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
@@ -161,8 +190,21 @@ class QuickInputMixin:
             logo_lbl.image = logo_img
             logo_lbl.pack(side="left", padx=(0, 8))
             drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=i18n.get("quick_input.title"), bg=bg,
-                             fg=accent, font=(FONT, 11, "bold"))
+        title_text = i18n.get("quick_input.title")
+        title_img = None
+        if v2on and ccv2 is not None:
+            # v2: the tri-colour brand gradient title (an image, not a glyph).
+            title_img = self._v2_photo(
+                ("qi_title", title_text, round(scale, 2)),
+                lambda: ccv2.gradient_text(
+                    title_text, ccv2.load_font("bold", 13, scale)))
+        if title_img is not None:
+            title_lbl = tk.Label(bar, image=title_img, bg=bg, bd=0,
+                                 highlightthickness=0)
+            title_lbl.image = title_img
+        else:
+            title_lbl = tk.Label(bar, text=title_text, bg=bg,
+                                 fg=accent, font=(FONT, 11, "bold"))
         title_lbl.pack(side="left")
         drag_targets.append(title_lbl)
         hint_lbl = tk.Label(
@@ -182,9 +224,10 @@ class QuickInputMixin:
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
 
-        editor_shell = tk.Frame(body, bg=border, bd=0, highlightthickness=0)
+        editor_shell = tk.Frame(body, bg=field_frame_bg, bd=0,
+                                highlightthickness=0)
         editor_shell.pack(fill="both", expand=True)
-        editor_bg = t["list_bg"]
+        editor_bg = field_bg
         # Keep quick-input font aligned with app font settings to avoid an
         # oversized editor, while keeping a readable lower bound.
         editor_font_size = max(10, int(self.cfg[CFG.FONT_SIZE]))
@@ -229,12 +272,30 @@ class QuickInputMixin:
             self._show_loading(text)
             return "break"
 
-        submit_btn = self._pill_button(
-            bottom, i18n.get("quick_input.translate"), submit,
-            bg=accent, fg="#ffffff",
-            hover_bg=accent, hover_fg="#ffffff",
-            active_bg=accent, active_fg="#ffffff",
-            font=(FONT, 10), padx=20, pady=6)
+        translate_text = i18n.get("quick_input.translate")
+        pill_img = None
+        if v2on and ccv2 is not None:
+            # v2: a brand-gradient filled pill (image), matching the result
+            # popup's accent action. Transparent rounded corners blend onto the
+            # navy footer.
+            pill_img = self._v2_photo(
+                ("qi_translate", translate_text, round(scale, 2)),
+                lambda: ccv2.gradient_pill(
+                    translate_text, ccv2.load_font("bold", 10, scale), pal,
+                    grad=True, px=20, py=7, scale=scale))
+        if pill_img is not None:
+            submit_btn = tk.Button(
+                bottom, image=pill_img, command=submit, bg=bg,
+                activebackground=bg, relief="flat", bd=0, highlightthickness=0,
+                cursor="hand2", takefocus=0)
+            submit_btn.image = pill_img
+        else:
+            submit_btn = self._pill_button(
+                bottom, translate_text, submit,
+                bg=accent, fg="#ffffff",
+                hover_bg=accent, hover_fg="#ffffff",
+                active_bg=accent, active_fg="#ffffff",
+                font=(FONT, 10), padx=20, pady=6)
         submit_btn.pack(side="right")
         win._quick_input_submit_btn = submit_btn
 

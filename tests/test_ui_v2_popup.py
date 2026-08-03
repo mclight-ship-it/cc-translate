@@ -217,6 +217,38 @@ class TestV2ResultPopup(unittest.TestCase):
                          "v2 face must be painted at the target size, not the "
                          "stale canvas size")
 
+    # -- quick-input (Phase 2) ---------------------------------------------
+    def test_v2_quick_input_uses_v2_skin(self):
+        app = self._app(v2=True)
+        app._open_quick_input()
+        win = app.quick_input_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertTrue(getattr(win, "_v2", False),
+                        "quick-input should build the v2 skin when the flag is on")
+        # The Translate action is a brand-gradient pill IMAGE (not a text pill).
+        btn = getattr(win, "_quick_input_submit_btn", None)
+        self.assertIsNotNone(btn)
+        self.assertTrue(str(btn.cget("image")),
+                        "v2 quick-input Translate button should be a gradient "
+                        "pill image")
+        self.assertFalse(str(btn.cget("text")),
+                         "v2 gradient pill button carries no text glyph")
+
+    def test_v2_quick_input_flag_off_is_legacy(self):
+        app = self._app(v2=False)
+        app._open_quick_input()
+        win = app.quick_input_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertFalse(getattr(win, "_v2", False),
+                         "flag off must build the legacy quick-input window")
+        # Legacy Translate button is a plain text pill (no image).
+        btn = getattr(win, "_quick_input_submit_btn", None)
+        self.assertIsNotNone(btn)
+        self.assertTrue(str(btn.cget("text")),
+                        "legacy quick-input Translate button is a text pill")
+
 
 if __name__ == "__main__":
     unittest.main()
