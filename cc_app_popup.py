@@ -32,8 +32,22 @@ from cc_core import (
     POPUP_BAR_PAD_X, POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM,
     POPUP_BODY_PAD_X, POPUP_BODY_PAD_BOTTOM, POPUP_TEXT_PAD_X, POPUP_TEXT_PAD_Y,
     CENTERED_POPUP_W, CENTERED_POPUP_H, HISTORY_WINDOW_W, HISTORY_WINDOW_H,
+    resolve_theme_name, ui_v2_enabled,
     log_error, log_perf,
 )
+
+# The v2 skin (cc_ui_v2) is optional: it needs Pillow, which the app treats as
+# an optional dependency. Import it guarded so a missing Pillow can never break
+# popup rendering; every v2 code path additionally checks _v2_popup_on(), which
+# requires BOTH the UI_V2 flag AND a working renderer before doing anything.
+try:
+    import cc_ui_v2 as ccv2
+except Exception:
+    ccv2 = None
+
+# Width (design points) of the glowing gradient halo the v2 result popup shows
+# between the rounded shell edge and the solid content card. DPI-scaled at use.
+V2_HALO_PTS = 13
 
 
 # ---------------------------------------------------------------------------
@@ -280,17 +294,41 @@ class PopupMixin:
                  pady=(POPUP_BAR_PAD_TOP, POPUP_BAR_PAD_BOTTOM))
 
         title_color = theme["status_err"] if is_error else accent
-        logo_img = self._logo_image(15)
+        v2on = bool(getattr(win, "_v2", False)) and ccv2 is not None
+        scale = self._ui_scale()
+
         drag_targets = [bar]
+        logo_img = None
+        if v2on:
+            # v2: the gradient app-mark tile (drawn shape, so no tofu glyphs).
+            tsize = ccv2.scaled(17, scale)
+            logo_img = self._v2_photo(
+                ("tile", tsize), lambda: ccv2.icon_tile(tsize, "CC", scale))
+        if logo_img is None:
+            logo_img = self._logo_image(15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
             logo_lbl.pack(side="left", padx=(0, 6))
             drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=title if logo_img else "●  " + title,
-                             bg=popup_bg, fg=title_color,
-                             font=("Microsoft YaHei UI", 9, "bold"))
+
+        if v2on and not is_error:
+            # v2: the tri-colour brand gradient title (an image, not a glyph).
+            title_img = self._v2_photo(
+                ("title", title, round(scale, 2)),
+                lambda: ccv2.gradient_text(
+                    title, ccv2.load_font("bold", 10, scale)))
+        else:
+            title_img = None
+        if title_img is not None:
+            title_lbl = tk.Label(bar, image=title_img, bg=popup_bg, bd=0,
+                                 highlightthickness=0)
+            title_lbl.image = title_img
+        else:
+            title_lbl = tk.Label(bar, text=title if logo_img else "●  " + title,
+                                 bg=popup_bg, fg=title_color,
+                                 font=("Microsoft YaHei UI", 9, "bold"))
         title_lbl.pack(side="left")
         drag_targets.append(title_lbl)
 
@@ -483,6 +521,18 @@ class PopupMixin:
         hint = t.get("popup_hint", t["hint_fg"])
         accent = t.get("accent", "#7aa2f7")
 
+        # v2 dark-launch skin: when the UI_V2 flag is on and the renderer is
+        # available, mark the window v2 (so _rounded_shell paints the gradient
+        # shell) and swap the content colours to the deep-navy palette. Legacy
+        # is untouched when the flag is off — win._v2 stays False.
+        win._v2 = self._v2_popup_on()
+        if win._v2:
+            v2c = self._v2_tk_colors()
+            popup_bg = v2c["panel"]
+            popup_border = v2c["border"]
+            hint = v2c["hint"]
+            accent = v2c["accent"]
+
         # Rounded corners via a transparent colour key (genuinely transparent on
         # this environment, unlike SetWindowRgn cut-outs which render black).
         card = self._rounded_shell(win, POPUP_CORNER_RADIUS,
@@ -566,8 +616,9 @@ class PopupMixin:
         # Content sits inside the rounded colour-key card, inset by the corner
         # radius on every side, so the window must be that much larger than the
         # measured text. (Cancels with the body pad exactly as the old shell-pad
-        # inset did, so effective wrapping width is unchanged.)
-        shell_pad = POPUP_CORNER_RADIUS
+        # inset did, so effective wrapping width is unchanged.) The v2 skin adds
+        # its glow-halo margin on top, so the shared math reserves room for it.
+        shell_pad = POPUP_CORNER_RADIUS + self._v2_margin()
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
@@ -668,8 +719,9 @@ class PopupMixin:
         The monitor and anchor are locked on the first frame so a mouse that
         drifts mid-stream never drags the window around."""
         text = win._text
-        # Match _size_popup: colour-key card inset is the corner radius.
-        shell_pad = POPUP_CORNER_RADIUS
+        # Match _size_popup: colour-key card inset is the corner radius (+ the
+        # v2 glow-halo margin when the v2 skin is active).
+        shell_pad = POPUP_CORNER_RADIUS + self._v2_margin()
 
         # Lock the monitor on the first frame; reuse it for the whole stream so a
         # cursor that wanders onto another display can't shift the anchor.
@@ -949,6 +1001,8 @@ class PopupMixin:
         in this environment where SetWindowRgn cut-outs render opaque). Returns
         the content Frame to fill; the window reveals via deiconify (colour-key
         transparency is incompatible with -alpha, so don't mix them)."""
+        if getattr(win, "_v2", False):
+            return self._rounded_shell_v2(win, radius, card_bg, border)
         win.configure(bg=ROUND_KEY_COLOR)
         try:
             win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
@@ -978,6 +1032,127 @@ class PopupMixin:
         win._round_canvas = cv
         win._round_redraw = _redraw
         return card
+
+    def _rounded_shell_v2(self, win, radius, card_bg, border):
+        """v2 skin of the rounded shell: the canvas paints the deep-navy brand
+        gradient + glow (via cc_ui_v2.GradientBackground, so the streaming redraw
+        just crops a cached bake — no per-frame gradient math), and the solid
+        content card floats inset by a halo margin so the glow reads as a
+        luminous frame around it. The header/body/text tree inside `card` is
+        identical to legacy, so the whole geometry / streaming / scroll engine is
+        reused unchanged (it only sees a larger shell_pad — see _v2_margin)."""
+        pal = self._v2_palette()
+        scale = self._ui_scale()
+        margin = ccv2.scaled(V2_HALO_PTS, scale)
+        gb = ccv2.GradientBackground(pal, scale=scale)
+        win._v2_gb = gb
+
+        win.configure(bg=ROUND_KEY_COLOR)
+        try:
+            win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
+        except Exception:
+            pass
+        cv = tk.Canvas(win, bg=ROUND_KEY_COLOR, highlightthickness=0, bd=0,
+                       takefocus=0)
+        cv.pack(fill="both", expand=True)
+        card = tk.Frame(cv, bg=card_bg, bd=0, highlightthickness=0)
+        item = cv.create_window(radius + margin, radius + margin, anchor="nw",
+                                window=card)
+
+        def _redraw(event=None):
+            w = cv.winfo_width()
+            h = cv.winfo_height()
+            if w <= 2 or h <= 2:
+                return
+            cv.delete("cc_shell")
+            # Layer 1: the gradient+glow shell fills the whole rounded window.
+            face = gb.rounded_face(w, h, radius)
+            photo = ccv2.to_photo(face, master=cv)
+            if photo is not None:
+                win._v2_face = photo   # keep a ref so Tk doesn't drop the image
+                cv.create_image(0, 0, anchor="nw", image=photo, tags="cc_shell")
+            else:
+                _draw_round_rect(cv, 0, 0, w, h, radius, fill=card_bg,
+                                 outline=card_bg, tags="cc_shell")
+            # Layer 2: the solid, readable content card, inset by the halo so the
+            # glow shows around it. Its square corners hide inside this rounded
+            # rect exactly as legacy hides the card frame inside the shell rect.
+            _draw_round_rect(cv, margin, margin, w - margin, h - margin, radius,
+                             fill=card_bg, outline=border, tags="cc_shell")
+            cv.tag_lower("cc_shell")
+            cv.coords(item, radius + margin, radius + margin)
+            cv.itemconfigure(item, width=w - 2 * (radius + margin),
+                             height=h - 2 * (radius + margin))
+
+        cv.bind("<Configure>", _redraw)
+        win._round_canvas = cv
+        win._round_redraw = _redraw
+        return card
+
+    def _ui_scale(self):
+        """Physical-pixels-per-logical-point scale for the active display."""
+        try:
+            return self.root.winfo_fpixels("1i") / 96.0
+        except Exception:
+            return 1.0
+
+    def _v2_popup_on(self):
+        """True only when the v2 result skin should render: the UI_V2 flag is on
+        AND the cc_ui_v2 renderer (Pillow) is available. Every v2 branch gates on
+        this, so with the flag off (default) the popup is byte-for-byte legacy."""
+        if ccv2 is None:
+            return False
+        try:
+            if not ui_v2_enabled(self.cfg):
+                return False
+        except Exception:
+            return False
+        try:
+            return ccv2.ui_v2_available()
+        except Exception:
+            return False
+
+    def _v2_palette(self):
+        """The cc_ui_v2 palette matching the app's active theme."""
+        name = "light" if resolve_theme_name(self.cfg) == "light" else "dark"
+        return ccv2.get_palette(name)
+
+    def _v2_margin(self):
+        """Extra inset (physical px) the v2 shell adds on every side for its glow
+        halo, so the shared sizing math reserves room for it. 0 in legacy."""
+        if not self._v2_popup_on():
+            return 0
+        return ccv2.scaled(V2_HALO_PTS, self._ui_scale())
+
+    def _v2_tk_colors(self):
+        """v2 result-popup colours as tk hex strings (card/border/hint/accent),
+        derived from the cc_ui_v2 palette. Body text keeps the theme fg."""
+        pal = self._v2_palette()
+        panel = ccv2.rgb_to_hex(pal["panel"])
+        sub = ccv2.rgb_to_hex(pal["sub"])
+        # A subtle border a touch lighter than the panel (hairline on navy).
+        if pal["is_dark"]:
+            border = ccv2.rgb_to_hex((44, 48, 92))
+            accent = ccv2.rgb_to_hex((161, 121, 255))   # brand violet
+        else:
+            border = ccv2.rgb_to_hex((214, 220, 240))
+            accent = ccv2.rgb_to_hex((124, 92, 246))
+        return {"panel": panel, "border": border, "hint": sub, "accent": accent}
+
+    def _v2_photo(self, key, factory):
+        """Cache-and-keep a PhotoImage for the v2 popup header (Tk drops
+        unreferenced images). ``factory`` builds the PIL image on a cache miss."""
+        cache = getattr(self, "_v2_photo_cache", None)
+        if cache is None:
+            cache = self._v2_photo_cache = {}
+        photo = cache.get(key)
+        if photo is None:
+            try:
+                photo = ccv2.to_photo(factory(), master=self.root)
+            except Exception:
+                photo = None
+            cache[key] = photo
+        return photo
 
     def _apply_window_rounding(self, win):
         """Force an immediate corner refresh at the window's current real size.

@@ -96,6 +96,13 @@ def hex_to_rgb(h):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def rgb_to_hex(rgb):
+    """Convert an (r, g, b[, a]) tuple to a '#rrggbb' string for tk widgets
+    (alpha is ignored — tk widget colours are opaque)."""
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    return "#{:02x}{:02x}{:02x}".format(int(r), int(g), int(b))
+
+
 # ---------------------------------------------------------------------------
 # HiDPI + fonts.
 # ---------------------------------------------------------------------------
