@@ -23,7 +23,7 @@ import win32util
 from win32util import get_monitor_rect
 from cc_rich import iter_rich_segments
 from cc_core import (
-    APP_NAME, CFG, ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
+    APP_NAME, CFG, ICON_PATH,
     POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
     MIN_POPUP_HEIGHT_COMPACT,
@@ -304,22 +304,17 @@ class PopupMixin:
         scale = self._ui_scale()
 
         drag_targets = [bar]
-        # Always the real app logo (the friendly "cc" brand mark) — never a
-        # drawn "CC" stand-in, which read as a random placeholder. v2 shows it a
-        # touch larger to balance the gradient title; legacy keeps its size. In
-        # v2 the logo sits on a soft brand halo ("icon 下面给个发光").
+        # v2 shows the brand badge (gradient rounded 'CC' + soft glow) — the
+        # concept's designed mark. Legacy keeps the real .ico logo.
         if v2on:
-            logo_img = self._v2_photo(
-                ("logo_glow", 17, round(scale, 2)),
-                lambda: ccv2.logo_glow_tile(
-                    self._v2_logo_pil(17), self._v2_palette(), scale=scale))
+            logo_img = self._v2_badge_image(28)
         else:
             logo_img = self._logo_image(15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 6))
+            logo_lbl.pack(side="left", padx=(0, 8 if v2on else 6))
             drag_targets.append(logo_lbl)
 
         if v2on and not is_error:
@@ -342,6 +337,10 @@ class PopupMixin:
         drag_targets.append(title_lbl)
 
         def _mk_btn(txt, cmd, danger=False):
+            # v2 success popups get soft translucent pills (the concept's 操作 /
+            # dynamic-action style); everything else keeps the legacy text pill.
+            if v2on and not is_error and not danger:
+                return self._v2_soft_button(bar, txt, cmd)
             active_bg = (theme["btn_close_active"] if danger
                          else theme["btn_active"])
             active_fg = "#ffffff" if danger else theme["fg"]
@@ -354,35 +353,24 @@ class PopupMixin:
             )
 
         if v2on and not is_error:
-            # v2: crisp MDL2 icon/text chip buttons — the concept's modern
-            # top-right style. Close/pin are icon chips; copy carries an icon +
-            # label and re-bakes for its copy-feedback text.
-            close_btn = self._v2_chip_button(
+            # v2: soft-pill primary actions + light ghost-icon window controls,
+            # generously spaced — the concept's airy top-right cluster (not a row
+            # of hard chips crammed together).
+            close_btn = self._v2_ghost_button(
                 bar, self._user_close_popup, icon="close", danger=True)
             close_btn.pack(side="right")
 
-            pin_btn = self._v2_chip_button(
+            pin_btn = self._v2_ghost_button(
                 bar, lambda: self._toggle_popup_pin(win, pin_btn), icon="pin",
                 tooltip=i18n.get("result.pin"))
-            pin_btn.pack(side="right", padx=(0, 4))
+            pin_btn.pack(side="right", padx=(0, 2))
             win._pin_btn = pin_btn
 
-            copy_btn = self._v2_chip_button(
-                bar, self._copy_result, icon="copy", text=i18n.get("result.copy"))
-            copy_btn.pack(side="right", padx=(0, 4))
+            copy_btn = self._v2_soft_button(
+                bar, i18n.get("result.copy"), self._copy_result, icon="copy")
+            copy_btn.pack(side="right", padx=(6, 8))
             win._copy_btn = copy_btn
-
-            def _copy_set(label, _btn=copy_btn, _scale=scale):
-                pal = self._v2_palette()
-                font = ccv2.load_font("reg", 10, _scale)
-                img = self._v2_photo(
-                    ("chip", "copy", label, False, False, round(_scale, 2)),
-                    lambda: ccv2.chip_button(text=label, icon="copy", font=font,
-                                             palette=pal, scale=_scale))
-                if img is not None:
-                    _btn._chip_normal = img
-                    _btn.config(image=img)
-            win._copy_set = _copy_set
+            win._copy_set = getattr(copy_btn, "_chip_set", None)
         else:
             close_btn = _mk_btn("✕", self._user_close_popup, danger=True)
             close_btn.pack(side="right")
@@ -1248,51 +1236,79 @@ class PopupMixin:
             cache[key] = photo
         return photo
 
-    def _v2_logo_pil(self, px):
-        """Load the app logo as a DPI-scaled PIL RGBA image for compositing a
-        glow behind it (the header's tk.Label can't blend a halo itself). Picks
-        the tile that contrasts the navy shell (white cc-light on dark, blue
-        cc-dark on light). Returns None if PIL or the icon files are missing."""
-        try:
-            from PIL import Image
-        except Exception:
-            return None
+    def _v2_badge_image(self, size_pt):
+        """The v2 brand badge (gradient rounded 'CC' + soft glow) as a cached
+        PhotoImage, replacing the flat-.ico-on-blob logo. Returns None if the
+        renderer is unavailable (caller falls back to the plain logo)."""
         scale = self._ui_scale()
-        size = max(12, round(px * scale))
-        theme_name = "light" if resolve_theme_name(self.cfg) == "light" else "dark"
-        path = ICON_PATH_DARK if theme_name == "light" else ICON_PATH_LIGHT
-        if not os.path.exists(path):
-            path = ICON_PATH
-        try:
-            with Image.open(path) as im:
-                return im.convert("RGBA").resize((size, size), Image.LANCZOS)
-        except Exception:
-            return None
+        return self._v2_photo(
+            ("badge", size_pt, round(scale, 2)),
+            lambda: ccv2.brand_badge(size_pt, self._v2_palette(), scale)[0])
 
-    def _v2_chip_button(self, parent, cmd, *, icon, text=None, danger=False,
+    def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
                         tooltip=None):
-        """A modern bordered-chip button for the v2 popup header: a baked RGBA
-        chip (MDL2 icon + optional text) that brightens on hover. Returns a
-        tk.Button whose image swaps between the normal and hover bakes. Falls
-        back to a plain text pill if the renderer can't build the chip."""
+        """A soft translucent pill button (concept's 复制 / 操作 style) as a
+        tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
+        re-bake the label (copy-feedback / processing text). Falls back to a
+        plain text pill if the renderer can't build the image."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
-        font = ccv2.load_font("reg", 10, scale) if text else None
-        normal = self._v2_photo(
-            ("chip", icon, text, danger, False, round(scale, 2)),
-            lambda: ccv2.chip_button(text=text, icon=icon, font=font,
-                                     palette=pal, scale=scale, hover=False,
-                                     danger=danger))
-        hover = self._v2_photo(
-            ("chip", icon, text, danger, True, round(scale, 2)),
-            lambda: ccv2.chip_button(text=text, icon=icon, font=font,
-                                     palette=pal, scale=scale, hover=True,
-                                     danger=danger))
-        if normal is None or hover is None:
-            b = self._pill_button(parent, text or "", cmd, bg=popup_bg,
-                                  fg=self._v2_tk_colors()["hint"])
-            return b
+
+        def _bake(label, hover):
+            font = ccv2.load_font("reg", 10, scale) if label else None
+            return self._v2_photo(
+                ("soft", label, icon, caret, hover, round(scale, 2)),
+                lambda: ccv2.soft_pill(text=label, icon=icon, font=font,
+                                       palette=pal, scale=scale, hover=hover,
+                                       caret=caret))
+
+        normal = _bake(text, False)
+        hover = _bake(text, True)
+        if normal is None:
+            return self._pill_button(parent, text or "", cmd, bg=popup_bg,
+                                     fg=self._v2_tk_colors()["hint"])
+        b = tk.Button(parent, image=normal, command=cmd, bg=popup_bg,
+                      activebackground=popup_bg, relief="flat", bd=0,
+                      highlightthickness=0, cursor="hand2")
+        b.image = normal
+        b._chip_normal = normal
+        b._chip_hover = hover
+        b.bind("<Enter>", lambda e: b.config(image=b._chip_hover))
+        b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
+
+        def _set(label):
+            n = _bake(label, False)
+            h = _bake(label, True)
+            if n is not None:
+                b._chip_normal, b._chip_hover = n, h
+                b.config(image=n)
+        b._chip_set = _set
+        if tooltip:
+            self._make_tooltip(b, tooltip)
+        return b
+
+    def _v2_ghost_button(self, parent, cmd, *, icon, danger=False,
+                         tooltip=None):
+        """A light-weight icon-only window control (pin / close): transparent at
+        rest, soft round fill on hover (subtle red for close). Keeps the header
+        airy instead of a row of hard chips. _chip_base holds the rest image so
+        a toggled state (pinned) can pin the hover look as the new rest."""
+        pal = self._v2_palette()
+        scale = self._ui_scale()
+        popup_bg = self._v2_tk_colors()["panel"]
+
+        def _bake(hover):
+            return self._v2_photo(
+                ("ghost", icon, danger, hover, round(scale, 2)),
+                lambda: ccv2.ghost_icon(icon, pal, scale, hover=hover,
+                                        danger=danger))
+
+        normal = _bake(False)
+        hover = _bake(True)
+        if normal is None:
+            return self._pill_button(parent, "", cmd, bg=popup_bg,
+                                     fg=self._v2_tk_colors()["hint"])
         b = tk.Button(parent, image=normal, command=cmd, bg=popup_bg,
                       activebackground=popup_bg, relief="flat", bd=0,
                       highlightthickness=0, cursor="hand2")
@@ -1300,7 +1316,7 @@ class PopupMixin:
         b._chip_normal = normal
         b._chip_base = normal
         b._chip_hover = hover
-        b.bind("<Enter>", lambda e: b.config(image=hover))
+        b.bind("<Enter>", lambda e: b.config(image=b._chip_hover))
         b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
         if tooltip:
             self._make_tooltip(b, tooltip)

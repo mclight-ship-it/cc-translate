@@ -247,36 +247,51 @@ class TestConceptPolish(unittest.TestCase):
         mid = v2.over((100, 100, 100, 128), (0, 0, 0))
         self.assertTrue(all(40 <= c <= 60 for c in mid))
 
-    def test_logo_glow_tile_is_larger_and_transparent_corner(self):
-        from PIL import Image
-        logo = Image.new("RGBA", (24, 24), (200, 210, 255, 255))
-        tile = v2.logo_glow_tile(logo, self._pal(), scale=1.0)
-        # The halo pads the logo, so the tile is larger than the logo.
-        self.assertGreater(tile.width, logo.width)
+    def test_brand_badge_is_larger_than_glyph_and_transparent_corner(self):
+        tile, pad = v2.brand_badge(24, self._pal(), scale=1.0)
+        # The badge tile includes a glow pad, so it's larger than the badge and
+        # returns the pad so callers can align it.
+        self.assertGreater(pad, 0)
+        self.assertGreater(tile.width, 24)
         self.assertEqual(tile.mode, "RGBA")
-        # Far corner is (near) transparent — the glow is a soft radial bleed.
-        self.assertLess(tile.getpixel((0, 0))[3], 40)
+        # Far corner is (near) transparent — the glow is a soft rounded bleed.
+        self.assertLess(tile.getpixel((0, 0))[3], 60)
+        # Centre is opaque (the gradient badge itself).
+        c = tile.width // 2
+        self.assertEqual(tile.getpixel((c, c))[3], 255)
 
-    def test_chip_button_opaque_rounded_and_hover_differs(self):
+    def test_soft_pill_rounded_and_hover_differs(self):
         pal = self._pal()
         font = v2.load_font("reg", 10, 1.0)
-        normal = v2.chip_button(text="Copy", icon="copy", font=font,
-                                palette=pal, scale=1.0, hover=False)
-        hover = v2.chip_button(text="Copy", icon="copy", font=font,
-                               palette=pal, scale=1.0, hover=True)
+        normal = v2.soft_pill(text="复制", icon="copy", font=font,
+                              palette=pal, scale=1.0, hover=False)
+        hover = v2.soft_pill(text="复制", icon="copy", font=font,
+                             palette=pal, scale=1.0, hover=True)
         self.assertEqual(normal.mode, "RGBA")
         self.assertEqual(normal.size, hover.size)
-        # Rounded corners: the extreme corner pixel is transparent.
+        # Full-pill radius: the extreme corner pixel is transparent.
         self.assertLess(normal.getpixel((0, 0))[3], 128)
-        # Hover brightens the chip, so the two bakes are not identical.
+        # Hover brightens the fill/ink, so the two bakes differ.
         self.assertNotEqual(normal.tobytes(), hover.tobytes())
 
-    def test_chip_button_icon_only(self):
+    def test_soft_pill_caret_widens_it(self):
         pal = self._pal()
-        img = v2.chip_button(icon="close", palette=pal, scale=1.0, danger=True)
-        self.assertIsNotNone(img)
-        self.assertEqual(img.mode, "RGBA")
-        self.assertGreater(img.width, 0)
+        font = v2.load_font("reg", 10, 1.0)
+        plain = v2.soft_pill(text="操作", font=font, palette=pal, scale=1.0)
+        caret = v2.soft_pill(text="操作", font=font, palette=pal, scale=1.0,
+                             caret=True)
+        self.assertGreater(caret.width, plain.width)
+
+    def test_ghost_icon_transparent_at_rest_fills_on_hover(self):
+        pal = self._pal()
+        rest = v2.ghost_icon("close", pal, scale=1.0, hover=False, danger=True)
+        hover = v2.ghost_icon("close", pal, scale=1.0, hover=True, danger=True)
+        self.assertEqual(rest.mode, "RGBA")
+        self.assertEqual(rest.size, hover.size)
+        # At rest a corner is fully transparent (no fill); hover adds a wash so
+        # the two differ.
+        self.assertEqual(rest.getpixel((0, 0))[3], 0)
+        self.assertNotEqual(rest.tobytes(), hover.tobytes())
 
     def test_bake_input_field_focus_brightens(self):
         pal = self._pal()

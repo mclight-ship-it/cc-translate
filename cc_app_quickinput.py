@@ -193,10 +193,7 @@ class QuickInputMixin:
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
         if v2on and ccv2 is not None:
-            logo_img = self._v2_photo(
-                ("qi_logo_glow", 20, round(scale, 2)),
-                lambda: ccv2.logo_glow_tile(
-                    self._v2_logo_pil(20), pal, scale=scale))
+            logo_img = self._v2_badge_image(24)
         else:
             logo_img = self._logo_image(18)
         drag_targets = [bar]
@@ -229,7 +226,7 @@ class QuickInputMixin:
         hint_lbl.pack(side="left", padx=(8, 0))
         drag_targets.append(hint_lbl)
         if v2on and ccv2 is not None:
-            close_btn = self._v2_chip_button(
+            close_btn = self._v2_ghost_button(
                 bar, lambda: win.destroy(), icon="close", danger=True)
             close_btn.pack(side="right")
         else:
@@ -259,11 +256,13 @@ class QuickInputMixin:
             # the Text sits inside via create_window so no ugly scrollbar shows.
             panel_rgb = ccv2.hex_to_rgb(bg)
             editor_bg = ccv2.rgb_to_hex(ccv2.over(pal["field"], panel_rgb))
-            field_h = ccv2.scaled(46, scale)
-            radius = ccv2.scaled(12, scale)
+            field_h = ccv2.scaled(52, scale)
+            radius = ccv2.scaled(13, scale)
             fcanvas = tk.Canvas(body, bg=bg, bd=0, highlightthickness=0,
                                 height=field_h)
-            fcanvas.pack(fill="x", expand=False)
+            # expand=True vertically centres the fixed-height field in the body,
+            # so any window slack is split above/below (never a big blank below).
+            fcanvas.pack(fill="x", expand=True)
             editor = tk.Text(
                 fcanvas, bg=editor_bg, fg=fg, wrap="none", relief="flat", bd=0,
                 width=1, height=1, padx=0, pady=0,
@@ -396,9 +395,9 @@ class QuickInputMixin:
 
         if v2on:
             # Single-line field needs far less height than the legacy multi-line
-            # editor, so the v2 window is shorter and more compact.
+            # editor, so the v2 window is a compact, tight card.
             w, h, x, y = self._scaled_centered_box(
-                QUICK_INPUT_WINDOW_W, 210, min_w=420, min_h=180)
+                QUICK_INPUT_WINDOW_W, 188, min_w=440, min_h=176)
         else:
             w, h, x, y = self._scaled_centered_box(
                 QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H, min_w=420,

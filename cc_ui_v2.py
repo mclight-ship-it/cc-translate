@@ -545,88 +545,128 @@ def status_dot(color, size=8, scale=1.0):
 
 
 # ---------------------------------------------------------------------------
-# Concept-polish pieces: glowing logo tile, modern chip buttons, glowing field.
+# Concept-polish pieces: brand badge, soft pill / ghost-icon buttons, field.
 # ---------------------------------------------------------------------------
-def logo_glow_tile(logo_img, palette, scale=1.0, glow=None, strength=0.85):
-    """Composite a soft brand glow BEHIND (and slightly below) a logo, returning
-    one RGBA tile. The header shows the app's real logo sitting on a gentle halo
-    — the "icon 下面给个发光" the concept art has — as a single image so a plain
-    tk.Label (bg = navy panel) renders it correctly via alpha. ``logo_img`` is a
-    square PIL RGBA logo already at its target pixel size."""
-    if not PIL_OK or logo_img is None:
-        return logo_img
-    L = logo_img.width
-    pad = max(2, int(L * 0.55))
-    W = L + pad * 2
+def brand_badge(size_pt, palette, scale=1.0):
+    """The concept's brand mark: a brand-gradient rounded square with a white
+    "CC", sitting on a soft violet glow. Returns ``(tile, pad)`` where ``pad``
+    is the transparent glow margin around the badge (device px) — a tk.Label
+    (bg = navy panel) shows it correctly via alpha. This replaces pasting the
+    flat .ico on a blurry blob, which read as a "weird box", not a logo."""
+    if not PIL_OK:
+        return None, 0
+    s = scaled(size_pt, scale)
+    r = int(s * 0.30)
+    pad = int(s * 0.42)
+    W = s + pad * 2
     tile = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    gcol = glow or (palette.get("field_brd") or (150, 130, 255))
-    halo = radial_glow(int(W * 1.02), tuple(gcol)[:3], strength)
-    # Centre the halo on the logo but bias it downward a touch so the light
-    # reads as coming from beneath the badge.
-    hx = (W - halo.width) // 2
-    hy = (W - halo.height) // 2 + int(pad * 0.28)
-    tile.alpha_composite(halo, (hx, hy))
-    tile.alpha_composite(logo_img.convert("RGBA"), (pad, pad))
-    return tile
+    # Soft glow beneath: a rounded, blurred violet — rounded + blurred means no
+    # boxy artefact (the old radial-behind-square trick left a hard square edge).
+    glow = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    gy = pad + int(s * 0.10)
+    ImageDraw.Draw(glow).rounded_rectangle(
+        (pad, gy, pad + s, gy + s), radius=r, fill=(150, 120, 255, 130))
+    tile.alpha_composite(glow.filter(ImageFilter.GaussianBlur(int(s * 0.28))))
+    badge = gradient_round(s, s, r, stops=BRAND, angle=135)
+    hl = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    ImageDraw.Draw(hl).rounded_rectangle((0, 0, s - 1, int(s * 0.5)), radius=r,
+                                         fill=(255, 255, 255, 34))
+    badge.alpha_composite(hl.filter(ImageFilter.GaussianBlur(int(s * 0.10))))
+    f = load_font("bold", max(6, int(size_pt * 0.46)), scale)
+    d = ImageDraw.Draw(badge)
+    b = d.textbbox((0, 0), "CC", font=f)
+    tw, th = b[2] - b[0], b[3] - b[1]
+    d.text(((s - tw) / 2 - b[0], (s - th) / 2 - b[1]), "CC", font=f,
+           fill=(255, 255, 255, 255))
+    tile.alpha_composite(badge, (pad, pad))
+    return tile, pad
 
 
-def chip_button(text=None, icon=None, font=None, palette=None, scale=1.0,
-                hover=False, danger=False):
-    """A modern bordered rounded-rect chip button (RGBA) with an optional MDL2
-    icon glyph and/or text — the concept's top-right button style. ``hover``
-    brightens the fill/border/ink; ``danger`` tints the ink/border red (close).
-    Both icon and text are drawn as images so nothing renders as a tofu box."""
+def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
+              hover=False, caret=False):
+    """A soft translucent rounded pill button (RGBA) — the concept's primary
+    top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
+    ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
+    pill radius and a gentle white fill that brightens on ``hover``."""
     if not PIL_OK:
         return None
-    pal = palette
-    is_dark = pal["is_dark"]
-    pw = scaled(11, scale)
+    pw = scaled(12, scale)
     ph = scaled(7, scale)
     gap = scaled(6, scale)
     icon_px = scaled(15, scale)
     ifont = icon_font(icon_px) if icon else None
+    glyph = _MDL2_GLYPHS.get(icon) if icon else None
     probe = ImageDraw.Draw(Image.new("L", (4, 4)))
     tw = th = iw = ih = 0
     if text and font:
         b = probe.textbbox((0, 0), text, font=font)
         tw, th = b[2] - b[0], b[3] - b[1]
-    glyph = _MDL2_GLYPHS.get(icon) if icon else None
     if glyph and ifont:
-        ib = probe.textbbox((0, 0), glyph, font=ifont)
-        iw, ih = ib[2] - ib[0], ib[3] - ib[1]
+        b = probe.textbbox((0, 0), glyph, font=ifont)
+        iw, ih = b[2] - b[0], b[3] - b[1]
     cgap = gap if (iw and tw) else 0
-    content_w = iw + cgap + tw
-    content_h = max(th, ih, icon_px)
-    W = max(1, content_w + pw * 2)
-    H = max(1, content_h + ph * 2)
-    r = scaled(9, scale)
+    cw = scaled(9, scale) if caret else 0
+    ccgap = scaled(5, scale) if caret else 0
+    W = max(1, iw + cgap + tw + ccgap + cw + pw * 2)
+    H = max(1, max(th, ih, icon_px) + ph * 2)
+    is_dark = palette["is_dark"]
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     if is_dark:
-        fill = (255, 255, 255, 26 if hover else 12)
-        brd = (255, 255, 255, 70 if hover else 34)
-        ink = (238, 241, 255, 255) if hover else (176, 184, 214, 255)
+        fill = (255, 255, 255, 30 if hover else 16)
+        ink = (238, 241, 255, 255) if hover else (206, 212, 235, 255)
     else:
-        fill = (20, 30, 70, 22 if hover else 10)
-        brd = (20, 30, 70, 70 if hover else 34)
-        ink = (28, 35, 64, 255) if hover else (100, 110, 145, 255)
-    if danger:
-        er = pal["err"]
-        brd = tuple(er) + (150 if hover else 60,)
-        ink = tuple(er) + (255,) if hover else ink
-        if hover:
-            fill = tuple(er) + (34,)
-    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=fill, outline=brd,
-                        width=max(1, scaled(1, scale)))
+        fill = (20, 30, 70, 26 if hover else 12)
+        ink = (28, 35, 64, 255) if hover else (90, 100, 135, 255)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
     ox = pw
     if glyph and ifont:
-        d.text((ox - probe.textbbox((0, 0), glyph, font=ifont)[0],
-                (H - ih) / 2 - probe.textbbox((0, 0), glyph, font=ifont)[1]),
-               glyph, font=ifont, fill=ink)
+        b = probe.textbbox((0, 0), glyph, font=ifont)
+        d.text((ox - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont, fill=ink)
         ox += iw + cgap
     if text and font:
         b = probe.textbbox((0, 0), text, font=font)
         d.text((ox - b[0], (H - th) / 2 - b[1]), text, font=font, fill=ink)
+        ox += tw
+    if caret:
+        cx = ox + ccgap
+        cy = H // 2
+        ch = scaled(3, scale)
+        d.polygon([(cx, cy - ch), (cx + cw, cy - ch), (cx + cw / 2, cy + ch)],
+                  fill=ink)
+    return img
+
+
+def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
+    """An icon-only window control (RGBA): fully transparent at rest so it reads
+    as light-weight, gaining a soft round fill on ``hover`` (a subtle red wash
+    when ``danger``, i.e. the close button). Used for pin / close next to the
+    soft-pill primary actions, so the header stays airy, not a row of hard
+    chips crammed together."""
+    if not PIL_OK:
+        return None
+    icon_px = scaled(15, scale)
+    ifont = icon_font(icon_px)
+    glyph = _MDL2_GLYPHS.get(icon, icon)
+    pad = scaled(7, scale)
+    probe = ImageDraw.Draw(Image.new("L", (4, 4)))
+    b = probe.textbbox((0, 0), glyph, font=ifont)
+    iw, ih = b[2] - b[0], b[3] - b[1]
+    W = iw + pad * 2
+    H = icon_px + pad * 2
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    ink = (206, 212, 235, 255) if palette["is_dark"] else (90, 100, 135, 255)
+    if danger and hover:
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
+                            fill=tuple(palette["err"]) + (40,))
+        ink = tuple(palette["err"]) + (255,)
+    elif hover:
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
+                            fill=(255, 255, 255, 30) if palette["is_dark"]
+                            else (20, 30, 70, 22))
+        ink = (238, 241, 255, 255) if palette["is_dark"] else (28, 35, 64, 255)
+    d.text((pad - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont, fill=ink)
     return img
 
 
