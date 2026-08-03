@@ -2318,6 +2318,55 @@ class TestUiSmoke(unittest.TestCase):
             win.winfo_height(), h0,
             "streamed frame should grow the window height, not shrink it")
 
+    def test_dynamic_stream_scroll_position_survives_frame(self):
+        # Regression ("闪来闪去" while scrolling mid-stream): each streamed frame
+        # rebuilds the Text (delete + reinsert), which snaps the view to the top.
+        # The forced update() calls that measure the line count then PAINTED the
+        # top for a frame before the scroll position was restored, so a reader
+        # who had scrolled up saw the popup flash to the top and jump back ~20×/s.
+        # A scrolled reader's top line must stay put across the next frame.
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.POPUP_LAYOUT] = "dynamic"
+        app._ss = tr.StreamSession()
+        # Force a short viewport so the streamed content overflows and scrolls.
+        app._ss.monitor_rect = (0, 0, 900, 320)
+        long_msg = "\n".join("第%d行流式内容" % i for i in range(1, 60))
+        win = app._make_popup(long_msg, anchor=(100, 60), reveal=False)
+        self.addCleanup(lambda w=win: self._safe_win_destroy(w))
+        app.popup = win
+        app._set_popup_text(long_msg, stream_grow=True)
+        win.update_idletasks(); win.update()
+        # Content must overflow the short viewport (only part is visible), so the
+        # view is genuinely scrollable and a scroll position exists to preserve.
+        self.assertLess(
+            win._text.yview()[1], 1.0,
+            "test setup: streamed content should overflow the short viewport")
+        # User scrolls down to read, opting out of stream auto-pin-to-top.
+        app._ss.user_scrolled = True
+        win._text.yview_moveto(0.5)
+        win.update_idletasks(); win.update()
+        top_before = int(float(win._text.index("@0,0")))
+        self.assertGreater(
+            top_before, 1,
+            "test setup: expected the view to be scrolled off the first line")
+        # A later, longer streamed frame arrives (append-only growth). Call the
+        # grow/measure step DIRECTLY: the flicker is the transient repaint at the
+        # top that happens INSIDE it (its forced update() calls) before the
+        # position is restored. The fix restores the position inside this step,
+        # so the view is already back at the reader's line when it returns —
+        # rather than sitting at the top waiting for the outer _set_popup_text
+        # restore, which is what flashed on screen frame after frame.
+        bigger = long_msg + "\n" + "\n".join(
+            "追加第%d行" % i for i in range(1, 10))
+        app._size_popup_stream_grow(win, bigger)
+        win.update_idletasks(); win.update()
+        top_after = int(float(win._text.index("@0,0")))
+        self.assertEqual(
+            top_before, top_after,
+            f"scroll position must survive the grow/measure step: top line was "
+            f"{top_before}, now {top_after} (view snapped toward top → flicker)")
+
     def test_dynamic_stream_short_output_stays_compact(self):
         # Root-cause regression (the "先大再小" report): streaming is gated on
         # INPUT length (>= STREAM_MIN_CHARS), but the OUTPUT can be short — a

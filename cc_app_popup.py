@@ -697,7 +697,28 @@ class PopupMixin:
         cols = self._ss.cols or preferred_cols
         self._ss.cols = cols
 
+        # Preserve the reader's scroll position across the delete+reinsert in
+        # _fill_text. That rebuild snaps the view to the top; the forced
+        # update() calls below (used to measure the line count) would then PAINT
+        # the top for a frame before _set_popup_text restored the position,
+        # flashing the whole popup on every ~50ms stream frame once the user had
+        # scrolled ("闪来闪去"). Capturing the top line BEFORE the refill and
+        # re-applying it BEFORE each measurement paint keeps scrolling during a
+        # live stream flicker-free. (The streamed text is append-only, so this
+        # line index stays valid after the rebuild.)
+        prev_top = None
+        if getattr(self._ss, "user_scrolled", False):
+            try:
+                prev_top = text.index("@0,0")
+            except Exception:
+                prev_top = None
+
         self._fill_text(text, message)
+        if prev_top is not None:
+            try:
+                text.yview(prev_top)
+            except Exception:
+                pass
         text.config(width=cols, height=1)
         text.update_idletasks()
         text.update()
@@ -760,6 +781,11 @@ class PopupMixin:
             win._scroll_body.bind("<MouseWheel>", self._on_mousewheel)
         else:
             win._scroll.pack_forget()
+        if prev_top is not None:
+            try:
+                text.yview(prev_top)
+            except Exception:
+                pass
         text.update()
 
         w = text.winfo_reqwidth() + (shell_pad * 2)
