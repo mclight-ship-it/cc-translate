@@ -249,6 +249,68 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertTrue(str(btn.cget("text")),
                         "legacy quick-input Translate button is a text pill")
 
+    # -- concept polish (glow logo / chip buttons / no divider / 1-line) ----
+    def test_v2_header_buttons_are_image_chips(self):
+        # The result popup's top-right Copy/pin/close become modern baked chip
+        # buttons (image-based), not plain text pills.
+        app = self._app(v2=True)
+        win = app._make_popup("译文")
+        app.popup = win
+        self._kill_later(win)
+        bar = getattr(win, "_btn_bar", None)
+        chips = [c for c in bar.winfo_children()
+                 if isinstance(c, tk.Button) and str(c.cget("image"))]
+        self.assertGreaterEqual(
+            len(chips), 3, "Copy/pin/close should be image chip buttons")
+
+    def test_v2_header_has_no_divider(self):
+        # The concept has no hairline between the title row and the body: the
+        # header frame should hold only the bar (no extra 1px separator frame).
+        app = self._app(v2=True)
+        win = app._make_popup("译文")
+        app.popup = win
+        self._kill_later(win)
+        header = getattr(win, "_bar", None)
+        frames = [c for c in header.winfo_children()
+                  if isinstance(c, tk.Frame)]
+        self.assertEqual(len(frames), 1,
+                         "v2 header must not add a divider frame")
+
+    def test_v2_copy_feedback_swaps_chip(self):
+        # Copy feedback must still work with the image chip (re-bakes the label
+        # into a new chip image instead of setting button text).
+        app = self._app(v2=True)
+        win = app._make_popup("hello")
+        app.popup = win
+        self._kill_later(win)
+        self.assertTrue(hasattr(win, "_copy_set"))
+        before = str(win._copy_btn.cget("image"))
+        app._copy_result()
+        after = str(win._copy_btn.cget("image"))
+        self.assertNotEqual(before, after,
+                            "copy feedback should swap the chip image")
+
+    def test_v2_quick_input_is_single_line_no_scrollbar(self):
+        app = self._app(v2=True)
+        app._open_quick_input()
+        win = app.quick_input_win
+        self._kill_later(win)
+        ed = getattr(win, "_quick_input_text", None)
+        self.assertIsNotNone(ed)
+        self.assertEqual(str(ed.cget("wrap")), "none")
+        self.assertEqual(int(ed.cget("height")), 1)
+        self.assertTrue(ed.bind("<Return>"),
+                        "single-line field should submit on Enter")
+
+        def _walk(w):
+            for c in w.winfo_children():
+                yield c
+                yield from _walk(c)
+        scrolls = [c for c in _walk(win)
+                   if isinstance(c, tr.ttk.Scrollbar)]
+        self.assertEqual(len(scrolls), 0,
+                         "v2 single-line quick-input must have no scrollbar")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,8 @@ import win32util
 from win32util import get_monitor_rect
 from cc_rich import iter_rich_segments
 from cc_core import (
-    APP_NAME, CFG, ICON_PATH, POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
+    APP_NAME, CFG, ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
+    POPUP_CORNER_RADIUS, ROUND_KEY_COLOR,
     LOADING_SPINNER, LOADING_CORNER_RADIUS,
     MIN_POPUP_HEIGHT_COMPACT,
     STREAM_OPEN_MIN_LINES,
@@ -305,8 +306,15 @@ class PopupMixin:
         drag_targets = [bar]
         # Always the real app logo (the friendly "cc" brand mark) — never a
         # drawn "CC" stand-in, which read as a random placeholder. v2 shows it a
-        # touch larger to balance the gradient title; legacy keeps its size.
-        logo_img = self._logo_image(16 if v2on else 15)
+        # touch larger to balance the gradient title; legacy keeps its size. In
+        # v2 the logo sits on a soft brand halo ("icon 下面给个发光").
+        if v2on:
+            logo_img = self._v2_photo(
+                ("logo_glow", 17, round(scale, 2)),
+                lambda: ccv2.logo_glow_tile(
+                    self._v2_logo_pil(17), self._v2_palette(), scale=scale))
+        else:
+            logo_img = self._logo_image(15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
@@ -345,38 +353,73 @@ class PopupMixin:
                 font=("Microsoft YaHei UI", 9), padx=9, pady=1,
             )
 
-        close_btn = _mk_btn("✕", self._user_close_popup, danger=True)
-        close_btn.pack(side="right")
+        if v2on and not is_error:
+            # v2: crisp MDL2 icon/text chip buttons — the concept's modern
+            # top-right style. Close/pin are icon chips; copy carries an icon +
+            # label and re-bakes for its copy-feedback text.
+            close_btn = self._v2_chip_button(
+                bar, self._user_close_popup, icon="close", danger=True)
+            close_btn.pack(side="right")
 
-        # Pushpin toggle: keep this result above other windows only when the
-        # user asks. Off by default (see _make_popup: win._pinned = False).
-        pin_btn = tk.Button(
-            bar, text="\uE718",
-            command=lambda: self._toggle_popup_pin(win, pin_btn),
-            bg=popup_bg, fg=hint, activebackground=popup_bg,
-            activeforeground=accent, relief="flat", bd=0, highlightthickness=0,
-            font=("Segoe MDL2 Assets", 10), cursor="hand2", padx=9, pady=1)
-        pin_btn.pack(side="right", padx=(0, 4), pady=(4, 0))
-        pin_btn.bind("<Enter>", lambda e: pin_btn.config(fg=accent))
-        pin_btn.bind(
-            "<Leave>",
-            lambda e: pin_btn.config(
-                fg=(accent if getattr(win, "_pinned", False) else hint)))
-        win._pin_btn = pin_btn
-        self._make_tooltip(pin_btn, i18n.get("result.pin"))
+            pin_btn = self._v2_chip_button(
+                bar, lambda: self._toggle_popup_pin(win, pin_btn), icon="pin",
+                tooltip=i18n.get("result.pin"))
+            pin_btn.pack(side="right", padx=(0, 4))
+            win._pin_btn = pin_btn
 
-        copy_btn = _mk_btn(i18n.get("result.copy"), self._copy_result)
-        copy_btn.pack(side="right", padx=(0, 4))
-        win._copy_btn = copy_btn
+            copy_btn = self._v2_chip_button(
+                bar, self._copy_result, icon="copy", text=i18n.get("result.copy"))
+            copy_btn.pack(side="right", padx=(0, 4))
+            win._copy_btn = copy_btn
+
+            def _copy_set(label, _btn=copy_btn, _scale=scale):
+                pal = self._v2_palette()
+                font = ccv2.load_font("reg", 10, _scale)
+                img = self._v2_photo(
+                    ("chip", "copy", label, False, False, round(_scale, 2)),
+                    lambda: ccv2.chip_button(text=label, icon="copy", font=font,
+                                             palette=pal, scale=_scale))
+                if img is not None:
+                    _btn._chip_normal = img
+                    _btn.config(image=img)
+            win._copy_set = _copy_set
+        else:
+            close_btn = _mk_btn("✕", self._user_close_popup, danger=True)
+            close_btn.pack(side="right")
+
+            # Pushpin toggle: keep this result above other windows only when the
+            # user asks. Off by default (see _make_popup: win._pinned = False).
+            pin_btn = tk.Button(
+                bar, text="\uE718",
+                command=lambda: self._toggle_popup_pin(win, pin_btn),
+                bg=popup_bg, fg=hint, activebackground=popup_bg,
+                activeforeground=accent, relief="flat", bd=0,
+                highlightthickness=0,
+                font=("Segoe MDL2 Assets", 10), cursor="hand2", padx=9, pady=1)
+            pin_btn.pack(side="right", padx=(0, 4), pady=(4, 0))
+            pin_btn.bind("<Enter>", lambda e: pin_btn.config(fg=accent))
+            pin_btn.bind(
+                "<Leave>",
+                lambda e: pin_btn.config(
+                    fg=(accent if getattr(win, "_pinned", False) else hint)))
+            win._pin_btn = pin_btn
+            self._make_tooltip(pin_btn, i18n.get("result.pin"))
+
+            copy_btn = _mk_btn(i18n.get("result.copy"), self._copy_result)
+            copy_btn.pack(side="right", padx=(0, 4))
+            win._copy_btn = copy_btn
         win._btn_bar = bar
         win._mk_bar_btn = _mk_btn
         if is_error:
             retry_btn = _mk_btn(i18n.get("result.retranslate"), self._retry)
             retry_btn.pack(side="right", padx=(0, 4))
 
-        tk.Frame(header, bg=popup_border, height=1,
-                 bd=0, highlightthickness=0).pack(
-                     fill="x", padx=POPUP_BAR_PAD_X)
+        # Legacy keeps a hairline under the header; v2 drops it (the concept has
+        # no divider between the title and the translation body).
+        if not v2on:
+            tk.Frame(header, bg=popup_border, height=1,
+                     bd=0, highlightthickness=0).pack(
+                         fill="x", padx=POPUP_BAR_PAD_X)
 
         # Dragging the header (but not the buttons) moves the window.
         self._make_draggable(tuple(drag_targets), lambda: self.popup,
@@ -395,7 +438,14 @@ class PopupMixin:
         t = self.theme
         accent = t.get("accent", "#7aa2f7")
         hint = t.get("popup_hint", t["hint_fg"])
-        pin_btn.config(fg=(accent if win._pinned else hint))
+        # v2 pin is an image chip: rest brighter (hover bake) while pinned.
+        if getattr(pin_btn, "_chip_hover", None) is not None:
+            rest = (pin_btn._chip_hover if win._pinned
+                    else getattr(pin_btn, "_chip_base", pin_btn._chip_normal))
+            pin_btn._chip_normal = rest
+            pin_btn.config(image=rest)
+        else:
+            pin_btn.config(fg=(accent if win._pinned else hint))
 
     def _build_popup_body(self, win, frame, *, popup_bg, is_error, highlight):
         body = tk.Frame(frame, bg=popup_bg, bd=0, highlightthickness=0)
@@ -1198,6 +1248,64 @@ class PopupMixin:
             cache[key] = photo
         return photo
 
+    def _v2_logo_pil(self, px):
+        """Load the app logo as a DPI-scaled PIL RGBA image for compositing a
+        glow behind it (the header's tk.Label can't blend a halo itself). Picks
+        the tile that contrasts the navy shell (white cc-light on dark, blue
+        cc-dark on light). Returns None if PIL or the icon files are missing."""
+        try:
+            from PIL import Image
+        except Exception:
+            return None
+        scale = self._ui_scale()
+        size = max(12, round(px * scale))
+        theme_name = "light" if resolve_theme_name(self.cfg) == "light" else "dark"
+        path = ICON_PATH_DARK if theme_name == "light" else ICON_PATH_LIGHT
+        if not os.path.exists(path):
+            path = ICON_PATH
+        try:
+            with Image.open(path) as im:
+                return im.convert("RGBA").resize((size, size), Image.LANCZOS)
+        except Exception:
+            return None
+
+    def _v2_chip_button(self, parent, cmd, *, icon, text=None, danger=False,
+                        tooltip=None):
+        """A modern bordered-chip button for the v2 popup header: a baked RGBA
+        chip (MDL2 icon + optional text) that brightens on hover. Returns a
+        tk.Button whose image swaps between the normal and hover bakes. Falls
+        back to a plain text pill if the renderer can't build the chip."""
+        pal = self._v2_palette()
+        scale = self._ui_scale()
+        popup_bg = self._v2_tk_colors()["panel"]
+        font = ccv2.load_font("reg", 10, scale) if text else None
+        normal = self._v2_photo(
+            ("chip", icon, text, danger, False, round(scale, 2)),
+            lambda: ccv2.chip_button(text=text, icon=icon, font=font,
+                                     palette=pal, scale=scale, hover=False,
+                                     danger=danger))
+        hover = self._v2_photo(
+            ("chip", icon, text, danger, True, round(scale, 2)),
+            lambda: ccv2.chip_button(text=text, icon=icon, font=font,
+                                     palette=pal, scale=scale, hover=True,
+                                     danger=danger))
+        if normal is None or hover is None:
+            b = self._pill_button(parent, text or "", cmd, bg=popup_bg,
+                                  fg=self._v2_tk_colors()["hint"])
+            return b
+        b = tk.Button(parent, image=normal, command=cmd, bg=popup_bg,
+                      activebackground=popup_bg, relief="flat", bd=0,
+                      highlightthickness=0, cursor="hand2")
+        b.image = normal
+        b._chip_normal = normal
+        b._chip_base = normal
+        b._chip_hover = hover
+        b.bind("<Enter>", lambda e: b.config(image=hover))
+        b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
+        if tooltip:
+            self._make_tooltip(b, tooltip)
+        return b
+
     def _apply_window_rounding(self, win):
         """Force an immediate corner refresh at the window's current real size.
         Colour-key windows (the common case now) just repaint their rounded
@@ -1607,16 +1715,23 @@ class PopupMixin:
     def _copy_result(self):
         if self.popup and getattr(self.popup, "_text", None):
             content = self.popup._text.get("1.0", "end-1c")
+            setter = getattr(self.popup, "_copy_set", None)
+            if setter is None:
+                setter = lambda label: self.popup._copy_btn.config(text=label)
             if self._copy_text_content(content):
-                self.popup._copy_btn.config(text=i18n.get("result.copied"))
+                setter(i18n.get("result.copied"))
                 self.popup.after(
                     1200,
-                    lambda: self.popup and self.popup._copy_btn.config(text=i18n.get("result.copy")))
+                    lambda: self.popup and getattr(self.popup, "_copy_set",
+                        lambda l: self.popup._copy_btn.config(text=l))(
+                            i18n.get("result.copy")))
             else:
-                self.popup._copy_btn.config(text=i18n.get("result.copy_failed"))
+                setter(i18n.get("result.copy_failed"))
                 self.popup.after(
                     1200,
-                    lambda: self.popup and self.popup._copy_btn.config(text=i18n.get("result.copy")))
+                    lambda: self.popup and getattr(self.popup, "_copy_set",
+                        lambda l: self.popup._copy_btn.config(text=l))(
+                            i18n.get("result.copy")))
 
     def _set_popup_text(self, message, resize=True, stream_grow=False,
                         stream_final=False, append=False):

@@ -103,6 +103,15 @@ def rgb_to_hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(int(r), int(g), int(b))
 
 
+def over(rgba, base):
+    """Flatten a possibly-translucent ``rgba`` colour onto an opaque ``base``
+    RGB, returning the resulting opaque RGB. Used to give a tk widget (which
+    can't be translucent) the exact colour a baked semi-transparent fill shows
+    when composited over the navy panel — so the widget blends seamlessly."""
+    a = (rgba[3] if len(rgba) > 3 else 255) / 255.0
+    return tuple(int(round(rgba[i] * a + base[i] * (1 - a))) for i in range(3))
+
+
 # ---------------------------------------------------------------------------
 # HiDPI + fonts.
 # ---------------------------------------------------------------------------
@@ -142,6 +151,32 @@ def load_font(kind, size_pt, scale):
         f = None
     _font_cache[key] = f
     return f
+
+
+# Segoe MDL2 Assets glyphs (the same icon font the app's tk buttons use) drawn
+# via PIL so the v2 chip buttons carry crisp modern icons, not tofu boxes.
+_MDL2_GLYPHS = {"copy": "\uE8C8", "pin": "\uE718", "close": "\uE711",
+                "retry": "\uE72C"}
+
+
+def icon_font(px):
+    """Load Segoe MDL2 Assets at ``px`` pixels for drawing icon glyphs, or
+    None if the font is unavailable (caller falls back to a text label)."""
+    if not PIL_OK:
+        return None
+    key = ("mdl2", int(px))
+    cached = _font_cache.get(key)
+    if cached is not None:
+        return cached
+    for fname in ("segmdl2.ttf", "SegMDL2.ttf"):
+        try:
+            f = ImageFont.truetype(fname, int(px))
+            _font_cache[key] = f
+            return f
+        except Exception:
+            continue
+    _font_cache[key] = None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +542,124 @@ def status_dot(color, size=8, scale=1.0):
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(img).ellipse((0, 0, s - 1, s - 1), fill=tuple(color) + (255,))
     return img
+
+
+# ---------------------------------------------------------------------------
+# Concept-polish pieces: glowing logo tile, modern chip buttons, glowing field.
+# ---------------------------------------------------------------------------
+def logo_glow_tile(logo_img, palette, scale=1.0, glow=None, strength=0.85):
+    """Composite a soft brand glow BEHIND (and slightly below) a logo, returning
+    one RGBA tile. The header shows the app's real logo sitting on a gentle halo
+    — the "icon 下面给个发光" the concept art has — as a single image so a plain
+    tk.Label (bg = navy panel) renders it correctly via alpha. ``logo_img`` is a
+    square PIL RGBA logo already at its target pixel size."""
+    if not PIL_OK or logo_img is None:
+        return logo_img
+    L = logo_img.width
+    pad = max(2, int(L * 0.55))
+    W = L + pad * 2
+    tile = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    gcol = glow or (palette.get("field_brd") or (150, 130, 255))
+    halo = radial_glow(int(W * 1.02), tuple(gcol)[:3], strength)
+    # Centre the halo on the logo but bias it downward a touch so the light
+    # reads as coming from beneath the badge.
+    hx = (W - halo.width) // 2
+    hy = (W - halo.height) // 2 + int(pad * 0.28)
+    tile.alpha_composite(halo, (hx, hy))
+    tile.alpha_composite(logo_img.convert("RGBA"), (pad, pad))
+    return tile
+
+
+def chip_button(text=None, icon=None, font=None, palette=None, scale=1.0,
+                hover=False, danger=False):
+    """A modern bordered rounded-rect chip button (RGBA) with an optional MDL2
+    icon glyph and/or text — the concept's top-right button style. ``hover``
+    brightens the fill/border/ink; ``danger`` tints the ink/border red (close).
+    Both icon and text are drawn as images so nothing renders as a tofu box."""
+    if not PIL_OK:
+        return None
+    pal = palette
+    is_dark = pal["is_dark"]
+    pw = scaled(11, scale)
+    ph = scaled(7, scale)
+    gap = scaled(6, scale)
+    icon_px = scaled(15, scale)
+    ifont = icon_font(icon_px) if icon else None
+    probe = ImageDraw.Draw(Image.new("L", (4, 4)))
+    tw = th = iw = ih = 0
+    if text and font:
+        b = probe.textbbox((0, 0), text, font=font)
+        tw, th = b[2] - b[0], b[3] - b[1]
+    glyph = _MDL2_GLYPHS.get(icon) if icon else None
+    if glyph and ifont:
+        ib = probe.textbbox((0, 0), glyph, font=ifont)
+        iw, ih = ib[2] - ib[0], ib[3] - ib[1]
+    cgap = gap if (iw and tw) else 0
+    content_w = iw + cgap + tw
+    content_h = max(th, ih, icon_px)
+    W = max(1, content_w + pw * 2)
+    H = max(1, content_h + ph * 2)
+    r = scaled(9, scale)
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    if is_dark:
+        fill = (255, 255, 255, 26 if hover else 12)
+        brd = (255, 255, 255, 70 if hover else 34)
+        ink = (238, 241, 255, 255) if hover else (176, 184, 214, 255)
+    else:
+        fill = (20, 30, 70, 22 if hover else 10)
+        brd = (20, 30, 70, 70 if hover else 34)
+        ink = (28, 35, 64, 255) if hover else (100, 110, 145, 255)
+    if danger:
+        er = pal["err"]
+        brd = tuple(er) + (150 if hover else 60,)
+        ink = tuple(er) + (255,) if hover else ink
+        if hover:
+            fill = tuple(er) + (34,)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=fill, outline=brd,
+                        width=max(1, scaled(1, scale)))
+    ox = pw
+    if glyph and ifont:
+        d.text((ox - probe.textbbox((0, 0), glyph, font=ifont)[0],
+                (H - ih) / 2 - probe.textbbox((0, 0), glyph, font=ifont)[1]),
+               glyph, font=ifont, fill=ink)
+        ox += iw + cgap
+    if text and font:
+        b = probe.textbbox((0, 0), text, font=font)
+        d.text((ox - b[0], (H - th) / 2 - b[1]), text, font=font, fill=ink)
+    return img
+
+
+def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
+    """Bake a glowing rounded input field (RGBA, transparent outside the glow):
+    a soft violet halo bleeds from the field edge, a dark rounded fill sits on
+    top, and a violet hairline outlines it — brighter when ``focused``. Returns
+    ``(image, inset)`` where ``inset`` is the transparent margin (device px)
+    reserved around the field for the glow; place the text widget at that
+    offset. Mirrors the popup shell so the field reads as its own lit surface."""
+    if not PIL_OK:
+        return None, 0
+    w = max(1, int(w))
+    h = max(1, int(h))
+    inset = scaled(7, scale)
+    x0, y0, x1, y1 = inset, inset, w - 1 - inset, h - 1 - inset
+    if x1 <= x0 or y1 <= y0:
+        return Image.new("RGBA", (w, h), (0, 0, 0, 0)), inset
+    gcol = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).rounded_rectangle(
+        (x0, y0, x1, y1), radius=int(radius),
+        fill=gcol + (int(255 * (0.5 if focused else 0.28)),))
+    canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
+        scaled(6 if focused else 5, scale))))
+    d = ImageDraw.Draw(canvas)
+    d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
+                        fill=tuple(palette["field"]))
+    d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
+                        outline=gcol + (210 if focused else 120,),
+                        width=max(1, scaled(1, scale)))
+    return canvas, inset
 
 
 # ---------------------------------------------------------------------------

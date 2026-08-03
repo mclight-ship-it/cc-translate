@@ -235,6 +235,62 @@ class TestWidgets(unittest.TestCase):
         self.assertEqual(img.getpixel((4, 4))[3], 255)
 
 
+@requires_pil
+class TestConceptPolish(unittest.TestCase):
+    def _pal(self):
+        return v2.get_palette("dark")
+
+    def test_over_blends_alpha(self):
+        # Fully opaque -> the colour itself; fully transparent -> the base.
+        self.assertEqual(v2.over((10, 20, 30, 255), (0, 0, 0)), (10, 20, 30))
+        self.assertEqual(v2.over((10, 20, 30, 0), (5, 6, 7)), (5, 6, 7))
+        mid = v2.over((100, 100, 100, 128), (0, 0, 0))
+        self.assertTrue(all(40 <= c <= 60 for c in mid))
+
+    def test_logo_glow_tile_is_larger_and_transparent_corner(self):
+        from PIL import Image
+        logo = Image.new("RGBA", (24, 24), (200, 210, 255, 255))
+        tile = v2.logo_glow_tile(logo, self._pal(), scale=1.0)
+        # The halo pads the logo, so the tile is larger than the logo.
+        self.assertGreater(tile.width, logo.width)
+        self.assertEqual(tile.mode, "RGBA")
+        # Far corner is (near) transparent — the glow is a soft radial bleed.
+        self.assertLess(tile.getpixel((0, 0))[3], 40)
+
+    def test_chip_button_opaque_rounded_and_hover_differs(self):
+        pal = self._pal()
+        font = v2.load_font("reg", 10, 1.0)
+        normal = v2.chip_button(text="Copy", icon="copy", font=font,
+                                palette=pal, scale=1.0, hover=False)
+        hover = v2.chip_button(text="Copy", icon="copy", font=font,
+                               palette=pal, scale=1.0, hover=True)
+        self.assertEqual(normal.mode, "RGBA")
+        self.assertEqual(normal.size, hover.size)
+        # Rounded corners: the extreme corner pixel is transparent.
+        self.assertLess(normal.getpixel((0, 0))[3], 128)
+        # Hover brightens the chip, so the two bakes are not identical.
+        self.assertNotEqual(normal.tobytes(), hover.tobytes())
+
+    def test_chip_button_icon_only(self):
+        pal = self._pal()
+        img = v2.chip_button(icon="close", palette=pal, scale=1.0, danger=True)
+        self.assertIsNotNone(img)
+        self.assertEqual(img.mode, "RGBA")
+        self.assertGreater(img.width, 0)
+
+    def test_bake_input_field_focus_brightens(self):
+        pal = self._pal()
+        img_u, inset = v2.bake_input_field(240, 48, 12, pal, 1.0, focused=False)
+        img_f, inset_f = v2.bake_input_field(240, 48, 12, pal, 1.0, focused=True)
+        self.assertEqual(img_u.size, (240, 48))
+        self.assertEqual(inset, inset_f)
+        self.assertGreater(inset, 0)
+        # Corner is transparent (glow + rounded fill leave the tile edge clear).
+        self.assertLess(img_u.getpixel((0, 0))[3], 40)
+        # Focused variant has a stronger glow, so the bakes differ.
+        self.assertNotEqual(img_u.tobytes(), img_f.tobytes())
+
+
 class TestTkIntegration(unittest.TestCase):
     def test_ui_v2_available_matches_pil(self):
         # available() implies PIL is importable.
