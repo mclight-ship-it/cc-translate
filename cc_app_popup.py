@@ -45,12 +45,14 @@ try:
 except Exception:
     ccv2 = None
 
-# Width (design points) of the glowing gradient halo the v2 result popup shows
-# between the rounded shell edge and the solid content card. The panel colour is
-# matched to the shell's flat navy (see _v2_tk_colors), so this margin is NOT a
-# brightness step / border — it's the width of the soft corner-glow rim that
-# bleeds around the content. DPI-scaled at use.
-V2_HALO_PTS = 11
+# Extra inset (design points) the v2 shell reserves between the rounded window
+# edge and the content card, on top of the corner radius. Set to 0: the v2
+# "frame" is now a thin brand-gradient hairline baked at the perimeter (see
+# cc_ui_v2.bake_border_ring), NOT a wide glow margin — an opaque tk window can't
+# render a real translucent glow outside itself, so a wide margin only ever read
+# as a lighter "solid border". Kept as a named knob in case a small inset is
+# ever wanted again. DPI-scaled at use.
+V2_HALO_PTS = 0
 
 
 # ---------------------------------------------------------------------------
@@ -1034,13 +1036,15 @@ class PopupMixin:
         return card
 
     def _rounded_shell_v2(self, win, radius, card_bg, border):
-        """v2 skin of the rounded shell: the canvas paints the deep-navy brand
-        gradient + glow (via cc_ui_v2.GradientBackground, so the streaming redraw
-        just crops a cached bake — no per-frame gradient math), and the solid
-        content card floats inset by a halo margin so the glow reads as a
-        luminous frame around it. The header/body/text tree inside `card` is
-        identical to legacy, so the whole geometry / streaming / scroll engine is
-        reused unchanged (it only sees a larger shell_pad — see _v2_margin)."""
+        """v2 skin of the rounded shell: the canvas paints a flat deep-navy plate
+        with a thin brand-gradient hairline at the rounded perimeter (via
+        cc_ui_v2.GradientBackground — a height-stable bake the streaming redraw
+        just crops, no per-frame gradient math), and the solid content card sits
+        inset by the corner radius so its square corners hide inside the rounded
+        shape. The card colour equals the plate colour, so the radius-wide reveal
+        around it is invisible and only the perimeter hairline shows. The
+        header/body/text tree inside `card` is identical to legacy, so the whole
+        geometry / streaming / scroll engine is reused unchanged."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         margin = ccv2.scaled(V2_HALO_PTS, scale)
@@ -1083,21 +1087,22 @@ class PopupMixin:
             if w <= 2 or h <= 2:
                 return
             cv.delete("cc_shell")
-            # Layer 1: the gradient+glow shell fills the whole rounded window.
+            # The gradient hairline shell fills the whole rounded window: a flat
+            # navy plate (identical to the content card colour) with a thin
+            # brand-gradient stroke at the perimeter. The content card (tk.Frame)
+            # sits inset by `radius` so its square corners hide inside the
+            # rounded shape; the radius-wide reveal around it is the SAME navy, so
+            # only the perimeter hairline shows.
             face = gb.rounded_face(w, h, radius)
             photo = ccv2.to_photo(face, master=cv)
             if photo is not None:
                 win._v2_face = photo   # keep a ref so Tk doesn't drop the image
                 cv.create_image(0, 0, anchor="nw", image=photo, tags="cc_shell")
             else:
+                # Pillow unavailable: fall back to a flat rounded card with a
+                # single-colour outline (no gradient), still no wide margin.
                 _draw_round_rect(cv, 0, 0, w, h, radius, fill=card_bg,
-                                 outline=card_bg, tags="cc_shell")
-            # Layer 2: the solid, readable content card, inset by the halo so the
-            # glow shows around it. NO hard outline here — a crisp border made the
-            # halo read as a redundant second frame; letting the card edge melt
-            # into the gradient keeps the rim reading as a soft glow instead.
-            _draw_round_rect(cv, margin, margin, w - margin, h - margin, radius,
-                             fill=card_bg, outline=card_bg, tags="cc_shell")
+                                 outline=border, tags="cc_shell")
             cv.tag_lower("cc_shell")
             cv.coords(item, radius + margin, radius + margin)
             cv.itemconfigure(item, width=w - 2 * (radius + margin),
@@ -1149,8 +1154,10 @@ class PopupMixin:
         return ccv2.get_palette(name)
 
     def _v2_margin(self):
-        """Extra inset (physical px) the v2 shell adds on every side for its glow
-        halo, so the shared sizing math reserves room for it. 0 in legacy."""
+        """Extra inset (physical px) the v2 shell reserves between the rounded
+        window edge and the content card, on top of the corner radius. Now 0 —
+        the v2 frame is a thin baked hairline, not a wide margin. Kept so the
+        shared sizing math has a single hook if a small inset is ever wanted."""
         if not self._v2_popup_on():
             return 0
         return ccv2.scaled(V2_HALO_PTS, self._ui_scale())
@@ -1159,10 +1166,10 @@ class PopupMixin:
         """v2 result-popup colours as tk hex strings (card/border/hint/accent),
         derived from the cc_ui_v2 palette. Body text keeps the theme fg.
 
-        ``panel`` is matched to the SHELL gradient's flat body tone (not the raw
-        dark ``solid`` stop) so the content card is the same navy as the shell
-        around it — that's what makes the glow-halo margin read as a soft rim
-        instead of a lighter "solid border" framing a darker plate."""
+        ``panel`` is the shell's flat navy (``panel_match_color`` -> flat_base),
+        so the content card is exactly the same navy as the plate around it and
+        the radius-wide reveal is invisible — the only edge that shows is the
+        thin brand hairline baked at the perimeter."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         panel = ccv2.rgb_to_hex(ccv2.panel_match_color(pal, scale))

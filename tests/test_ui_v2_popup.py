@@ -6,7 +6,8 @@ via test_full's shared root) with the UI_V2 flag ON, and assert:
   * the v2 shell wires up the GradientBackground and paints a face photo,
   * the header shows the gradient title + app-mark tile images,
   * the shared geometry/streaming engine still runs (popup grows downward as it
-    streams) with the v2 glow-halo margin reserved.
+  streams), and v2 no longer inflates the window with a wide glow margin
+  (the frame is now a thin baked brand hairline).
 
 The class is skipped when Pillow (the v2 renderer) or Tk is unavailable, since
 the v2 skin degrades to legacy in exactly that case.
@@ -80,8 +81,9 @@ class TestV2ResultPopup(unittest.TestCase):
     def test_flag_on_activates_v2(self):
         app = self._app(v2=True)
         self.assertTrue(app._v2_popup_on())
-        self.assertGreater(app._v2_margin(), 0,
-                           "v2 must reserve a glow-halo margin")
+        # v2 no longer reserves a wide glow-halo margin — the frame is a thin
+        # brand hairline baked at the perimeter, so no extra window inset.
+        self.assertEqual(app._v2_margin(), 0)
 
     # -- shell --------------------------------------------------------------
     def test_v2_shell_paints_gradient_face(self):
@@ -134,9 +136,10 @@ class TestV2ResultPopup(unittest.TestCase):
                         "error popup title should remain plain text")
 
     # -- geometry / streaming ----------------------------------------------
-    def test_v2_margin_widens_window_vs_legacy(self):
-        # Same message: the v2 popup is wider than legacy by ~2x the halo margin
-        # (the glow frame), proving the shared sizing math reserved room for it.
+    def test_v2_does_not_inflate_window_vs_legacy(self):
+        # Same message: the v2 popup must NOT be substantially wider than legacy
+        # any more — the old wide glow margin (~2x the halo inset) is gone, the
+        # frame is now a thin baked hairline that adds no window width.
         msg = "measure me"
         legacy = self._app(v2=False)
         lw = legacy._make_popup(msg)
@@ -152,8 +155,11 @@ class TestV2ResultPopup(unittest.TestCase):
         vw.update_idletasks(); vw.update()
         v2_w = vw.winfo_width()
 
-        self.assertGreater(v2_w, legacy_w,
-                           "v2 popup should be wider by its glow-halo margin")
+        # Allow a small delta for the gradient-title image vs plain-text title
+        # metrics, but nothing like the old ~2x margin inflation.
+        self.assertLessEqual(
+            v2_w, legacy_w + 12,
+            "v2 popup should no longer be widened by a glow-halo margin")
 
     def test_v2_streaming_grows_downward(self):
         app = self._app(v2=True)

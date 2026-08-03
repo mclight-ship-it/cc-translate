@@ -316,73 +316,69 @@ def bake_stream_face(w, h, palette, scale=1.0):
 
     This is the streaming variant of :func:`bake_face`. The result popup grows
     downward ~20x/second, and the anti-flicker guarantee is that a top-anchored
-    crop is identical frame to frame. The base is a FLAT navy (:func:`flat_base`)
-    — identical to the content panel colour, so the halo margin shows no
-    brightness step / border — over which two soft glows are composited, both
-    anchored to the TOP (offsets independent of ``h``), so baking taller only
-    appends identical rows and every ``crop((0, 0, w, h'))`` for ``h' <= h`` is
-    byte-identical to a shorter bake."""
+    crop is identical frame to frame. The face is a single FLAT navy
+    (:func:`flat_base`) — the same colour as the content panel — so the card is
+    one uniform plate with no internal brightness steps. The v2 "frame" is a
+    thin brand-gradient hairline drawn separately at the rounded-rect perimeter
+    (see :func:`bake_border_ring` / :meth:`GradientBackground.rounded_face`), not
+    a wide glow margin: an opaque tk window can't render a real translucent glow
+    OUTSIDE itself, so a wide margin only ever read as a lighter "solid border".
+    A flat fill is trivially height-stable (every row is identical)."""
     w = max(1, int(w))
     h = max(1, int(h))
-    # Flat navy base = the panel colour: no top-to-bottom gradient means the card
-    # edge never steps against the panel (that step was the "solid border").
-    face = Image.new("RGBA", (w, h), tuple(flat_base(palette)) + (255,))
-    # Cool glow pinned to the top-left; warm glow pinned a fixed distance below
-    # the top. Both offsets are constants (× scale), never × h. Kept subtle: the
-    # glow is only ever seen in the thin halo margin (the opaque panel covers the
-    # interior), so a strong glow there just reads as a coloured border. Gentle
-    # values keep the rim's brightness within ~±2 of the panel — a whisper of
-    # cool/warm at the corners, never a frame.
-    hi = radial_glow(int(w * 1.15), palette["glow_hi"],
-                     0.055 if palette["is_dark"] else 0.035)
-    face.alpha_composite(hi, (-int(w * 0.35), -scaled(_STREAM_HI_UP_PTS, scale)))
-    lo = radial_glow(int(w * 1.05), palette["glow_lo"],
-                     0.05 if palette["is_dark"] else 0.03)
-    face.alpha_composite(lo, (int(w * 0.55), scaled(_STREAM_LO_DOWN_PTS, scale)))
-    return face
+    return Image.new("RGBA", (w, h), tuple(flat_base(palette)) + (255,))
 
 
-# Fixed geometry for the height-stable streaming bake (design points).
-_STREAM_HI_UP_PTS = 150     # cool glow centre this far ABOVE the top edge
-_STREAM_LO_DOWN_PTS = 130   # warm glow centre this far BELOW the top edge
+# ---------------------------------------------------------------------------
+# Thin brand-gradient perimeter hairline (the v2 "border").
+# ---------------------------------------------------------------------------
+_border_row_cache = {}
 
 
-_panel_match_cache = {}
+def _brand_border_row(w):
+    """A cached 1-row horizontal brand gradient (RGBA, opaque) of width ``w``.
+
+    Horizontal means the stroke colour depends only on x, so the top and side
+    hairline is HEIGHT-STABLE during streaming (only the bottom edge advances as
+    the card grows — expected), keeping the anti-flicker guarantee intact."""
+    w = max(1, int(w))
+    hit = _border_row_cache.get(w)
+    if hit is not None:
+        return hit
+    row = Image.new("RGBA", (w, 1))
+    px = row.load()
+    for x in range(w):
+        px[x, 0] = tuple(sample_stops(BRAND, x / max(1, w - 1))) + (255,)
+    _border_row_cache[w] = row
+    return row
+
+
+def bake_border_ring(w, h, radius, scale=1.0, stroke_pts=1.4, alpha=160):
+    """A transparent RGBA (w×h) carrying ONLY a thin brand-gradient stroke along
+    the rounded-rectangle perimeter — the v2 popup's slim, subtly-graded frame.
+    Composited over the flat navy face by :meth:`GradientBackground.rounded_face`.
+    Returns ``None`` when Pillow is unavailable."""
+    if not PIL_OK:
+        return None
+    w = max(1, int(w))
+    h = max(1, int(h))
+    stroke = max(1, scaled(stroke_pts, scale))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, w - 1, h - 1), radius=int(radius), outline=alpha, width=stroke)
+    grad = _brand_border_row(w).resize((w, h))
+    ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ring.paste(grad, (0, 0), mask)
+    return ring
 
 
 def panel_match_color(palette, scale=1.0):
-    """The flat navy the v2 content panel must use so its brightness equals the
-    SHELL's (flat base + the broad glow wash). The shell isn't just ``flat_base``
-    — the two soft glows lift the whole face by a few luminance levels — so a
-    panel painted at the raw base sits a touch DARKER than the surrounding shell
-    and the halo margin still reads as a faint uniform border. We therefore
-    return the MEAN colour of a representative baked face (base + glow wash), so
-    the panel matches the ring's actual brightness; the only remaining
-    difference is the glow's gentle ±1 variation across the ring, which is
-    imperceptible and reads as a soft rim, never an edge. Cached per palette."""
-    if not PIL_OK:
-        return palette["panel"]
-    key = (id(palette), round(scale, 3))
-    hit = _panel_match_cache.get(key)
-    if hit is not None:
-        return hit
-    # Representative popup size (px): glow spread scales with width, so bake a
-    # typical width; the mean over the whole face is the level the ring sits at.
-    w = scaled(360, scale)
-    h = scaled(300, scale)
-    face = bake_stream_face(w, h, palette, scale=scale).convert("RGB")
-    px = face.load()
-    n = 0
-    r = g = b = 0
-    step = max(1, w // 40)
-    for yy in range(0, h, step):
-        for xx in range(0, w, step):
-            pr, pg, pb = px[xx, yy]
-            r += pr; g += pg; b += pb; n += 1
-    col = ((r + n // 2) // n, (g + n // 2) // n, (b + n // 2) // n) if n \
-        else flat_base(palette)
-    _panel_match_cache[key] = col
-    return col
+    """The flat navy the v2 content panel uses — identical to the shell's flat
+    base (:func:`flat_base`). With the shell now a single flat colour (no glow
+    wash), the panel and the surrounding shell are the same navy everywhere, so
+    the ``radius``-wide reveal around the content card is invisible and the only
+    thing that shows at the edge is the thin brand hairline."""
+    return flat_base(palette)
 
 
 class GradientBackground:
@@ -425,9 +421,13 @@ class GradientBackground:
         return self._cache.crop((0, 0, w, h))
 
     def rounded_face(self, w, h, radius):
-        """Face with rounded corners applied (alpha cut)."""
+        """Face with rounded corners applied (alpha cut) plus the thin
+        brand-gradient perimeter hairline composited on top."""
         f = self.face(w, h).copy()
         f.putalpha(rounded_mask(w, h, radius))
+        ring = bake_border_ring(w, h, radius, scale=self.scale)
+        if ring is not None:
+            f.alpha_composite(ring)
         return f
 
     def invalidate(self):
