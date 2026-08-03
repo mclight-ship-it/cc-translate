@@ -105,19 +105,20 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertGreater(face.width(), 0)
         self.assertGreater(face.height(), 0)
 
-    def test_v2_header_has_gradient_title_and_tile(self):
+    def test_v2_header_has_gradient_title_and_logo(self):
         app = self._app(v2=True)
         win = app._make_popup("译文")
         app.popup = win
         self._kill_later(win)
-        # The header packs a tile image label then a gradient title image label.
+        # The header packs the real app-logo image label then a gradient title
+        # image label (v2 uses the brand logo, never a drawn "CC" placeholder).
         bar = getattr(win, "_btn_bar", None)
         self.assertIsNotNone(bar)
         image_labels = [c for c in bar.winfo_children()
                         if isinstance(c, tk.Label) and c.cget("image")]
         self.assertGreaterEqual(
             len(image_labels), 2,
-            "v2 header should show the gradient tile + gradient title as images")
+            "v2 header should show the app logo + gradient title as images")
 
     def test_error_popup_keeps_plain_title(self):
         # Error popups must stay plain text (never gradient) so a raw error
@@ -176,6 +177,39 @@ class TestV2ResultPopup(unittest.TestCase):
                            "v2 streaming popup should grow downward with content")
         # The v2 shell repainted at the grown size without error.
         self.assertIsNotNone(getattr(win, "_v2_face", None))
+
+    def test_v2_redraw_uses_target_size_when_canvas_is_stale(self):
+        # Regression: after a programmatic geometry() grow, Tk leaves
+        # canvas.winfo_width/height reporting the OLD size until a full
+        # update() runs. A manual redraw at that moment must paint the
+        # gradient face at the INTENDED size (win._v2_size), otherwise the
+        # grown edge shows a transparent colour-key strip ("black halo") and
+        # the content card is too short (last streamed line clipped).
+        app = self._app(v2=True)
+        app._ss = tr.StreamSession()
+        win = app._make_popup("摘要", anchor=(300, 300), reveal=False)
+        app.popup = win
+        self._kill_later(win)
+
+        big = "## 摘要\n" + "\n".join("这是第%d行流式内容" % i
+                                     for i in range(1, 40))
+        # stream_grow deliberately avoids a settling update() per frame, so the
+        # canvas size is stale right after this call -- exactly the bad frame.
+        app._set_popup_text(big, stream_grow=True)
+
+        target = getattr(win, "_v2_size", None)
+        self.assertIsNotNone(target, "resize sites must record win._v2_size")
+        cv = win._round_canvas
+        # Prove the canvas really is stale (smaller than target) at this point.
+        self.assertLess(cv.winfo_height(), target[1],
+                        "precondition: canvas height should lag the grow")
+        # Manual redraw (event=None path) -- must consume _v2_size, not winfo.
+        win._round_redraw()
+        face = getattr(win, "_v2_face", None)
+        self.assertIsNotNone(face)
+        self.assertEqual((face.width(), face.height()), tuple(target),
+                         "v2 face must be painted at the target size, not the "
+                         "stale canvas size")
 
 
 if __name__ == "__main__":

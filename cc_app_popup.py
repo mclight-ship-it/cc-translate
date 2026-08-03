@@ -298,14 +298,10 @@ class PopupMixin:
         scale = self._ui_scale()
 
         drag_targets = [bar]
-        logo_img = None
-        if v2on:
-            # v2: the gradient app-mark tile (drawn shape, so no tofu glyphs).
-            tsize = ccv2.scaled(17, scale)
-            logo_img = self._v2_photo(
-                ("tile", tsize), lambda: ccv2.icon_tile(tsize, "CC", scale))
-        if logo_img is None:
-            logo_img = self._logo_image(15)
+        # Always the real app logo (the friendly "cc" brand mark) — never a
+        # drawn "CC" stand-in, which read as a random placeholder. v2 shows it a
+        # touch larger to balance the gradient title; legacy keeps its size.
+        logo_img = self._logo_image(16 if v2on else 15)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=popup_bg, bd=0,
                                 highlightthickness=0)
@@ -567,6 +563,7 @@ class PopupMixin:
         win.geometry("+{}+{}".format(-4000, -4000))
         win.update_idletasks()   # lay out widgets while still withdrawn
         w, h, x, y = self._layout_popup_offscreen(win, message, anchor)
+        self._record_v2_size(win, w, h)
 
         self._bind_popup_window_events(win)
         self._apply_taskbar_identity(win)
@@ -1060,8 +1057,26 @@ class PopupMixin:
                                 window=card)
 
         def _redraw(event=None):
-            w = cv.winfo_width()
-            h = cv.winfo_height()
+            # A <Configure> event carries the ACTUAL new canvas size (the WM has
+            # already resized it), so trust it. A manual call (event is None)
+            # fires right after a programmatic win.geometry() — at which point
+            # cv.winfo_width() is still the OLD size, because the WM resize is
+            # asynchronous (even win.geometry()/winfo_geometry() read back the
+            # old value until the event loop runs). Painting the gradient face or
+            # sizing the content card at that stale size was the real cause of
+            # the "black halo" on a grown edge and the clipped last streamed line
+            # (issues seen mid-stream): the face was smaller than the window, so
+            # the freshly grown strip showed the transparent colour key, and the
+            # card was configured too short. On a manual call use the intended
+            # size the resizer recorded in win._v2_size instead.
+            if event is not None and int(getattr(event, "width", 0)) > 2:
+                w, h = int(event.width), int(event.height)
+            else:
+                tgt = getattr(win, "_v2_size", None)
+                if tgt is not None:
+                    w, h = int(tgt[0]), int(tgt[1])
+                else:
+                    w, h = cv.winfo_width(), cv.winfo_height()
             if w <= 2 or h <= 2:
                 return
             cv.delete("cc_shell")
@@ -1095,6 +1110,18 @@ class PopupMixin:
             return self.root.winfo_fpixels("1i") / 96.0
         except Exception:
             return 1.0
+
+    def _record_v2_size(self, win, w, h):
+        """Record the size a v2 popup is being resized to, so the shell repaint
+        (_rounded_shell_v2's _redraw) can paint at the intended size on a manual
+        call — the canvas's own winfo lags a programmatic win.geometry() by an
+        event-loop turn, which otherwise left a transparent gap on the grown
+        edge and clipped the last streamed line. No-op for legacy windows."""
+        if getattr(win, "_v2", False):
+            try:
+                win._v2_size = (int(w), int(h))
+            except Exception:
+                pass
 
     def _v2_popup_on(self):
         """True only when the v2 result skin should render: the UI_V2 flag is on
@@ -1590,6 +1617,7 @@ class PopupMixin:
                 except Exception:
                     prev_top = None
             w, h = self._size_popup_stream_grow(win, message)
+            self._record_v2_size(win, w, h)
 
             # Anchor (origin_x/origin_y) and monitor were fixed inside
             # _size_popup_stream_grow on the first frame; here we only read them
@@ -1658,6 +1686,7 @@ class PopupMixin:
             except Exception:
                 prev_top = None
         w, h = self._size_popup(win, message)
+        self._record_v2_size(win, w, h)
         cx, cy = self._window_xy(win)
         x, y = self._clamp_to_monitor(cx, cy, w, h, ref=(cx, cy))
         win.geometry(f"{w}x{h}+{x}+{y}")
