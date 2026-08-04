@@ -671,8 +671,8 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False,
     """An icon-only window control (RGBA): fully transparent at rest so it reads
     as light-weight, gaining a soft round fill on ``hover`` (a subtle red wash
     when ``danger``, i.e. the close button). ``active`` (e.g. a pinned pushpin)
-    paints a filled brand-violet disc with a white glyph so a toggled-on control
-    clearly reads as a *state change*, not a second button. Bakes to the SAME
+    turns the glyph red and rotates it 45° CCW so a toggled-on control clearly
+    reads as a *state change*, not a second button. Bakes to the SAME
     height as ``soft_pill`` (and a matching square-ish width) so pin / close line
     up with Copy — same centre, no floating-high pushpin."""
     if not PIL_OK:
@@ -688,13 +688,13 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False,
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     ink = (206, 212, 235, 255) if palette["is_dark"] else (74, 84, 120, 255)
-    accent = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
     if active:
-        # Toggled-on: a filled brand-violet disc with a white glyph. Reads as the
-        # control's state changed (lit), not as an extra chip appearing.
-        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
-                            fill=accent + (255 if hover else 235,))
-        ink = (255, 255, 255, 255)
+        # Toggled-on (pinned): the glyph turns red and rotates 45° CCW — a clear,
+        # lively state change (a "stuck-in" pushpin) rather than an extra chip.
+        ink = tuple(palette["err"]) + (255,)
+        if hover:
+            d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
+                                fill=tuple(palette["err"]) + (40,))
     elif danger and hover:
         d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
                             fill=tuple(palette["err"]) + (40,))
@@ -713,6 +713,14 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False,
     ink_bbox = gly.getbbox()
     if ink_bbox:
         cropped = gly.crop(ink_bbox)
+        if active:
+            # Supersample around the rotation so the 45° edges stay smooth.
+            ss = 4
+            big = cropped.resize((cropped.width * ss, cropped.height * ss),
+                                 Image.LANCZOS)
+            big = big.rotate(45, expand=True, resample=Image.BICUBIC)
+            cropped = big.resize((max(1, big.width // ss),
+                                  max(1, big.height // ss)), Image.LANCZOS)
         gw, gh = cropped.size
         img.alpha_composite(cropped, ((W - gw) // 2, (H - gh) // 2))
     return img
