@@ -202,13 +202,17 @@ def iter_rich_segments(message, highlight=False):
             indent, content = m.group(1), (m.group(2) or "")
             if content.strip() == "":
                 # The model emitted a bare marker ("- ") and put the item's
-                # text on the FOLLOWING line(s) with no marker. Rendered as-is
-                # that leaves a lone "•" with its text orphaned on a plain,
-                # un-indented line below it (ugly). Absorb the following plain
+                # text on the FOLLOWING line(s) with no marker — sometimes even
+                # separated by one or more BLANK lines. Rendered as-is that
+                # either orphans the text on a plain, un-indented line below the
+                # bullet, or (worse) leaves a lone "•" on its own line. Skip any
+                # intervening blank lines, then absorb the run of plain
                 # continuation line(s) — up to the next blank line or new block —
                 # so the bullet reads as one normal item.
-                parts = []
                 j = i + 1
+                while j < n and lines[j].strip() == "":
+                    j += 1
+                parts = []
                 while j < n and lines[j].strip() != "" and not _is_block_start(
                         lines[j]):
                     parts.append(lines[j].strip())
@@ -216,8 +220,8 @@ def iter_rich_segments(message, highlight=False):
                 content = "".join(parts)
                 i = j
                 if content == "":
-                    # A genuinely empty marker (nothing follows): drop it rather
-                    # than render a lone bullet dot.
+                    # A genuinely empty marker (only blanks / a new block
+                    # follows): drop it rather than render a lone bullet dot.
                     continue
             else:
                 i += 1

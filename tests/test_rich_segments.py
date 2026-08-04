@@ -106,6 +106,42 @@ class TestBlocks(unittest.TestCase):
                    if c == "通过添加白色框自动检测器修复问题")
         self.assertEqual(segs[idx - 1][1], "rich_bullet")
 
+    def test_empty_marker_absorbs_across_blank_lines(self):
+        # Regression (the recurring "a lone dot on its own line" bug): the model
+        # emits a bare marker, then a BLANK line, then the item's text. The
+        # blank line must not orphan the text on an un-bulleted line (nor leave
+        # a lone "•"). The marker absorbs the text across the blank gap so the
+        # first item renders exactly like the well-formed bullets after it.
+        md = "步骤:\n\n- \n\n视觉设计升级：改成圆角芯片\n- 复用现有技术\n- 颜色方案"
+        segs = tr.iter_rich_segments(md)
+        bullets = [c for c, t in segs if t == "rich_bullet"]
+        self.assertEqual(len(bullets), 3, "all three items must keep a bullet")
+        idx = next(i for i, (c, _) in enumerate(segs)
+                   if c == "视觉设计升级：改成圆角芯片")
+        self.assertEqual(segs[idx - 1][1], "rich_bullet",
+                         "text after a blank-separated marker must be bulleted")
+
+    def test_unicode_empty_marker_absorbs_across_multiple_blanks(self):
+        # Same as above with a U+2022 marker and two blank lines of separation.
+        md = "• \n\n\n视觉设计升级：改成圆角芯片\n• 复用现有技术"
+        segs = tr.iter_rich_segments(md)
+        bullets = [c for c, t in segs if t == "rich_bullet"]
+        self.assertEqual(len(bullets), 2)
+        idx = next(i for i, (c, _) in enumerate(segs)
+                   if c == "视觉设计升级：改成圆角芯片")
+        self.assertEqual(segs[idx - 1][1], "rich_bullet")
+
+    def test_empty_marker_before_blank_then_block_is_dropped(self):
+        # A bare marker followed only by blank line(s) and then a NEW block
+        # (another bullet) is genuinely empty: it must be dropped, not absorb
+        # the next block, and must not leave a lone dot.
+        md = "- \n\n- 复用现有技术\n- 颜色方案"
+        segs = tr.iter_rich_segments(md)
+        bullets = [c for c, t in segs if t == "rich_bullet"]
+        self.assertEqual(len(bullets), 2, "empty marker dropped; blocks kept")
+        self.assertIn("复用现有技术", reconstruct(segs))
+        self.assertIn("颜色方案", reconstruct(segs))
+
 
 class TestStreamSafety(unittest.TestCase):
     def test_unclosed_bold_is_literal(self):
