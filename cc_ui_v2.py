@@ -688,19 +688,25 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
     return img
 
 
-def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
+def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
+                     inset=None):
     """Bake a glowing rounded input field (RGBA, transparent outside the glow):
     a soft violet bloom bleeds from the field edge, a dark rounded fill sits on
     top, and a *subtle* violet hairline outlines it — brighter when ``focused``.
     Returns ``(image, inset)`` where ``inset`` is the transparent margin (device
     px) reserved around the field for the glow; place the text widget at that
     offset. The bloom is layered + wide so it reads as a soft glow, not a hard
-    coloured border."""
+    coloured border.
+
+    ``inset`` may be passed by the caller (the quick-input field reserves a
+    generous margin so the bloom fully fades to transparent *inside* the image
+    — otherwise the blur is clipped at the image edge and shows a hard line);
+    when omitted it defaults to a compact 11px."""
     if not PIL_OK:
         return None, 0
     w = max(1, int(w))
     h = max(1, int(h))
-    inset = scaled(11, scale)
+    inset = scaled(11, scale) if inset is None else int(inset)
     x0, y0, x1, y1 = inset, inset, w - 1 - inset, h - 1 - inset
     if x1 <= x0 or y1 <= y0:
         return Image.new("RGBA", (w, h), (0, 0, 0, 0)), inset
@@ -708,11 +714,13 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False):
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     # Three blurred layers (wide+faint under mid under tight+strong) = a smooth
     # but clearly-visible violet bloom that falls off gently instead of a crisp
-    # glowing rectangle. Alphas are (unfocused, focused).
+    # glowing rectangle. Alphas are (unfocused, focused). Grows + blurs are kept
+    # small enough that, with the caller's generous inset, the bloom fades to
+    # ~0 before the image edge (no hard clip line around the glow).
     for grow, alpha_f, blur in (
-            (scaled(6, scale), (0.30, 0.42), 15),
-            (scaled(3, scale), (0.42, 0.62), 9),
-            (0, (0.60, 0.85), 5)):
+            (scaled(4, scale), (0.26, 0.40), 8),
+            (scaled(2, scale), (0.42, 0.62), 5),
+            (0, (0.60, 0.88), 3)):
         glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
         ImageDraw.Draw(glow).rounded_rectangle(

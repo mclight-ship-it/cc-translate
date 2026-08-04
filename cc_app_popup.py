@@ -600,6 +600,11 @@ class PopupMixin:
         # below reads win._corner_radius so the inset stays in sync.
         radius = V2_CORNER_RADIUS if win._v2 else POPUP_CORNER_RADIUS
         win._corner_radius = radius
+        # Legacy insets the card by the full radius; the v2 shell overrides this
+        # with a much smaller decoupled inset (see _rounded_shell_v2). The
+        # sizing math below reads win._card_inset so the window is exactly as
+        # large as the card needs, with no wide dead band.
+        win._card_inset = radius
         card = self._rounded_shell(win, radius,
                                    popup_bg, popup_border)
         self._build_popup_header(
@@ -679,13 +684,15 @@ class PopupMixin:
         a max; tkinter then reports the precise pixel reqwidth/reqheight, and
         we read the true wrapped line count for the height."""
         text = win._text
-        # Content sits inside the rounded colour-key card, inset by the corner
-        # radius on every side, so the window must be that much larger than the
-        # measured text. (Cancels with the body pad exactly as the old shell-pad
-        # inset did, so effective wrapping width is unchanged.) The v2 skin adds
-        # its glow-halo margin on top, so the shared math reserves room for it.
-        shell_pad = int(getattr(win, "_corner_radius",
-                                POPUP_CORNER_RADIUS)) + self._v2_margin()
+        # Content sits inside the rounded colour-key card, inset by the card
+        # inset on every side (the v2 shell decouples this from the visual
+        # corner radius so the dead band is thin — see _rounded_shell_v2). The
+        # window must be that much larger than the measured text. (Cancels with
+        # the body pad exactly as the old shell-pad inset did, so effective
+        # wrapping width is unchanged.)
+        shell_pad = int(getattr(win, "_card_inset",
+                                getattr(win, "_corner_radius",
+                                        POPUP_CORNER_RADIUS)))
 
         rect = get_monitor_rect()
         mon_w = (rect[2] - rect[0]) if rect else self.root.winfo_screenwidth()
@@ -786,10 +793,11 @@ class PopupMixin:
         The monitor and anchor are locked on the first frame so a mouse that
         drifts mid-stream never drags the window around."""
         text = win._text
-        # Match _size_popup: colour-key card inset is the corner radius (+ the
-        # v2 glow-halo margin when the v2 skin is active).
-        shell_pad = int(getattr(win, "_corner_radius",
-                                POPUP_CORNER_RADIUS)) + self._v2_margin()
+        # Match _size_popup: the colour-key card inset (decoupled from the
+        # visual corner radius by the v2 shell so the dead band stays thin).
+        shell_pad = int(getattr(win, "_card_inset",
+                                getattr(win, "_corner_radius",
+                                        POPUP_CORNER_RADIUS)))
 
         # Lock the monitor on the first frame; reuse it for the whole stream so a
         # cursor that wanders onto another display can't shift the anchor.
@@ -1117,6 +1125,19 @@ class PopupMixin:
         gb = ccv2.GradientBackground(pal, scale=scale)
         win._v2_gb = gb
 
+        # The content card only has to clear the four rounded corner ARCS, not
+        # sit inset by the full radius. The baked `face` already fills the whole
+        # rounded shape with navy (identical to the card colour) and draws the
+        # perimeter hairline, so a small inset keeps the card's square corners
+        # tucked inside the arc while the face paints the tiny gap navy. A square
+        # corner at (ci, ci) stays inside a circle of radius `radius` centred at
+        # (radius, radius) when ci >= radius*(1 - 1/sqrt2) ~= 0.293*radius; we add
+        # a couple px of anti-alias safety. This DECOUPLES the visual corner
+        # radius (24) from the dead band around the card (was a full 24px ring —
+        # the "extra edge" the window felt wrapped in), shrinking it to ~9px.
+        card_inset = margin + max(4, int(radius * 0.30) + 2)
+        win._card_inset = card_inset
+
         win.configure(bg=ROUND_KEY_COLOR)
         try:
             win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
@@ -1126,8 +1147,14 @@ class PopupMixin:
                        takefocus=0)
         cv.pack(fill="both", expand=True)
         card = tk.Frame(cv, bg=card_bg, bd=0, highlightthickness=0)
-        item = cv.create_window(radius + margin, radius + margin, anchor="nw",
+        item = cv.create_window(card_inset, card_inset, anchor="nw",
                                 window=card)
+        # The thin navy band around the card belongs to this canvas, not the
+        # card, so the header/body drag bindings never covered it. Bind the
+        # canvas itself so the whole ring drags the window (v2 result windows
+        # also disable edge-resize in _resize_hit, so the ring is purely a drag
+        # surface and never turns into an accidental resize grip).
+        self._make_draggable((cv,), win)
 
         def _redraw(event=None):
             # A <Configure> event carries the ACTUAL new canvas size (the WM has
@@ -1170,9 +1197,9 @@ class PopupMixin:
                 _draw_round_rect(cv, 0, 0, w, h, radius, fill=card_bg,
                                  outline=border, tags="cc_shell")
             cv.tag_lower("cc_shell")
-            cv.coords(item, radius + margin, radius + margin)
-            cv.itemconfigure(item, width=w - 2 * (radius + margin),
-                             height=h - 2 * (radius + margin))
+            cv.coords(item, card_inset, card_inset)
+            cv.itemconfigure(item, width=w - 2 * card_inset,
+                             height=h - 2 * card_inset)
 
         cv.bind("<Configure>", _redraw)
         win._round_canvas = cv
@@ -1506,6 +1533,11 @@ class PopupMixin:
         return self._scaled_centered_box(HISTORY_WINDOW_W, HISTORY_WINDOW_H)
 
     def _resize_hit(self, win, x, y):
+        # v2 result windows auto-size to content and grow while streaming; manual
+        # edge-resize on the (now thin) navy ring only caused accidental resizes
+        # when the user meant to drag, so v2 windows are drag-only.
+        if getattr(win, "_v2", False):
+            return ""
         w, h = win.winfo_width(), win.winfo_height()
         # Overrideredirect windows can report slightly off local coordinates,
         # especially near the bottom edge; widen and normalize hit bands.

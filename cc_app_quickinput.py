@@ -21,6 +21,7 @@ from tkinter import ttk
 from tkinter import font as tkfont
 
 import i18n
+from win32util import get_monitor_rect
 
 from cc_core import (
     CFG, log_error, POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
@@ -47,11 +48,15 @@ class QuickInputMixin:
     def _v2_field_photo(self, w, h, radius, pal, scale, focused):
         """Bake the glowing input field at (w, h) as a PhotoImage, returning
         ``(photo, inset)`` where ``inset`` is the transparent glow margin the
-        Text should sit inside. Cached per (w, h, focused) via _v2_photo."""
-        inset = ccv2.scaled(7, scale)
+        Text should sit inside. Cached per (w, h, focused) via _v2_photo. The
+        inset is generous so the violet bloom fully fades to transparent inside
+        the image instead of being clipped at the edge (which showed a hard
+        line)."""
+        inset = ccv2.scaled(20, scale)
         photo = self._v2_photo(
             ("qi_field", int(w), int(h), round(scale, 2), bool(focused)),
-            lambda: ccv2.bake_input_field(w, h, radius, pal, scale, focused)[0])
+            lambda: ccv2.bake_input_field(w, h, radius, pal, scale, focused,
+                                          inset=inset)[0])
         return photo, inset
 
     def _apply_ime_composition_font(self, widget, family, point_size):
@@ -196,7 +201,7 @@ class QuickInputMixin:
         # v2: align the logo's left edge with the input field's rounded-left
         # (the field is inset by ~this margin inside its canvas), so the icon,
         # the field box and the footer text all share one left column.
-        field_inset = ccv2.scaled(11, scale) if (v2on and ccv2 is not None) else 0
+        field_inset = ccv2.scaled(20, scale) if (v2on and ccv2 is not None) else 0
         if v2on and ccv2 is not None:
             logo_img = self._v2_logo_image(22) or self._v2_badge_image(24)
         else:
@@ -259,13 +264,16 @@ class QuickInputMixin:
             # the Text sits inside via create_window so no ugly scrollbar shows.
             panel_rgb = ccv2.hex_to_rgb(bg)
             editor_bg = ccv2.rgb_to_hex(ccv2.over(pal["field"], panel_rgb))
-            field_h = ccv2.scaled(52, scale)
+            # Field canvas is taller than the visible pill so the violet bloom
+            # (baked with a 20px transparent inset) fades fully inside the image
+            # — no hard clip line at the canvas top/bottom.
+            field_h = ccv2.scaled(66, scale)
             radius = ccv2.scaled(13, scale)
             fcanvas = tk.Canvas(body, bg=bg, bd=0, highlightthickness=0,
                                 height=field_h)
-            # expand=True vertically centres the fixed-height field in the body,
-            # so any window slack is split above/below (never a big blank below).
-            fcanvas.pack(fill="x", expand=True)
+            # No expand: the window is sized to content (below), so the field
+            # sits at its natural height with no vertical slack to centre into.
+            fcanvas.pack(fill="x")
             editor = tk.Text(
                 fcanvas, bg=editor_bg, fg=fg, wrap="none", relief="flat", bd=0,
                 width=1, height=1, padx=0, pady=0,
@@ -417,11 +425,24 @@ class QuickInputMixin:
         win.bind("<Escape>", lambda e: win.destroy())
 
         if v2on:
-            # Single-line field needs far less height than the legacy multi-line
-            # editor, so the v2 window is a compact, tight card. Keep it short so
-            # the field is the hero (no big slack above/below it).
-            w, h, x, y = self._scaled_centered_box(
-                QUICK_INPUT_WINDOW_W, 150, min_w=440, min_h=144)
+            # Size the window to the card's own requested height (plus the two
+            # card insets) instead of a fixed guess, so nothing is clipped (the
+            # Translate pill was being squeezed) and there is no top/bottom
+            # slack band. Width stays a comfortable fixed value; the field is
+            # fill="x".
+            win.update_idletasks()
+            card.update_idletasks()
+            ci = int(getattr(win, "_card_inset", _radius))
+            w, _h_guess, x, _y_guess = self._scaled_centered_box(
+                QUICK_INPUT_WINDOW_W, 150, min_w=440, min_h=120)
+            content_h = card.winfo_reqheight() + 2 * ci
+            rect = get_monitor_rect()
+            if rect:
+                mon_top, mon_h = rect[1], rect[3] - rect[1]
+            else:
+                mon_top, mon_h = 0, self.root.winfo_screenheight()
+            h = min(content_h, mon_h - 40)
+            y = mon_top + (mon_h - h) // 2
         else:
             w, h, x, y = self._scaled_centered_box(
                 QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H, min_w=420,
