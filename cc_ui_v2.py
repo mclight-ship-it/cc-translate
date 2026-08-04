@@ -728,6 +728,15 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
     gcol = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
     is_dark = palette["is_dark"]
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+
+    def _safe_sigma(desired_logical, grow_dev):
+        # Clamp a layer's blur radius so its tail (~3*sigma beyond ``grow``) still
+        # fades to ~0 *inside* the transparent ``inset`` margin. Otherwise the
+        # Gaussian gets clipped flat at the image edge and shows a hard
+        # horizontal line (the seam the field used to have above/below it).
+        sig = scaled(desired_logical, scale)
+        return min(float(sig), max(1.0, (inset - grow_dev - 1) / 3.0))
+
     if is_dark:
         # Three blurred violet layers (wide+faint under mid under tight+strong)
         # = a smooth, clearly-visible bloom that falls off gently. Alphas are
@@ -743,7 +752,7 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                 (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
                 radius=int(radius) + grow, fill=gcol + (a,))
             canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
-                scaled(blur, scale))))
+                _safe_sigma(blur, grow))))
     else:
         # Light mode: a soft violet/pink halo hugging the field (a gentle brand
         # tint, NOT neutral grey and NOT a wide muddy bloom). Two tight, faint,
@@ -762,7 +771,7 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                 radius=int(radius) + grow,
                 fill=halo + (int(255 * min(alpha, 1.0)),))
             canvas.alpha_composite(gl.filter(ImageFilter.GaussianBlur(
-                scaled(blur, scale))))
+                _safe_sigma(blur, grow))))
         if focused:
             ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             ImageDraw.Draw(ring).rounded_rectangle(
@@ -771,7 +780,7 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                 radius=int(radius) + scaled(1, scale),
                 outline=gcol + (150,), width=max(1, scaled(2, scale)))
             canvas.alpha_composite(ring.filter(ImageFilter.GaussianBlur(
-                scaled(2, scale))))
+                _safe_sigma(2, scaled(1, scale)))))
     # Draw the crisp field fill + hairline outline on a supersampled layer, then
     # downscale (LANCZOS) so the rounded corners are anti-aliased (the non-AA
     # rounded_rectangle showed corner stair-stepping, worst on white).

@@ -52,7 +52,7 @@ class QuickInputMixin:
         inset is generous so the violet bloom fully fades to transparent inside
         the image instead of being clipped at the edge (which showed a hard
         line)."""
-        inset = ccv2.scaled(15, scale)
+        inset = ccv2.scaled(20, scale)
         photo = self._v2_photo(
             ("qi_field", int(w), int(h), round(scale, 2), bool(focused)),
             lambda: ccv2.bake_input_field(w, h, radius, pal, scale, focused,
@@ -272,7 +272,7 @@ class QuickInputMixin:
             # hard clip line at the canvas top/bottom. The visible box is a
             # rounded RECTANGLE (small radius vs height), not a stadium pill, to
             # match the concept.
-            field_h = ccv2.scaled(62, scale)
+            field_h = ccv2.scaled(72, scale)
             radius = ccv2.scaled(9, scale)
             fcanvas = tk.Canvas(body, bg=bg, bd=0, highlightthickness=0,
                                 height=field_h)
