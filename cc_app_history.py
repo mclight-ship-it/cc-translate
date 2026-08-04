@@ -564,11 +564,12 @@ class HistoryMixin:
         panel = theme["bg"]
 
         # Action bar (bottom) — no hairline divider; the padding separates it.
-        # Weighted DOWNWARD: more room above (so it's not crammed against the
-        # history list) and less below (so it's not marooned far from the window
-        # floor).
+        # The gap above is trimmed to ~75% (S18 -> S12) so the row sits closer to
+        # the list/detail boxes; because the body fills with expand, the boxes
+        # simply grow DOWNWARD into the reclaimed space while the row keeps its
+        # distance from the window floor (bottom pad unchanged).
         bottom = tk.Frame(card, bg=panel)
-        bottom.pack(side="bottom", fill="x", padx=S(20), pady=(S(18), S(10)))
+        bottom.pack(side="bottom", fill="x", padx=S(20), pady=(S(12), S(10)))
 
         body = tk.Frame(card, bg=panel)
         body.pack(side="top", fill="both", expand=True, padx=S(20), pady=(0, S(4)))
@@ -960,14 +961,24 @@ class HistoryMixin:
                 active_bg=hover, active_fg=hover_fg,
                 font=(font, 9), padx=14, pady=6)
 
+        # v2: wider inter-button breathing room, and the rightmost pill's right
+        # edge flush with the detail box above it (the bottom bar shares the body's
+        # S(20) side padding, so a 0 right pad lands on that same edge). Legacy
+        # keeps its original 8/16 px gaps.
+        if v2 and ccv2 is not None:
+            btn_gap = ccv2.scaled(14, scale)
+            btn_edge = 0
+        else:
+            btn_gap = 8
+            btn_edge = 16
         hist_btn(i18n.get("history.clear"), do_clear, danger=True).pack(
-            side="right", padx=(0, 16), pady=(4, 12))
+            side="right", padx=(0, btn_edge), pady=(4, 12))
         hist_btn(i18n.get("history.rerun"), rerun_entry).pack(
-            side="right", padx=(0, 8), pady=(4, 12))
+            side="right", padx=(0, btn_gap), pady=(4, 12))
         hist_btn(i18n.get("history.copy_bilingual"), copy_bilingual).pack(
-            side="right", padx=(0, 8), pady=(4, 12))
+            side="right", padx=(0, btn_gap), pady=(4, 12))
         hist_btn(i18n.get("history.copy_result"), copy_output).pack(
-            side="right", padx=(0, 8), pady=(4, 12))
+            side="right", padx=(0, btn_gap), pady=(4, 12))
 
         hlist.bind_select(show_detail)
         win.bind("<ButtonPress-1>", on_window_click, add="+")
