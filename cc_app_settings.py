@@ -602,13 +602,14 @@ class SettingsMixin:
         # ---- Title bar (draggable, with logo + close button) ----
         if v2on:
             # A roomy brand header shared with the history window: app-mark tile,
-            # gradient title + calm subtitle, ghost close. No hairline divider —
-            # the generous padding does the separating.
+            # gradient title, ghost close. No subtitle (a settings screen needs
+            # no tagline) and no hairline divider — the generous padding does the
+            # separating.
             bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
             bar.pack(fill="x", padx=24, pady=(20, 14))
             self._v2_brand_header(
                 bar, win, title=i18n.get("settings.title"),
-                subtitle=i18n.get("settings.subtitle"),
+                subtitle=None,
                 bg=bg, hint=hint, accent=accent, font=FONT, scale=scale,
                 cache_tag="settings_title")
         else:

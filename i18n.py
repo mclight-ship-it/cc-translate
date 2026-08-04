@@ -70,7 +70,6 @@ TRANSLATIONS = {
 
         # Settings window
         "settings.title": "设置",
-        "settings.subtitle": "让翻译更懂你 · 一切本地生效",
         "settings.model": "模型",
         "settings.custom_model": "自定义模型",
         "settings.work_dir": "工作目录",
@@ -377,7 +376,6 @@ TRANSLATIONS = {
 
         # Settings window
         "settings.title": "Settings",
-        "settings.subtitle": "Tune it to your liking · all applied locally",
         "settings.model": "Model",
         "settings.custom_model": "Custom",
         "settings.work_dir": "Directory",
