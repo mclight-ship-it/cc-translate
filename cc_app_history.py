@@ -50,6 +50,18 @@ _TAG_COLORS = {
     "ocr": (99, 132, 241),     # screenshot  — indigo-blue
 }
 
+# Shared corner-radius scale for the v2 history window (unscaled px; every use
+# goes through ccv2.scaled). One source of truth so surfaces that stack in the
+# same column round ALIKE instead of drifting to accidental 11-vs-12 mismatches.
+_HIST_R_CONTROL = 12   # search field · filter pill · list cards (the tap targets)
+_HIST_R_PANEL = 14     # the large detail surface (a touch rounder)
+_HIST_R_CHIP = 8       # the small kind badge
+
+# Shared inner padding for the v2 history controls (unscaled px). The card's chip
+# sits this far from its left edge and the row text keeps the same margin on the
+# right, so the search field's text (same inset) lines up with the chips beneath.
+_HIST_PAD = 15
+
 
 def _history_relative_time(ts):
     """A friendly relative timestamp ("刚刚" / "3 分钟前" / "2 小时前" / "昨天")
@@ -156,11 +168,12 @@ class _CardHistoryList:
         self.S = S
         self.card_h = S(54)
         self.gap = S(9)
-        # No horizontal inset: the cards fill the full column width so their left
-        # and right edges line up exactly with the search field above (which is a
-        # full-width canvas). A non-zero pad made the cards a couple of px
-        # narrower and shifted them right, so neither edge matched the search box.
-        self.pad = 0
+        # Named row geometry — one source of truth so the chip, the text column
+        # and the right margin stay in agreement (no stray insets). Cards fill the
+        # full column width, so their edges line up exactly with the search field.
+        self.pad_x = S(_HIST_PAD)          # chip left inset == text right margin
+        self.chip_gap = S(12)              # chip -> title/time gap
+        self.card_r = S(_HIST_R_CONTROL)   # card corner radius
         # NEGATIVE tk font sizes are DEVICE PIXELS, so the title/time render at a
         # size we control exactly — the old positive point sizes got scaled AGAIN
         # by the 1.5x display DPI, which is why the title ballooned. Title now
@@ -231,7 +244,7 @@ class _CardHistoryList:
         from PIL import Image, ImageDraw
         S = self.S
         h = self.card_h
-        r = S(12)
+        r = self.card_r
 
         def bake(fill_hex, border_hex=None):
             fill = ccv2.hex_to_rgb(fill_hex)
@@ -276,7 +289,7 @@ class _CardHistoryList:
         h = S(26)
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         solid = Image.new("RGBA", (w, h), tuple(color) + (255,))
-        solid.putalpha(ccv2.rounded_mask(w, h, S(8)))
+        solid.putalpha(ccv2.rounded_mask(w, h, S(_HIST_R_CHIP)))
         img.alpha_composite(solid)
         d = ImageDraw.Draw(img)
         d.text(((w - tw) / 2 - b[0], (h - th) / 2 - b[1]), label, font=f,
@@ -310,10 +323,10 @@ class _CardHistoryList:
         self._laid_w = w
         cv.delete("all")
         self._rows = []
-        card_w = w - self.pad * 2
+        card_w = w
         self._card_normal, self._card_sel = self._card_images(card_w)
         S = self.S
-        text_x = self.pad + S(15)  # chip left inside card
+        text_x = self.pad_x  # chip left inside card
         # First card hugs y=0 so its top edge lines up with the detail panel's
         # top edge across the gutter (the cards' inter-row breathing room is the
         # gap ADDED AFTER each row, not before the first). Starting at self.gap
@@ -323,11 +336,11 @@ class _CardHistoryList:
             kind = _tr.history_entry_kind(e)
             chip = self._chip_image(kind)
             img = self._card_sel if idx == self.sel else self._card_normal
-            bg_id = cv.create_image(self.pad, y, anchor="nw", image=img)
+            bg_id = cv.create_image(0, y, anchor="nw", image=img)
             chip_w = chip.width()
             cv.create_image(text_x, y + self.card_h // 2, anchor="w", image=chip)
-            tx = text_x + chip_w + S(12)
-            avail = card_w - (tx - self.pad) - S(15)
+            tx = text_x + chip_w + self.chip_gap
+            avail = card_w - tx - self.pad_x
             title = _tr.history_entry_preview(e, limit=200)
             title = self._ellipsize(title, self._title_font, avail)
             when = _history_relative_time(e.get("ts", ""))
@@ -608,17 +621,23 @@ class HistoryMixin:
         return (bottom, hlist, detail, search_wrap, search, search_icon,
                 search_var, filter_var)
 
+    def _v2_hist_surface(self, theme):
+        """Resolve the colours every rounded history control paints with: the
+        window panel behind it, the elevated field fill (as both hex + rgb), and
+        the hairline border rgb. Centralised so the search field, filter pill and
+        detail panel can't drift to different fills/borders."""
+        panel = theme["bg"]
+        field = theme["list_bg"]
+        border = theme.get("popup_border") or theme["list_sel"]
+        return panel, field, ccv2.hex_to_rgb(field), ccv2.hex_to_rgb(border)
+
     def _v2_hist_search(self, parent, *, theme, scale, font, height, pad_below):
         """A rounded search field: a baked rounded panel on a Canvas with a flat
         Entry and a search glyph placed inside. Returns
         ``(canvas, entry, var, icon)`` — the canvas doubles as ``search_wrap`` so
         the shared wiring's click-to-focus binding keeps working."""
         S = lambda v: ccv2.scaled(v, scale)
-        panel = theme["bg"]
-        field = theme["list_bg"]
-        fill = ccv2.hex_to_rgb(field)
-        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
-            else ccv2.hex_to_rgb(theme["list_sel"])
+        panel, field, fill, brd = self._v2_hist_surface(theme)
         cv = tk.Canvas(parent, bg=panel, height=height, highlightthickness=0,
                        bd=0, takefocus=0)
         cv.pack(side="top", fill="x", pady=(0, pad_below))
@@ -635,7 +654,8 @@ class HistoryMixin:
             if w <= 1 or (w == state["w"] and _e is not None):
                 return
             state["w"] = w
-            img = _bake_round_panel(w, height, S(11), fill, brd, max(1, S(1)))
+            img = _bake_round_panel(w, height, S(_HIST_R_CONTROL), fill, brd,
+                                    max(1, S(1)))
             photo = ccv2.to_photo(img, master=cv)
             cv._bg = photo
             cv.delete("bg")
@@ -647,12 +667,12 @@ class HistoryMixin:
             else:
                 cv.coords(state["iwin"], w - S(10), height // 2)
             iw = icon.winfo_reqwidth() + S(10)
-            tw = max(1, w - S(15) - iw)
+            tw = max(1, w - S(_HIST_PAD) - iw)
             if state["win"] is None:
                 state["win"] = cv.create_window(
-                    S(15), height // 2, anchor="w", window=entry, width=tw)
+                    S(_HIST_PAD), height // 2, anchor="w", window=entry, width=tw)
             else:
-                cv.coords(state["win"], S(15), height // 2)
+                cv.coords(state["win"], S(_HIST_PAD), height // 2)
                 cv.itemconfig(state["win"], width=tw)
 
         cv.bind("<Configure>", paint, add="+")
@@ -664,23 +684,20 @@ class HistoryMixin:
         a drawn caret; clicking posts a native menu of the filter options.
         Returns ``(var, canvas)``."""
         S = lambda v: ccv2.scaled(v, scale)
-        panel = theme["bg"]
-        field = theme["list_bg"]
-        fill = ccv2.hex_to_rgb(field)
-        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
-            else ccv2.hex_to_rgb(theme["list_sel"])
+        panel, field, fill, brd = self._v2_hist_surface(theme)
         width = S(116)
         var = tk.StringVar(value=labels["all"])
         cv = tk.Canvas(parent, bg=panel, height=height, width=width,
                        highlightthickness=0, bd=0, takefocus=0)
         cv.pack(side="top", anchor="w", pady=(0, pad_below))
-        img = _bake_round_panel(width, height, S(11), fill, brd, max(1, S(1)))
+        img = _bake_round_panel(width, height, S(_HIST_R_CONTROL), fill, brd,
+                                max(1, S(1)))
         photo = ccv2.to_photo(img, master=cv)
         cv._bg = photo
         cv.create_image(0, 0, anchor="nw", image=photo)
         lbl = tk.Label(cv, textvariable=var, bg=field, fg=theme["fg"],
                        font=(font, 10))
-        cv.create_window(S(14), height // 2, anchor="w", window=lbl)
+        cv.create_window(S(_HIST_PAD), height // 2, anchor="w", window=lbl)
         # Draw the caret as a real filled triangle sized to MATCH the result
         # window's 操作 ▾ caret (soft_pill: cw=S(8) wide, ch=S(3) half-tall), so
         # the two dropdown affordances read as one design language — the old
@@ -716,11 +733,7 @@ class HistoryMixin:
         with the markdown-lite Text inset. Wheel-scrolls (no scrollbar). Returns
         the Text widget."""
         S = lambda v: ccv2.scaled(v, scale)
-        panel = theme["bg"]
-        field = theme["list_bg"]
-        fill = ccv2.hex_to_rgb(field)
-        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
-            else ccv2.hex_to_rgb(theme["list_sel"])
+        panel, field, fill, brd = self._v2_hist_surface(theme)
         cv = tk.Canvas(parent, bg=panel, highlightthickness=0, bd=0, takefocus=0)
         cv.pack(side="top", fill="both", expand=True)
         detail = tk.Text(
@@ -742,7 +755,8 @@ class HistoryMixin:
                     w == state["w"] and h == state["h"] and _e is not None):
                 return
             state["w"], state["h"] = w, h
-            img = _bake_round_panel(w, h, S(14), fill, brd, max(1, S(1)))
+            img = _bake_round_panel(w, h, S(_HIST_R_PANEL), fill, brd,
+                                    max(1, S(1)))
             photo = ccv2.to_photo(img, master=cv)
             cv._bg = photo
             cv.delete("bg")
