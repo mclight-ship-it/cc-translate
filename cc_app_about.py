@@ -256,6 +256,13 @@ class AboutMixin:
         FONT = font
         pal = self._v2_palette()
 
+        # Force a wide, landscape card (the design is a roomy hero card, not a
+        # narrow column): a zero-height strut floors the content width so the
+        # calm hero and the spaced button row breathe in horizontal space.
+        strut_w = int(470 * scale)
+        tk.Frame(content_frame, bg=bg, height=1, width=strut_w,
+                 bd=0, highlightthickness=0).pack()
+
         # ---- Hero: glowing logo · gradient name · one-line description ----
         hero_logo = self._v2_hero_logo(64)
         if hero_logo:
@@ -278,7 +285,7 @@ class AboutMixin:
             ("about_name", name_txt, round(scale, 2)),
             lambda: ccv2.gradient_text(
                 name_txt, ccv2.load_font("bold", 22, scale),
-                stops=ccv2.NAME_GRAD, angle=0))
+                stops=ccv2.NAME_GRAD, angle=90))
         if name_img is not None:
             name_lbl = tk.Label(content_frame, image=name_img, bg=bg, bd=0,
                                 highlightthickness=0)
@@ -334,12 +341,12 @@ class AboutMixin:
 
         gh_btn = self._v2_soft_button(
             footer, "GitHub", lambda: self._open_url(github_url), icon="code")
-        gh_btn.pack(side="left", padx=(0, 14))
+        gh_btn.pack(side="left", padx=(0, 20))
 
         contact_btn = self._v2_soft_button(
             footer, i18n.get("about.contact_author"),
             lambda: self._open_url(f"mailto:{email_addr}"), icon="mail")
-        contact_btn.pack(side="left", padx=(0, 14))
+        contact_btn.pack(side="left", padx=(0, 20))
 
         coffee_btn = self._v2_soft_button(
             footer, i18n.get("about.support_author"),

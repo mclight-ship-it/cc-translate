@@ -49,9 +49,11 @@ except Exception:
 # hard way in the POC), so all three stops are load-bearing.
 BRAND = [(0.0, (110, 168, 255)), (0.5, (161, 121, 255)), (1.0, (255, 122, 198))]
 
-# The app-name gradient: a calm violet -> bright-pink sweep (a two-stop slice of
-# BRAND that drops the cool blue), rendered LEFT->RIGHT for the About hero title.
-NAME_GRAD = [(0.0, (161, 121, 255)), (1.0, (255, 122, 198))]
+# The app-name gradient: a vivid violet -> hot-pink sweep, rendered LEFT->RIGHT
+# for the About hero title. The stops are pulled clearly apart (deeper violet ->
+# hotter pink) so the sweep is obvious across the short word "CC Translate"; a
+# tighter pair reads as one flat pink.
+NAME_GRAD = [(0.0, (150, 105, 255)), (1.0, (255, 94, 178))]
 
 # Per-theme skin. ``solid`` is the deep-navy base gradient (NOT the app's greyish
 # real popup colour — that greyed out the vibe in an earlier POC). Colours are
@@ -554,20 +556,19 @@ def icon_tile(size, text="CC", scale=1.0):
 
 
 def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.7, dy_frac=0.1,
-              blur_frac=0.44):
+              blur_frac=0.44, halo=True):
     """The About hero mark: the app logo tile lifted off the card by a soft
     coloured bloom that HUGS ITS OWN ROUNDED SILHOUETTE (not a bright disc/box
-    behind it, which read as a dirty rectangle). We tint a blurred copy of the
-    logo's alpha in ``glow_color`` and lay it down offset by ``dy_frac`` of the
-    logo size, then the crisp logo on top.
+    behind it, which read as a dirty rectangle).
 
-    Dark mode passes a bright brand colour + wide ``blur_frac`` + small offset ->
-    a soft glow. Light mode can't emit brighter than a near-white card, so a wide
-    colour bloom just greys into a box; instead the caller passes a DARK neutral
-    colour + a TIGHT ``blur_frac`` + a small downward offset, turning this same
-    machinery into a crisp soft DROP-SHADOW (elevation) right under the tile —
-    the tasteful light-mode equivalent of "a glow beneath". Returns the input
-    unchanged if Pillow is missing."""
+    Dark mode (``halo=True``) stacks TWO blurred silhouette copies — a WIDE faint
+    ambient halo under a TIGHTER, brighter core — so the glow is clearly visible
+    yet edge-free (a single wide bloom just washes out to nothing; a single tight
+    one reads as an outline). Light mode (``halo=False``) can't emit brighter than
+    a near-white card, so the caller passes a DARK neutral colour + a TIGHT
+    ``blur_frac`` + a small downward offset, turning one layer into a crisp soft
+    DROP-SHADOW (elevation) right under the tile. Returns the input unchanged if
+    Pillow is missing."""
     if not PIL_OK or logo_rgba is None:
         return logo_rgba
     s = logo_rgba.width
@@ -575,13 +576,23 @@ def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.7, dy_frac=0.1,
     W = s + pad * 2
     canvas = Image.new("RGBA", (W, W), (0, 0, 0, 0))
     alpha = logo_rgba.split()[3]
-    tint = tuple(glow_color)[:3] + (int(round(255 * glow_strength)),)
-    sil = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    sil.paste(Image.new("RGBA", (s, s), tint), (0, 0), alpha)
-    bloom = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    bloom.alpha_composite(sil, (pad, pad + int(round(s * dy_frac))))
-    bloom = bloom.filter(ImageFilter.GaussianBlur(max(1, int(round(s * blur_frac)))))
-    canvas.alpha_composite(bloom)
+
+    def _bloom(strength, bf, dyf):
+        tint = tuple(glow_color)[:3] + (int(round(255 * min(1.0, strength))),)
+        sil = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        sil.paste(Image.new("RGBA", (s, s), tint), (0, 0), alpha)
+        layer = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+        layer.alpha_composite(sil, (pad, pad + int(round(s * dyf))))
+        return layer.filter(
+            ImageFilter.GaussianBlur(max(1, int(round(s * bf)))))
+
+    if halo:
+        canvas.alpha_composite(_bloom(glow_strength * 0.55, blur_frac * 1.25,
+                                      dy_frac))
+        canvas.alpha_composite(_bloom(glow_strength * 1.25, blur_frac * 0.5,
+                                      dy_frac))
+    else:
+        canvas.alpha_composite(_bloom(glow_strength, blur_frac, dy_frac))
     canvas.alpha_composite(logo_rgba, (pad, pad))
     return canvas
 
@@ -619,14 +630,21 @@ def gradient_pill(text, font, palette, fg=None, grad=False, px=14, py=8,
         dsz = scaled(7, scale)
         dx0 = ox
         dcx = dx0 + dsz / 2.0
-        # A soft coloured bloom behind the dot so it reads as a lit indicator,
-        # not a flat sticker. Composite the blurred glow onto the pill, then
-        # redraw the crisp dot (+ a tiny white highlight) on top for a "bright
-        # point + glow" feel.
-        gd = scaled(13, scale)
-        glow = radial_glow(gd, dot, 0.7)
-        img.alpha_composite(glow, (int(round(dcx - gd / 2.0)),
-                                   int(round(cy - gd / 2.0))))
+        # A genuinely soft halo: a SMALL solid core blurred heavily so the falloff
+        # is a smooth Gaussian tail with no visible ring / hard edge. (The old
+        # radial_glow drew a big near-opaque disc whose blur was too small
+        # relative to its size, leaving a hard boundary.)
+        gsz = scaled(22, scale)
+        gc = gsz / 2.0
+        cr = scaled(3, scale)
+        halo = Image.new("L", (gsz, gsz), 0)
+        ImageDraw.Draw(halo).ellipse((gc - cr, gc - cr, gc + cr, gc + cr),
+                                     fill=150)
+        halo = halo.filter(ImageFilter.GaussianBlur(gsz / 3.2))
+        glow = Image.new("RGBA", (gsz, gsz), tuple(dot)[:3] + (0,))
+        glow.putalpha(halo)
+        img.alpha_composite(glow, (int(round(dcx - gc)),
+                                   int(round(cy - gc))))
         dr = ImageDraw.Draw(img)
         dr.ellipse((dx0, cy - dsz // 2, dx0 + dsz, cy + dsz // 2),
                    fill=tuple(dot) + (255,))
