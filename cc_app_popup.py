@@ -448,12 +448,12 @@ class PopupMixin:
         t = self.theme
         accent = t.get("accent", "#7aa2f7")
         hint = t.get("popup_hint", t["hint_fg"])
-        # v2 pin is an image chip: rest brighter (hover bake) while pinned.
-        if getattr(pin_btn, "_chip_hover", None) is not None:
-            rest = (pin_btn._chip_hover if win._pinned
-                    else getattr(pin_btn, "_chip_base", pin_btn._chip_normal))
-            pin_btn._chip_normal = rest
-            pin_btn.config(image=rest)
+        # v2 pin is an image chip: a filled brand-violet "active" disc while
+        # pinned (a clear state change), back to the transparent rest otherwise.
+        if getattr(pin_btn, "_chip_active", None) is not None:
+            pin_btn._active = bool(win._pinned)
+            pin_btn.config(image=(pin_btn._chip_active if win._pinned
+                                  else pin_btn._chip_normal))
         else:
             pin_btn.config(fg=(accent if win._pinned else hint))
 
@@ -1440,14 +1440,16 @@ class PopupMixin:
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
 
-        def _bake(hover):
+        def _bake(hover, active=False):
             return self._v2_photo(
-                ("ghost", icon, danger, hover, round(scale, 2)),
+                ("ghost", icon, danger, hover, active, round(scale, 2)),
                 lambda: ccv2.ghost_icon(icon, pal, scale, hover=hover,
-                                        danger=danger))
+                                        active=active, danger=danger))
 
         normal = _bake(False)
         hover = _bake(True)
+        active = _bake(False, active=True)
+        active_hover = _bake(True, active=True)
         if normal is None:
             return self._pill_button(parent, "", cmd, bg=popup_bg,
                                      fg=self._v2_tk_colors()["hint"])
@@ -1458,8 +1460,13 @@ class PopupMixin:
         b._chip_normal = normal
         b._chip_base = normal
         b._chip_hover = hover
-        b.bind("<Enter>", lambda e: b.config(image=b._chip_hover))
-        b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
+        b._chip_active = active
+        b._chip_active_hover = active_hover
+        b._active = False
+        b.bind("<Enter>", lambda e: b.config(
+            image=(b._chip_active_hover if b._active else b._chip_hover)))
+        b.bind("<Leave>", lambda e: b.config(
+            image=(b._chip_active if b._active else b._chip_normal)))
         if tooltip:
             self._make_tooltip(b, tooltip)
         return b

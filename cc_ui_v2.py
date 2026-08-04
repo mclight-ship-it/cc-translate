@@ -666,12 +666,15 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     return img
 
 
-def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
+def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False,
+               active=False):
     """An icon-only window control (RGBA): fully transparent at rest so it reads
     as light-weight, gaining a soft round fill on ``hover`` (a subtle red wash
-    when ``danger``, i.e. the close button). Bakes to the SAME height as
-    ``soft_pill`` (and a matching square-ish width) so pin / close line up with
-    Copy — same centre, no floating-high pushpin."""
+    when ``danger``, i.e. the close button). ``active`` (e.g. a pinned pushpin)
+    paints a filled brand-violet disc with a white glyph so a toggled-on control
+    clearly reads as a *state change*, not a second button. Bakes to the SAME
+    height as ``soft_pill`` (and a matching square-ish width) so pin / close line
+    up with Copy — same centre, no floating-high pushpin."""
     if not PIL_OK:
         return None
     icon_px = scaled(15, scale)
@@ -679,13 +682,20 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
     glyph = _MDL2_GLYPHS.get(icon, icon)
     probe = ImageDraw.Draw(Image.new("L", (4, 4)))
     b = probe.textbbox((0, 0), glyph, font=ifont)
-    iw, ih = b[2] - b[0], b[3] - b[1]
+    iw = b[2] - b[0]
     H = scaled(SOFT_BTN_H_PTS, scale)
     W = max(H, iw + scaled(13, scale))
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     ink = (206, 212, 235, 255) if palette["is_dark"] else (74, 84, 120, 255)
-    if danger and hover:
+    accent = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
+    if active:
+        # Toggled-on: a filled brand-violet disc with a white glyph. Reads as the
+        # control's state changed (lit), not as an extra chip appearing.
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
+                            fill=accent + (255 if hover else 235,))
+        ink = (255, 255, 255, 255)
+    elif danger and hover:
         d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
                             fill=tuple(palette["err"]) + (40,))
         ink = tuple(palette["err"]) + (255,)
@@ -694,8 +704,17 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
                             fill=(255, 255, 255, 30) if palette["is_dark"]
                             else (36, 48, 92, 34))
         ink = (238, 241, 255, 255) if palette["is_dark"] else (28, 35, 64, 255)
-    d.text(((W - iw) / 2 - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont,
-           fill=ink)
+    # Centre by the glyph's TIGHT ink bounding box, not textbbox: MDL2 glyphs
+    # carry asymmetric side-bearings (the pushpin ink leans up-and-right), so
+    # bbox-centring left the icon visibly high/off inside the disc. Render the
+    # glyph on its own layer, crop to real ink, then composite dead-centre.
+    gly = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(gly).text((-b[0], -b[1]), glyph, font=ifont, fill=ink)
+    ink_bbox = gly.getbbox()
+    if ink_bbox:
+        cropped = gly.crop(ink_bbox)
+        gw, gh = cropped.size
+        img.alpha_composite(cropped, ((W - gw) // 2, (H - gh) // 2))
     return img
 
 
