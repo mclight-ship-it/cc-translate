@@ -261,7 +261,7 @@ def rounded_mask(w, h, r, ss=4):
     return m
 
 
-def hard_rounded_mask(w, h, r, ss=4):
+def hard_rounded_mask(w, h, r, ss=8):
     """A BINARY (0 or 255) rounded-rectangle mask — no partial-alpha pixels.
 
     The window shell is revealed through a 1-bit colour KEY (Tk

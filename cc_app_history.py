@@ -79,6 +79,29 @@ def _history_relative_time(ts):
     return dt.strftime("%m-%d")
 
 
+def _bake_round_panel(w, h, r, fill_rgb, border_rgb=None, stroke=1):
+    """A rounded-rectangle RGBA image (anti-aliased corners) for a filled panel
+    with an optional hairline border. These sit on the OPAQUE content card, so
+    the anti-aliased corners blend against a known colour — no colour-key grit —
+    giving the search box / filter pill / detail panel real rounded corners
+    instead of the ugly square tk frames."""
+    from PIL import Image, ImageDraw
+    w = max(1, int(w))
+    h = max(1, int(h))
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    solid = Image.new("RGBA", (w, h), tuple(fill_rgb) + (255,))
+    solid.putalpha(ccv2.rounded_mask(w, h, r))
+    img.alpha_composite(solid)
+    if border_rgb is not None:
+        ring = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(ring).rounded_rectangle(
+            (0, 0, w - 1, h - 1), radius=r, outline=255, width=max(1, int(stroke)))
+        st = Image.new("RGBA", (w, h), tuple(border_rgb) + (255,))
+        st.putalpha(ring)
+        img.alpha_composite(st)
+    return img
+
+
 class _ListboxHistoryList:
     """Adapter that lets the shared history wiring drive the legacy ``Listbox``
     through the same tiny interface the v2 card list exposes."""
@@ -131,21 +154,24 @@ class _CardHistoryList:
         import tkinter.font as tkfont
         S = lambda v: ccv2.scaled(v, scale)
         self.S = S
-        self.card_h = S(58)
-        self.gap = S(10)
+        self.card_h = S(54)
+        self.gap = S(9)
         self.pad = S(2)
-        self._title_font = tkfont.Font(family=font, size=max(9, int(10 * scale)))
-        self._time_font = tkfont.Font(family=font, size=max(8, int(9 * scale)))
+        # NEGATIVE tk font sizes are DEVICE PIXELS, so the title/time render at a
+        # size we control exactly — the old positive point sizes got scaled AGAIN
+        # by the 1.5x display DPI, which is why the title ballooned. Title now
+        # reads a touch larger than the time, both comfortably inside a 54pt card.
+        self._title_font = tkfont.Font(family=font, size=-S(13))
+        self._time_font = tkfont.Font(family=font, size=-S(11))
 
         panel = theme["bg"]
         wrap = tk.Frame(parent, bg=panel)
+        # No scrollbar — the list scrolls by wheel only (the ttk bar read as an
+        # ugly seam between the columns). The selected row is always scrolled
+        # into view programmatically.
         cv = tk.Canvas(wrap, bg=panel, highlightthickness=0, bd=0, takefocus=0)
-        sb = ttk.Scrollbar(wrap, orient="vertical",
-                           style="CC.Vertical.TScrollbar", command=cv.yview)
-        cv.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
         cv.pack(side="left", fill="both", expand=True)
-        self.wrap, self.cv, self.sb = wrap, cv, sb
+        self.wrap, self.cv = wrap, cv
         cv.bind("<Configure>", self._on_configure)
         cv.bind("<Button-1>", self._on_click)
         cv.bind("<MouseWheel>", self._on_wheel)
@@ -235,16 +261,16 @@ class _CardHistoryList:
             "ocr": i18n.get("history.tag.ocr"),
         }.get(kind, i18n.get("history.tag.text"))
         color = _TAG_COLORS.get(kind, ccv2.hex_to_rgb(self.theme["accent"]))
-        f = ccv2.load_font("bold", 9, self.scale)
+        f = ccv2.load_font("bold", 11, self.scale)
         probe = ImageDraw.Draw(Image.new("L", (4, 4)))
         b = probe.textbbox((0, 0), label, font=f)
         tw, th = b[2] - b[0], b[3] - b[1]
-        pad_x = S(9)
+        pad_x = S(11)
         w = tw + pad_x * 2
-        h = S(22)
+        h = S(26)
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         solid = Image.new("RGBA", (w, h), tuple(color) + (255,))
-        solid.putalpha(ccv2.rounded_mask(w, h, S(7)))
+        solid.putalpha(ccv2.rounded_mask(w, h, S(8)))
         img.alpha_composite(solid)
         d = ImageDraw.Draw(img)
         d.text(((w - tw) / 2 - b[0], (h - th) / 2 - b[1]), label, font=f,
@@ -281,7 +307,7 @@ class _CardHistoryList:
         card_w = w - self.pad * 2
         self._card_normal, self._card_sel = self._card_images(card_w)
         S = self.S
-        text_x = self.pad + S(14)  # chip left inside card
+        text_x = self.pad + S(15)  # chip left inside card
         y = self.gap
         for idx, e in enumerate(self.entries):
             kind = _tr.history_entry_kind(e)
@@ -290,12 +316,12 @@ class _CardHistoryList:
             bg_id = cv.create_image(self.pad, y, anchor="nw", image=img)
             chip_w = chip.width()
             cv.create_image(text_x, y + self.card_h // 2, anchor="w", image=chip)
-            tx = text_x + chip_w + S(11)
-            avail = card_w - (tx - self.pad) - S(14)
+            tx = text_x + chip_w + S(12)
+            avail = card_w - (tx - self.pad) - S(15)
             title = _tr.history_entry_preview(e, limit=200)
             title = self._ellipsize(title, self._title_font, avail)
             when = _history_relative_time(e.get("ts", ""))
-            cv.create_text(tx, y + S(15), anchor="w", text=title,
+            cv.create_text(tx, y + S(18), anchor="w", text=title,
                            font=self._title_font, fill=self.theme["settings_fg"])
             cv.create_text(tx, y + S(37), anchor="w", text=when,
                            font=self._time_font, fill=self.theme["popup_hint"])
@@ -524,74 +550,193 @@ class HistoryMixin:
 
     def _build_history_views_v2(self, card, *, width, border, theme, font,
                                 scale):
-        """The roomy POC-style history body: a full-width search over a card
-        list on the left, a filter pill over a floating detail card on the
-        right, and a generously padded action bar. Returns the same tuple shape
-        as the legacy builder, with a :class:`_CardHistoryList` adapter standing
-        in for the Listbox."""
+        """The roomy POC-style history body: a rounded search field over a
+        scrollbar-free card list on the left, an equal-height rounded filter pill
+        over a rounded detail panel on the right, tops aligned across both
+        columns. Returns the same tuple shape as the legacy builder, with a
+        :class:`_CardHistoryList` adapter standing in for the Listbox."""
         import translator as _tr
+        S = lambda v: ccv2.scaled(v, scale)
         panel = theme["bg"]
-        elev = theme["list_bg"]
 
         # Action bar (bottom) — no hairline divider; the padding separates it.
         bottom = tk.Frame(card, bg=panel)
-        bottom.pack(side="bottom", fill="x", padx=24, pady=(6, 18))
+        bottom.pack(side="bottom", fill="x", padx=S(20), pady=(S(6), S(16)))
 
         body = tk.Frame(card, bg=panel)
-        body.pack(side="top", fill="both", expand=True, padx=24, pady=(0, 4))
+        body.pack(side="top", fill="both", expand=True, padx=S(20), pady=(0, S(4)))
 
-        list_w = max(220, int(width * 0.38))
+        list_w = max(S(210), int(width * 0.40))
         left = tk.Frame(body, bg=panel, width=list_w)
         left.pack(side="left", fill="y", expand=False)
         left.pack_propagate(False)
         right = tk.Frame(body, bg=panel)
-        right.pack(side="left", fill="both", expand=True, padx=(18, 0))
+        right.pack(side="left", fill="both", expand=True, padx=(S(16), 0))
 
-        # -- left column: big search over the card list --------------------
-        search_wrap = tk.Frame(left, bg=elev, bd=0, highlightthickness=1,
-                               highlightbackground=border)
-        search_wrap.pack(side="top", fill="x", pady=(0, 14))
-        search_var = tk.StringVar()
-        search = tk.Entry(
-            search_wrap, textvariable=search_var, bg=elev, fg=theme["fg"],
-            relief="flat", bd=0, insertbackground=theme["fg"],
-            highlightthickness=0, font=(font, 10))
-        search.pack(side="left", fill="x", expand=True, ipady=8, padx=(14, 0))
-        search_icon = tk.Label(search_wrap, text="⌕", bg=elev,
-                               fg=theme["popup_hint"],
-                               font=("Segoe UI Symbol", 11), padx=10)
-        search_icon.pack(side="right")
+        # One shared row height for the search field and the filter pill, so the
+        # card list (left) and the detail panel (right) start on the SAME line.
+        row_h = S(38)
+        gap_below = S(12)
 
+        # -- left column: rounded search over the scrollbar-free card list --
+        search_wrap, search, search_var, search_icon = self._v2_hist_search(
+            left, theme=theme, scale=scale, font=font, height=row_h,
+            pad_below=gap_below)
         hlist = _CardHistoryList(self, left, theme=theme, font=font, scale=scale)
         hlist.pack(side="top", fill="both", expand=True)
 
-        # -- right column: filter pill over the floating detail card -------
-        top_r = tk.Frame(right, bg=panel)
-        top_r.pack(side="top", fill="x", pady=(0, 14))
-        history_filter_labels = _tr.get_history_filter_labels()
-        filter_var = tk.StringVar(value=history_filter_labels["all"])
-        filt = ttk.Combobox(
-            top_r, textvariable=filter_var, state="readonly", width=7,
-            style="CC.TCombobox", font=(font, 9),
-            values=list(history_filter_labels.values()))
-        filt.pack(side="left")
+        # -- right column: rounded filter pill over the rounded detail panel --
+        labels = _tr.get_history_filter_labels()
+        filter_var, _filt = self._v2_hist_filter(
+            right, theme=theme, scale=scale, font=font, height=row_h,
+            labels=labels, pad_below=gap_below)
+        detail = self._v2_hist_detail(right, theme=theme, scale=scale, font=font)
+        return (bottom, hlist, detail, search_wrap, search, search_icon,
+                search_var, filter_var)
 
-        detail_card = tk.Frame(right, bg=elev, bd=0, highlightthickness=1,
-                               highlightbackground=border)
-        detail_card.pack(side="top", fill="both", expand=True)
+    def _v2_hist_search(self, parent, *, theme, scale, font, height, pad_below):
+        """A rounded search field: a baked rounded panel on a Canvas with a flat
+        Entry and a search glyph placed inside. Returns
+        ``(canvas, entry, var, icon)`` — the canvas doubles as ``search_wrap`` so
+        the shared wiring's click-to-focus binding keeps working."""
+        S = lambda v: ccv2.scaled(v, scale)
+        panel = theme["bg"]
+        field = theme["list_bg"]
+        fill = ccv2.hex_to_rgb(field)
+        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
+            else ccv2.hex_to_rgb(theme["list_sel"])
+        cv = tk.Canvas(parent, bg=panel, height=height, highlightthickness=0,
+                       bd=0, takefocus=0)
+        cv.pack(side="top", fill="x", pady=(0, pad_below))
+        var = tk.StringVar()
+        entry = tk.Entry(cv, textvariable=var, bg=field, fg=theme["fg"],
+                         relief="flat", bd=0, insertbackground=theme["fg"],
+                         highlightthickness=0, font=(font, 10))
+        icon = tk.Label(cv, text="⌕", bg=field, fg=theme["popup_hint"],
+                        font=("Segoe UI Symbol", 11))
+        state = {"w": 0, "win": None, "iwin": None}
+
+        def paint(_e=None):
+            w = cv.winfo_width()
+            if w <= 1 or (w == state["w"] and _e is not None):
+                return
+            state["w"] = w
+            img = _bake_round_panel(w, height, S(11), fill, brd, max(1, S(1)))
+            photo = ccv2.to_photo(img, master=cv)
+            cv._bg = photo
+            cv.delete("bg")
+            cv.create_image(0, 0, anchor="nw", image=photo, tags="bg")
+            cv.tag_lower("bg")
+            if state["iwin"] is None:
+                state["iwin"] = cv.create_window(
+                    w - S(10), height // 2, anchor="e", window=icon)
+            else:
+                cv.coords(state["iwin"], w - S(10), height // 2)
+            iw = icon.winfo_reqwidth() + S(10)
+            tw = max(1, w - S(15) - iw)
+            if state["win"] is None:
+                state["win"] = cv.create_window(
+                    S(15), height // 2, anchor="w", window=entry, width=tw)
+            else:
+                cv.coords(state["win"], S(15), height // 2)
+                cv.itemconfig(state["win"], width=tw)
+
+        cv.bind("<Configure>", paint, add="+")
+        return cv, entry, var, icon
+
+    def _v2_hist_filter(self, parent, *, theme, scale, font, height, labels,
+                        pad_below):
+        """A rounded filter pill: a baked rounded panel with the current label +
+        a drawn caret; clicking posts a native menu of the filter options.
+        Returns ``(var, canvas)``."""
+        S = lambda v: ccv2.scaled(v, scale)
+        panel = theme["bg"]
+        field = theme["list_bg"]
+        fill = ccv2.hex_to_rgb(field)
+        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
+            else ccv2.hex_to_rgb(theme["list_sel"])
+        width = S(116)
+        var = tk.StringVar(value=labels["all"])
+        cv = tk.Canvas(parent, bg=panel, height=height, width=width,
+                       highlightthickness=0, bd=0, takefocus=0)
+        cv.pack(side="top", anchor="w", pady=(0, pad_below))
+        img = _bake_round_panel(width, height, S(11), fill, brd, max(1, S(1)))
+        photo = ccv2.to_photo(img, master=cv)
+        cv._bg = photo
+        cv.create_image(0, 0, anchor="nw", image=photo)
+        lbl = tk.Label(cv, textvariable=var, bg=field, fg=theme["fg"],
+                       font=(font, 10))
+        cv.create_window(S(14), height // 2, anchor="w", window=lbl)
+        caret = tk.Label(cv, text="▾", bg=field, fg=theme["popup_hint"],
+                         font=("Segoe UI Symbol", 9))
+        cv.create_window(width - S(11), height // 2, anchor="e", window=caret)
+        menu = tk.Menu(cv, tearoff=0)
+        for val in labels.values():
+            menu.add_command(label=val, command=lambda v=val: var.set(v))
+
+        def popup(_e=None):
+            try:
+                menu.tk_popup(cv.winfo_rootx(), cv.winfo_rooty() + height)
+            finally:
+                menu.grab_release()
+
+        for wdg in (cv, lbl, caret):
+            wdg.bind("<Button-1>", popup)
+        return var, cv
+
+    def _v2_hist_detail(self, parent, *, theme, scale, font):
+        """The floating rounded detail panel: a baked rounded card on a Canvas
+        with the markdown-lite Text inset. Wheel-scrolls (no scrollbar). Returns
+        the Text widget."""
+        S = lambda v: ccv2.scaled(v, scale)
+        panel = theme["bg"]
+        field = theme["list_bg"]
+        fill = ccv2.hex_to_rgb(field)
+        brd = ccv2.hex_to_rgb(border) if (border := theme.get("popup_border")) \
+            else ccv2.hex_to_rgb(theme["list_sel"])
+        cv = tk.Canvas(parent, bg=panel, highlightthickness=0, bd=0, takefocus=0)
+        cv.pack(side="top", fill="both", expand=True)
         detail = tk.Text(
-            detail_card, bg=elev, fg=theme["fg"], wrap="word", relief="flat",
-            padx=18, pady=16, font=(font, self.cfg[CFG.FONT_SIZE]),
+            cv, bg=field, fg=theme["fg"], wrap="word", relief="flat", bd=0,
+            padx=0, pady=0, font=(font, self.cfg[CFG.FONT_SIZE]),
             selectbackground=theme["sel_bg"], highlightthickness=0,
             cursor="arrow")
-        detail.pack(fill="both", expand=True)
         self._configure_rich_tags(detail)
         detail.tag_configure(
             "detail_head",
             font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
             foreground=theme["rich_heading_fg"], spacing1=2, spacing3=6)
-        return (bottom, hlist, detail, search_wrap, search, search_icon,
-                search_var, filter_var)
+        state = {"w": 0, "h": 0, "win": None}
+
+        def paint(_e=None):
+            w = cv.winfo_width()
+            h = cv.winfo_height()
+            if w <= 1 or h <= 1 or (
+                    w == state["w"] and h == state["h"] and _e is not None):
+                return
+            state["w"], state["h"] = w, h
+            img = _bake_round_panel(w, h, S(14), fill, brd, max(1, S(1)))
+            photo = ccv2.to_photo(img, master=cv)
+            cv._bg = photo
+            cv.delete("bg")
+            cv.create_image(0, 0, anchor="nw", image=photo, tags="bg")
+            cv.tag_lower("bg")
+            pad = S(18)
+            tw = max(1, w - 2 * pad)
+            th = max(1, h - 2 * pad)
+            if state["win"] is None:
+                state["win"] = cv.create_window(
+                    pad, pad, anchor="nw", window=detail, width=tw, height=th)
+            else:
+                cv.coords(state["win"], pad, pad)
+                cv.itemconfig(state["win"], width=tw, height=th)
+
+        cv.bind("<Configure>", paint, add="+")
+        detail.bind(
+            "<MouseWheel>",
+            lambda e: (detail.yview_scroll(int(-1 * (e.delta / 120)), "units"),
+                       "break")[1])
+        return detail
 
     def _populate_history_list(self, listbox, entries):
         import translator as _tr
@@ -641,13 +786,13 @@ class HistoryMixin:
                     pass
 
         def show_search_icon():
-            if icon_visible["on"]:
+            if v2 or icon_visible["on"]:
                 return
             icon_visible["on"] = True
             search_icon.pack(side="right")
 
         def hide_search_icon():
-            if not icon_visible["on"]:
+            if v2 or not icon_visible["on"]:
                 return
             icon_visible["on"] = False
             search_icon.pack_forget()
@@ -660,6 +805,11 @@ class HistoryMixin:
             return False
 
         def sync_search_adornment():
+            # v2's search field is a baked rounded canvas: the glyph is fixed in
+            # place and the focus ring is part of the bake, so there's nothing to
+            # toggle — the legacy pack/highlight dance would only fight the canvas.
+            if v2:
+                return
             try:
                 focused = (win.focus_get() == search)
             except Exception:
