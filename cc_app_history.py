@@ -375,57 +375,6 @@ class _CardHistoryList:
 class HistoryMixin:
     """Translation-history window (mixed into TranslatorApp)."""
 
-    def _v2_history_theme(self):
-        """A copy of ``self.theme`` with the specific colour keys the history
-        builders read overridden with values derived from the cc_ui_v2 palette,
-        so the (unchanged) builders render the v2 skin just by being handed a
-        different colour map. Structural v2 differences (brand badge, gradient
-        title, ghost close, soft-pill actions) are branched separately.
-
-        Elevation is theme-aware: on the deep-navy dark card inset surfaces go a
-        touch LIGHTER; on the near-white light card they go a touch DARKER, so
-        the list column always reads as a distinct navigation pane."""
-        pal = self._v2_palette()
-        v2c = self._v2_tk_colors()
-        is_dark = pal["is_dark"]
-        panel = ccv2.hex_to_rgb(v2c["panel"])
-        accent = ccv2.hex_to_rgb(v2c["accent"])
-        ink = (255, 255, 255) if is_dark else (20, 30, 70)
-
-        def mix(a, b, f):
-            return tuple(int(round(a[i] * (1 - f) + b[i] * f)) for i in range(3))
-
-        elev = mix(panel, ink, 0.09 if is_dark else 0.07)
-        row_sel = mix(panel, accent, 0.30 if is_dark else 0.16)
-        txt_sel = mix(panel, accent, 0.38 if is_dark else 0.20)
-        btn_hov = mix(panel, ink, 0.12 if is_dark else 0.08)
-        thumb = mix(panel, accent, 0.35 if is_dark else 0.28)
-        thumb_hi = mix(panel, accent, 0.55 if is_dark else 0.45)
-        H = ccv2.rgb_to_hex
-
-        t = dict(self.theme)
-        t.update({
-            "settings_bg": v2c["panel"],
-            "bg": v2c["panel"],
-            "popup_border": v2c["border"],
-            "accent": v2c["accent"],
-            "popup_hint": v2c["hint"],
-            "fg": H(pal["fg"]),
-            "settings_fg": H(pal["fg"]),
-            "list_bg": H(elev),
-            "list_sel": H(row_sel),
-            "sel_bg": H(txt_sel),
-            "rich_heading_fg": v2c["accent"],
-            "status_ok": H(pal["ok"]),
-            "status_err": H(pal["err"]),
-            "btn_active": H(btn_hov),
-            "btn_close_active": H(pal["err"]),
-            "scroll_thumb": H(thumb),
-            "scroll_thumb_active": H(thumb_hi),
-            "trough": v2c["panel"],
-        })
-        return t
-
     def _build_history_titlebar(self, card, win, *, bg, border, accent, hint,
                                 font, v2=False, scale=1.0):
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
@@ -440,38 +389,13 @@ class HistoryMixin:
             # v2: a roomy brand header mirroring the POC — a larger app-mark tile,
             # the tri-colour gradient title with a calm subtitle stacked beneath
             # it, and a ghost close button. No hairline divider (the concept has
-            # none); the generous padding does the separating.
-            logo_img = self._v2_logo_image(30) or self._v2_badge_image(32)
-            if logo_img:
-                logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
-                                    highlightthickness=0)
-                logo_lbl.image = logo_img
-                logo_lbl.pack(side="left", padx=(0, 12), anchor="center")
-                drag_targets.append(logo_lbl)
-            heading = tk.Frame(bar, bg=bg, bd=0, highlightthickness=0)
-            heading.pack(side="left", anchor="center")
-            drag_targets.append(heading)
-            title_img = self._v2_photo(
-                ("hist_title", title_text, round(scale, 2)),
-                lambda: ccv2.gradient_text(
-                    title_text, ccv2.load_font("bold", 15, scale)))
-            if title_img is not None:
-                title_lbl = tk.Label(heading, image=title_img, bg=bg, bd=0,
-                                     highlightthickness=0)
-                title_lbl.image = title_img
-            else:
-                title_lbl = tk.Label(heading, text=title_text, bg=bg, fg=accent,
-                                     font=(font, 13, "bold"))
-            title_lbl.pack(side="top", anchor="w")
-            drag_targets.append(title_lbl)
-            subtitle = tk.Label(heading, text=i18n.get("history.subtitle"),
-                                bg=bg, fg=hint, font=(font, 9))
-            subtitle.pack(side="top", anchor="w", pady=(2, 0))
-            drag_targets.append(subtitle)
-            close_btn = self._v2_ghost_button(
-                bar, lambda: win.destroy(), icon="close", danger=True)
-            close_btn.pack(side="right", anchor="n")
-            self._make_draggable(tuple(drag_targets), win)
+            # none); the generous padding does the separating. Shared with the
+            # settings window via _v2_brand_header so the two stay identical.
+            self._v2_brand_header(
+                bar, win, title=title_text,
+                subtitle=i18n.get("history.subtitle"),
+                bg=bg, hint=hint, accent=accent, font=font, scale=scale,
+                cache_tag="hist_title")
             return
 
         logo_img = self._logo_image(18)
@@ -1027,13 +951,13 @@ class HistoryMixin:
         FONT = "Microsoft YaHei UI"
 
         # v2 skin: when the UI_V2 flag is on AND the renderer is available, hand
-        # the builders a palette-derived colour map (self._v2_history_theme) and
+        # the builders a palette-derived colour map (self._v2_window_theme) and
         # branch the structural bits (brand badge, gradient title, ghost close,
         # soft-pill actions). Legacy is byte-for-byte untouched otherwise.
         v2on = self._v2_popup_on()
         scale = self._ui_scale() if v2on else 1.0
         if v2on:
-            t = self._v2_history_theme()
+            t = self._v2_window_theme()
         else:
             t = self.theme
         bg = t["settings_bg"]

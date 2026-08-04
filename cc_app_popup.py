@@ -1306,6 +1306,99 @@ class PopupMixin:
             accent = ccv2.rgb_to_hex((124, 92, 246))
         return {"panel": panel, "border": border, "hint": sub, "accent": accent}
 
+    def _v2_window_theme(self):
+        """A copy of ``self.theme`` with the specific colour keys the history /
+        settings builders read overridden with values derived from the cc_ui_v2
+        palette, so those (unchanged) builders render the v2 skin just by being
+        handed a different colour map. Structural v2 differences (brand badge,
+        gradient title, ghost close, soft-pill actions) are branched separately.
+
+        Elevation is theme-aware: on the deep-navy dark card inset surfaces go a
+        touch LIGHTER; on the near-white light card they go a touch DARKER, so
+        inset panes (the history list column, form fields) always read as a
+        distinct surface against the plate."""
+        pal = self._v2_palette()
+        v2c = self._v2_tk_colors()
+        is_dark = pal["is_dark"]
+        panel = ccv2.hex_to_rgb(v2c["panel"])
+        accent = ccv2.hex_to_rgb(v2c["accent"])
+        ink = (255, 255, 255) if is_dark else (20, 30, 70)
+
+        def mix(a, b, f):
+            return tuple(int(round(a[i] * (1 - f) + b[i] * f)) for i in range(3))
+
+        elev = mix(panel, ink, 0.09 if is_dark else 0.07)
+        row_sel = mix(panel, accent, 0.30 if is_dark else 0.16)
+        txt_sel = mix(panel, accent, 0.38 if is_dark else 0.20)
+        btn_hov = mix(panel, ink, 0.12 if is_dark else 0.08)
+        thumb = mix(panel, accent, 0.35 if is_dark else 0.28)
+        thumb_hi = mix(panel, accent, 0.55 if is_dark else 0.45)
+        H = ccv2.rgb_to_hex
+
+        t = dict(self.theme)
+        t.update({
+            "settings_bg": v2c["panel"],
+            "bg": v2c["panel"],
+            "popup_border": v2c["border"],
+            "accent": v2c["accent"],
+            "popup_hint": v2c["hint"],
+            "fg": H(pal["fg"]),
+            "settings_fg": H(pal["fg"]),
+            "list_bg": H(elev),
+            "list_sel": H(row_sel),
+            "sel_bg": H(txt_sel),
+            "rich_heading_fg": v2c["accent"],
+            "status_ok": H(pal["ok"]),
+            "status_err": H(pal["err"]),
+            "btn_active": H(btn_hov),
+            "btn_close_active": H(pal["err"]),
+            "scroll_thumb": H(thumb),
+            "scroll_thumb_active": H(thumb_hi),
+            "trough": v2c["panel"],
+        })
+        return t
+
+    def _v2_brand_header(self, bar, win, *, title, subtitle, bg, hint, accent,
+                         font, scale, cache_tag):
+        """Fill an already-packed header ``bar`` with the shared v2 window
+        chrome: a brand tile, the tri-colour gradient title with a calm subtitle
+        stacked beneath it, and a ghost close button — then wire dragging. Used
+        by the history and settings v2 windows so their headers stay identical.
+        ``cache_tag`` namespaces the baked gradient-title image per window."""
+        drag_targets = [bar]
+        logo_img = self._v2_logo_image(30) or self._v2_badge_image(32)
+        if logo_img:
+            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                highlightthickness=0)
+            logo_lbl.image = logo_img
+            logo_lbl.pack(side="left", padx=(0, 12), anchor="center")
+            drag_targets.append(logo_lbl)
+        heading = tk.Frame(bar, bg=bg, bd=0, highlightthickness=0)
+        heading.pack(side="left", anchor="center")
+        drag_targets.append(heading)
+        title_img = self._v2_photo(
+            (cache_tag, title, round(scale, 2)),
+            lambda: ccv2.gradient_text(
+                title, ccv2.load_font("bold", 15, scale)))
+        if title_img is not None:
+            title_lbl = tk.Label(heading, image=title_img, bg=bg, bd=0,
+                                 highlightthickness=0)
+            title_lbl.image = title_img
+        else:
+            title_lbl = tk.Label(heading, text=title, bg=bg, fg=accent,
+                                 font=(font, 13, "bold"))
+        title_lbl.pack(side="top", anchor="w")
+        drag_targets.append(title_lbl)
+        if subtitle:
+            sub_lbl = tk.Label(heading, text=subtitle, bg=bg, fg=hint,
+                               font=(font, 9))
+            sub_lbl.pack(side="top", anchor="w", pady=(2, 0))
+            drag_targets.append(sub_lbl)
+        close_btn = self._v2_ghost_button(
+            bar, lambda: win.destroy(), icon="close", danger=True)
+        close_btn.pack(side="right", anchor="n")
+        self._make_draggable(tuple(drag_targets), win)
+
     def _v2_photo(self, key, factory):
         """Cache-and-keep a PhotoImage for the v2 popup header (Tk drops
         unreferenced images). ``factory`` builds the PIL image on a cache miss.

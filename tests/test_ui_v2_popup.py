@@ -375,6 +375,38 @@ class TestV2ResultPopup(unittest.TestCase):
             len(legacy_listboxes), 1,
             "legacy history should still use a Listbox")
 
+    def test_v2_settings_uses_v2_skin(self):
+        app = self._app(v2=True)
+        app._open_settings()
+        win = app.settings_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertTrue(getattr(win, "_v2", False),
+                        "settings window should build the v2 skin when the flag "
+                        "is on")
+        # Fixed-size card: its whole ring drags rather than resizing.
+        self.assertFalse(getattr(win, "_v2_resizable", True),
+                         "v2 settings card is a fixed-size (ring-drag) window")
+
+        def _walk(w):
+            for c in w.winfo_children():
+                yield c
+                yield from _walk(c)
+        image_btns = [c for c in _walk(win)
+                      if isinstance(c, tk.Button) and str(c.cget("image"))]
+        self.assertGreaterEqual(
+            len(image_btns), 1,
+            "v2 settings chrome uses a baked image button (ghost close)")
+
+    def test_v2_settings_flag_off_is_legacy(self):
+        app = self._app(v2=False)
+        app._open_settings()
+        win = app.settings_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertFalse(getattr(win, "_v2", False),
+                         "flag off must build the legacy settings window")
+
 
 if __name__ == "__main__":
     unittest.main()

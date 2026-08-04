@@ -31,7 +31,7 @@ import i18n
 from win32util import get_monitor_rect
 from cc_update import version_string, is_autostart_enabled, set_autostart
 from cc_core import (
-    CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS,
+    CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     ROUND_KEY_COLOR, SUPPORT_IMAGE_PATH, SETTINGS_MIN_W, SETTINGS_COL_MIN_W,
     fit_box_size, LANGUAGE_LABELS,
@@ -565,12 +565,16 @@ class SettingsMixin:
             return
 
         t = self.theme
+        v2on = self._v2_popup_on()
+        scale = self._ui_scale() if v2on else 1.0
+        if v2on:
+            t = self._v2_window_theme()
         bg = t["settings_bg"]
         fg = t["settings_fg"]
         border = t["popup_border"]
         hint = t["popup_hint"]
         accent = t["accent"]
-        self._setup_form_style()
+        self._setup_form_style(theme=t)
         direction_labels = get_direction_labels()
         theme_labels = get_theme_labels()
         layout_labels = get_popup_layout_labels()
@@ -585,35 +589,55 @@ class SettingsMixin:
         win.focus_force()
         self.settings_win = win
 
+        # v2 skin: hand the (unchanged) form builders a palette-derived colour
+        # map and swap to the frosted rounded shell + brand header. The window is
+        # a fixed-size card, so its whole ring drags (never resizes).
+        win._v2 = v2on
+        win._v2_resizable = False
+
         FONT = "Microsoft YaHei UI"
-        outer = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+        radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+        outer = self._rounded_shell(win, radius, bg, border)
 
         # ---- Title bar (draggable, with logo + close button) ----
-        bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-        bar.pack(fill="x", padx=16, pady=(12, 8))
-        logo_img = self._logo_image(18)
-        drag_targets = [bar]
-        if logo_img:
-            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
-                                highlightthickness=0)
-            logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 8))
-            drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=i18n.get("settings.title"), bg=bg,
-                             fg=accent, font=(FONT, 11, "bold"))
-        title_lbl.pack(side="left")
-        drag_targets.append(title_lbl)
-        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
-                             font=(FONT, 11), cursor="hand2", padx=6)
-        close_btn.pack(side="right")
-        close_btn.bind("<Button-1>", lambda e: win.destroy())
-        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+        if v2on:
+            # A roomy brand header shared with the history window: app-mark tile,
+            # gradient title + calm subtitle, ghost close. No hairline divider —
+            # the generous padding does the separating.
+            bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
+            bar.pack(fill="x", padx=24, pady=(20, 14))
+            self._v2_brand_header(
+                bar, win, title=i18n.get("settings.title"),
+                subtitle=i18n.get("settings.subtitle"),
+                bg=bg, hint=hint, accent=accent, font=FONT, scale=scale,
+                cache_tag="settings_title")
+        else:
+            bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
+            bar.pack(fill="x", padx=16, pady=(12, 8))
+            logo_img = self._logo_image(18)
+            drag_targets = [bar]
+            if logo_img:
+                logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                    highlightthickness=0)
+                logo_lbl.image = logo_img
+                logo_lbl.pack(side="left", padx=(0, 8))
+                drag_targets.append(logo_lbl)
+            title_lbl = tk.Label(bar, text=i18n.get("settings.title"), bg=bg,
+                                 fg=accent, font=(FONT, 11, "bold"))
+            title_lbl.pack(side="left")
+            drag_targets.append(title_lbl)
+            close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                                 font=(FONT, 11), cursor="hand2", padx=6)
+            close_btn.pack(side="right")
+            close_btn.bind("<Button-1>", lambda e: win.destroy())
+            close_btn.bind("<Enter>",
+                           lambda e: close_btn.config(fg=t["status_err"]))
+            close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
 
-        # Drag the bar (but not the close button) to move the borderless window.
-        self._make_draggable(tuple(drag_targets), win)
+            # Drag the bar (but not the close button) to move the window.
+            self._make_draggable(tuple(drag_targets), win)
 
-        tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
+            tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
 
         body = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=20, pady=(14, 6))
@@ -899,7 +923,11 @@ class SettingsMixin:
         row_state["value"] += 1
 
         # ---- Footer: status + action buttons ----
-        tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16, pady=(4, 0))
+        # v2 drops the hairline divider (the padding separates the row); legacy
+        # keeps its thin rule above the footer.
+        if not v2on:
+            tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16,
+                                                      pady=(4, 0))
         footer = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
         footer.pack(fill="x", padx=20, pady=(10, 14))
 
@@ -1046,14 +1074,17 @@ class SettingsMixin:
         win.bind("<Escape>", lambda e: win.destroy())
 
         # ---- Size & center on the active monitor, then reveal ----
-        # The content lives inside a Canvas card inset by the corner radius, so
-        # measure the card and pad by the radius on every side. The update row's
+        # The content lives inside a Canvas card inset by the shell's corner
+        # reveal, so measure the card and pad by that inset on every side. On the
+        # v2 shell the card sits inset by win._card_inset (smaller than the full
+        # radius); legacy falls back to the corner radius. The update row's
         # footprint is already reserved above (col-0 min width + row min height),
         # so the measured size stays constant whether or not an update is found.
         win.update_idletasks()
         min_w = max(380, SETTINGS_MIN_W)
-        w = max(outer.winfo_reqwidth() + 2 * POPUP_CORNER_RADIUS, min_w)
-        h = outer.winfo_reqheight() + 2 * POPUP_CORNER_RADIUS
+        ci = int(getattr(win, "_card_inset", POPUP_CORNER_RADIUS))
+        w = max(outer.winfo_reqwidth() + 2 * ci, min_w)
+        h = outer.winfo_reqheight() + 2 * ci
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
