@@ -1308,7 +1308,15 @@ class PopupMixin:
 
     def _v2_photo(self, key, factory):
         """Cache-and-keep a PhotoImage for the v2 popup header (Tk drops
-        unreferenced images). ``factory`` builds the PIL image on a cache miss."""
+        unreferenced images). ``factory`` builds the PIL image on a cache miss.
+
+        The cache lives on the app (whole lifetime), so it is namespaced by the
+        ACTIVE THEME: theme-dependent bakes (soft/ghost buttons, the brand badge,
+        the quick-input field) differ between light and dark, and without this a
+        theme switch would return the previously-baked image of the WRONG theme
+        (dark chips/field bleeding onto a light window, and vice versa)."""
+        theme = "light" if resolve_theme_name(self.cfg) == "light" else "dark"
+        key = (theme, key)
         cache = getattr(self, "_v2_photo_cache", None)
         if cache is None:
             cache = self._v2_photo_cache = {}

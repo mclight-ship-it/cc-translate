@@ -640,8 +640,11 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
         fill = (255, 255, 255, 30 if hover else 16)
         ink = (238, 241, 255, 255) if hover else (206, 212, 235, 255)
     else:
-        fill = (20, 30, 70, 26 if hover else 12)
-        ink = (28, 35, 64, 255) if hover else (90, 100, 135, 255)
+        # Light mode needs a clearly visible surface: a ~5% navy wash read as
+        # "disabled". Give the pill a soft, visible lavender-grey fill and darker
+        # ink so it looks like a real button on white.
+        fill = (36, 48, 92, 46 if hover else 28)
+        ink = (28, 35, 64, 255) if hover else (66, 76, 112, 255)
     d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
     # Centre the icon+text+caret block horizontally (so a min_w-floored pill
     # keeps its content centred, not left-hugging).
@@ -681,7 +684,7 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
     W = max(H, iw + scaled(13, scale))
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    ink = (206, 212, 235, 255) if palette["is_dark"] else (90, 100, 135, 255)
+    ink = (206, 212, 235, 255) if palette["is_dark"] else (74, 84, 120, 255)
     if danger and hover:
         d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
                             fill=tuple(palette["err"]) + (40,))
@@ -689,7 +692,7 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
     elif hover:
         d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2,
                             fill=(255, 255, 255, 30) if palette["is_dark"]
-                            else (20, 30, 70, 22))
+                            else (36, 48, 92, 34))
         ink = (238, 241, 255, 255) if palette["is_dark"] else (28, 35, 64, 255)
     d.text(((W - iw) / 2 - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont,
            fill=ink)
@@ -736,12 +739,22 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
             radius=int(radius) + grow, fill=gcol + (a,))
         canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
             scaled(blur, scale))))
-    d = ImageDraw.Draw(canvas)
-    d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
-                        fill=tuple(palette["field"]))
-    d.rounded_rectangle((x0, y0, x1, y1), radius=int(radius),
-                        outline=gcol + (190 if focused else 110,),
-                        width=max(1, scaled(1, scale)))
+    # Draw the crisp field fill + hairline outline on a supersampled layer, then
+    # downscale (LANCZOS) so the rounded corners are anti-aliased — on a white
+    # (light-mode) background the non-AA rounded_rectangle showed visible corner
+    # stair-stepping. The glow layers above are already blurred, so only this
+    # crisp shape needs the AA pass.
+    ss = 4
+    top = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
+    td = ImageDraw.Draw(top)
+    sx0, sy0, sx1, sy1 = x0 * ss, y0 * ss, (x1 + 1) * ss - 1, (y1 + 1) * ss - 1
+    td.rounded_rectangle((sx0, sy0, sx1, sy1), radius=int(radius) * ss,
+                         fill=tuple(palette["field"]))
+    td.rounded_rectangle((sx0, sy0, sx1, sy1), radius=int(radius) * ss,
+                         outline=gcol + (190 if focused else 110,),
+                         width=max(1, scaled(1, scale)) * ss)
+    canvas.alpha_composite(
+        top.resize((w, h), Image.LANCZOS))
     return canvas, inset
 
 
