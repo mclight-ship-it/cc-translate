@@ -308,7 +308,11 @@ class _CardHistoryList:
         self._card_normal, self._card_sel = self._card_images(card_w)
         S = self.S
         text_x = self.pad + S(15)  # chip left inside card
-        y = self.gap
+        # First card hugs y=0 so its top edge lines up with the detail panel's
+        # top edge across the gutter (the cards' inter-row breathing room is the
+        # gap ADDED AFTER each row, not before the first). Starting at self.gap
+        # used to drop the whole list a row lower than the detail card.
+        y = 0
         for idx, e in enumerate(self.entries):
             kind = _tr.history_entry_kind(e)
             chip = self._chip_image(kind)
@@ -560,8 +564,11 @@ class HistoryMixin:
         panel = theme["bg"]
 
         # Action bar (bottom) — no hairline divider; the padding separates it.
+        # Weighted DOWNWARD: more room above (so it's not crammed against the
+        # history list) and less below (so it's not marooned far from the window
+        # floor).
         bottom = tk.Frame(card, bg=panel)
-        bottom.pack(side="bottom", fill="x", padx=S(20), pady=(S(6), S(16)))
+        bottom.pack(side="bottom", fill="x", padx=S(20), pady=(S(18), S(10)))
 
         body = tk.Frame(card, bg=panel)
         body.pack(side="top", fill="both", expand=True, padx=S(20), pady=(0, S(4)))
@@ -667,20 +674,33 @@ class HistoryMixin:
         lbl = tk.Label(cv, textvariable=var, bg=field, fg=theme["fg"],
                        font=(font, 10))
         cv.create_window(S(14), height // 2, anchor="w", window=lbl)
-        caret = tk.Label(cv, text="▾", bg=field, fg=theme["popup_hint"],
-                         font=("Segoe UI Symbol", 9))
-        cv.create_window(width - S(11), height // 2, anchor="e", window=caret)
-        menu = tk.Menu(cv, tearoff=0)
+        # Draw the caret as a real filled triangle sized to MATCH the result
+        # window's 操作 ▾ caret (soft_pill: cw=S(8) wide, ch=S(3) half-tall), so
+        # the two dropdown affordances read as one design language — the old
+        # Segoe "▾" glyph was a tiny, mismatched tofu-prone character.
+        cw = S(8)
+        ch = S(3)
+        cx = width - S(13) - cw
+        cy = height // 2
+        cv.create_polygon(
+            cx, cy - ch, cx + cw, cy - ch, cx + cw / 2, cy + ch,
+            fill=theme["fg"], outline="")
+        # A themed dropdown: tinted to the card (not the stark system-white menu),
+        # with an accent-wash active row, so it belongs to the v2 skin.
+        menu = tk.Menu(
+            cv, tearoff=0, bg=field, fg=theme["fg"],
+            activebackground=theme["list_sel"], activeforeground=theme["fg"],
+            relief="flat", bd=0, activeborderwidth=0, font=(font, 10))
         for val in labels.values():
             menu.add_command(label=val, command=lambda v=val: var.set(v))
 
         def popup(_e=None):
             try:
-                menu.tk_popup(cv.winfo_rootx(), cv.winfo_rooty() + height)
+                menu.tk_popup(cv.winfo_rootx(), cv.winfo_rooty() + height + S(4))
             finally:
                 menu.grab_release()
 
-        for wdg in (cv, lbl, caret):
+        for wdg in (cv, lbl):
             wdg.bind("<Button-1>", popup)
         return var, cv
 
