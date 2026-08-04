@@ -349,6 +349,32 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertFalse(getattr(win, "_v2", False),
                          "flag off must build the legacy history window")
 
+    def test_v2_history_uses_card_list_not_listbox(self):
+        # The roomy POC redesign draws entries as canvas cards, so the v2 body
+        # must NOT contain a tk.Listbox — while the legacy body still does.
+        def _walk(w):
+            for c in w.winfo_children():
+                yield c
+                yield from _walk(c)
+
+        app = self._app(v2=True)
+        app._open_history()
+        win = app.history_win
+        self._kill_later(win)
+        listboxes = [c for c in _walk(win) if isinstance(c, tk.Listbox)]
+        self.assertEqual(
+            listboxes, [],
+            "v2 history should use the canvas card list, not a Listbox")
+
+        app2 = self._app(v2=False)
+        app2._open_history()
+        win2 = app2.history_win
+        self._kill_later(win2)
+        legacy_listboxes = [c for c in _walk(win2) if isinstance(c, tk.Listbox)]
+        self.assertGreaterEqual(
+            len(legacy_listboxes), 1,
+            "legacy history should still use a Listbox")
+
 
 if __name__ == "__main__":
     unittest.main()

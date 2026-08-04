@@ -246,7 +246,12 @@ TRANSLATIONS = {
 
         # History window
         "history.title": "历史记录",
+        "history.subtitle": "本机保存 · 一切都在你的电脑上",
         "history.search_placeholder": "搜索",
+        "history.time_now": "刚刚",
+        "history.time_min": "{n} 分钟前",
+        "history.time_hour": "{n} 小时前",
+        "history.time_yesterday": "昨天",
         "history.filter_all": "全部",
         "history.filter_text": "文本",
         "history.filter_code": "代码",
@@ -549,7 +554,12 @@ TRANSLATIONS = {
 
         # History window
         "history.title": "History",
+        "history.subtitle": "Saved locally · all on your device",
         "history.search_placeholder": "Search",
+        "history.time_now": "Just now",
+        "history.time_min": "{n} min ago",
+        "history.time_hour": "{n} h ago",
+        "history.time_yesterday": "Yesterday",
         "history.filter_all": "All",
         "history.filter_text": "Text",
         "history.filter_code": "Code",

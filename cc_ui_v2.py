@@ -261,6 +261,30 @@ def rounded_mask(w, h, r, ss=4):
     return m
 
 
+def hard_rounded_mask(w, h, r, ss=4):
+    """A BINARY (0 or 255) rounded-rectangle mask — no partial-alpha pixels.
+
+    The window shell is revealed through a 1-bit colour KEY (Tk
+    ``-transparentcolor``): only pixels that EXACTLY match the key become
+    transparent. Any anti-aliased corner pixel (partial alpha) blends the card
+    colour toward the near-black key and lands OUTSIDE the true arc as a gritty
+    dark fringe — the "颗粒" the corners used to show. Supersampling the coverage
+    and thresholding at 50% yields the best-fit circle at device resolution with
+    a strictly binary edge, so nothing but full-card or full-key ever reaches the
+    keyed canvas. ``Image.BOX`` (a plain coverage average) is used instead of
+    LANCZOS to avoid resampling ringing, which itself sprayed faint speckle just
+    outside the arc."""
+    w = max(1, int(w))
+    h = max(1, int(h))
+    r = max(0, int(r))
+    m = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(m).rounded_rectangle(
+        (0, 0, w * ss - 1, h * ss - 1), radius=r * ss, fill=255)
+    if ss != 1:
+        m = m.resize((w, h), Image.BOX)
+    return m.point(lambda a: 255 if a >= 128 else 0)
+
+
 def gradient_round(w, h, r, stops=BRAND, angle=120):
     """A rounded-rectangle tile filled with a gradient (used for pills/tiles)."""
     g = linear_gradient(w, h, stops, angle)
@@ -464,13 +488,20 @@ class GradientBackground:
         return self._cache.crop((0, 0, w, h))
 
     def rounded_face(self, w, h, radius):
-        """Face with rounded corners applied (alpha cut) plus the thin
-        brand-gradient perimeter hairline composited on top."""
+        """Face with rounded corners applied plus the thin brand-gradient
+        perimeter hairline composited on top.
+
+        Order matters for a grit-free silhouette on the 1-bit colour-key canvas:
+        composite the (possibly semi-transparent) hairline over the OPAQUE face
+        first, then stamp a strictly BINARY corner mask as the FINAL alpha. That
+        clips any hairline/AA overshoot to the arc and guarantees every pixel is
+        either full-card or full-key — so nothing blends into a dark fringe just
+        outside the corner (the old "颗粒" grain)."""
         f = self.face(w, h).copy()
-        f.putalpha(rounded_mask(w, h, radius))
         ring = bake_border_ring(w, h, radius, scale=self.scale)
         if ring is not None:
             f.alpha_composite(ring)
+        f.putalpha(hard_rounded_mask(w, h, radius))
         return f
 
     def invalidate(self):

@@ -41,6 +41,288 @@ except Exception:
     ccv2 = None
 
 
+# Vivid, brand-harmonious accent per history entry kind — the coloured tag chip
+# that anchors each card row in the v2 list (mirrors the POC's 译/词/码/图 chips).
+_TAG_COLORS = {
+    "text": (91, 124, 250),    # translation — blue
+    "dict": (139, 108, 246),   # dictionary  — violet
+    "code": (168, 92, 230),    # code        — purple
+    "ocr": (99, 132, 241),     # screenshot  — indigo-blue
+}
+
+
+def _history_relative_time(ts):
+    """A friendly relative timestamp ("刚刚" / "3 分钟前" / "2 小时前" / "昨天")
+    from the stored ``"%Y-%m-%d %H:%M"`` string, falling back to a compact date
+    for anything older than a day, or the raw string if it can't be parsed."""
+    import time as _time
+    from datetime import datetime
+    if not ts:
+        return ""
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M")
+    except Exception:
+        return ts
+    now = datetime.now()
+    delta = (now - dt).total_seconds()
+    if delta < 0:
+        delta = 0
+    if delta < 60:
+        return i18n.get("history.time_now")
+    if delta < 3600:
+        return i18n.get("history.time_min").format(n=int(delta // 60))
+    if delta < 86400 and now.date() == dt.date():
+        return i18n.get("history.time_hour").format(n=int(delta // 3600))
+    if (now.date() - dt.date()).days == 1:
+        return i18n.get("history.time_yesterday")
+    # Older: compact date. Localised order is not critical for a list subtitle.
+    return dt.strftime("%m-%d")
+
+
+class _ListboxHistoryList:
+    """Adapter that lets the shared history wiring drive the legacy ``Listbox``
+    through the same tiny interface the v2 card list exposes."""
+
+    def __init__(self, app, listbox):
+        self.app = app
+        self.lb = listbox
+
+    def widget(self):
+        return self.lb
+
+    def render(self, entries):
+        self.lb.delete(0, "end")
+        self.app._populate_history_list(self.lb, entries)
+
+    def select(self, i):
+        self.lb.selection_clear(0, "end")
+        self.lb.selection_set(i)
+        self.lb.activate(i)
+        self.lb.see(i)
+
+    def selected_index(self):
+        sel = self.lb.curselection()
+        return sel[0] if sel else None
+
+    def bind_select(self, cb):
+        self.lb.bind("<<ListboxSelect>>", lambda _e: cb())
+
+
+class _CardHistoryList:
+    """The v2 history list: a scrollable column of comfortable two-line cards
+    (coloured kind chip + title + relative time), mirroring the roomy POC. Drawn
+    on a single Canvas — cards and chips are cached baked images (they sit on the
+    opaque panel, so their anti-aliased corners blend cleanly, no colour-key
+    grit), while the title/time are live Canvas text (crisp CJK, no per-row
+    baking). Exposes render/select/selected_index/bind_select so the shared
+    wiring treats it exactly like the legacy Listbox."""
+
+    def __init__(self, app, parent, *, theme, font, scale):
+        self.app = app
+        self.theme = theme
+        self.font = font
+        self.scale = scale
+        self.entries = []
+        self.sel = None
+        self._cb = None
+        self._rows = []           # per-row canvas item ids
+        self._laid_w = 0
+
+        import tkinter.font as tkfont
+        S = lambda v: ccv2.scaled(v, scale)
+        self.S = S
+        self.card_h = S(58)
+        self.gap = S(10)
+        self.pad = S(2)
+        self._title_font = tkfont.Font(family=font, size=max(9, int(10 * scale)))
+        self._time_font = tkfont.Font(family=font, size=max(8, int(9 * scale)))
+
+        panel = theme["bg"]
+        wrap = tk.Frame(parent, bg=panel)
+        cv = tk.Canvas(wrap, bg=panel, highlightthickness=0, bd=0, takefocus=0)
+        sb = ttk.Scrollbar(wrap, orient="vertical",
+                           style="CC.Vertical.TScrollbar", command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        self.wrap, self.cv, self.sb = wrap, cv, sb
+        cv.bind("<Configure>", self._on_configure)
+        cv.bind("<Button-1>", self._on_click)
+        cv.bind("<MouseWheel>", self._on_wheel)
+        self._card_normal = None
+        self._card_sel = None
+        self._chips = {}
+
+    # -- public adapter interface ------------------------------------------
+    def pack(self, **kw):
+        self.wrap.pack(**kw)
+
+    def render(self, entries):
+        self.entries = list(entries)
+        if self.sel is not None and self.sel >= len(self.entries):
+            self.sel = None
+        self._relayout(force=True)
+
+    def select(self, i):
+        if not self.entries:
+            self.sel = None
+            return
+        i = max(0, min(int(i), len(self.entries) - 1))
+        self.sel = i
+        self._paint_selection()
+        self._scroll_to(i)
+
+    def selected_index(self):
+        return self.sel
+
+    def bind_select(self, cb):
+        self._cb = cb
+
+    # -- internals ---------------------------------------------------------
+    def _on_configure(self, _e=None):
+        self._relayout()
+
+    def _on_wheel(self, e):
+        self.cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+    def _on_click(self, e):
+        y = self.cv.canvasy(e.y)
+        step = self.card_h + self.gap
+        idx = int((y - self.gap) // step)
+        if 0 <= idx < len(self.entries):
+            self.select(idx)
+            if self._cb:
+                self._cb()
+
+    def _card_images(self, w):
+        """(normal, selected) baked rounded-card PhotoImages of width ``w``."""
+        from PIL import Image, ImageDraw
+        S = self.S
+        h = self.card_h
+        r = S(12)
+
+        def bake(fill_hex, border_hex=None):
+            fill = ccv2.hex_to_rgb(fill_hex)
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            solid = Image.new("RGBA", (w, h), tuple(fill) + (255,))
+            solid.putalpha(ccv2.rounded_mask(w, h, r))
+            img.alpha_composite(solid)
+            if border_hex:
+                ring = Image.new("L", (w, h), 0)
+                ImageDraw.Draw(ring).rounded_rectangle(
+                    (0, 0, w - 1, h - 1), radius=r, outline=255,
+                    width=max(1, S(1.4)))
+                stroke = Image.new("RGBA", (w, h),
+                                   tuple(ccv2.hex_to_rgb(border_hex)) + (255,))
+                stroke.putalpha(ring)
+                img.alpha_composite(stroke)
+            return ccv2.to_photo(img, master=self.app.root)
+
+        normal = bake(self.theme["list_bg"])
+        sel = bake(self.theme["list_sel"], self.theme["accent"])
+        return normal, sel
+
+    def _chip_image(self, kind):
+        if kind in self._chips:
+            return self._chips[kind]
+        import translator as _tr
+        from PIL import Image, ImageDraw
+        S = self.S
+        label = {
+            "text": i18n.get("history.tag.text"),
+            "dict": i18n.get("history.tag.dict"),
+            "code": i18n.get("history.tag.code"),
+            "ocr": i18n.get("history.tag.ocr"),
+        }.get(kind, i18n.get("history.tag.text"))
+        color = _TAG_COLORS.get(kind, ccv2.hex_to_rgb(self.theme["accent"]))
+        f = ccv2.load_font("bold", 9, self.scale)
+        probe = ImageDraw.Draw(Image.new("L", (4, 4)))
+        b = probe.textbbox((0, 0), label, font=f)
+        tw, th = b[2] - b[0], b[3] - b[1]
+        pad_x = S(9)
+        w = tw + pad_x * 2
+        h = S(22)
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        solid = Image.new("RGBA", (w, h), tuple(color) + (255,))
+        solid.putalpha(ccv2.rounded_mask(w, h, S(7)))
+        img.alpha_composite(solid)
+        d = ImageDraw.Draw(img)
+        d.text(((w - tw) / 2 - b[0], (h - th) / 2 - b[1]), label, font=f,
+               fill=(255, 255, 255, 255))
+        photo = ccv2.to_photo(img, master=self.app.root)
+        self._chips[kind] = photo
+        return photo
+
+    def _ellipsize(self, text, tkf, max_w):
+        text = " ".join((text or "").split())
+        if not text or tkf.measure(text) <= max_w:
+            return text
+        ell = "…"
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if tkf.measure(text[:mid] + ell) <= max_w:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo] + ell
+
+    def _relayout(self, force=False):
+        import translator as _tr
+        cv = self.cv
+        w = cv.winfo_width()
+        if w <= 1:
+            return
+        if not force and w == self._laid_w:
+            return
+        self._laid_w = w
+        cv.delete("all")
+        self._rows = []
+        card_w = w - self.pad * 2
+        self._card_normal, self._card_sel = self._card_images(card_w)
+        S = self.S
+        text_x = self.pad + S(14)  # chip left inside card
+        y = self.gap
+        for idx, e in enumerate(self.entries):
+            kind = _tr.history_entry_kind(e)
+            chip = self._chip_image(kind)
+            img = self._card_sel if idx == self.sel else self._card_normal
+            bg_id = cv.create_image(self.pad, y, anchor="nw", image=img)
+            chip_w = chip.width()
+            cv.create_image(text_x, y + self.card_h // 2, anchor="w", image=chip)
+            tx = text_x + chip_w + S(11)
+            avail = card_w - (tx - self.pad) - S(14)
+            title = _tr.history_entry_preview(e, limit=200)
+            title = self._ellipsize(title, self._title_font, avail)
+            when = _history_relative_time(e.get("ts", ""))
+            cv.create_text(tx, y + S(15), anchor="w", text=title,
+                           font=self._title_font, fill=self.theme["settings_fg"])
+            cv.create_text(tx, y + S(37), anchor="w", text=when,
+                           font=self._time_font, fill=self.theme["popup_hint"])
+            self._rows.append({"bg": bg_id, "y": y})
+            y += self.card_h + self.gap
+        cv.configure(scrollregion=(0, 0, w, max(y, cv.winfo_height())))
+
+    def _paint_selection(self):
+        for idx, row in enumerate(self._rows):
+            img = self._card_sel if idx == self.sel else self._card_normal
+            self.cv.itemconfigure(row["bg"], image=img)
+
+    def _scroll_to(self, i):
+        if i >= len(self._rows):
+            return
+        cv = self.cv
+        top = self._rows[i]["y"]
+        bottom = top + self.card_h
+        vh = cv.winfo_height()
+        y0 = cv.canvasy(0)
+        total = float(cv.cget("scrollregion").split()[-1] or 1)
+        if top < y0:
+            cv.yview_moveto(max(0, top - self.gap) / total)
+        elif bottom > y0 + vh:
+            cv.yview_moveto(max(0, bottom - vh + self.gap) / total)
+
+
 class HistoryMixin:
     """Translation-history window (mixed into TranslatorApp)."""
 
@@ -98,37 +380,48 @@ class HistoryMixin:
     def _build_history_titlebar(self, card, win, *, bg, border, accent, hint,
                                 font, v2=False, scale=1.0):
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bar.pack(fill="x", padx=16, pady=(12, 8))
+        if v2 and ccv2 is not None:
+            bar.pack(fill="x", padx=24, pady=(20, 14))
+        else:
+            bar.pack(fill="x", padx=16, pady=(12, 8))
         title_text = i18n.get("history.title")
         drag_targets = [bar]
 
         if v2 and ccv2 is not None:
-            # v2: real app logo (dark/light tile) + tri-colour brand-gradient
-            # title + ghost close button, matching the quick-input / result
-            # windows. No hairline divider (the v2 concept has none).
-            logo_img = self._v2_logo_image(20) or self._v2_badge_image(22)
+            # v2: a roomy brand header mirroring the POC — a larger app-mark tile,
+            # the tri-colour gradient title with a calm subtitle stacked beneath
+            # it, and a ghost close button. No hairline divider (the concept has
+            # none); the generous padding does the separating.
+            logo_img = self._v2_logo_image(30) or self._v2_badge_image(32)
             if logo_img:
                 logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
                                     highlightthickness=0)
                 logo_lbl.image = logo_img
-                logo_lbl.pack(side="left", padx=(0, 8), anchor="center")
+                logo_lbl.pack(side="left", padx=(0, 12), anchor="center")
                 drag_targets.append(logo_lbl)
+            heading = tk.Frame(bar, bg=bg, bd=0, highlightthickness=0)
+            heading.pack(side="left", anchor="center")
+            drag_targets.append(heading)
             title_img = self._v2_photo(
                 ("hist_title", title_text, round(scale, 2)),
                 lambda: ccv2.gradient_text(
-                    title_text, ccv2.load_font("bold", 13, scale)))
+                    title_text, ccv2.load_font("bold", 15, scale)))
             if title_img is not None:
-                title_lbl = tk.Label(bar, image=title_img, bg=bg, bd=0,
+                title_lbl = tk.Label(heading, image=title_img, bg=bg, bd=0,
                                      highlightthickness=0)
                 title_lbl.image = title_img
             else:
-                title_lbl = tk.Label(bar, text=title_text, bg=bg, fg=accent,
-                                     font=(font, 11, "bold"))
-            title_lbl.pack(side="left", anchor="center")
+                title_lbl = tk.Label(heading, text=title_text, bg=bg, fg=accent,
+                                     font=(font, 13, "bold"))
+            title_lbl.pack(side="top", anchor="w")
             drag_targets.append(title_lbl)
+            subtitle = tk.Label(heading, text=i18n.get("history.subtitle"),
+                                bg=bg, fg=hint, font=(font, 9))
+            subtitle.pack(side="top", anchor="w", pady=(2, 0))
+            drag_targets.append(subtitle)
             close_btn = self._v2_ghost_button(
                 bar, lambda: win.destroy(), icon="close", danger=True)
-            close_btn.pack(side="right")
+            close_btn.pack(side="right", anchor="n")
             self._make_draggable(tuple(drag_targets), win)
             return
 
@@ -153,7 +446,12 @@ class HistoryMixin:
         self._make_draggable(tuple(drag_targets), win)
         tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
-    def _build_history_views(self, card, *, width, bg, border, theme, font):
+    def _build_history_views(self, card, *, width, bg, border, theme, font,
+                             v2=False, scale=1.0):
+        if v2 and ccv2 is not None:
+            return self._build_history_views_v2(
+                card, width=width, border=border, theme=theme, font=font,
+                scale=scale)
         import translator as _tr
         # Bottom action bar — packed first so it always stays visible, with
         # themed flat buttons matching the rest of the app.
@@ -221,7 +519,78 @@ class HistoryMixin:
             "detail_head",
             font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
             foreground=theme["rich_heading_fg"], spacing1=2, spacing3=4)
-        return (bottom, listbox, detail, search_wrap, search, search_icon,
+        return (bottom, _ListboxHistoryList(self, listbox), detail, search_wrap,
+                search, search_icon, search_var, filter_var)
+
+    def _build_history_views_v2(self, card, *, width, border, theme, font,
+                                scale):
+        """The roomy POC-style history body: a full-width search over a card
+        list on the left, a filter pill over a floating detail card on the
+        right, and a generously padded action bar. Returns the same tuple shape
+        as the legacy builder, with a :class:`_CardHistoryList` adapter standing
+        in for the Listbox."""
+        import translator as _tr
+        panel = theme["bg"]
+        elev = theme["list_bg"]
+
+        # Action bar (bottom) — no hairline divider; the padding separates it.
+        bottom = tk.Frame(card, bg=panel)
+        bottom.pack(side="bottom", fill="x", padx=24, pady=(6, 18))
+
+        body = tk.Frame(card, bg=panel)
+        body.pack(side="top", fill="both", expand=True, padx=24, pady=(0, 4))
+
+        list_w = max(220, int(width * 0.38))
+        left = tk.Frame(body, bg=panel, width=list_w)
+        left.pack(side="left", fill="y", expand=False)
+        left.pack_propagate(False)
+        right = tk.Frame(body, bg=panel)
+        right.pack(side="left", fill="both", expand=True, padx=(18, 0))
+
+        # -- left column: big search over the card list --------------------
+        search_wrap = tk.Frame(left, bg=elev, bd=0, highlightthickness=1,
+                               highlightbackground=border)
+        search_wrap.pack(side="top", fill="x", pady=(0, 14))
+        search_var = tk.StringVar()
+        search = tk.Entry(
+            search_wrap, textvariable=search_var, bg=elev, fg=theme["fg"],
+            relief="flat", bd=0, insertbackground=theme["fg"],
+            highlightthickness=0, font=(font, 10))
+        search.pack(side="left", fill="x", expand=True, ipady=8, padx=(14, 0))
+        search_icon = tk.Label(search_wrap, text="⌕", bg=elev,
+                               fg=theme["popup_hint"],
+                               font=("Segoe UI Symbol", 11), padx=10)
+        search_icon.pack(side="right")
+
+        hlist = _CardHistoryList(self, left, theme=theme, font=font, scale=scale)
+        hlist.pack(side="top", fill="both", expand=True)
+
+        # -- right column: filter pill over the floating detail card -------
+        top_r = tk.Frame(right, bg=panel)
+        top_r.pack(side="top", fill="x", pady=(0, 14))
+        history_filter_labels = _tr.get_history_filter_labels()
+        filter_var = tk.StringVar(value=history_filter_labels["all"])
+        filt = ttk.Combobox(
+            top_r, textvariable=filter_var, state="readonly", width=7,
+            style="CC.TCombobox", font=(font, 9),
+            values=list(history_filter_labels.values()))
+        filt.pack(side="left")
+
+        detail_card = tk.Frame(right, bg=elev, bd=0, highlightthickness=1,
+                               highlightbackground=border)
+        detail_card.pack(side="top", fill="both", expand=True)
+        detail = tk.Text(
+            detail_card, bg=elev, fg=theme["fg"], wrap="word", relief="flat",
+            padx=18, pady=16, font=(font, self.cfg[CFG.FONT_SIZE]),
+            selectbackground=theme["sel_bg"], highlightthickness=0,
+            cursor="arrow")
+        detail.pack(fill="both", expand=True)
+        self._configure_rich_tags(detail)
+        detail.tag_configure(
+            "detail_head",
+            font=("Microsoft YaHei UI", int(self.cfg[CFG.FONT_SIZE]), "bold"),
+            foreground=theme["rich_heading_fg"], spacing1=2, spacing3=6)
+        return (bottom, hlist, detail, search_wrap, search, search_icon,
                 search_var, filter_var)
 
     def _populate_history_list(self, listbox, entries):
@@ -246,7 +615,7 @@ class HistoryMixin:
                 detail.insert("end", chunk)
         detail.config(state="disabled")
 
-    def _wire_history_interactions(self, win, listbox, detail, entries,
+    def _wire_history_interactions(self, win, hlist, detail, entries,
                                    bottom, theme, font, search_wrap, search,
                                    search_icon, search_var, filter_var,
                                    v2=False, scale=1.0):
@@ -327,10 +696,9 @@ class HistoryMixin:
             win.after_idle(sync_search_adornment)
 
         def selected_entry():
-            sel = listbox.curselection()
-            if not sel:
+            idx = hlist.selected_index()
+            if idx is None:
                 return None
-            idx = sel[0]
             if idx >= len(state["shown"]):
                 return None
             return state["shown"][idx]
@@ -351,16 +719,13 @@ class HistoryMixin:
                 state["all"], search_var.get(),
                 kind_by_label.get(filter_var.get(), "all"))
             state["shown"] = shown
-            listbox.delete(0, "end")
-            self._populate_history_list(listbox, shown)
+            hlist.render(shown)
             if not shown:
                 set_status(i18n.get("history.matches_zero"))
                 show_detail()
                 return
             idx = shown.index(current) if current in shown else 0
-            listbox.selection_set(idx)
-            listbox.activate(idx)
-            listbox.see(idx)
+            hlist.select(idx)
             set_status(i18n.get("history.matches_count").format(
                 shown=len(shown), total=len(state["all"])))
             show_detail()
@@ -434,7 +799,7 @@ class HistoryMixin:
         hist_btn(i18n.get("history.copy_result"), copy_output).pack(
             side="right", padx=(0, 8), pady=(4, 12))
 
-        listbox.bind("<<ListboxSelect>>", show_detail)
+        hlist.bind_select(show_detail)
         win.bind("<ButtonPress-1>", on_window_click, add="+")
         search_wrap.bind("<Button-1>", focus_search, add="+")
         search_icon.bind("<Button-1>", focus_search, add="+")
@@ -509,11 +874,12 @@ class HistoryMixin:
             font=FONT, v2=v2on, scale=scale)
 
         entries = _tr.load_history()
-        (bottom, listbox, detail, search_wrap, search, search_icon,
+        (bottom, hlist, detail, search_wrap, search, search_icon,
          search_var, filter_var) = self._build_history_views(
-            card, width=w, bg=bg, border=border, theme=t, font=FONT)
+            card, width=w, bg=bg, border=border, theme=t, font=FONT,
+            v2=v2on, scale=scale)
         self._wire_history_interactions(
-            win, listbox, detail, entries, bottom, t, FONT, search_wrap, search,
+            win, hlist, detail, entries, bottom, t, FONT, search_wrap, search,
             search_icon, search_var, filter_var, v2=v2on, scale=scale)
 
         # ---- Reveal centred, staying above the (topmost) settings window ----
