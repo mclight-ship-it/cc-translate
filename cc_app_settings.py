@@ -606,7 +606,7 @@ class SettingsMixin:
             # no tagline) and no hairline divider — the generous padding does the
             # separating.
             bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-            bar.pack(fill="x", padx=24, pady=(20, 14))
+            bar.pack(fill="x", padx=44, pady=(20, 14))
             self._v2_brand_header(
                 bar, win, title=i18n.get("settings.title"),
                 subtitle=None,
@@ -641,7 +641,7 @@ class SettingsMixin:
             tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
 
         body = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=20, pady=(14, 6))
+        body.pack(fill="both", expand=True, padx=44, pady=(14, 6))
 
         # Two columns side by side so the panel stays short instead of one long
         # vertical strip. Each column is an independent label|widget grid with
@@ -649,7 +649,7 @@ class SettingsMixin:
         # the same height. The section code below is unchanged — we just alias
         # `body`/`row_state` to the active column before each group.
         left_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 30))
         # Weighted spacer columns on either side of the divider soak up any extra
         # window width (e.g. the room reserved for the update button) evenly, so
         # the two columns sit against the left/right edges with the divider
@@ -662,7 +662,7 @@ class SettingsMixin:
         body.grid_columnconfigure(4, minsize=SETTINGS_COL_MIN_W,
                                   uniform="settings_cols")
         right_col = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        right_col.grid(row=0, column=4, sticky="nsew", padx=(16, 0))
+        right_col.grid(row=0, column=4, sticky="nsew", padx=(30, 0))
         for _col in (left_col, right_col):
             _col.grid_columnconfigure(0, weight=1)
             _col.grid_columnconfigure(1, minsize=140)
@@ -930,7 +930,7 @@ class SettingsMixin:
             tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16,
                                                       pady=(4, 0))
         footer = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-        footer.pack(fill="x", padx=20, pady=(10, 14))
+        footer.pack(fill="x", padx=44, pady=(10, 14))
 
         # Uninstall sits far left, deliberately separated from the save/close
         # actions on the right so it can't be hit by accident.
