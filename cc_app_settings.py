@@ -417,7 +417,7 @@ class SettingsMixin:
                 fieldbackground=field_bg, background=field_bg,
                 foreground=fg,
                 bordercolor=field_bg, lightcolor=border, darkcolor=field_bg,
-                relief="flat", borderwidth=1, padding=6,
+                relief="flat", borderwidth=1, padding=(12, 6, 8, 6),
             )
             style.map(
                 name,
@@ -449,7 +449,7 @@ class SettingsMixin:
         # borderWidth of 0 made the text hug the side). relief=flat keeps it an
         # invisible inset rather than a drawn border line.
         self.root.option_add("*TCombobox*Listbox.relief", "flat")
-        self.root.option_add("*TCombobox*Listbox.borderWidth", 6)
+        self.root.option_add("*TCombobox*Listbox.borderWidth", 10)
         self.root.option_add("*TCombobox*Listbox.font", "{Microsoft YaHei UI} 10")
 
     def _make_toggle(self, parent, initial, bg):

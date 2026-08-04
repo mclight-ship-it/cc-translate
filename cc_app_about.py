@@ -101,8 +101,11 @@ class AboutMixin:
             tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
         # ---- Content (vertically centered) ----
+        # v2 gets roomy side margins (matching the settings window) so the card
+        # doesn't feel cramped; legacy keeps its tighter fixed-box padding.
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=20, pady=24)
+        body.pack(fill="both", expand=True, padx=(44 if v2on else 20),
+                  pady=24)
 
         # Wrapper frame for content to center vertically in body
         content_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)

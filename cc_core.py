@@ -784,6 +784,9 @@ POPUP_BODY_PAD_BOTTOM = 10
 POPUP_TEXT_PAD_X = 16
 POPUP_TEXT_PAD_Y = 12
 LOADING_CORNER_RADIUS = 11
+# v2 loading hint uses a slightly larger radius so its rounded, frosted plate
+# reads as part of the v2 window family (settings/history/about/result).
+LOADING_CORNER_RADIUS_V2 = 16
 
 # Centred-layout popup and history-window sizes (see translator.pyw notes).
 CENTERED_POPUP_W = 552

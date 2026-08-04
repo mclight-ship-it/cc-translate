@@ -26,7 +26,7 @@ from cc_rich import iter_rich_segments
 from cc_core import (
     APP_NAME, CFG, ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     POPUP_CORNER_RADIUS, V2_CORNER_RADIUS, ROUND_KEY_COLOR,
-    LOADING_SPINNER, LOADING_CORNER_RADIUS,
+    LOADING_SPINNER, LOADING_CORNER_RADIUS, LOADING_CORNER_RADIUS_V2,
     MIN_POPUP_HEIGHT_COMPACT,
     STREAM_OPEN_MIN_LINES,
     MIN_RESIZE_WIDTH,
@@ -197,23 +197,40 @@ def _draw_round_rect(cv, x1, y1, x2, y2, r, **kwargs):
 class PopupMixin:
     def _make_loading_popup(self):
         """A compact, modern 'translating' card: an accent-coloured spinner
-        next to a muted label. Borderless, rounded, no toolbar/scrollbar."""
+        next to a muted label. Borderless, rounded, no toolbar/scrollbar.
+
+        v2 skin: the same little card repainted with the frosted navy plate +
+        brand-gradient hairline shell shared by the other v2 windows, an accent
+        (violet) spinner and a calm sub-coloured label — gated on
+        ``_v2_popup_on()`` so the flag-off path stays byte-for-byte legacy."""
+        v2on = self._v2_popup_on()
         win = tk.Toplevel(self.root)
         win.withdraw()
         win.overrideredirect(True)
 
-        popup_bg = self.theme.get("popup_bg", self.theme["bg"])
-        popup_border = self.theme.get("popup_border", self.theme["border"])
-        popup_hint = self.theme.get("popup_hint", self.theme["hint_fg"])
-        accent = self.theme.get("accent", "#7aa2f7")
+        if v2on:
+            t = self._v2_window_theme()
+            popup_bg = t["bg"]
+            popup_border = t["popup_border"]
+            popup_hint = t["popup_hint"]
+            accent = t["accent"]
+            radius = LOADING_CORNER_RADIUS_V2
+        else:
+            popup_bg = self.theme.get("popup_bg", self.theme["bg"])
+            popup_border = self.theme.get("popup_border", self.theme["border"])
+            popup_hint = self.theme.get("popup_hint", self.theme["hint_fg"])
+            accent = self.theme.get("accent", "#7aa2f7")
+            radius = LOADING_CORNER_RADIUS
 
         # Rounded corners via a transparent colour key (genuinely transparent on
-        # this environment, unlike SetWindowRgn cut-outs which render black).
-        card = self._rounded_shell(win, LOADING_CORNER_RADIUS,
-                                   popup_bg, popup_border)
+        # this environment, unlike SetWindowRgn cut-outs which render black). The
+        # v2 flag routes _rounded_shell to the frosted gradient-hairline shell.
+        win._v2 = v2on
+        win._v2_resizable = False
+        card = self._rounded_shell(win, radius, popup_bg, popup_border)
 
         row = tk.Frame(card, bg=popup_bg, bd=0, highlightthickness=0)
-        row.pack(padx=20, pady=14)
+        row.pack(padx=(22 if v2on else 20), pady=(15 if v2on else 14))
 
         spinner = tk.Label(
             row,
@@ -239,9 +256,11 @@ class PopupMixin:
         win._hint_label = hint
 
         win.update_idletasks()
-        radius = LOADING_CORNER_RADIUS
-        w = card.winfo_reqwidth() + 2 * radius
-        h = card.winfo_reqheight() + 2 * radius
+        # The v2 shell insets the content card by _card_inset (not the full
+        # radius), so pad the measured size by whichever the active shell used.
+        inset = int(getattr(win, "_card_inset", radius))
+        w = card.winfo_reqwidth() + 2 * inset
+        h = card.winfo_reqheight() + 2 * inset
         if self._is_centered_layout():
             # Centre the small hint where the fixed result card will appear, so
             # there is no positional jump when the result replaces it.
