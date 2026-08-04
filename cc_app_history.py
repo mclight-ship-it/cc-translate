@@ -156,7 +156,11 @@ class _CardHistoryList:
         self.S = S
         self.card_h = S(54)
         self.gap = S(9)
-        self.pad = S(2)
+        # No horizontal inset: the cards fill the full column width so their left
+        # and right edges line up exactly with the search field above (which is a
+        # full-width canvas). A non-zero pad made the cards a couple of px
+        # narrower and shifted them right, so neither edge matched the search box.
+        self.pad = 0
         # NEGATIVE tk font sizes are DEVICE PIXELS, so the title/time render at a
         # size we control exactly — the old positive point sizes got scaled AGAIN
         # by the 1.5x display DPI, which is why the title ballooned. Title now
@@ -214,7 +218,9 @@ class _CardHistoryList:
     def _on_click(self, e):
         y = self.cv.canvasy(e.y)
         step = self.card_h + self.gap
-        idx = int((y - self.gap) // step)
+        # Cards start at y=0 (first card hugs the top), so the row index is a
+        # plain floor by the row pitch — no leading-gap offset to subtract.
+        idx = int(y // step)
         if 0 <= idx < len(self.entries):
             self.select(idx)
             if self._cb:
