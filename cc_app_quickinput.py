@@ -272,7 +272,7 @@ class QuickInputMixin:
             # hard clip line at the canvas top/bottom. The visible box is a
             # rounded RECTANGLE (small radius vs height), not a stadium pill, to
             # match the concept.
-            field_h = ccv2.scaled(72, scale)
+            field_h = ccv2.scaled(108, scale)
             radius = ccv2.scaled(9, scale)
             fcanvas = tk.Canvas(body, bg=bg, bd=0, highlightthickness=0,
                                 height=field_h)
