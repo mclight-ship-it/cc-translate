@@ -22,7 +22,8 @@ import i18n
 
 from win32util import get_monitor_rect
 from cc_update import version_string, remove_shortcuts, spawn_uninstaller
-from cc_core import APP_DIR, DATA_DIR, log_error, POPUP_CORNER_RADIUS
+from cc_core import (APP_DIR, DATA_DIR, log_error, POPUP_CORNER_RADIUS,
+                     V2_CORNER_RADIUS)
 
 
 class AboutMixin:
@@ -37,7 +38,9 @@ class AboutMixin:
             self._bring_to_front(self.about_win)
             return
 
-        t = self.theme
+        v2on = self._v2_popup_on()
+        scale = self._ui_scale() if v2on else 1.0
+        t = self._v2_window_theme() if v2on else self.theme
         bg = t["settings_bg"]
         fg = t["settings_fg"]
         border = t["popup_border"]
@@ -51,33 +54,51 @@ class AboutMixin:
         win.lift()
         win.focus_force()
         self.about_win = win
+        # v2 skin: frosted rounded shell + shared brand header. Fixed-size card,
+        # so its whole ring drags (never resizes).
+        win._v2 = v2on
+        win._v2_resizable = False
 
-        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+        radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+        card = self._rounded_shell(win, radius, bg, border)
 
         # ---- Title bar ----
-        bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bar.pack(fill="x", padx=16, pady=(12, 8))
-        logo_img = self._logo_image(18)
-        drag_targets = [bar]
-        if logo_img:
-            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
-                                highlightthickness=0)
-            logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 8))
-            drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=i18n.get("about.title"), bg=bg,
-                             fg=accent, font=(FONT, 11, "bold"))
-        title_lbl.pack(side="left")
-        drag_targets.append(title_lbl)
-        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
-                             font=(FONT, 11), cursor="hand2", padx=6)
-        close_btn.pack(side="right")
-        close_btn.bind("<Button-1>", lambda e: win.destroy())
-        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
-        self._make_draggable(tuple(drag_targets), win)
+        if v2on:
+            # Shared v2 chrome: brand tile + gradient title + ghost close. No
+            # subtitle (the hero logo/name/description below carry the identity)
+            # and no hairline divider — the roomy padding does the separating.
+            bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+            bar.pack(fill="x", padx=24, pady=(20, 14))
+            self._v2_brand_header(
+                bar, win, title=i18n.get("about.title"),
+                subtitle=None,
+                bg=bg, hint=hint, accent=accent, font=FONT, scale=scale,
+                cache_tag="about_title")
+        else:
+            bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
+            bar.pack(fill="x", padx=16, pady=(12, 8))
+            logo_img = self._logo_image(18)
+            drag_targets = [bar]
+            if logo_img:
+                logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                    highlightthickness=0)
+                logo_lbl.image = logo_img
+                logo_lbl.pack(side="left", padx=(0, 8))
+                drag_targets.append(logo_lbl)
+            title_lbl = tk.Label(bar, text=i18n.get("about.title"), bg=bg,
+                                 fg=accent, font=(FONT, 11, "bold"))
+            title_lbl.pack(side="left")
+            drag_targets.append(title_lbl)
+            close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
+                                 font=(FONT, 11), cursor="hand2", padx=6)
+            close_btn.pack(side="right")
+            close_btn.bind("<Button-1>", lambda e: win.destroy())
+            close_btn.bind("<Enter>",
+                           lambda e: close_btn.config(fg=t["status_err"]))
+            close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+            self._make_draggable(tuple(drag_targets), win)
 
-        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+            tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
         # ---- Content (vertically centered) ----
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
@@ -186,7 +207,23 @@ class AboutMixin:
 
         win.bind("<Escape>", lambda e: win.destroy())
 
-        w, h, x, y = self._centered_box()
+        # v2 hugs its measured content (like settings); legacy uses the fixed
+        # centred box and lets the content centre inside it.
+        if v2on:
+            win.update_idletasks()
+            ci = int(getattr(win, "_card_inset", radius))
+            w = card.winfo_reqwidth() + 2 * ci
+            h = card.winfo_reqheight() + 2 * ci
+            rect = get_monitor_rect()
+            if rect:
+                left, top, right, bottom = rect
+                x = left + (right - left - w) // 2
+                y = top + (bottom - top - h) // 2
+            else:
+                sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+                x, y = (sw - w) // 2, (sh - h) // 2
+        else:
+            w, h, x, y = self._centered_box()
         self._reveal_rounded_window(win, w, h, x, y)
 
     def _confirm_and_uninstall(self):
