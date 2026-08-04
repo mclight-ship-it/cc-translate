@@ -27,6 +27,13 @@ from cc_core import (
     is_single_word, log_error,
 )
 
+# Optional v2 renderer (needs Pillow). Guarded so a missing Pillow never breaks
+# the result actions; every v2 path also gates on getattr(win, "_v2", False).
+try:
+    import cc_ui_v2 as ccv2
+except Exception:
+    ccv2 = None
+
 
 class ResultActionsMixin:
     def _maybe_add_explain_button(self, win):
@@ -100,36 +107,61 @@ class ResultActionsMixin:
         if bar is None or mk is None:
             return
         try:
-            t = self.theme
-            menu = tk.Menu(
-                win, tearoff=0,
-                bg=t.get("popup_bg", t["bg"]), fg=t["fg"],
-                activebackground=t["accent"], activeforeground="#ffffff",
-                bd=0, relief="flat",
-                font=("Microsoft YaHei UI", 9))
-            if self._last_input:
-                for code, (zh_name, en_name) in LANGUAGES.items():
-                    lang_name = self._language_display_name(code, zh_name, en_name)
-                    menu.add_command(
-                        label=i18n.get("result.retranslate_to").format(language=lang_name),
-                        command=lambda c=code: self._retranslate_to(c))
-                menu.add_separator()
-                menu.add_command(label=i18n.get("result.copy_bilingual"), command=self._copy_bilingual_result)
-                menu.add_separator()
-            for mode in ("concise", "formal", "summary"):
-                label_key = RESULT_ACTION_PROMPTS[mode][0]
-                menu.add_command(
-                    label=i18n.get(label_key),
-                    command=lambda m=mode: self._transform_result(m))
+            items = self._build_result_action_items()
+            win._actions_items = items
+            win_v2 = bool(getattr(win, "_v2", False)) and ccv2 is not None
+            if not win_v2:
+                t = self.theme
+                menu = tk.Menu(
+                    win, tearoff=0,
+                    bg=t.get("popup_bg", t["bg"]), fg=t["fg"],
+                    activebackground=t["accent"], activeforeground="#ffffff",
+                    bd=0, relief="flat",
+                    font=("Microsoft YaHei UI", 9))
+                for kind, label, cmd in items:
+                    if kind == "sep":
+                        menu.add_separator()
+                    else:
+                        menu.add_command(label=label, command=cmd)
+                win._actions_menu = menu
             btn = mk(i18n.get("result.actions"), lambda: self._show_result_actions_menu(win))
             btn.pack(side="right", padx=(0, 4))
             win._actions_btn = btn
-            win._actions_menu = menu
             win._has_actions_btn = True
         except Exception:
             pass
 
+    def _build_result_action_items(self):
+        """The post-result action menu contents as a list of
+        ``(kind, label, command)`` tuples (``kind`` is 'cmd' or 'sep'). Shared by
+        the legacy native tk.Menu and the v2 custom dropdown so both stay in
+        sync: alternate-language retranslation, bilingual copy, and one-click
+        rewrites (concise / formal / summary)."""
+        items = []
+        if self._last_input:
+            for code, (zh_name, en_name) in LANGUAGES.items():
+                lang_name = self._language_display_name(code, zh_name, en_name)
+                items.append((
+                    "cmd",
+                    i18n.get("result.retranslate_to").format(language=lang_name),
+                    (lambda c=code: self._retranslate_to(c))))
+            items.append(("sep", None, None))
+            items.append((
+                "cmd", i18n.get("result.copy_bilingual"),
+                self._copy_bilingual_result))
+            items.append(("sep", None, None))
+        for mode in ("concise", "formal", "summary"):
+            label_key = RESULT_ACTION_PROMPTS[mode][0]
+            items.append((
+                "cmd", i18n.get(label_key),
+                (lambda m=mode: self._transform_result(m))))
+        return items
+
     def _show_result_actions_menu(self, win):
+        # v2 gets a modern rounded dropdown; legacy keeps the native tk.Menu.
+        if bool(getattr(win, "_v2", False)) and ccv2 is not None:
+            self._show_v2_actions_menu(win)
+            return
         menu = getattr(win, "_actions_menu", None)
         btn = getattr(win, "_actions_btn", None)
         if menu is None or btn is None:
@@ -143,6 +175,121 @@ class ResultActionsMixin:
                 menu.grab_release()
             except Exception:
                 pass
+
+    def _show_v2_actions_menu(self, win):
+        """A modern rounded dropdown for the v2 result popup: a deep-navy card
+        with a thin brand hairline, soft item hover, and drawn separators — the
+        native tk.Menu looked dated (system-grey, hard border) against the v2
+        skin. Toggles closed if already open; dismisses on Escape / focus-out /
+        item click."""
+        btn = getattr(win, "_actions_btn", None)
+        if btn is None:
+            return
+        existing = getattr(self, "_v2_actions_menu_win", None)
+        if existing is not None:
+            try:
+                if tk.Toplevel.winfo_exists(existing):
+                    existing.destroy()
+            except Exception:
+                pass
+            self._v2_actions_menu_win = None
+            return
+        items = getattr(win, "_actions_items", None) or \
+            self._build_result_action_items()
+        if not items:
+            return
+
+        pal = self._v2_palette()
+        scale = self._ui_scale()
+        colors = self._v2_tk_colors()
+        panel = colors["panel"]
+        sep_col = colors["border"]
+        fg = ccv2.rgb_to_hex(pal["fg"])
+        sub = colors["hint"]
+        hover_bg = (ccv2.rgb_to_hex((46, 51, 96)) if pal["is_dark"]
+                    else ccv2.rgb_to_hex((228, 232, 246)))
+
+        menu = tk.Toplevel(win)
+        menu.withdraw()
+        menu.overrideredirect(True)
+        menu._v2 = True
+        menu._v2_resizable = False
+        self._v2_actions_menu_win = menu
+
+        def _close():
+            try:
+                menu.destroy()
+            finally:
+                if getattr(self, "_v2_actions_menu_win", None) is menu:
+                    self._v2_actions_menu_win = None
+
+        def _on_destroy(_e=None):
+            if getattr(self, "_v2_actions_menu_win", None) is menu:
+                self._v2_actions_menu_win = None
+        menu.bind("<Destroy>", _on_destroy, add="+")
+
+        radius = ccv2.scaled(14, scale)
+        card = self._rounded_shell(menu, radius, panel, sep_col)
+        inner = tk.Frame(card, bg=panel, bd=0, highlightthickness=0)
+        inner.pack(fill="both", expand=True,
+                   padx=ccv2.scaled(6, scale), pady=ccv2.scaled(6, scale))
+        FONT = ("Microsoft YaHei UI", 10)
+
+        ipadx = ccv2.scaled(12, scale)
+        ipady = ccv2.scaled(6, scale)
+        for kind, label, cmd in items:
+            if kind == "sep":
+                tk.Frame(inner, bg=sep_col, height=1, bd=0,
+                         highlightthickness=0).pack(
+                             fill="x", padx=ccv2.scaled(10, scale),
+                             pady=ccv2.scaled(4, scale))
+                continue
+            it = tk.Label(inner, text=label, bg=panel, fg=fg, anchor="w",
+                          font=FONT, padx=ipadx, pady=ipady, cursor="hand2",
+                          bd=0, highlightthickness=0)
+            it.pack(fill="x")
+            it.bind("<Enter>", lambda e, w=it: w.config(bg=hover_bg))
+            it.bind("<Leave>", lambda e, w=it: w.config(bg=panel))
+            it.bind("<Button-1>",
+                    lambda e, c=cmd: (_close(), c() if c else None))
+
+        menu.update_idletasks()
+        card.update_idletasks()
+        ci = int(getattr(menu, "_card_inset", radius))
+        w = card.winfo_reqwidth() + 2 * ci
+        h = card.winfo_reqheight() + 2 * ci
+
+        gap = ccv2.scaled(6, scale)
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height() + gap
+        x, y = self._clamp_to_monitor(x, y, w, h, ref=(x, y))
+
+        self._record_v2_size(menu, w, h)
+        menu.geometry(f"{w}x{h}+{x}+{y}")
+        menu.deiconify()
+        menu.update_idletasks()
+        try:
+            menu._round_redraw()
+        except Exception:
+            pass
+        try:
+            menu.attributes("-topmost", True)
+        except Exception:
+            pass
+        menu.lift()
+        menu.focus_force()
+
+        # Arm outside-dismiss only after construction so the initial focus
+        # settling doesn't immediately close the menu.
+        menu._armed = False
+
+        def _arm():
+            menu._armed = True
+        menu.after(180, _arm)
+        menu.bind("<Escape>", lambda e: _close())
+        menu.bind(
+            "<FocusOut>",
+            lambda e: _close() if getattr(menu, "_armed", False) else None)
 
     def _retranslate_to(self, code):
         src = self._last_input

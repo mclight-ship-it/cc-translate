@@ -587,6 +587,9 @@ class PopupMixin:
         # shell) and swap the content colours to the deep-navy palette. Legacy
         # is untouched when the flag is off — win._v2 stays False.
         win._v2 = self._v2_popup_on()
+        # The result popup is edge-resizable (the thin v2 ring falls through to
+        # the resize handler; see _rounded_shell_v2 and _resize_hit).
+        win._v2_resizable = True
         if win._v2:
             v2c = self._v2_tk_colors()
             popup_bg = v2c["panel"]
@@ -1150,11 +1153,38 @@ class PopupMixin:
         item = cv.create_window(card_inset, card_inset, anchor="nw",
                                 window=card)
         # The thin navy band around the card belongs to this canvas, not the
-        # card, so the header/body drag bindings never covered it. Bind the
-        # canvas itself so the whole ring drags the window (v2 result windows
-        # also disable edge-resize in _resize_hit, so the ring is purely a drag
-        # surface and never turns into an accidental resize grip).
-        self._make_draggable((cv,), win)
+        # card, so the header/body drag bindings never covered it. Make the ring
+        # a drag surface — but on a resizable window (the result popup) a press
+        # that lands in the edge resize zone must fall through to the window-
+        # level resize handler instead of starting a move, so grabbing an edge
+        # still resizes. The quick-input window is not resizable, so its whole
+        # ring simply drags.
+        off = {"x": 0, "y": 0, "active": False}
+
+        def _ring_press(e):
+            if (getattr(win, "_v2_resizable", False)
+                    and self._resize_hit(win, e.x, e.y)):
+                off["active"] = False
+                return
+            off["x"], off["y"], off["active"] = e.x, e.y, True
+
+        def _ring_move(e):
+            if not off.get("active"):
+                return
+            if getattr(win, "_v2_resizable", False) and self._resize_mode:
+                return
+            wx, wy = self._window_xy(win)
+            nx = int(wx + e.x - off["x"])
+            ny = int(wy + e.y - off["y"])
+            win.geometry(f"+{nx}+{ny}")
+            self._remember_window_xy(win, nx, ny)
+
+        def _ring_release(_e):
+            off["active"] = False
+
+        cv.bind("<Button-1>", _ring_press)
+        cv.bind("<B1-Motion>", _ring_move)
+        cv.bind("<ButtonRelease-1>", _ring_release)
 
         def _redraw(event=None):
             # A <Configure> event carries the ACTUAL new canvas size (the WM has
@@ -1533,10 +1563,10 @@ class PopupMixin:
         return self._scaled_centered_box(HISTORY_WINDOW_W, HISTORY_WINDOW_H)
 
     def _resize_hit(self, win, x, y):
-        # v2 result windows auto-size to content and grow while streaming; manual
-        # edge-resize on the (now thin) navy ring only caused accidental resizes
-        # when the user meant to drag, so v2 windows are drag-only.
-        if getattr(win, "_v2", False):
+        # v2 result windows are edge-resizable; the quick-input window sets
+        # win._v2_resizable = False so it stays a fixed-size card. Legacy windows
+        # have no flag and resize as before.
+        if getattr(win, "_v2", False) and not getattr(win, "_v2_resizable", True):
             return ""
         w, h = win.winfo_width(), win.winfo_height()
         # Overrideredirect windows can report slightly off local coordinates,

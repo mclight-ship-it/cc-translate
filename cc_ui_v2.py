@@ -243,13 +243,21 @@ def radial_glow(size, color, strength=1.0):
     return out
 
 
-def rounded_mask(w, h, r):
-    """An L-mode rounded-rectangle alpha mask."""
+def rounded_mask(w, h, r, ss=4):
+    """An L-mode rounded-rectangle alpha mask with anti-aliased corners.
+
+    PIL's ``rounded_rectangle`` is not anti-aliased, so at button sizes the
+    corners come out visibly stair-stepped/jagged. Rendering the mask at ``ss``x
+    and downsampling with LANCZOS gives smooth, rounded corners (used by every
+    gradient pill/tile via ``gradient_round``)."""
     w = max(1, int(w))
     h = max(1, int(h))
-    m = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(m).rounded_rectangle((0, 0, w - 1, h - 1), radius=int(r),
-                                        fill=255)
+    r = max(0, int(r))
+    m = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(m).rounded_rectangle(
+        (0, 0, w * ss - 1, h * ss - 1), radius=r * ss, fill=255)
+    if ss != 1:
+        m = m.resize((w, h), Image.LANCZOS)
     return m
 
 
@@ -718,9 +726,9 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
     # small enough that, with the caller's generous inset, the bloom fades to
     # ~0 before the image edge (no hard clip line around the glow).
     for grow, alpha_f, blur in (
-            (scaled(4, scale), (0.26, 0.40), 8),
-            (scaled(2, scale), (0.42, 0.62), 5),
-            (0, (0.60, 0.88), 3)):
+            (scaled(3, scale), (0.26, 0.40), 6),
+            (scaled(1, scale), (0.42, 0.62), 4),
+            (0, (0.62, 0.90), 2)):
         glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
         ImageDraw.Draw(glow).rounded_rectangle(

@@ -52,7 +52,7 @@ class QuickInputMixin:
         inset is generous so the violet bloom fully fades to transparent inside
         the image instead of being clipped at the edge (which showed a hard
         line)."""
-        inset = ccv2.scaled(20, scale)
+        inset = ccv2.scaled(15, scale)
         photo = self._v2_photo(
             ("qi_field", int(w), int(h), round(scale, 2), bool(focused)),
             lambda: ccv2.bake_input_field(w, h, radius, pal, scale, focused,
@@ -193,15 +193,18 @@ class QuickInputMixin:
         win.bind("<Destroy>", _on_destroy, add="+")
 
         win._v2 = v2on
+        # The quick-input window is a fixed-size card, so its whole ring drags
+        # (never resizes); _resize_hit reads this flag.
+        win._v2_resizable = False
         _radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
         card = self._rounded_shell(win, _radius, bg, border)
 
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bar.pack(fill="x", padx=16, pady=(12, 8))
+        bar.pack(fill="x", padx=12, pady=(12, 6))
         # v2: align the logo's left edge with the input field's rounded-left
         # (the field is inset by ~this margin inside its canvas), so the icon,
         # the field box and the footer text all share one left column.
-        field_inset = ccv2.scaled(20, scale) if (v2on and ccv2 is not None) else 0
+        field_inset = ccv2.scaled(15, scale) if (v2on and ccv2 is not None) else 0
         if v2on and ccv2 is not None:
             logo_img = self._v2_logo_image(22) or self._v2_badge_image(24)
         else:
@@ -252,7 +255,7 @@ class QuickInputMixin:
             tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
+        body.pack(fill="both", expand=True, padx=12, pady=(2, 2))
 
         # Keep quick-input font aligned with app font settings to avoid an
         # oversized editor, while keeping a readable lower bound.
@@ -264,11 +267,13 @@ class QuickInputMixin:
             # the Text sits inside via create_window so no ugly scrollbar shows.
             panel_rgb = ccv2.hex_to_rgb(bg)
             editor_bg = ccv2.rgb_to_hex(ccv2.over(pal["field"], panel_rgb))
-            # Field canvas is taller than the visible pill so the violet bloom
-            # (baked with a 20px transparent inset) fades fully inside the image
-            # — no hard clip line at the canvas top/bottom.
-            field_h = ccv2.scaled(66, scale)
-            radius = ccv2.scaled(13, scale)
+            # Field canvas is taller than the visible box so the violet bloom
+            # (baked with a transparent inset) fades fully inside the image — no
+            # hard clip line at the canvas top/bottom. The visible box is a
+            # rounded RECTANGLE (small radius vs height), not a stadium pill, to
+            # match the concept.
+            field_h = ccv2.scaled(62, scale)
+            radius = ccv2.scaled(9, scale)
             fcanvas = tk.Canvas(body, bg=bg, bd=0, highlightthickness=0,
                                 height=field_h)
             # No expand: the window is sized to content (below), so the field
