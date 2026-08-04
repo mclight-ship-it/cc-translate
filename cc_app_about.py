@@ -69,7 +69,7 @@ class AboutMixin:
             # carries the identity, so the top strip is just a draggable bar with
             # a ghost close button — no repeated brand tile / "关于" title.
             bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-            bar.pack(fill="x", padx=20, pady=(16, 0))
+            bar.pack(fill="x", padx=20, pady=(12, 0))
             close_btn = self._v2_ghost_button(
                 bar, lambda: win.destroy(), icon="close", danger=True)
             close_btn.pack(side="right", anchor="n")
@@ -105,7 +105,7 @@ class AboutMixin:
         # doesn't feel cramped; legacy keeps its tighter fixed-box padding.
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         body.pack(fill="both", expand=True, padx=(56 if v2on else 20),
-                  pady=(20 if v2on else 24, 30 if v2on else 24))
+                  pady=(12 if v2on else 24, 30 if v2on else 24))
 
         # Wrapper frame for content to center vertically in body
         content_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
@@ -269,7 +269,7 @@ class AboutMixin:
             logo_large_lbl = tk.Label(content_frame, image=hero_logo,
                                       bg=bg, bd=0, highlightthickness=0)
             logo_large_lbl.image = hero_logo
-            logo_large_lbl.pack(pady=(4, 10))
+            logo_large_lbl.pack(pady=(0, 2))
         else:
             fallback = self._logo_image(56)
             if fallback:
@@ -297,7 +297,7 @@ class AboutMixin:
 
         desc_lbl = tk.Label(content_frame, text=i18n.get("about.description"),
                             bg=bg, fg=hint, font=(FONT, 10))
-        desc_lbl.pack(pady=(0, 26))
+        desc_lbl.pack(pady=(0, 34))
 
         # ---- Version pill (click → in-Settings check-update flow) ----
         version_str = version_string()
@@ -337,7 +337,7 @@ class AboutMixin:
         github_url = "https://github.com/mclight-ship-it/cc-translate"
         email_addr = i18n.get("about.author_email")
         footer = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
-        footer.pack(pady=(30, 4))
+        footer.pack(pady=(40, 4))
 
         gh_btn = self._v2_soft_button(
             footer, "GitHub", lambda: self._open_url(github_url), icon="code")

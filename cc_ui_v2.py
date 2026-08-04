@@ -165,6 +165,12 @@ _MDL2_GLYPHS = {"copy": "\uE8C8", "pin": "\uE718", "close": "\uE711",
                 "retry": "\uE72C", "mail": "\uE715", "code": "\uE943",
                 "coffee": "\uEC32"}
 
+# Per-glyph optical vertical nudge (design px, +down). MDL2 ink bounds don't
+# match a glyph's visual centre of mass, so a couple of icons read a hair high
+# even when geometrically ink-centred. Push those down a touch so icon + CJK
+# label share one optical baseline.
+_ICON_DY = {"mail": 1.0, "coffee": 1.0}
+
 
 def icon_font(px):
     """Load Segoe MDL2 Assets at ``px`` pixels for drawing icon glyphs, or
@@ -572,7 +578,7 @@ def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.7, dy_frac=0.1,
     if not PIL_OK or logo_rgba is None:
         return logo_rgba
     s = logo_rgba.width
-    pad = int(round(s * 0.6))
+    pad = int(round(s * 0.42))
     W = s + pad * 2
     canvas = Image.new("RGBA", (W, W), (0, 0, 0, 0))
     alpha = logo_rgba.split()[3]
@@ -629,31 +635,16 @@ def gradient_pill(text, font, palette, fg=None, grad=False, px=14, py=8,
         cy = h // 2
         dsz = scaled(7, scale)
         dx0 = ox
-        dcx = dx0 + dsz / 2.0
-        # A genuinely soft halo: a SMALL solid core blurred heavily so the falloff
-        # is a smooth Gaussian tail with no visible ring / hard edge. (The old
-        # radial_glow drew a big near-opaque disc whose blur was too small
-        # relative to its size, leaving a hard boundary.)
-        gsz = scaled(22, scale)
-        gc = gsz / 2.0
-        cr = scaled(3, scale)
-        halo = Image.new("L", (gsz, gsz), 0)
-        ImageDraw.Draw(halo).ellipse((gc - cr, gc - cr, gc + cr, gc + cr),
-                                     fill=150)
-        halo = halo.filter(ImageFilter.GaussianBlur(gsz / 3.2))
-        glow = Image.new("RGBA", (gsz, gsz), tuple(dot)[:3] + (0,))
-        glow.putalpha(halo)
-        img.alpha_composite(glow, (int(round(dcx - gc)),
-                                   int(round(cy - gc))))
-        dr = ImageDraw.Draw(img)
-        dr.ellipse((dx0, cy - dsz // 2, dx0 + dsz, cy + dsz // 2),
-                   fill=tuple(dot) + (255,))
-        hl = max(1, scaled(2, scale))
-        dr.ellipse((int(round(dcx - hl / 2.0)) - scaled(1, scale),
-                    cy - dsz // 2 + scaled(1, scale),
-                    int(round(dcx - hl / 2.0)) - scaled(1, scale) + hl,
-                    cy - dsz // 2 + scaled(1, scale) + hl),
-                   fill=(255, 255, 255, 225))
+        # A plain, crisp status dot — NO glow/halo (a soft bloom against the flat
+        # pill always leaves a faintly visible edge, so we drop it entirely). The
+        # dot is supersampled 4x then downscaled so the circle edge is smoothly
+        # anti-aliased rather than stair-stepped.
+        ss = 4
+        chip = Image.new("RGBA", (dsz * ss, dsz * ss), (0, 0, 0, 0))
+        ImageDraw.Draw(chip).ellipse((0, 0, dsz * ss - 1, dsz * ss - 1),
+                                     fill=tuple(dot) + (255,))
+        chip = chip.resize((dsz, dsz), Image.LANCZOS)
+        img.alpha_composite(chip, (dx0, int(cy - dsz / 2.0)))
         ox += dg
     dr.text((ox - b[0], (h - th) / 2 - b[1]), text, font=font, fill=col)
     ox += tw
@@ -781,7 +772,9 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     ox = max(pw, (W - content_w) // 2)
     if glyph and ifont:
         b = probe.textbbox((0, 0), glyph, font=ifont)
-        d.text((ox - b[0], (H - ih) / 2 - b[1]), glyph, font=ifont, fill=ink)
+        idy = scaled(_ICON_DY.get(icon, 0), scale)
+        d.text((ox - b[0], (H - ih) / 2 - b[1] + idy), glyph, font=ifont,
+               fill=ink)
         ox += iw + cgap
     if text and font:
         b = probe.textbbox((0, 0), text, font=font)
