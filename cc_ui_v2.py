@@ -701,18 +701,22 @@ def ghost_icon(icon, palette, scale=1.0, hover=False, danger=False):
 
 def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                      inset=None):
-    """Bake a glowing rounded input field (RGBA, transparent outside the glow):
-    a soft violet bloom bleeds from the field edge, a dark rounded fill sits on
-    top, and a *subtle* violet hairline outlines it — brighter when ``focused``.
-    Returns ``(image, inset)`` where ``inset`` is the transparent margin (device
-    px) reserved around the field for the glow; place the text widget at that
-    offset. The bloom is layered + wide so it reads as a soft glow, not a hard
-    coloured border.
+    """Bake a rounded input field (RGBA, transparent outside the field).
 
-    ``inset`` may be passed by the caller (the quick-input field reserves a
-    generous margin so the bloom fully fades to transparent *inside* the image
-    — otherwise the blur is clipped at the image edge and shows a hard line);
-    when omitted it defaults to a compact 11px."""
+    Dark mode: a soft violet bloom bleeds from the field edge (reads as emitted
+    light against the deep-navy card), a dark rounded fill on top, and a subtle
+    violet hairline — brighter when ``focused``.
+
+    Light mode: a wide coloured bloom over WHITE only reads as a dirty grey
+    smudge (you can't emit light brighter than white), so instead the field gets
+    a clean, tight neutral drop-shadow to lift it off the surface plus a crisp
+    violet ring that strengthens on focus — a modern Fluent-style input.
+
+    Returns ``(image, inset)`` where ``inset`` is the transparent margin (device
+    px) reserved around the field for the halo/shadow; place the text widget at
+    that offset. ``inset`` may be passed by the caller (generous so the blur
+    fades fully inside the image — otherwise it clips to a hard line); defaults
+    to a compact 11px."""
     if not PIL_OK:
         return None, 0
     w = max(1, int(w))
@@ -722,28 +726,56 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
     if x1 <= x0 or y1 <= y0:
         return Image.new("RGBA", (w, h), (0, 0, 0, 0)), inset
     gcol = tuple((palette.get("field_brd") or (150, 130, 255)))[:3]
+    is_dark = palette["is_dark"]
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    # Three blurred layers (wide+faint under mid under tight+strong) = a smooth
-    # but clearly-visible violet bloom that falls off gently instead of a crisp
-    # glowing rectangle. Alphas are (unfocused, focused). Grows + blurs are kept
-    # small enough that, with the caller's generous inset, the bloom fades to
-    # ~0 before the image edge (no hard clip line around the glow).
-    for grow, alpha_f, blur in (
-            (scaled(3, scale), (0.26, 0.40), 6),
-            (scaled(1, scale), (0.42, 0.62), 4),
-            (0, (0.62, 0.90), 2)):
-        glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
-        ImageDraw.Draw(glow).rounded_rectangle(
-            (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
-            radius=int(radius) + grow, fill=gcol + (a,))
-        canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
-            scaled(blur, scale))))
+    if is_dark:
+        # Three blurred violet layers (wide+faint under mid under tight+strong)
+        # = a smooth, clearly-visible bloom that falls off gently. Alphas are
+        # (unfocused, focused). Kept small enough that, with the caller's
+        # generous inset, the bloom fades to ~0 before the image edge (no clip).
+        for grow, alpha_f, blur in (
+                (scaled(3, scale), (0.26, 0.40), 6),
+                (scaled(1, scale), (0.42, 0.62), 4),
+                (0, (0.62, 0.90), 2)):
+            glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            a = int(255 * (alpha_f[1] if focused else alpha_f[0]))
+            ImageDraw.Draw(glow).rounded_rectangle(
+                (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
+                radius=int(radius) + grow, fill=gcol + (a,))
+            canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
+                scaled(blur, scale))))
+    else:
+        # Light mode: a soft neutral drop-shadow (cool grey, offset slightly
+        # DOWN) so the white field lifts cleanly off the card — no coloured
+        # halo. On focus, add a single tight violet ring for feedback (a thin
+        # low-alpha blurred outline hugging the field, not a wide bloom).
+        shcol = (60, 66, 96)
+        for grow, alpha, blur, dy in (
+                (scaled(2, scale), 0.10, 7, scaled(2, scale)),
+                (0, 0.14, 4, scaled(1, scale))):
+            sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            ImageDraw.Draw(sh).rounded_rectangle(
+                (x0 - grow, y0 - grow + dy, x1 + grow, y1 + grow + dy),
+                radius=int(radius) + grow, fill=shcol + (int(255 * alpha),))
+            canvas.alpha_composite(sh.filter(ImageFilter.GaussianBlur(
+                scaled(blur, scale))))
+        if focused:
+            ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            ImageDraw.Draw(ring).rounded_rectangle(
+                (x0 - scaled(1, scale), y0 - scaled(1, scale),
+                 x1 + scaled(1, scale), y1 + scaled(1, scale)),
+                radius=int(radius) + scaled(1, scale),
+                outline=gcol + (150,), width=max(1, scaled(2, scale)))
+            canvas.alpha_composite(ring.filter(ImageFilter.GaussianBlur(
+                scaled(2, scale))))
     # Draw the crisp field fill + hairline outline on a supersampled layer, then
-    # downscale (LANCZOS) so the rounded corners are anti-aliased — on a white
-    # (light-mode) background the non-AA rounded_rectangle showed visible corner
-    # stair-stepping. The glow layers above are already blurred, so only this
-    # crisp shape needs the AA pass.
+    # downscale (LANCZOS) so the rounded corners are anti-aliased (the non-AA
+    # rounded_rectangle showed corner stair-stepping, worst on white).
+    if is_dark:
+        brd_a = 190 if focused else 110
+    else:
+        # A calm violet ring at rest, clearly stronger on focus.
+        brd_a = 220 if focused else 120
     ss = 4
     top = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
     td = ImageDraw.Draw(top)
@@ -751,7 +783,7 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
     td.rounded_rectangle((sx0, sy0, sx1, sy1), radius=int(radius) * ss,
                          fill=tuple(palette["field"]))
     td.rounded_rectangle((sx0, sy0, sx1, sy1), radius=int(radius) * ss,
-                         outline=gcol + (190 if focused else 110,),
+                         outline=gcol + (brd_a,),
                          width=max(1, scaled(1, scale)) * ss)
     canvas.alpha_composite(
         top.resize((w, h), Image.LANCZOS))
