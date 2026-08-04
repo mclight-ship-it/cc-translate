@@ -65,16 +65,15 @@ class AboutMixin:
 
         # ---- Title bar ----
         if v2on:
-            # Shared v2 chrome: brand tile + gradient title + ghost close. No
-            # subtitle (the hero logo/name/description below carry the identity)
-            # and no hairline divider — the roomy padding does the separating.
+            # The hero below (big glowing logo + gradient name + description)
+            # carries the identity, so the top strip is just a draggable bar with
+            # a ghost close button — no repeated brand tile / "关于" title.
             bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-            bar.pack(fill="x", padx=24, pady=(20, 14))
-            self._v2_brand_header(
-                bar, win, title=i18n.get("about.title"),
-                subtitle=None,
-                bg=bg, hint=hint, accent=accent, font=FONT, scale=scale,
-                cache_tag="about_title")
+            bar.pack(fill="x", padx=20, pady=(16, 0))
+            close_btn = self._v2_ghost_button(
+                bar, lambda: win.destroy(), icon="close", danger=True)
+            close_btn.pack(side="right", anchor="n")
+            self._make_draggable((bar,), win)
         else:
             bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
             bar.pack(fill="x", padx=16, pady=(12, 8))
@@ -105,8 +104,8 @@ class AboutMixin:
         # v2 gets roomy side margins (matching the settings window) so the card
         # doesn't feel cramped; legacy keeps its tighter fixed-box padding.
         body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=(44 if v2on else 20),
-                  pady=24)
+        body.pack(fill="both", expand=True, padx=(56 if v2on else 20),
+                  pady=(20 if v2on else 24, 30 if v2on else 24))
 
         # Wrapper frame for content to center vertically in body
         content_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
@@ -257,21 +256,41 @@ class AboutMixin:
         FONT = font
         pal = self._v2_palette()
 
-        # ---- Hero: logo · name · one-line description ----
-        logo_img_large = self._logo_image(48)
-        if logo_img_large:
-            logo_large_lbl = tk.Label(content_frame, image=logo_img_large,
+        # ---- Hero: glowing logo · gradient name · one-line description ----
+        hero_logo = self._v2_hero_logo(64)
+        if hero_logo:
+            logo_large_lbl = tk.Label(content_frame, image=hero_logo,
                                       bg=bg, bd=0, highlightthickness=0)
-            logo_large_lbl.image = logo_img_large
-            logo_large_lbl.pack(pady=(4, 16))
+            logo_large_lbl.image = hero_logo
+            logo_large_lbl.pack(pady=(4, 10))
+        else:
+            fallback = self._logo_image(56)
+            if fallback:
+                logo_large_lbl = tk.Label(content_frame, image=fallback,
+                                          bg=bg, bd=0, highlightthickness=0)
+                logo_large_lbl.image = fallback
+                logo_large_lbl.pack(pady=(4, 16))
 
-        name_lbl = tk.Label(content_frame, text=i18n.get("about.name"), bg=bg,
-                            fg=accent, font=(FONT, 15, "bold"))
-        name_lbl.pack(pady=(0, 6))
+        # App name as a real violet -> bright-pink gradient (drawn image so the
+        # sweep is left-to-right across the glyphs, not a flat accent colour).
+        name_txt = i18n.get("about.name")
+        name_img = self._v2_photo(
+            ("about_name", name_txt, round(scale, 2)),
+            lambda: ccv2.gradient_text(
+                name_txt, ccv2.load_font("bold", 22, scale),
+                stops=ccv2.NAME_GRAD, angle=0))
+        if name_img is not None:
+            name_lbl = tk.Label(content_frame, image=name_img, bg=bg, bd=0,
+                                highlightthickness=0)
+            name_lbl.image = name_img
+        else:
+            name_lbl = tk.Label(content_frame, text=name_txt, bg=bg,
+                                fg=accent, font=(FONT, 17, "bold"))
+        name_lbl.pack(pady=(0, 8))
 
         desc_lbl = tk.Label(content_frame, text=i18n.get("about.description"),
                             bg=bg, fg=hint, font=(FONT, 10))
-        desc_lbl.pack(pady=(0, 22))
+        desc_lbl.pack(pady=(0, 26))
 
         # ---- Version pill (click → in-Settings check-update flow) ----
         version_str = version_string()
@@ -324,7 +343,7 @@ class AboutMixin:
 
         coffee_btn = self._v2_soft_button(
             footer, i18n.get("about.support_author"),
-            lambda: self.open_support_author(), icon="coffee")
+            lambda: self.open_support_author(), icon="coffee", grad=True)
         coffee_btn.pack(side="left")
 
     def _confirm_and_uninstall(self):

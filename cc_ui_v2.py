@@ -49,6 +49,10 @@ except Exception:
 # hard way in the POC), so all three stops are load-bearing.
 BRAND = [(0.0, (110, 168, 255)), (0.5, (161, 121, 255)), (1.0, (255, 122, 198))]
 
+# The app-name gradient: a calm violet -> bright-pink sweep (a two-stop slice of
+# BRAND that drops the cool blue), rendered LEFT->RIGHT for the About hero title.
+NAME_GRAD = [(0.0, (161, 121, 255)), (1.0, (255, 122, 198))]
+
 # Per-theme skin. ``solid`` is the deep-navy base gradient (NOT the app's greyish
 # real popup colour — that greyed out the vibe in an earlier POC). Colours are
 # RGB tuples unless a 4th alpha channel is meaningful.
@@ -412,13 +416,13 @@ def edge_line_color(palette):
     like the reference and the whole ring reads as an emitted glow."""
     base = flat_base(palette)
     if palette["is_dark"]:
-        col = tuple(int(round(base[i] + (255 - base[i]) * 0.26)) for i in range(3))
-        return col, 170, 74
-    col = tuple(int(round(base[i] * 0.90)) for i in range(3))
-    return col, 150, 72
+        col = tuple(int(round(base[i] + (255 - base[i]) * 0.42)) for i in range(3))
+        return col, 218, 82
+    col = tuple(int(round(base[i] * 0.86)) for i in range(3))
+    return col, 165, 74
 
 
-def bake_border_ring(w, h, radius, palette, scale=1.0, stroke_pts=1.4):
+def bake_border_ring(w, h, radius, palette, scale=1.0, stroke_pts=1.0):
     """A transparent RGBA (w×h) carrying ONLY a thin luminance-shifted stroke
     along the rounded-rectangle perimeter — the v2 window's slim, softly-glowing
     frame. The stroke colour is the card base nudged in brightness (same hue via
@@ -549,6 +553,30 @@ def icon_tile(size, text="CC", scale=1.0):
     return t
 
 
+def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.85):
+    """The About hero mark: a large app logo tile sitting on a transparent canvas
+    with a soft coloured glow blooming beneath/around it, so the icon looks lit
+    (like the reference design) rather than pasted flat. ``logo_rgba`` is the
+    already-sized square icon (RGBA); returns a taller RGBA canvas with the glow
+    behind the logo and the logo centred horizontally. Returns the input
+    unchanged if Pillow is missing."""
+    if not PIL_OK or logo_rgba is None:
+        return logo_rgba
+    s = logo_rgba.width
+    pad = int(round(s * 0.52))
+    W = s + pad * 2
+    canvas = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    # A wide soft disc glow, centred horizontally and nudged DOWN so the bloom
+    # reads as light spilling beneath the icon.
+    gd = int(round(s * 1.85))
+    glow = radial_glow(gd, glow_color, glow_strength)
+    gx = (W - gd) // 2
+    gy = pad + int(round(s * 0.22))
+    canvas.alpha_composite(glow, (gx, gy))
+    canvas.alpha_composite(logo_rgba, (pad, pad))
+    return canvas
+
+
 def gradient_pill(text, font, palette, fg=None, grad=False, px=14, py=8,
                   scale=1.0, caret=False, dot=None):
     """A pill button image: gradient-filled (``grad``) or translucent chip.
@@ -578,8 +606,27 @@ def gradient_pill(text, font, palette, fg=None, grad=False, px=14, py=8,
     col = fg if len(fg) == 4 else tuple(fg) + (255,)
     ox = pxs
     if dot:
-        dr.ellipse((ox, h // 2 - scaled(4, scale), ox + scaled(8, scale),
-                    h // 2 + scaled(4, scale)), fill=tuple(dot) + (255,))
+        cy = h // 2
+        dsz = scaled(7, scale)
+        dx0 = ox
+        dcx = dx0 + dsz / 2.0
+        # A soft coloured bloom behind the dot so it reads as a lit indicator,
+        # not a flat sticker. Composite the blurred glow onto the pill, then
+        # redraw the crisp dot (+ a tiny white highlight) on top for a "bright
+        # point + glow" feel.
+        gd = scaled(18, scale)
+        glow = radial_glow(gd, dot, 0.95)
+        img.alpha_composite(glow, (int(round(dcx - gd / 2.0)),
+                                   int(round(cy - gd / 2.0))))
+        dr = ImageDraw.Draw(img)
+        dr.ellipse((dx0, cy - dsz // 2, dx0 + dsz, cy + dsz // 2),
+                   fill=tuple(dot) + (255,))
+        hl = max(1, scaled(2, scale))
+        dr.ellipse((int(round(dcx - hl / 2.0)) - scaled(1, scale),
+                    cy - dsz // 2 + scaled(1, scale),
+                    int(round(dcx - hl / 2.0)) - scaled(1, scale) + hl,
+                    cy - dsz // 2 + scaled(1, scale) + hl),
+                   fill=(255, 255, 255, 225))
         ox += dg
     dr.text((ox - b[0], (h - th) / 2 - b[1]), text, font=font, fill=col)
     ox += tw
@@ -647,7 +694,7 @@ def brand_badge(size_pt, palette, scale=1.0):
 
 
 def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
-              hover=False, caret=False, min_w=0):
+              hover=False, caret=False, min_w=0, grad=False):
     """A soft translucent rounded pill button (RGBA) — the concept's primary
     top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
     ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
@@ -655,7 +702,8 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     bakes to the SAME height (``SOFT_BTN_H_PTS``) regardless of whether it has an
     icon, so 复制 and 操作 are the same size and sit on the same line. ``min_w``
     (device px) floors the width so sibling pills match; the content is centred
-    in the extra room."""
+    in the extra room. ``grad`` swaps the soft wash for a filled brand-gradient
+    surface with white ink (the accented "primary" pill, e.g. 请喝咖啡)."""
     if not PIL_OK:
         return None
     pw = scaled(12, scale)
@@ -678,18 +726,29 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     W = max(1, content_w + pw * 2, int(min_w))
     H = scaled(SOFT_BTN_H_PTS, scale)
     is_dark = palette["is_dark"]
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    if is_dark:
-        fill = (255, 255, 255, 30 if hover else 16)
-        ink = (238, 241, 255, 255) if hover else (206, 212, 235, 255)
+    if grad:
+        # A filled brand-gradient pill (violet -> pink), white ink; hover lifts
+        # the whole surface with a faint white sheen.
+        img = gradient_round(W, H, H // 2, stops=BRAND, angle=120)
+        if hover:
+            sheen = Image.new("RGBA", (W, H), (255, 255, 255, 30))
+            sheen.putalpha(rounded_mask(W, H, H // 2))
+            img.alpha_composite(sheen)
+        ink = (255, 255, 255, 255)
+        d = ImageDraw.Draw(img)
     else:
-        # Light mode needs a clearly visible surface: a ~5% navy wash read as
-        # "disabled". Give the pill a soft, visible lavender-grey fill and darker
-        # ink so it looks like a real button on white.
-        fill = (36, 48, 92, 46 if hover else 28)
-        ink = (28, 35, 64, 255) if hover else (66, 76, 112, 255)
-    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        if is_dark:
+            fill = (255, 255, 255, 30 if hover else 16)
+            ink = (238, 241, 255, 255) if hover else (206, 212, 235, 255)
+        else:
+            # Light mode needs a clearly visible surface: a ~5% navy wash read as
+            # "disabled". Give the pill a soft, visible lavender-grey fill and
+            # darker ink so it looks like a real button on white.
+            fill = (36, 48, 92, 46 if hover else 28)
+            ink = (28, 35, 64, 255) if hover else (66, 76, 112, 255)
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
     # Centre the icon+text+caret block horizontally (so a min_w-floored pill
     # keeps its content centred, not left-hugging).
     ox = max(pw, (W - content_w) // 2)

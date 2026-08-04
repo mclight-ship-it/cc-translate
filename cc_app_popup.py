@@ -1486,15 +1486,40 @@ class PopupMixin:
         cache[key] = photo
         return photo
 
+    def _v2_hero_logo(self, size_pt):
+        """The large About HERO logo: the real app tile (dark mode -> the
+        deep-blue cc-dark tile; light mode -> the white cc-light tile, per the
+        design) sitting on a soft coloured glow that blooms beneath it so the
+        mark looks lit. Cached PhotoImage; falls back to None (caller uses the
+        plain title-bar logo) if PIL/the icon is unavailable."""
+        scale = self._ui_scale()
+        s = max(24, ccv2.scaled(size_pt, scale)) if ccv2 else max(24, size_pt)
+        pal = self._v2_palette()
+        is_dark = pal["is_dark"]
+        path = ICON_PATH_DARK if is_dark else ICON_PATH_LIGHT
+        if not os.path.exists(path):
+            path = ICON_PATH
+
+        def _bake():
+            from PIL import Image
+            with Image.open(path) as im:
+                logo = im.convert("RGBA").resize((s, s), Image.LANCZOS)
+            glow_col = tuple(pal.get("glow_hi", (110, 140, 255)))
+            return ccv2.hero_logo(logo, glow_col, scale=scale,
+                                  glow_strength=0.9 if is_dark else 0.5)
+        return self._v2_photo(("herologo", path, s, round(scale, 2)), _bake)
+
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
-                        tooltip=None, min_w=0):
+                        tooltip=None, min_w=0, grad=False):
         """A soft translucent pill button (concept's 复制 / 操作 style) as a
         tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
         re-bake the label (copy-feedback / processing text). Falls back to a
         plain text pill if the renderer can't build the image. A trailing caret
         glyph in the label (e.g. i18n's "操作 ▾") is stripped and drawn as a real
         triangle, so it never renders as a tofu box in the baked image. ``min_w``
-        (device px) floors the baked width so sibling pills match (操作/复制)."""
+        (device px) floors the baked width so sibling pills match (操作/复制).
+        ``grad`` bakes a filled brand-gradient pill (the accented primary
+        action, e.g. 请喝咖啡)."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
@@ -1512,10 +1537,11 @@ class PopupMixin:
             lbl, has_caret = _clean(label)
             font = ccv2.load_font("reg", 10, scale) if lbl else None
             return self._v2_photo(
-                ("soft", lbl, icon, has_caret, hover, min_w, round(scale, 2)),
+                ("soft", lbl, icon, has_caret, hover, min_w, grad,
+                 round(scale, 2)),
                 lambda: ccv2.soft_pill(text=lbl, icon=icon, font=font,
                                        palette=pal, scale=scale, hover=hover,
-                                       caret=has_caret, min_w=min_w))
+                                       caret=has_caret, min_w=min_w, grad=grad))
 
         normal = _bake(text, False)
         hover = _bake(text, True)
