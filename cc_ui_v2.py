@@ -781,17 +781,18 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
             canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(
                 _safe_sigma(blur, grow))))
     else:
-        # Light mode: a soft violet/pink halo hugging the field (a gentle brand
-        # tint, NOT neutral grey and NOT a wide muddy bloom). Two tight, faint,
-        # blurred layers of a pink-leaning violet — kept close to the edge with
-        # low alpha so over white it stays a clean coloured haze, not a smudge.
-        # Slightly stronger on focus. No downward offset, so it reads as a glow
-        # (evenly around) rather than a drop-shadow.
-        halo = (196, 132, 224)          # pink-violet, echoes the brand gradient
+        # Light mode: a soft, airy lavender haze that hugs the field and fades
+        # gently outward. The colour is a HIGH-luminance periwinkle (not a
+        # saturated magenta) so any partial coverage over white stays clean and
+        # airy instead of muddying into a grey-purple smudge. Alphas are low and
+        # the layers are spread wide so the transition is comfortable, with no
+        # tight dark band at the edge.
+        halo = (224, 201, 248)          # light orchid: pink-violet, high luma
         base = 1.35 if focused else 1.0
         for grow, alpha, blur in (
-                (scaled(3, scale), 0.16 * base, 8),
-                (scaled(1, scale), 0.20 * base, 5)):
+                (scaled(5, scale), 0.09 * base, 11),
+                (scaled(2, scale), 0.11 * base, 7),
+                (0, 0.12 * base, 4)):
             gl = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             ImageDraw.Draw(gl).rounded_rectangle(
                 (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
@@ -799,15 +800,10 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                 fill=halo + (int(255 * min(alpha, 1.0)),))
             canvas.alpha_composite(gl.filter(ImageFilter.GaussianBlur(
                 _safe_sigma(blur, grow))))
-        if focused:
-            ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            ImageDraw.Draw(ring).rounded_rectangle(
-                (x0 - scaled(1, scale), y0 - scaled(1, scale),
-                 x1 + scaled(1, scale), y1 + scaled(1, scale)),
-                radius=int(radius) + scaled(1, scale),
-                outline=gcol + (150,), width=max(1, scaled(2, scale)))
-            canvas.alpha_composite(ring.filter(ImageFilter.GaussianBlur(
-                _safe_sigma(2, scaled(1, scale)))))
+        # On focus we DON'T add a blurred ring (blurring a thin violet stroke
+        # smears into a grey mush that hugs the border and reads "dirty"). The
+        # crisp violet border below already brightens on focus; the halo above
+        # is a touch stronger. That keeps the focus state clean.
     # Draw the crisp field fill + hairline outline on a supersampled layer, then
     # downscale (LANCZOS) so the rounded corners are anti-aliased (the non-AA
     # rounded_rectangle showed corner stair-stepping, worst on white).
