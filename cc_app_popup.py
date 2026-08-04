@@ -1752,28 +1752,60 @@ class PopupMixin:
         b.bind("<Leave>", lambda e: b.config(bg=bg, fg=fg))
         return b
 
+    def _tooltip_colors(self):
+        """Colours for the floating tooltip card. Under the v2 skin it is an
+        *elevated* rounded chip — a navy a touch lighter than the popup card (so
+        it reads as floating above it) with a soft brand-tinted hairline; light
+        mode is a clean white chip with a subtle cool-grey ring. Legacy keeps a
+        neutral dark chip. Returns ``(fill, border, fg, radius)``."""
+        if self._v2_popup_on():
+            if self._v2_palette()["is_dark"]:
+                return "#262c4e", "#3d4576", "#eef1ff", 9
+            return "#ffffff", "#d7dcec", "#2a2f4a", 9
+        return "#2b2b2b", "#3a3a3a", "#f0f0f0", 6
+
     def _make_tooltip(self, widget, text, delay_ms=400):
-        """Attach a simple tooltip to a widget. Shows on enter after a delay,
-        hides on leave. The tooltip is topmost so it never hides behind a
-        borderless -topmost dialog (e.g. the settings window)."""
+        """Attach a rounded, theme-aware tooltip to a widget. Shows on enter
+        after a delay, hides on leave. The tooltip is topmost so it never hides
+        behind a borderless -topmost dialog (e.g. the settings window). Rounded
+        corners come from a transparent colour-key canvas (same technique as the
+        rounded window shells) so the old hard grey rectangle is gone."""
         tooltip_var = {"job": None, "tooltip": None}
 
         def show_tooltip(e):
             def do_show():
                 try:
+                    fill, border, fg, radius = self._tooltip_colors()
                     tt = tk.Toplevel(self.root)
                     tt.wm_overrideredirect(True)
                     tt.attributes("-topmost", True)
-                    lbl = tk.Label(tt, text=text, bg="#2b2b2b", fg="#ffffff",
+                    tt.configure(bg=ROUND_KEY_COLOR)
+                    try:
+                        tt.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
+                    except Exception:
+                        pass
+                    cv = tk.Canvas(tt, bg=ROUND_KEY_COLOR, highlightthickness=0,
+                                   bd=0, takefocus=0)
+                    cv.pack(fill="both", expand=True)
+                    lbl = tk.Label(cv, text=text, bg=fill, fg=fg,
                                    font=("Microsoft YaHei UI", 9),
-                                   wraplength=240, justify="left",
-                                   padx=10, pady=6, relief="flat", bd=0)
-                    lbl.pack()
+                                   wraplength=260, justify="left",
+                                   padx=0, pady=0, relief="flat", bd=0,
+                                   highlightthickness=0)
+                    lbl.update_idletasks()
+                    pad_x, pad_y = 12, 7
+                    tw = lbl.winfo_reqwidth() + pad_x * 2
+                    th = lbl.winfo_reqheight() + pad_y * 2
+                    tt.wm_geometry(f"{tw}x{th}")
+                    cv.configure(width=tw, height=th)
+                    _draw_round_rect(cv, 0, 0, tw, th, radius,
+                                     fill=border, tags="tip")
+                    _draw_round_rect(cv, 1, 1, tw - 1, th - 1, radius,
+                                     fill=fill, tags="tip")
+                    cv.create_window(tw // 2, th // 2, window=lbl)
                     tt.update_idletasks()
                     # Prefer to the right of the icon; if that would run off the
                     # right screen edge, flip to the left side instead.
-                    tw = tt.winfo_width()
-                    th = tt.winfo_height()
                     sw = widget.winfo_screenwidth()
                     x = widget.winfo_rootx() + widget.winfo_width() + 8
                     if x + tw > sw - 8:
@@ -1781,7 +1813,7 @@ class PopupMixin:
                     y = widget.winfo_rooty() + (widget.winfo_height() - th) // 2
                     if y < 8:
                         y = 8
-                    tt.wm_geometry(f"+{x}+{y}")
+                    tt.wm_geometry(f"{tw}x{th}+{x}+{y}")
                     tt.lift()
                     tooltip_var["tooltip"] = tt
                 except Exception:
