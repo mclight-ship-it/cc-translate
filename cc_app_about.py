@@ -19,6 +19,7 @@ import threading
 import tkinter as tk
 
 import i18n
+import cc_ui_v2 as ccv2
 
 from win32util import get_monitor_rect
 from cc_update import version_string, remove_shortcuts, spawn_uninstaller
@@ -111,6 +112,43 @@ class AboutMixin:
         content_frame = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         content_frame.pack(fill="none", expand=True, anchor="center")
 
+        if v2on:
+            self._about_body_v2(content_frame, win, bg=bg, fg=fg, hint=hint,
+                                accent=accent, font=FONT, scale=scale)
+        else:
+            self._about_body_legacy(content_frame, win, bg=bg, fg=fg, hint=hint,
+                                    accent=accent, font=FONT, t=t)
+
+        win.bind("<Escape>", lambda e: win.destroy())
+
+        # v2 hugs its measured content (like settings); legacy uses the fixed
+        # centred box and lets the content centre inside it.
+        if v2on:
+            win.update_idletasks()
+            ci = int(getattr(win, "_card_inset", radius))
+            w = card.winfo_reqwidth() + 2 * ci
+            h = card.winfo_reqheight() + 2 * ci
+            rect = get_monitor_rect()
+            if rect:
+                left, top, right, bottom = rect
+                x = left + (right - left - w) // 2
+                y = top + (bottom - top - h) // 2
+            else:
+                sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+                x, y = (sw - w) // 2, (sh - h) // 2
+        else:
+            w, h, x, y = self._centered_box()
+        self._reveal_rounded_window(win, w, h, x, y)
+
+    # ------------------------------------------------------------------
+    # About body — legacy (flag-off) vs v2 (redesigned card).
+    # ------------------------------------------------------------------
+    def _about_body_legacy(self, content_frame, win, *, bg, fg, hint, accent,
+                           font, t):
+        """The original About content (logo · name · description · version +
+        check-update · GitHub · contact · coffee), unchanged. Used when the v2
+        skin is off so the legacy dialog stays byte-for-byte as before."""
+        FONT = font
         # Top spacer
         tk.Frame(content_frame, bg=bg, height=8).pack()
 
@@ -208,26 +246,86 @@ class AboutMixin:
         # Bottom spacer
         tk.Frame(content_frame, bg=bg, height=8).pack()
 
-        win.bind("<Escape>", lambda e: win.destroy())
+    def _about_body_v2(self, content_frame, win, *, bg, fg, hint, accent,
+                       font, scale):
+        """The redesigned v2 About card: a calm hero (logo · name · one-line
+        description), a single translucent VERSION PILL that reads
+        "版本 X · 检查更新" with a live green dot (click → the same in-Settings
+        update flow), and a roomy row of three pill buttons — GitHub · 联系作者 ·
+        请喝咖啡 — pulled apart for a modern, uncramped feel. All buttons are baked
+        v2 pills (hover-swap images) so they match the rest of the skin."""
+        FONT = font
+        pal = self._v2_palette()
 
-        # v2 hugs its measured content (like settings); legacy uses the fixed
-        # centred box and lets the content centre inside it.
-        if v2on:
-            win.update_idletasks()
-            ci = int(getattr(win, "_card_inset", radius))
-            w = card.winfo_reqwidth() + 2 * ci
-            h = card.winfo_reqheight() + 2 * ci
-            rect = get_monitor_rect()
-            if rect:
-                left, top, right, bottom = rect
-                x = left + (right - left - w) // 2
-                y = top + (bottom - top - h) // 2
-            else:
-                sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-                x, y = (sw - w) // 2, (sh - h) // 2
+        # ---- Hero: logo · name · one-line description ----
+        logo_img_large = self._logo_image(48)
+        if logo_img_large:
+            logo_large_lbl = tk.Label(content_frame, image=logo_img_large,
+                                      bg=bg, bd=0, highlightthickness=0)
+            logo_large_lbl.image = logo_img_large
+            logo_large_lbl.pack(pady=(4, 16))
+
+        name_lbl = tk.Label(content_frame, text=i18n.get("about.name"), bg=bg,
+                            fg=accent, font=(FONT, 15, "bold"))
+        name_lbl.pack(pady=(0, 6))
+
+        desc_lbl = tk.Label(content_frame, text=i18n.get("about.description"),
+                            bg=bg, fg=hint, font=(FONT, 10))
+        desc_lbl.pack(pady=(0, 22))
+
+        # ---- Version pill (click → in-Settings check-update flow) ----
+        version_str = version_string()
+        pill_text = f"{i18n.get('about.version')} {version_str}  ·  " \
+                    f"{i18n.get('about.check_update')}"
+        ok_dot = tuple(pal["ok"])
+
+        def _bake_version(hover):
+            pf = ccv2.load_font("reg", 10, scale)
+            return self._v2_photo(
+                ("about_ver", pill_text, hover, round(scale, 2)),
+                lambda: ccv2.gradient_pill(
+                    pill_text, pf, pal, grad=False, px=16, py=8, scale=scale,
+                    dot=ok_dot,
+                    fg=(pal["fg"] if hover else pal["sub"])))
+
+        ver_normal = _bake_version(False)
+        ver_hover = _bake_version(True)
+        if ver_normal is not None:
+            ver_btn = tk.Button(
+                content_frame, image=ver_normal,
+                command=lambda: self._about_check_update(),
+                bg=bg, activebackground=bg, relief="flat", bd=0,
+                highlightthickness=0, cursor="hand2")
+            ver_btn.image = ver_normal
+            ver_btn._n, ver_btn._h = ver_normal, ver_hover
+            ver_btn.bind("<Enter>", lambda e: ver_btn.config(image=ver_btn._h))
+            ver_btn.bind("<Leave>", lambda e: ver_btn.config(image=ver_btn._n))
+            ver_btn.pack(pady=(0, 4))
         else:
-            w, h, x, y = self._centered_box()
-        self._reveal_rounded_window(win, w, h, x, y)
+            ver_btn = tk.Label(content_frame, text=pill_text, bg=bg, fg=accent,
+                               font=(FONT, 10), cursor="hand2")
+            ver_btn.pack(pady=(0, 4))
+            ver_btn.bind("<Button-1>", lambda e: self._about_check_update())
+
+        # ---- Footer: three spaced pill buttons ----
+        github_url = "https://github.com/mclight-ship-it/cc-translate"
+        email_addr = i18n.get("about.author_email")
+        footer = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
+        footer.pack(pady=(30, 4))
+
+        gh_btn = self._v2_soft_button(
+            footer, "GitHub", lambda: self._open_url(github_url), icon="code")
+        gh_btn.pack(side="left", padx=(0, 14))
+
+        contact_btn = self._v2_soft_button(
+            footer, i18n.get("about.contact_author"),
+            lambda: self._open_url(f"mailto:{email_addr}"), icon="mail")
+        contact_btn.pack(side="left", padx=(0, 14))
+
+        coffee_btn = self._v2_soft_button(
+            footer, i18n.get("about.support_author"),
+            lambda: self.open_support_author(), icon="coffee")
+        coffee_btn.pack(side="left")
 
     def _confirm_and_uninstall(self):
         """Show a themed confirm dialog with a checked-by-default "keep my data"

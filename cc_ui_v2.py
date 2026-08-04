@@ -55,7 +55,7 @@ BRAND = [(0.0, (110, 168, 255)), (0.5, (161, 121, 255)), (1.0, (255, 122, 198))]
 _PALETTES = {
     "dark": dict(
         is_dark=True,
-        solid=[(0.0, (36, 38, 58)), (1.0, (24, 25, 39))],
+        solid=[(0.0, (34, 35, 45)), (1.0, (24, 25, 32))],
         glow=(70, 50, 160),
         glow_hi=(110, 140, 255),
         glow_lo=(255, 120, 200),
@@ -64,13 +64,13 @@ _PALETTES = {
         border=(255, 255, 255, 36),
         fg=(238, 241, 255), sub=(170, 178, 213), hint=(127, 136, 173),
         btn=(255, 255, 255, 18), btn_brd=(255, 255, 255, 30),
-        field=(13, 15, 33, 255), field_brd=(150, 130, 255),
-        panel=(20, 21, 35),                 # solid inner panel for body text / ttk
+        field=(16, 17, 28, 255), field_brd=(150, 130, 255),
+        panel=(22, 23, 31),                 # solid inner panel for body text / ttk
         ok=(110, 231, 168), err=(240, 113, 120),
     ),
     "light": dict(
         is_dark=False,
-        solid=[(0.0, (255, 255, 255)), (1.0, (240, 243, 252))],
+        solid=[(0.0, (255, 255, 255)), (1.0, (242, 244, 248))],
         glow=(150, 150, 210),
         glow_hi=(110, 140, 255),
         glow_lo=(255, 120, 200),
@@ -156,7 +156,8 @@ def load_font(kind, size_pt, scale):
 # Segoe MDL2 Assets glyphs (the same icon font the app's tk buttons use) drawn
 # via PIL so the v2 chip buttons carry crisp modern icons, not tofu boxes.
 _MDL2_GLYPHS = {"copy": "\uE8C8", "pin": "\uE718", "close": "\uE711",
-                "retry": "\uE72C"}
+                "retry": "\uE72C", "mail": "\uE715", "code": "\uE943",
+                "coffee": "\uEC32"}
 
 
 def icon_font(px):
@@ -397,45 +398,57 @@ def bake_stream_face(w, h, palette, scale=1.0):
 
 
 # ---------------------------------------------------------------------------
-# Thin brand-gradient perimeter hairline (the v2 "border").
+# Thin luminance-only perimeter hairline (the v2 "border").
 # ---------------------------------------------------------------------------
-_border_row_cache = {}
+def edge_line_color(palette):
+    """The perimeter hairline colour + top/bottom alphas for a window edge that
+    is the SAME HUE as the card base, differing only in LUMINANCE — a calm rim
+    that reads as a soft glow, not a coloured (rainbow) frame.
+
+    Dark card: the rim is a touch BRIGHTER than the base navy, so the edge looks
+    gently lit. Near-white light card: you can't emit brighter than white, so the
+    rim goes a touch DARKER (a soft neutral hairline of the same hue). Both fade
+    from a brighter top to a fainter bottom, so the top edge catches the light
+    like the reference and the whole ring reads as an emitted glow."""
+    base = flat_base(palette)
+    if palette["is_dark"]:
+        col = tuple(int(round(base[i] + (255 - base[i]) * 0.26)) for i in range(3))
+        return col, 170, 74
+    col = tuple(int(round(base[i] * 0.90)) for i in range(3))
+    return col, 150, 72
 
 
-def _brand_border_row(w):
-    """A cached 1-row horizontal brand gradient (RGBA, opaque) of width ``w``.
-
-    Horizontal means the stroke colour depends only on x, so the top and side
-    hairline is HEIGHT-STABLE during streaming (only the bottom edge advances as
-    the card grows — expected), keeping the anti-flicker guarantee intact."""
-    w = max(1, int(w))
-    hit = _border_row_cache.get(w)
-    if hit is not None:
-        return hit
-    row = Image.new("RGBA", (w, 1))
-    px = row.load()
-    for x in range(w):
-        px[x, 0] = tuple(sample_stops(BRAND, x / max(1, w - 1))) + (255,)
-    _border_row_cache[w] = row
-    return row
-
-
-def bake_border_ring(w, h, radius, scale=1.0, stroke_pts=1.4, alpha=120):
-    """A transparent RGBA (w×h) carrying ONLY a thin brand-gradient stroke along
-    the rounded-rectangle perimeter — the v2 popup's slim, subtly-graded frame.
-    Composited over the flat navy face by :meth:`GradientBackground.rounded_face`.
-    Returns ``None`` when Pillow is unavailable."""
+def bake_border_ring(w, h, radius, palette, scale=1.0, stroke_pts=1.4):
+    """A transparent RGBA (w×h) carrying ONLY a thin luminance-shifted stroke
+    along the rounded-rectangle perimeter — the v2 window's slim, softly-glowing
+    frame. The stroke colour is the card base nudged in brightness (same hue via
+    :func:`edge_line_color`) and its alpha fades top→bottom so the top rim looks
+    lit. Composited over the flat base face by
+    :meth:`GradientBackground.rounded_face`. Returns ``None`` when Pillow is
+    unavailable."""
     if not PIL_OK:
         return None
     w = max(1, int(w))
     h = max(1, int(h))
     stroke = max(1, scaled(stroke_pts, scale))
+    col, top_a, bot_a = edge_line_color(palette)
+    # The rounded-rect outline as an anti-aliased coverage mask.
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle(
-        (0, 0, w - 1, h - 1), radius=int(radius), outline=alpha, width=stroke)
-    grad = _brand_border_row(w).resize((w, h))
-    ring = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ring.paste(grad, (0, 0), mask)
+        (0, 0, w - 1, h - 1), radius=int(radius), outline=255, width=stroke)
+    # A 1-px-wide vertical alpha ramp (top brighter → bottom fainter), stretched
+    # to full width. Pasting it THROUGH the outline mask scales the ramp by the
+    # stroke's own coverage, preserving corner anti-aliasing.
+    ramp = Image.new("L", (1, h), 0)
+    rpx = ramp.load()
+    for y in range(h):
+        f = y / max(1, h - 1)
+        rpx[0, y] = int(round(top_a * (1 - f) + bot_a * f))
+    ramp = ramp.resize((w, h))
+    alpha = Image.new("L", (w, h), 0)
+    alpha.paste(ramp, (0, 0), mask)
+    ring = Image.new("RGBA", (w, h), tuple(col) + (0,))
+    ring.putalpha(alpha)
     return ring
 
 
@@ -498,7 +511,7 @@ class GradientBackground:
         either full-card or full-key — so nothing blends into a dark fringe just
         outside the corner (the old "颗粒" grain)."""
         f = self.face(w, h).copy()
-        ring = bake_border_ring(w, h, radius, scale=self.scale)
+        ring = bake_border_ring(w, h, radius, self.palette, scale=self.scale)
         if ring is not None:
             f.alpha_composite(ring)
         f.putalpha(hard_rounded_mask(w, h, radius))
@@ -813,17 +826,17 @@ def bake_input_field(w, h, radius, palette, scale=1.0, focused=False,
                 _safe_sigma(blur, grow))))
     else:
         # Light mode: a soft, airy lavender haze that hugs the field and fades
-        # gently outward. The colour is a HIGH-luminance periwinkle (not a
-        # saturated magenta) so any partial coverage over white stays clean and
-        # airy instead of muddying into a grey-purple smudge. Alphas are low and
-        # the layers are spread wide so the transition is comfortable, with no
-        # tight dark band at the edge.
-        halo = (224, 201, 248)          # light orchid: pink-violet, high luma
-        base = 1.35 if focused else 1.0
+        # gently outward. The colour is a VERY high-luminance periwinkle (almost
+        # white) and the alphas are low, so any partial coverage over white stays
+        # clean and airy — a faint bloom of light rather than the earlier
+        # grey-purple smudge that read "dirty". Layers spread wide for a
+        # comfortable transition with no tight dark band at the edge.
+        halo = (233, 226, 250)          # near-white periwinkle, very high luma
+        base = 1.3 if focused else 1.0
         for grow, alpha, blur in (
-                (scaled(5, scale), 0.09 * base, 11),
-                (scaled(2, scale), 0.11 * base, 7),
-                (0, 0.12 * base, 4)):
+                (scaled(6, scale), 0.055 * base, 12),
+                (scaled(3, scale), 0.07 * base, 8),
+                (0, 0.08 * base, 5)):
             gl = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             ImageDraw.Draw(gl).rounded_rectangle(
                 (x0 - grow, y0 - grow, x1 + grow, y1 + grow),
