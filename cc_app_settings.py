@@ -368,13 +368,16 @@ class SettingsMixin:
                     ("Combobox.textarea", {"sticky": "nswe"})]})]})])
         return True
 
-    def _setup_form_style(self):
+    def _setup_form_style(self, theme=None):
         """Flat, theme-aware styling for the settings comboboxes / spinboxes.
         Native ttk themes ignore colours, so we base these on 'clam' and set
         field/border colours from the active palette. The combobox uses a
         custom thin chevron indicator; the spinboxes drop their up/down arrows
-        entirely (values are edited by typing)."""
-        t = self.theme
+        entirely (values are edited by typing).
+
+        ``theme`` overrides the colour source (the v2 history/settings windows
+        pass a palette-derived map); it defaults to the app's active theme."""
+        t = theme or self.theme
         style = ttk.Style(self.root)
         try:
             style.theme_use("clam")

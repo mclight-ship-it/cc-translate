@@ -29,25 +29,117 @@ from tkinter import ttk
 import i18n
 
 from cc_rich import iter_rich_segments
-from cc_core import CFG, POPUP_CORNER_RADIUS
+from cc_core import CFG, POPUP_CORNER_RADIUS, V2_CORNER_RADIUS
+
+# The v2 skin (cc_ui_v2) is optional (needs Pillow). Import it guarded so a
+# missing renderer never breaks the history window; every v2 path also gates on
+# self._v2_popup_on(), which requires BOTH the UI_V2 flag AND a working
+# renderer. Flag off -> the legacy window is built byte-for-byte.
+try:
+    import cc_ui_v2 as ccv2
+except Exception:
+    ccv2 = None
 
 
 class HistoryMixin:
     """Translation-history window (mixed into TranslatorApp)."""
 
+    def _v2_history_theme(self):
+        """A copy of ``self.theme`` with the specific colour keys the history
+        builders read overridden with values derived from the cc_ui_v2 palette,
+        so the (unchanged) builders render the v2 skin just by being handed a
+        different colour map. Structural v2 differences (brand badge, gradient
+        title, ghost close, soft-pill actions) are branched separately.
+
+        Elevation is theme-aware: on the deep-navy dark card inset surfaces go a
+        touch LIGHTER; on the near-white light card they go a touch DARKER, so
+        the list column always reads as a distinct navigation pane."""
+        pal = self._v2_palette()
+        v2c = self._v2_tk_colors()
+        is_dark = pal["is_dark"]
+        panel = ccv2.hex_to_rgb(v2c["panel"])
+        accent = ccv2.hex_to_rgb(v2c["accent"])
+        ink = (255, 255, 255) if is_dark else (20, 30, 70)
+
+        def mix(a, b, f):
+            return tuple(int(round(a[i] * (1 - f) + b[i] * f)) for i in range(3))
+
+        elev = mix(panel, ink, 0.09 if is_dark else 0.07)
+        row_sel = mix(panel, accent, 0.30 if is_dark else 0.16)
+        txt_sel = mix(panel, accent, 0.38 if is_dark else 0.20)
+        btn_hov = mix(panel, ink, 0.12 if is_dark else 0.08)
+        thumb = mix(panel, accent, 0.35 if is_dark else 0.28)
+        thumb_hi = mix(panel, accent, 0.55 if is_dark else 0.45)
+        H = ccv2.rgb_to_hex
+
+        t = dict(self.theme)
+        t.update({
+            "settings_bg": v2c["panel"],
+            "bg": v2c["panel"],
+            "popup_border": v2c["border"],
+            "accent": v2c["accent"],
+            "popup_hint": v2c["hint"],
+            "fg": H(pal["fg"]),
+            "settings_fg": H(pal["fg"]),
+            "list_bg": H(elev),
+            "list_sel": H(row_sel),
+            "sel_bg": H(txt_sel),
+            "rich_heading_fg": v2c["accent"],
+            "status_ok": H(pal["ok"]),
+            "status_err": H(pal["err"]),
+            "btn_active": H(btn_hov),
+            "btn_close_active": H(pal["err"]),
+            "scroll_thumb": H(thumb),
+            "scroll_thumb_active": H(thumb_hi),
+            "trough": v2c["panel"],
+        })
+        return t
+
     def _build_history_titlebar(self, card, win, *, bg, border, accent, hint,
-                                font):
+                                font, v2=False, scale=1.0):
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
         bar.pack(fill="x", padx=16, pady=(12, 8))
-        logo_img = self._logo_image(18)
+        title_text = i18n.get("history.title")
         drag_targets = [bar]
+
+        if v2 and ccv2 is not None:
+            # v2: real app logo (dark/light tile) + tri-colour brand-gradient
+            # title + ghost close button, matching the quick-input / result
+            # windows. No hairline divider (the v2 concept has none).
+            logo_img = self._v2_logo_image(20) or self._v2_badge_image(22)
+            if logo_img:
+                logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                    highlightthickness=0)
+                logo_lbl.image = logo_img
+                logo_lbl.pack(side="left", padx=(0, 8), anchor="center")
+                drag_targets.append(logo_lbl)
+            title_img = self._v2_photo(
+                ("hist_title", title_text, round(scale, 2)),
+                lambda: ccv2.gradient_text(
+                    title_text, ccv2.load_font("bold", 13, scale)))
+            if title_img is not None:
+                title_lbl = tk.Label(bar, image=title_img, bg=bg, bd=0,
+                                     highlightthickness=0)
+                title_lbl.image = title_img
+            else:
+                title_lbl = tk.Label(bar, text=title_text, bg=bg, fg=accent,
+                                     font=(font, 11, "bold"))
+            title_lbl.pack(side="left", anchor="center")
+            drag_targets.append(title_lbl)
+            close_btn = self._v2_ghost_button(
+                bar, lambda: win.destroy(), icon="close", danger=True)
+            close_btn.pack(side="right")
+            self._make_draggable(tuple(drag_targets), win)
+            return
+
+        logo_img = self._logo_image(18)
         if logo_img:
             logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
                                 highlightthickness=0)
             logo_lbl.image = logo_img
             logo_lbl.pack(side="left", padx=(0, 8))
             drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=i18n.get("history.title"), bg=bg,
+        title_lbl = tk.Label(bar, text=title_text, bg=bg,
                              fg=accent, font=(font, 11, "bold"))
         title_lbl.pack(side="left")
         drag_targets.append(title_lbl)
@@ -156,7 +248,8 @@ class HistoryMixin:
 
     def _wire_history_interactions(self, win, listbox, detail, entries,
                                    bottom, theme, font, search_wrap, search,
-                                   search_icon, search_var, filter_var):
+                                   search_icon, search_var, filter_var,
+                                   v2=False, scale=1.0):
         import translator as _tr
         state = {"all": list(entries), "shown": []}
         kind_by_label = {v: k for k, v in _tr.get_history_filter_labels().items()}
@@ -314,7 +407,15 @@ class HistoryMixin:
             win.destroy()
             self._show_loading(src, origin=origin, use_cache=False)
 
+        min_w = ccv2.scaled(58, scale) if (v2 and ccv2 is not None) else 0
+
         def hist_btn(text_, cmd, danger=False):
+            if v2 and ccv2 is not None:
+                # v2: soft translucent pills matching the result window's
+                # 复制 / 操作 buttons, sized to a shared min width so the row
+                # stays tidy. Destructive intent (清空) reads from its label +
+                # the red status feedback, so all four share one calm style.
+                return self._v2_soft_button(bottom, text_, cmd, min_w=min_w)
             hover = theme["btn_close_active"] if danger else theme["btn_active"]
             hover_fg = "#ffffff" if danger else theme["settings_fg"]
             return self._pill_button(
@@ -357,13 +458,35 @@ class HistoryMixin:
             self._bring_to_front(self.history_win)
             return
 
-        t = self.theme
+        FONT = "Microsoft YaHei UI"
+
+        # v2 skin: when the UI_V2 flag is on AND the renderer is available, hand
+        # the builders a palette-derived colour map (self._v2_history_theme) and
+        # branch the structural bits (brand badge, gradient title, ghost close,
+        # soft-pill actions). Legacy is byte-for-byte untouched otherwise.
+        v2on = self._v2_popup_on()
+        scale = self._ui_scale() if v2on else 1.0
+        if v2on:
+            t = self._v2_history_theme()
+        else:
+            t = self.theme
         bg = t["settings_bg"]
         border = t["popup_border"]
         accent = t["accent"]
         hint = t["popup_hint"]
-        FONT = "Microsoft YaHei UI"
-        self._setup_form_style()
+        self._setup_form_style(theme=t)
+        if v2on:
+            # Re-tint the shared capsule scrollbar for the navy/light v2 card
+            # (base setup used the legacy theme colours).
+            style = ttk.Style(self.root)
+            style.configure(
+                "CC.Vertical.TScrollbar",
+                background=t["scroll_thumb"], troughcolor=t["trough"],
+                bordercolor=t["trough"])
+            style.map(
+                "CC.Vertical.TScrollbar",
+                background=[("active", t["scroll_thumb_active"]),
+                           ("pressed", t["scroll_thumb_active"])])
 
         win = tk.Toplevel(self.root)
         win.withdraw()
@@ -372,13 +495,18 @@ class HistoryMixin:
         win.focus_force()
         self.history_win = win
 
+        win._v2 = v2on
+        # Fixed-size card: its whole ring drags (never resizes).
+        win._v2_resizable = False
+
         # A larger centred card than the result/settings popups, so the richer
         # history tools (search, filters, copy/rerun actions) still have room.
         w, h, x, y = self._history_box()
-        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+        _radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+        card = self._rounded_shell(win, _radius, bg, border)
         self._build_history_titlebar(
             card, win, bg=bg, border=border, accent=accent, hint=hint,
-            font=FONT)
+            font=FONT, v2=v2on, scale=scale)
 
         entries = _tr.load_history()
         (bottom, listbox, detail, search_wrap, search, search_icon,
@@ -386,7 +514,7 @@ class HistoryMixin:
             card, width=w, bg=bg, border=border, theme=t, font=FONT)
         self._wire_history_interactions(
             win, listbox, detail, entries, bottom, t, FONT, search_wrap, search,
-            search_icon, search_var, filter_var)
+            search_icon, search_var, filter_var, v2=v2on, scale=scale)
 
         # ---- Reveal centred, staying above the (topmost) settings window ----
         self._reveal_rounded_window(win, w, h, x, y)
