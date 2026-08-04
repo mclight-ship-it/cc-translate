@@ -553,26 +553,35 @@ def icon_tile(size, text="CC", scale=1.0):
     return t
 
 
-def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.85):
-    """The About hero mark: a large app logo tile sitting on a transparent canvas
-    with a soft coloured glow blooming beneath/around it, so the icon looks lit
-    (like the reference design) rather than pasted flat. ``logo_rgba`` is the
-    already-sized square icon (RGBA); returns a taller RGBA canvas with the glow
-    behind the logo and the logo centred horizontally. Returns the input
+def hero_logo(logo_rgba, glow_color, scale=1.0, glow_strength=0.7, dy_frac=0.1,
+              blur_frac=0.44):
+    """The About hero mark: the app logo tile lifted off the card by a soft
+    coloured bloom that HUGS ITS OWN ROUNDED SILHOUETTE (not a bright disc/box
+    behind it, which read as a dirty rectangle). We tint a blurred copy of the
+    logo's alpha in ``glow_color`` and lay it down offset by ``dy_frac`` of the
+    logo size, then the crisp logo on top.
+
+    Dark mode passes a bright brand colour + wide ``blur_frac`` + small offset ->
+    a soft glow. Light mode can't emit brighter than a near-white card, so a wide
+    colour bloom just greys into a box; instead the caller passes a DARK neutral
+    colour + a TIGHT ``blur_frac`` + a small downward offset, turning this same
+    machinery into a crisp soft DROP-SHADOW (elevation) right under the tile —
+    the tasteful light-mode equivalent of "a glow beneath". Returns the input
     unchanged if Pillow is missing."""
     if not PIL_OK or logo_rgba is None:
         return logo_rgba
     s = logo_rgba.width
-    pad = int(round(s * 0.52))
+    pad = int(round(s * 0.6))
     W = s + pad * 2
     canvas = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    # A wide soft disc glow, centred horizontally and nudged DOWN so the bloom
-    # reads as light spilling beneath the icon.
-    gd = int(round(s * 1.85))
-    glow = radial_glow(gd, glow_color, glow_strength)
-    gx = (W - gd) // 2
-    gy = pad + int(round(s * 0.22))
-    canvas.alpha_composite(glow, (gx, gy))
+    alpha = logo_rgba.split()[3]
+    tint = tuple(glow_color)[:3] + (int(round(255 * glow_strength)),)
+    sil = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    sil.paste(Image.new("RGBA", (s, s), tint), (0, 0), alpha)
+    bloom = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    bloom.alpha_composite(sil, (pad, pad + int(round(s * dy_frac))))
+    bloom = bloom.filter(ImageFilter.GaussianBlur(max(1, int(round(s * blur_frac)))))
+    canvas.alpha_composite(bloom)
     canvas.alpha_composite(logo_rgba, (pad, pad))
     return canvas
 
@@ -614,8 +623,8 @@ def gradient_pill(text, font, palette, fg=None, grad=False, px=14, py=8,
         # not a flat sticker. Composite the blurred glow onto the pill, then
         # redraw the crisp dot (+ a tiny white highlight) on top for a "bright
         # point + glow" feel.
-        gd = scaled(18, scale)
-        glow = radial_glow(gd, dot, 0.95)
+        gd = scaled(13, scale)
+        glow = radial_glow(gd, dot, 0.7)
         img.alpha_composite(glow, (int(round(dcx - gd / 2.0)),
                                    int(round(cy - gd / 2.0))))
         dr = ImageDraw.Draw(img)

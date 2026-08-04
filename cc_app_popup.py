@@ -1504,9 +1504,17 @@ class PopupMixin:
             from PIL import Image
             with Image.open(path) as im:
                 logo = im.convert("RGBA").resize((s, s), Image.LANCZOS)
-            glow_col = tuple(pal.get("glow_hi", (110, 140, 255)))
-            return ccv2.hero_logo(logo, glow_col, scale=scale,
-                                  glow_strength=0.9 if is_dark else 0.5)
+            if is_dark:
+                # Dark card: a bright brand-blue glow bleeding out from the mark.
+                return ccv2.hero_logo(logo, (110, 140, 255), scale=scale,
+                                      glow_strength=0.7, dy_frac=0.1,
+                                      blur_frac=0.44)
+            # Light card: can't emit brighter than near-white, so use a TIGHT
+            # soft drop-shadow (dark navy, low alpha, small blur pushed just
+            # below the tile) — a clean elevation instead of a grey glow-box.
+            return ccv2.hero_logo(logo, (18, 26, 60), scale=scale,
+                                  glow_strength=0.30, dy_frac=0.1,
+                                  blur_frac=0.14)
         return self._v2_photo(("herologo", path, s, round(scale, 2)), _bake)
 
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
