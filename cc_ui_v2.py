@@ -55,7 +55,7 @@ BRAND = [(0.0, (110, 168, 255)), (0.5, (161, 121, 255)), (1.0, (255, 122, 198))]
 _PALETTES = {
     "dark": dict(
         is_dark=True,
-        solid=[(0.0, (34, 37, 70)), (1.0, (22, 24, 48))],
+        solid=[(0.0, (36, 38, 58)), (1.0, (24, 25, 39))],
         glow=(70, 50, 160),
         glow_hi=(110, 140, 255),
         glow_lo=(255, 120, 200),
@@ -65,7 +65,7 @@ _PALETTES = {
         fg=(238, 241, 255), sub=(170, 178, 213), hint=(127, 136, 173),
         btn=(255, 255, 255, 18), btn_brd=(255, 255, 255, 30),
         field=(13, 15, 33, 255), field_brd=(150, 130, 255),
-        panel=(18, 20, 44),                 # solid inner panel for body text / ttk
+        panel=(20, 21, 35),                 # solid inner panel for body text / ttk
         ok=(110, 231, 168), err=(240, 113, 120),
     ),
     "light": dict(
