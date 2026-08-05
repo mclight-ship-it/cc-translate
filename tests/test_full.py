@@ -809,6 +809,7 @@ class TestSummaryHelpers(unittest.TestCase):
     def test_stream_and_summary_thresholds_unified(self):
         self.assertEqual(tr.STREAM_MIN_CHARS, tr.SUMMARY_MIN_CHARS)
         self.assertEqual(tr.STREAM_MIN_CHARS, 400)
+        self.assertEqual(tr.CODEX_STREAM_MIN_CHARS, 400)
 
     def test_prose_paragraph_is_summarizable(self):
         prose = ("The quick brown fox jumps over the lazy dog. " * 20).strip()
@@ -1576,6 +1577,38 @@ class TestProviderRouting(unittest.TestCase):
 
         app._stream_codex.assert_not_called()
         app._call_model.assert_called_once()
+
+    def test_codex_stream_route_uses_evidence_based_boundary(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock(return_value=(True, "ok"))
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+
+        def meta(text):
+            return {
+                "provider": "codex_cli",
+                "model": "auto",
+                "input": text,
+                "system_prompt": "Translate.",
+            }
+
+        below = ("x " * 199) + "x"
+        self.assertEqual(len(below), tr.CODEX_STREAM_MIN_CHARS - 1)
+        app._do_provider_translate(below, 1, meta(below))
+        app._stream_codex.assert_not_called()
+        app._call_model.assert_called_once()
+
+        app._call_model.reset_mock()
+        at_boundary = "x " * 200
+        self.assertEqual(len(at_boundary), tr.CODEX_STREAM_MIN_CHARS)
+        app._do_provider_translate(at_boundary, 2, meta(at_boundary))
+        app._stream_codex.assert_called_once()
+        app._call_model.assert_not_called()
 
     def test_codex_stream_failure_before_delta_allows_exec_fallback(self):
         from cc_providers.base import ProviderResult

@@ -29,6 +29,10 @@ import i18n
 APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STREAM_MIN_CHARS = 400
+# Keep Codex routing independent from Claude/summary behavior. A real route A/B
+# on 0.146.0 showed stable exec winning near 200 chars and app-server revealing
+# first text materially earlier from roughly 400 chars onward.
+CODEX_STREAM_MIN_CHARS = 400
 # Empty preserves every existing Claude cache signature. Bump only the provider
 # whose output contract changed so unrelated providers keep valid cached results.
 PROVIDER_PROMPT_REVISIONS = {
@@ -264,7 +268,7 @@ def summarize_provider_dogfood(path=None, days=PERF_DOGFOOD_DAYS, now=None):
             if (stage == "provider_complete"
                     and record.get("ok")
                     and isinstance(record.get("chars"), (int, float))
-                    and record["chars"] >= STREAM_MIN_CHARS):
+                    and record["chars"] >= CODEX_STREAM_MIN_CHARS):
                 total = record.get("total_ms")
                 if isinstance(total, (int, float)) and total >= 0:
                     stable_long_text_durations.append(int(total))

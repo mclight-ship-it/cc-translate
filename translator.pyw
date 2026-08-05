@@ -60,7 +60,8 @@ from cc_core import (
     POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
     log_perf, log_error,
-    CFG, DEFAULT_CONFIG, STREAM_MIN_CHARS, PROVIDER_PROMPT_REVISIONS,
+    CFG, DEFAULT_CONFIG, STREAM_MIN_CHARS, CODEX_STREAM_MIN_CHARS,
+    PROVIDER_PROMPT_REVISIONS,
     UI_V2_ENV, ui_v2_enabled,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
@@ -1628,7 +1629,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         stream_eligible = (
             selection.provider_id == CODEX_PROVIDER
             and stream_enabled
-            and len(text) >= STREAM_MIN_CHARS
+            and len(text) >= CODEX_STREAM_MIN_CHARS
             and not dictionary)
         if selection.provider_id == CODEX_PROVIDER and not stream_eligible:
             reason = (

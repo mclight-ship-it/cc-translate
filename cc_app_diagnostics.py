@@ -44,7 +44,7 @@ from cc_warm import CLAUDE_CMD
 from cc_update import is_git_deploy, version_string
 from cc_core import (
     APP_DIR, DATA_DIR, CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS,
-    STREAM_MIN_CHARS,
+    CODEX_STREAM_MIN_CHARS,
     _user_data_path,
     get_provider_labels, summarize_provider_dogfood, evaluate_codex_rollout,
 )
@@ -210,7 +210,7 @@ class DiagnosticsMixin:
                     DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])),
                 "version_supported": appserver_version_supported(
                     status.version),
-                "min_chars": STREAM_MIN_CHARS,
+                "min_chars": CODEX_STREAM_MIN_CHARS,
                 "last_route": dict(getattr(
                     self, "_last_provider_route", {}) or {}),
             }
@@ -349,7 +349,7 @@ class DiagnosticsMixin:
                 f"- {i18n.get('diagnostics.codex_streaming')}: "
                 f"{_codex_streaming_status_text(streaming)}",
                 f"- {i18n.get('diagnostics.codex_stream_trigger')}: "
-                f"{i18n.get('diagnostics.codex_stream_trigger_value').format(chars=streaming.get('min_chars', STREAM_MIN_CHARS))}",
+                f"{i18n.get('diagnostics.codex_stream_trigger_value').format(chars=streaming.get('min_chars', CODEX_STREAM_MIN_CHARS))}",
                 f"- {i18n.get('diagnostics.codex_stream_last_route')}: "
                 f"{_codex_route_text(streaming.get('last_route'))}",
             ])

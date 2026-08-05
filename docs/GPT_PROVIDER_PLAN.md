@@ -87,6 +87,11 @@ exec/app-server：
 - history 文件为 100 条、约 190 KiB 时，读取并扫描中位约 2.5 ms，不值得增加易失效的
   进程内索引。
 - 短文本改走 app-server 未显示稳定收益，继续保留 stable exec 路由。
+- 追加的 200/400/600/900 字符路由 A/B 中，约 200 字符时 stable exec 更快；
+  约 400–900 字符时 app-server 首字提前约 2.0–4.9 s。因此自动路由继续采用保守的
+  400 字符边界。
+- Codex 的 `CODEX_STREAM_MIN_CHARS` 已与 Claude/摘要共用阈值解耦，防止未来调整摘要
+  行为时意外改变经过实测的 Codex 路由。
 - `gpt-5.6-luna` 在当前 ChatGPT 登录下可用且单次短句较快，但两次长文中位总耗时约
   12.6 s，波动大；`gpt-5.6-terra` 的短句也未优于现有选项，因此暂不加入“快速”列表。
 - Auto 使用 `none` reasoning + low verbosity 的两次长文首字中位约提前 1 s，但总耗时
