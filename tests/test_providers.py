@@ -1,6 +1,7 @@
 import json
 import io
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -19,6 +20,7 @@ from cc_providers.codex_appserver import (
     CodexAppServerProtocolError,
     CodexAppServerTransport,
     _DEFENDER_HOOK_COMMAND,
+    _clear_appserver_version_cache,
     appserver_version_supported,
     _is_trusted_defender_path,
     _supported_appserver_version,
@@ -390,18 +392,27 @@ class TestCodexAppServerTransport(unittest.TestCase):
         self.assertIn("--strict-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertIn("features.shell_tool=false", command)
+        self.assertIn("features.shell_snapshot=false", command)
+        self.assertIn("features.remote_plugin=false", command)
         self.assertIn('web_search="disabled"', command)
+        self.assertIn("check_for_update_on_startup=false", command)
+        self.assertIn("project_root_markers=[]", command)
         self.assertIn('model_reasoning_effort="low"', command)
 
     def test_version_gate_accepts_only_pinned_protocol_version(self):
+        self.addCleanup(_clear_appserver_version_cache)
+        _clear_appserver_version_cache()
         supported = unittest.mock.Mock(
             returncode=0, stdout="codex-cli 0.146.0", stderr="")
         future = unittest.mock.Mock(
             returncode=0, stdout="codex-cli 0.147.0", stderr="")
         with unittest.mock.patch(
                 "cc_providers.codex_appserver.subprocess.run",
-                return_value=supported):
+                return_value=supported) as run:
             self.assertTrue(_supported_appserver_version("codex.exe"))
+            self.assertTrue(_supported_appserver_version("codex.exe"))
+            run.assert_called_once()
+        _clear_appserver_version_cache()
         with unittest.mock.patch(
                 "cc_providers.codex_appserver.subprocess.run",
                 return_value=future):
@@ -409,6 +420,29 @@ class TestCodexAppServerTransport(unittest.TestCase):
         self.assertTrue(appserver_version_supported("codex-cli 0.146.0"))
         self.assertFalse(appserver_version_supported("codex-cli 0.147.0"))
         self.assertFalse(appserver_version_supported(""))
+
+    def test_version_gate_retries_transient_probe_failures(self):
+        self.addCleanup(_clear_appserver_version_cache)
+        supported = unittest.mock.Mock(
+            returncode=0, stdout="codex-cli 0.146.0", stderr="")
+        transient_failures = (
+            subprocess.TimeoutExpired("codex.exe", 5),
+            OSError("temporarily unavailable"),
+        )
+
+        for failure in transient_failures:
+            with self.subTest(failure=type(failure).__name__):
+                _clear_appserver_version_cache()
+                with unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.run",
+                        side_effect=[failure, supported]) as run:
+                    self.assertFalse(
+                        _supported_appserver_version("codex.exe"))
+                    self.assertTrue(
+                        _supported_appserver_version("codex.exe"))
+                    self.assertTrue(
+                        _supported_appserver_version("codex.exe"))
+                    self.assertEqual(run.call_count, 2)
 
     def test_hook_preflight_allows_only_managed_defender_hook(self):
         with tempfile.TemporaryDirectory() as work_dir:
@@ -642,6 +676,16 @@ class TestCodexAppServerTransport(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.text, "final")
         self.assertEqual(deltas, ["partial"])
+        metrics = dict(result.metrics)
+        self.assertTrue({
+            "initialize_ms",
+            "hook_preflight_ms",
+            "thread_start_ms",
+            "turn_start_ms",
+            "turn_first_event_ms",
+            "turn_first_result_ms",
+            "turn_total_ms",
+        }.issubset(metrics))
         sent = [
             json.loads(line)
             for line in process.stdin.getvalue().splitlines()

@@ -532,6 +532,7 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 
 HISTORY_PATH = _user_data_path("history.json")
+CODEX_FIRST_FRAME_WAIT_SECONDS = 0.05
 
 # Serialises the read-modify-write in add_history so concurrent translation
 # workers (each may append a result) can't interleave and lose entries.
@@ -1768,14 +1769,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         schedule_failed = threading.Event()
         stream_active = threading.Event()
         stream_active.set()
+        first_frame_lock = threading.Lock()
+        first_frame_state = {"value": "pending"}
         first_frame_scheduled = {"value": False}
         ss.popup_ready = False
 
         def render_first_frame():
-            if (not stream_active.is_set()
-                    or not self._job_is_current(job_id)
-                    or self._ss is not ss):
-                return
+            with first_frame_lock:
+                if (not stream_active.is_set()
+                        or not self._job_is_current(job_id)
+                        or self._ss is not ss):
+                    first_frame_state["value"] = "abandoned"
+                    return
+                first_frame_state["value"] = "rendering"
             appended = []
             try:
                 while True:
@@ -1783,13 +1789,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             except queue.Empty:
                 pass
             if not appended:
+                with first_frame_lock:
+                    first_frame_state["value"] = "failed"
                 return
             ss.accum += "".join(appended)
             try:
                 self._stream_update(ss.accum)
             except Exception:
+                with first_frame_lock:
+                    first_frame_state["value"] = "failed"
                 return
-            rendered_delta.set()
+            with first_frame_lock:
+                first_frame_state["value"] = "rendered"
+                rendered_delta.set()
 
         def on_delta(delta):
             received_delta.set()
@@ -1801,9 +1813,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 except tk.TclError:
                     schedule_failed.set()
                     return
-                # Block protocol parsing briefly so a first delta is either
-                # rendered or explicitly abandoned before fallback is decided.
-                rendered_delta.wait(1.0)
+                # Give Tk one frame to render without stalling protocol parsing
+                # for a full second when the UI thread is temporarily busy.
+                rendered_delta.wait(CODEX_FIRST_FRAME_WAIT_SECONDS)
                 return
             if not rendered_delta.is_set():
                 return
@@ -1848,8 +1860,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 job_id, selection, "stable_fallback", "pre_output_failure",
                 result.error_code)
             return False
-        if not rendered_delta.is_set():
-            stream_active.clear()
+        with first_frame_lock:
+            frame_claimed = first_frame_state["value"] in {
+                "rendering", "rendered",
+            }
+            if not frame_claimed:
+                first_frame_state["value"] = "abandoned"
+                stream_active.clear()
+        if not frame_claimed:
             while True:
                 try:
                     ss.queue.get_nowait()

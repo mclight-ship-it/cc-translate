@@ -37,9 +37,13 @@ _CODEX_CONFIG_OVERRIDES = (
     "features.multi_agent_v2=false",
     "agents.enabled=false",
     "features.memories=false",
+    "features.shell_snapshot=false",
+    "features.remote_plugin=false",
     "memories.generate_memories=false",
     "memories.use_memories=false",
     'web_search="disabled"',
+    "check_for_update_on_startup=false",
+    "project_root_markers=[]",
 )
 _MODEL_CONFIG_OVERRIDES = {
     "gpt-5.4-mini": ('model_reasoning_effort="low"',),

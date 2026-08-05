@@ -169,6 +169,8 @@ _PERF_SAFE_KEYS = {
     "provider", "model", "mode", "route", "outcome", "task", "kind",
     "chars", "images", "wall_ms", "spawn_ms",
     "first_event_ms", "first_result_ms", "total_ms",
+    "initialize_ms", "hook_preflight_ms", "thread_start_ms", "turn_start_ms",
+    "turn_first_event_ms", "turn_first_result_ms", "turn_total_ms",
     "ok", "cancelled", "killed", "is_error", "rc",
     "has_stream_data", "error_code",
 }

@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -30,6 +31,9 @@ _SAFE_ITEM_TYPES = {
     "contextCompaction",
 }
 _SUPPORTED_CODEX_VERSIONS = {"0.146.0"}
+_VERSION_CACHE_MAX_ENTRIES = 8
+_version_cache = {}
+_version_cache_lock = threading.Lock()
 _DEFENDER_HOOK_COMMAND = (
     "trap { exit 0 } $l=(Get-ItemProperty -LiteralPath:"
     "'HKLM:\\SOFTWARE\\Microsoft\\Windows Defender' -Name:"
@@ -114,8 +118,10 @@ class CodexAppServerParser:
         self.error_detail = ""
         self.responses = {}
         self.saw_delta = False
+        self.last_was_notification = False
 
     def feed(self, raw_line):
+        self.last_was_notification = False
         try:
             message = json.loads(raw_line)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -140,6 +146,7 @@ class CodexAppServerParser:
         if not isinstance(method, str):
             raise CodexAppServerProtocolError(
                 "invalid_appserver_message", "missing method")
+        self.last_was_notification = True
 
         params = message.get("params") or {}
         if method in ("hook/started", "hook/completed"):
@@ -290,6 +297,13 @@ class CodexAppServerTransport:
         deadline = time.monotonic() + max(1.0, request.timeout_seconds)
         first_event_ms = None
         first_result_ms = None
+        initialize_ms = None
+        hook_preflight_ms = None
+        thread_start_ms = None
+        turn_start_ms = None
+        turn_started_at = None
+        turn_first_event_ms = None
+        turn_first_result_ms = None
         interrupt_sent = False
         next_id = 1
 
@@ -303,6 +317,21 @@ class CodexAppServerTransport:
                 values.append(("first_event_ms", first_event_ms))
             if first_result_ms is not None:
                 values.append(("first_result_ms", first_result_ms))
+            if initialize_ms is not None:
+                values.append(("initialize_ms", initialize_ms))
+            if hook_preflight_ms is not None:
+                values.append(("hook_preflight_ms", hook_preflight_ms))
+            if thread_start_ms is not None:
+                values.append(("thread_start_ms", thread_start_ms))
+            if turn_start_ms is not None:
+                values.append(("turn_start_ms", turn_start_ms))
+            if turn_first_event_ms is not None:
+                values.append(("turn_first_event_ms", turn_first_event_ms))
+            if turn_first_result_ms is not None:
+                values.append(("turn_first_result_ms", turn_first_result_ms))
+            if turn_started_at is not None:
+                values.append(("turn_total_ms", int(
+                    (time.perf_counter() - turn_started_at) * 1000)))
             return tuple(values)
 
         def send(method, params=None, request_id=None):
@@ -332,8 +361,10 @@ class CodexAppServerTransport:
                 if kind != "line":
                     return self._early_result(kind, payload, parser, metrics())
                 parser.feed(payload)
+            initialize_ms = int((time.perf_counter() - started_at) * 1000)
 
             send("initialized")
+            hook_started_at = time.perf_counter()
             send("hooks/list", {
                 "cwds": [os.path.abspath(self.work_dir)],
             }, next_id)
@@ -348,6 +379,8 @@ class CodexAppServerTransport:
                 parser.feed(payload)
             _validate_hook_preflight(
                 parser.responses[hooks_list_id], self.work_dir)
+            hook_preflight_ms = int(
+                (time.perf_counter() - hook_started_at) * 1000)
 
             thread_params = {
                 "cwd": os.path.abspath(self.work_dir),
@@ -364,6 +397,7 @@ class CodexAppServerTransport:
             }
             if request.model and request.model != "auto":
                 thread_params["model"] = request.model
+            thread_started_at = time.perf_counter()
             send("thread/start", thread_params, next_id)
             thread_start_id = next_id
             next_id += 1
@@ -380,6 +414,8 @@ class CodexAppServerTransport:
             if not parser.thread_id:
                 raise CodexAppServerProtocolError(
                     "invalid_appserver_message", "thread/start returned no id")
+            thread_start_ms = int(
+                (time.perf_counter() - thread_started_at) * 1000)
 
             turn_params = {
                 "threadId": parser.thread_id,
@@ -397,6 +433,7 @@ class CodexAppServerTransport:
                 turn_params["model"] = request.model
             if request.model == "gpt-5.4-mini":
                 turn_params["effort"] = "low"
+            turn_started_at = time.perf_counter()
             send("turn/start", turn_params, next_id)
             turn_start_id = next_id
             next_id += 1
@@ -417,10 +454,14 @@ class CodexAppServerTransport:
                     return self._early_result(kind, payload, parser, metrics())
                 parser.feed(payload)
                 elapsed = int((time.perf_counter() - started_at) * 1000)
-                if first_event_ms is None:
+                turn_elapsed = int(
+                    (time.perf_counter() - turn_started_at) * 1000)
+                if parser.last_was_notification and first_event_ms is None:
                     first_event_ms = elapsed
+                    turn_first_event_ms = turn_elapsed
                 if parser.saw_delta and first_result_ms is None:
                     first_result_ms = elapsed
+                    turn_first_result_ms = turn_elapsed
                 if turn_start_id in parser.responses and not parser.turn_id:
                     turn_result = parser.responses[turn_start_id] or {}
                     turn = turn_result.get("turn") or {}
@@ -429,6 +470,7 @@ class CodexAppServerTransport:
                         raise CodexAppServerProtocolError(
                             "invalid_appserver_message",
                             "turn/start returned no id")
+                    turn_start_ms = turn_elapsed
 
             if interrupt_sent or parser.turn_status == "interrupted":
                 return ProviderResult(
@@ -506,6 +548,11 @@ def _read_stdout(stream, output_queue):
 
 
 def _supported_appserver_version(command):
+    cache_key = _command_fingerprint(command)
+    with _version_cache_lock:
+        cached = _version_cache.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         completed = subprocess.run(
             [command, "--version"],
@@ -517,9 +564,30 @@ def _supported_appserver_version(command):
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    if completed.returncode != 0:
-        return False
-    return appserver_version_supported(completed.stdout)
+    supported = (
+        completed.returncode == 0
+        and appserver_version_supported(completed.stdout)
+    )
+    with _version_cache_lock:
+        if len(_version_cache) >= _VERSION_CACHE_MAX_ENTRIES:
+            _version_cache.clear()
+        _version_cache[cache_key] = supported
+    return supported
+
+
+def _command_fingerprint(command):
+    resolved = shutil.which(command) or command
+    path = os.path.normcase(os.path.abspath(resolved))
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return path, None, None
+    return path, stat.st_mtime_ns, stat.st_size
+
+
+def _clear_appserver_version_cache():
+    with _version_cache_lock:
+        _version_cache.clear()
 
 
 def appserver_version_supported(version_text):

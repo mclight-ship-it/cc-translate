@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -1649,6 +1650,62 @@ class TestProviderRouting(unittest.TestCase):
         app._show_result.assert_called_once_with(
             False, "protocol changed", 1, record=False)
 
+    def test_codex_render_in_progress_does_not_allow_exec_fallback(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        render_started = threading.Event()
+        finish_render = threading.Event()
+        callback_threads = []
+        app.root = unittest.mock.Mock()
+
+        def run_callback(_delay, callback):
+            callback_thread = threading.Thread(target=callback)
+            callback_thread.start()
+            callback_threads.append(callback_thread)
+
+        app.root.after.side_effect = run_callback
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+
+        def stream(_request, on_delta, _cancel_event):
+            on_delta("partial")
+            self.assertTrue(render_started.wait(1))
+            return ProviderResult(
+                False, error_code="unknown_appserver_event")
+
+        provider.stream.side_effect = stream
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+
+        def block_first_render(_text):
+            render_started.set()
+            self.assertTrue(finish_render.wait(1))
+
+        app._stream_update = unittest.mock.Mock(side_effect=block_first_render)
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        ss = tr.StreamSession()
+        app._ss = ss
+        meta = {"input": "long text", "origin": "text",
+                "is_code": False, "kind": "text"}
+
+        try:
+            handled = app._stream_codex(
+                "long text", 1, ss, meta,
+                tr.ProviderSelection("codex_cli", "auto"))
+        finally:
+            finish_render.set()
+            for callback_thread in callback_threads:
+                callback_thread.join(1)
+
+        self.assertTrue(handled)
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
+        app._provider_error_text.assert_called_once()
+
     def test_codex_unrendered_delta_can_fall_back_without_late_render(self):
         from cc_providers.base import ProviderResult
 
@@ -1684,6 +1741,7 @@ class TestProviderRouting(unittest.TestCase):
 
         self.assertFalse(handled)
         app._stream_update.assert_not_called()
+        self.assertLessEqual(tr.CODEX_FIRST_FRAME_WAIT_SECONDS, 0.05)
 
     def test_codex_render_schedule_failure_is_not_logged_as_success(self):
         app = object.__new__(tr.TranslatorApp)

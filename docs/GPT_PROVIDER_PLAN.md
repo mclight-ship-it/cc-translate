@@ -58,6 +58,48 @@ CLI 原生进程启动只需约 7–13 ms，主要时间消耗在模型响应，
 `%APPDATA%\CC Translate\perf.log` 的真实使用数据计算；该日志上限 512 KiB，并保留一个
 轮转备份。Claude 的真实远程基线暂不重跑，以避免干扰当前不可方便验证的 Claude 环境。
 
+#### 2026-08-05 延迟专项复测
+
+同一台机器又完成了 12 次受控请求，分离短/长文本、Auto/mini 和 stable
+exec/app-server：
+
+- 短文本 stable exec：Auto 总耗时中位数 7.41 s，mini 为 6.89 s。
+- 长文本 stable exec：Auto 首结果/总耗时中位数 9.94/11.32 s，mini 为
+  8.68/10.03 s。
+- 长文本 app-server：Auto 首字/总耗时中位数 5.42/8.85 s，mini 为
+  4.99/9.27 s。
+- app-server 将长文首字提前约 5–6 s；真正的进程创建只有约 7–83 ms，远端
+  推理/排队仍是主瓶颈。
+
+复测后实施的低风险优化：
+
+- Codex 版本兼容探测按可执行文件路径、修改时间和大小在进程内缓存。本机重复探测从约
+  67 ms 降至约 0.1 ms；可执行文件变化会使缓存键失效。
+- 首个流式 delta 等待 Tk 渲染的上限从 1 s 降至 50 ms，保留“未显示可安全回退、已显示
+  不重复请求”的既有语义。
+- 增加 initialize、hook preflight、thread/start、turn 到首事件/首字/完成的隐私安全
+  分段计时。
+- 在既有工具禁用基础上继续关闭启动更新检查、父目录项目配置扫描、shell snapshot 和
+  remote plugin；严格配置启动验证通过。
+
+额外 A/B 的结论：
+
+- history 文件为 100 条、约 190 KiB 时，读取并扫描中位约 2.5 ms，不值得增加易失效的
+  进程内索引。
+- 短文本改走 app-server 未显示稳定收益，继续保留 stable exec 路由。
+- `gpt-5.6-luna` 在当前 ChatGPT 登录下可用且单次短句较快，但两次长文中位总耗时约
+  12.6 s，波动大；`gpt-5.6-terra` 的短句也未优于现有选项，因此暂不加入“快速”列表。
+- Auto 使用 `none` reasoning + low verbosity 的两次长文首字中位约提前 1 s，但总耗时
+  没有稳定下降；小样本不足以改变默认配置。
+- 当前 perf 日志的 741 条记录中，249 条明确为 test，492 条缺少 runtime、只能标为
+  legacy-unknown，没有可识别的 app 样本。旧记录不得冒充真实用户 P50/P95。
+
+Codex 0.146.0 官方协议支持一个长生命周期连接上创建多个 thread；若未来实验常驻
+app-server，应坚持每次翻译新建 `ephemeral` thread。Windows 没有官方 daemon，且当前
+分段计时显示 initialize 约 0.15–0.31 s、进程清理约 0.3 s，理论收益明显小于模型等待。
+因此常驻方案仍不直接上线，必须先通过跨请求无串话、取消、过载、Defender hook
+fail-closed 和退出无残留测试。
+
 安全结论：Codex CLI 没有一个可证明“彻底禁用所有工具”的稳定总开关。当前实现使用
 `--ignore-user-config`、`--ignore-rules`、`--strict-config`、清空 MCP、只读沙箱、专用工作
 目录、功能覆盖项、JSON 编码的用户输入和严格提示词做纵深防御。JSONL 会逐行解析，首个工具
