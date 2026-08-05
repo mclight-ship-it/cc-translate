@@ -26,6 +26,7 @@ import time
 import types
 import unittest
 import unittest.mock
+from datetime import datetime
 
 from tests._tr import tr
 
@@ -97,7 +98,9 @@ class TestModuleImports(unittest.TestCase):
 
 class TestCFGConstants(unittest.TestCase):
     _EXPECTED_KEYS = {
-        "MODEL", "DOUBLE_PRESS_WINDOW", "FONT_SIZE", "DIRECTION",
+        "MODEL", "MODEL_PROVIDER", "CLAUDE_MODEL", "CODEX_MODEL",
+        "CODEX_STREAMING_EXPERIMENTAL",
+        "DOUBLE_PRESS_WINDOW", "FONT_SIZE", "DIRECTION",
         "MAX_CHARS", "THEME", "POPUP_LAYOUT",
         "HISTORY_ENABLED", "HISTORY_LIMIT",
         "AUTO_UPDATE_ENABLED", "AUTO_UPDATE_HOUR",
@@ -145,6 +148,11 @@ class TestCFGConstants(unittest.TestCase):
         self.assertGreater(dc[tr.CFG.MAX_CHARS], 0)
         self.assertIsInstance(dc[tr.CFG.HISTORY_ENABLED], bool)
         self.assertIsInstance(dc[tr.CFG.AUTO_UPDATE_ENABLED], bool)
+
+    def test_release_defaults_enable_codex_streaming_and_use_font_10(self):
+        self.assertIs(
+            tr.DEFAULT_CONFIG[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
+        self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
 
 
 # ============================================================
@@ -288,6 +296,30 @@ class TestConfigPersistence(unittest.TestCase):
         cfg = tr.load_config()
         self.assertEqual(cfg[tr.CFG.THEME], "dark")
         self.assertEqual(cfg[tr.CFG.MODEL], tr.DEFAULT_CONFIG[tr.CFG.MODEL])
+        self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
+        self.assertEqual(cfg[tr.CFG.FONT_SIZE], 10)
+
+    def test_saved_release_settings_override_new_defaults(self):
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump({
+                tr.CFG.CODEX_STREAMING_EXPERIMENTAL: False,
+                tr.CFG.FONT_SIZE: 16,
+            }, f)
+        self._patch_config_path(self._path)
+
+        cfg = tr.load_config()
+
+        self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], False)
+        self.assertEqual(cfg[tr.CFG.FONT_SIZE], 16)
+
+    def test_legacy_model_migrates_to_claude_model(self):
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump({tr.CFG.MODEL: "opus"}, f)
+        self._patch_config_path(self._path)
+        cfg = tr.load_config()
+        self.assertEqual(cfg[tr.CFG.MODEL_PROVIDER], "claude_cli")
+        self.assertEqual(cfg[tr.CFG.CLAUDE_MODEL], "opus")
+        self.assertEqual(cfg[tr.CFG.MODEL], "opus")
 
 
 class TestConfigWrapper(unittest.TestCase):
@@ -341,6 +373,18 @@ class TestConfigWrapper(unittest.TestCase):
         # LANGUAGE is intentionally not in DEFAULT_CONFIG (set on first launch).
         cfg = tr.Config()
         self.assertIsNone(cfg.language)
+
+    def test_unknown_provider_is_preserved_for_explicit_error(self):
+        cfg = tr.Config({tr.CFG.MODEL_PROVIDER: "not-a-provider"})
+        self.assertEqual(cfg[tr.CFG.MODEL_PROVIDER], "not-a-provider")
+
+    def test_explicit_claude_model_keeps_legacy_model_synchronized(self):
+        cfg = tr.Config({
+            tr.CFG.MODEL: "haiku",
+            tr.CFG.CLAUDE_MODEL: "sonnet",
+        })
+        self.assertEqual(cfg[tr.CFG.CLAUDE_MODEL], "sonnet")
+        self.assertEqual(cfg[tr.CFG.MODEL], "sonnet")
 
 
 # ============================================================
@@ -636,6 +680,16 @@ class TestModelLabels(unittest.TestCase):
         en = tr.get_model_labels()
         self.assertNotEqual(zh["haiku"], en["haiku"])
 
+    def test_provider_labels_and_models_are_separate(self):
+        providers = tr.get_provider_labels()
+        self.assertEqual(set(providers), {"claude_cli", "codex_cli"})
+        self.assertEqual(
+            set(tr.get_provider_model_labels("claude_cli")),
+            {"haiku", "sonnet", "opus"})
+        self.assertEqual(
+            set(tr.get_provider_model_labels("codex_cli")),
+            {"auto", "gpt-5.4-mini"})
+
 
 # ============================================================
 # Rich-text rendering: edge cases
@@ -883,10 +937,11 @@ class TestShouldSummarize(unittest.TestCase):
     """Exercise TranslatorApp._should_summarize without constructing the full
     app: call the unbound method against a lightweight stub self."""
 
-    def _stub(self, *, enabled=True, last_class="text"):
+    def _stub(self, *, enabled=True, last_class="text", last_origin="text"):
         ns = types.SimpleNamespace()
         ns.cfg = {tr.CFG.SUMMARY_ENABLED: enabled}
         ns._last_class = last_class
+        ns._last_origin = last_origin
         return ns
 
     def _call(self, stub, text):
@@ -913,6 +968,10 @@ class TestShouldSummarize(unittest.TestCase):
         # verbatim); only pure code and screenshots are excluded.
         self.assertTrue(
             self._call(self._stub(last_class="mixed"), self._long_prose()))
+
+    def test_local_ocr_is_not_summarized(self):
+        self.assertFalse(self._call(
+            self._stub(last_origin="ocr"), self._long_prose()))
 
     def test_ocr_class_not_summarized(self):
         # Screenshots take a separate one-shot vision path, not this pipeline.
@@ -975,6 +1034,89 @@ class TestCCWarm(unittest.TestCase):
         result = w.send_and_stream("hello", lambda x: None)
         self.assertIsNone(result)
 
+    def test_warm_start_preserves_claude_cli_contract(self):
+        import cc_warm
+
+        proc = unittest.mock.Mock()
+        with unittest.mock.patch.object(
+                cc_warm.subprocess, "Popen", return_value=proc) as popen, \
+                unittest.mock.patch.object(cc_warm.threading, "Thread") as thread:
+            w = cc_warm.WarmClaude(
+                "sonnet", "SYSTEM", ("translate", "sonnet", "auto"))
+            self.assertTrue(w.start())
+
+        self.assertEqual(
+            popen.call_args.args[0],
+            [
+                cc_warm.CLAUDE_CMD, "-p", "--safe-mode", "--model", "sonnet",
+                "--system-prompt", "SYSTEM",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages", "--verbose",
+                "--tools", "",
+                "--exclude-dynamic-system-prompt-sections",
+                "--no-session-persistence",
+            ],
+        )
+        self.assertEqual(
+            popen.call_args.kwargs,
+            {
+                "stdin": cc_warm.subprocess.PIPE,
+                "stdout": cc_warm.subprocess.PIPE,
+                "stderr": cc_warm.subprocess.DEVNULL,
+                "text": True,
+                "encoding": "utf-8",
+                "creationflags": cc_warm.subprocess.CREATE_NO_WINDOW,
+            },
+        )
+        thread.assert_called_once()
+
+    def test_warm_send_preserves_stream_json_input_contract(self):
+        import cc_warm
+
+        stdin = unittest.mock.Mock()
+        stdout = iter([
+            json.dumps({
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_delta",
+                    "delta": {"text": "你"},
+                },
+            }),
+            json.dumps({
+                "type": "result",
+                "is_error": False,
+                "result": "你好",
+            }),
+        ])
+        proc = unittest.mock.Mock(
+            stdin=stdin, stdout=stdout, poll=unittest.mock.Mock(return_value=None))
+        timer = unittest.mock.Mock()
+        deltas = []
+        w = cc_warm.WarmClaude(
+            "sonnet", "SYSTEM", ("translate", "sonnet", "auto"))
+        w.proc = proc
+
+        with unittest.mock.patch.object(
+                cc_warm.threading, "Timer", return_value=timer) as timer_cls:
+            result = w.send_and_stream("hello", deltas.append)
+
+        expected = {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<text>\nhello\n</text>",
+            },
+        }
+        stdin.write.assert_called_once_with(json.dumps(expected) + "\n")
+        stdin.flush.assert_called_once_with()
+        timer_cls.assert_called_once_with(
+            cc_warm.WARM_SEND_TIMEOUT_S, unittest.mock.ANY)
+        timer.start.assert_called_once_with()
+        timer.cancel.assert_called_once_with()
+        self.assertEqual(deltas, ["你"])
+        self.assertEqual(result, "你好")
+
 
 class TestWarmPoolProfiles(unittest.TestCase):
     """The warm pool keeps up to WARM_POOL_DEPTH pre-warmed processes per
@@ -991,6 +1133,7 @@ class TestWarmPoolProfiles(unittest.TestCase):
         app._warm_lock = __import__("threading").Lock()
         app._warm_pool = {}
         app._warm_pending = {}
+        app._warm_generation = 0
         app._warm_enabled = True
         return app
 
@@ -1120,6 +1263,34 @@ class TestWarmPoolProfiles(unittest.TestCase):
         self.assertFalse(app._warm_enabled)
         self.assertEqual(app._warm_pool, {})
 
+    def test_completed_spawn_is_discarded_after_provider_switch(self):
+        app = self._app()
+        started = {}
+        candidates = [unittest.mock.Mock(), unittest.mock.Mock()]
+        for candidate in candidates:
+            candidate.start.return_value = True
+
+        class _FakeThread:
+            def __init__(self, target, daemon=None):
+                started["target"] = target
+
+            def start(self):
+                pass
+
+        import cc_app_warm
+        with unittest.mock.patch.object(
+                cc_app_warm, "WarmClaude", side_effect=candidates), \
+                unittest.mock.patch.object(
+                    cc_app_warm.threading, "Thread", _FakeThread):
+            app._spawn_warm_async("translate")
+            app._set_warm_provider("codex_cli")
+            started["target"]()
+
+        self.assertFalse(app._warm_enabled)
+        self.assertEqual(app._warm_pool, {})
+        for candidate in candidates:
+            candidate.close.assert_called_once_with()
+
     def test_reset_warm_pool_closes_all_and_respawns(self):
         app = self._app()
         a, b = unittest.mock.Mock(), unittest.mock.Mock()
@@ -1145,6 +1316,7 @@ class TestDoTranslateWarmRouting(unittest.TestCase):
         app._warm_enabled = True
         app.root = unittest.mock.Mock()
         app._warm_translate = unittest.mock.Mock(return_value=True)
+        app._record_history = unittest.mock.Mock()
         return app
 
     def _profile_of_call(self, app):
@@ -1181,6 +1353,442 @@ class TestDoTranslateWarmRouting(unittest.TestCase):
         app._do_translate(long_text, job_id=1, meta={"input": long_text})
         app._warm_translate.assert_not_called()
 
+    def test_long_text_fallback_order_remains_warm_stream_oneshot(self):
+        app = self._app()
+        app._warm_translate.return_value = False
+        app._stream_claude = unittest.mock.Mock(return_value=False)
+        app._call_claude = unittest.mock.Mock(return_value=(True, "fallback"))
+        calls = unittest.mock.Mock()
+        calls.attach_mock(app._warm_translate, "warm")
+        calls.attach_mock(app._stream_claude, "stream")
+        calls.attach_mock(app._call_claude, "oneshot")
+        long_text = "This is a long sentence. " * 30
+
+        app._do_translate(long_text, job_id=1, meta={"input": long_text})
+
+        self.assertEqual(
+            [call[0] for call in calls.mock_calls],
+            ["warm", "stream", "oneshot"],
+        )
+
+
+class TestProviderRouting(unittest.TestCase):
+    def test_claude_text_facade_forwards_snapshot_model(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._call_claude = unittest.mock.Mock(return_value=(True, "ok"))
+        selection = tr.ProviderSelection("claude_cli", "opus")
+
+        result = app._call_model(
+            "hello", "PROMPT", selection=selection)
+
+        self.assertEqual(result, (True, "ok"))
+        app._call_claude.assert_called_once_with(
+            "hello", "PROMPT", model="opus")
+
+    def test_claude_image_facade_forwards_snapshot_model(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._call_claude_vision = unittest.mock.Mock(
+            return_value=(True, "ok"))
+        selection = tr.ProviderSelection("claude_cli", "haiku")
+
+        result = app._call_model_image(
+            r"C:\image.png", selection=selection)
+
+        self.assertEqual(result, (True, "ok"))
+        app._call_claude_vision.assert_called_once_with(
+            r"C:\image.png", model="haiku")
+
+    def test_codex_request_bypasses_all_claude_paths(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._do_provider_translate = unittest.mock.Mock()
+        app._warm_translate = unittest.mock.Mock()
+        app._stream_claude = unittest.mock.Mock()
+        app._call_claude = unittest.mock.Mock()
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto",
+            "system_prompt": "Translate.",
+        }
+
+        app._do_translate("hello", 7, meta)
+
+        app._do_provider_translate.assert_called_once_with("hello", 7, meta)
+        app._warm_translate.assert_not_called()
+        app._stream_claude.assert_not_called()
+        app._call_claude.assert_not_called()
+
+    def test_history_meta_captures_provider_selection(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "gpt-5.4",
+        })
+        app._last_input = "hello"
+        app._last_origin = "text"
+        app._last_class = "text"
+        app._provider_cancel_event = tr.threading.Event()
+        app._history_kind = unittest.mock.Mock(return_value="text")
+        app._cache_signature = unittest.mock.Mock(return_value="sig")
+        app._system_prompt_for = unittest.mock.Mock(return_value="prompt")
+
+        meta = app._history_meta()
+        app.cfg[tr.CFG.MODEL_PROVIDER] = "claude_cli"
+
+        self.assertEqual(meta["provider"], "codex_cli")
+        self.assertEqual(meta["model"], "gpt-5.4")
+        self.assertEqual(meta["system_prompt"], "prompt")
+        self.assertIs(meta["cancel_event"], app._provider_cancel_event)
+
+    def test_unknown_provider_returns_explicit_error(self):
+        app = object.__new__(tr.TranslatorApp)
+        ok, result = app._call_model(
+            "hello", "Translate.",
+            tr.ProviderSelection(provider_id="missing", model=None))
+        self.assertFalse(ok)
+        self.assertIn("missing", result)
+
+    def test_codex_facade_logs_safe_provider_metrics(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        provider = unittest.mock.Mock()
+        provider.complete.return_value = ProviderResult(
+            True, text="ok", metrics=(
+                ("spawn_ms", 10), ("total_ms", 500)))
+        app._provider_registry = unittest.mock.Mock()
+        app._provider_registry.get.return_value = provider
+
+        with unittest.mock.patch.object(tr, "log_perf") as perf:
+            result = app._call_model(
+                "hello", "Translate.",
+                tr.ProviderSelection("codex_cli", "gpt-5.4-mini"))
+
+        self.assertEqual(result, (True, "ok"))
+        fields = perf.call_args.args[1]
+        self.assertEqual(fields["provider"], "codex_cli")
+        self.assertEqual(fields["model"], "gpt-5.4-mini")
+        self.assertEqual(fields["chars"], 5)
+        self.assertEqual(fields["total_ms"], 500)
+        self.assertNotIn("text", fields)
+
+    def test_long_codex_uses_experimental_stream_when_enabled(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock()
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+        text = "long text " * 100
+        meta = {
+            "provider": "codex_cli",
+            "model": "gpt-5.4-mini",
+            "input": text,
+            "system_prompt": "Translate.",
+        }
+
+        app._do_provider_translate(text, 1, meta)
+
+        app._stream_codex.assert_called_once()
+        app._call_model.assert_not_called()
+
+    def test_codex_route_records_stable_reason_when_stream_not_eligible(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock(return_value=(True, "ok"))
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto",
+            "input": "hello world.",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "system_prompt": "Translate.",
+        }
+
+        app._do_provider_translate("hello world.", 1, meta)
+
+        self.assertEqual(app._last_provider_route, {
+            "provider": "codex_cli",
+            "model": "auto",
+            "mode": "stable_exec",
+            "reason": "short_text",
+            "error_code": "",
+        })
+
+    def test_stable_codex_logs_terminal_dogfood_route(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._call_model = unittest.mock.Mock(return_value=(True, "ok"))
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+        text = "short text"
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto",
+            "input": text,
+            "system_prompt": "Translate.",
+        }
+
+        with unittest.mock.patch.object(tr, "log_perf") as perf:
+            app._do_provider_translate(text, 1, meta)
+
+        route_event = next(
+            fields for stage, fields in (call.args for call in perf.call_args_list)
+            if stage == "provider_route_complete")
+        self.assertEqual(route_event["route"], "stable_exec")
+        self.assertEqual(route_event["outcome"], "success")
+        self.assertNotIn("input", route_event)
+
+    def test_short_codex_skips_experimental_stream(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock(return_value=(True, "ok"))
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto",
+            "input": "hello world.",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "system_prompt": "Translate.",
+        }
+
+        app._do_provider_translate("hello world.", 1, meta)
+
+        app._stream_codex.assert_not_called()
+        app._call_model.assert_called_once()
+
+    def test_codex_stream_failure_before_delta_allows_exec_fallback(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            False, error_code="appserver_exited")
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(return_value="failed")
+        ss = tr.StreamSession()
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertFalse(handled)
+        app._provider_error_text.assert_not_called()
+        self.assertEqual(
+            app._last_provider_route["mode"], "stable_fallback")
+        self.assertEqual(
+            app._last_provider_route["error_code"], "appserver_exited")
+
+    def test_codex_stream_failure_after_delta_does_not_retry(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = lambda _delay, callback: callback()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+
+        def stream(_request, on_delta, _cancel_event):
+            on_delta("partial")
+            return ProviderResult(
+                False, error_code="unknown_appserver_event")
+
+        provider.stream.side_effect = stream
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+        app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        ss = tr.StreamSession()
+        app._ss = ss
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertTrue(handled)
+        app._stream_update.assert_called_once_with("partial")
+        app._provider_error_text.assert_called_once()
+        app._show_result.assert_called_once_with(
+            False, "protocol changed", 1, record=False)
+
+    def test_codex_unrendered_delta_can_fall_back_without_late_render(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        callbacks = []
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = (
+            lambda _delay, callback: callbacks.append(callback))
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+
+        def stream(_request, on_delta, _cancel_event):
+            on_delta("not rendered")
+            return ProviderResult(
+                False, error_code="unknown_appserver_event")
+
+        provider.stream.side_effect = stream
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock()
+        app._stream_update = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        ss = tr.StreamSession()
+        app._ss = ss
+        meta = {"input": "long text", "origin": "text",
+                "is_code": False, "kind": "text"}
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+        for callback in callbacks:
+            callback()
+
+        self.assertFalse(handled)
+        app._stream_update.assert_not_called()
+
+    def test_codex_render_schedule_failure_is_not_logged_as_success(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock()
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+        text = "long text " * 100
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto",
+            "input": text,
+            "system_prompt": "Translate.",
+        }
+
+        with unittest.mock.patch.object(tr, "log_perf") as perf:
+            app._do_provider_translate(text, 1, meta)
+
+        route_event = next(
+            fields for stage, fields in (call.args for call in perf.call_args_list)
+            if stage == "provider_route_complete")
+        self.assertEqual(route_event["route"], "stream_failed")
+        self.assertEqual(route_event["outcome"], "failed")
+
+    def test_codex_success_during_tk_teardown_never_falls_back(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = tr.tk.TclError("destroyed")
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            True, text="final")
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._call_model = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        app._ss = tr.StreamSession()
+        text = "long text " * 100
+        meta = {"provider": "codex_cli", "model": "auto",
+                "input": text, "origin": "text", "is_code": False,
+                "kind": "text", "system_prompt": "Translate."}
+
+        app._do_provider_translate(text, 1, meta)
+
+        app._call_model.assert_not_called()
+
+    def test_stale_stream_error_cannot_cancel_new_stream_flush(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        deferred = []
+        call_count = {"value": 0}
+
+        def after(_delay, callback):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                callback()
+            else:
+                deferred.append(callback)
+
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = after
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+
+        def stream(_request, on_delta, _cancel_event):
+            on_delta("partial")
+            return ProviderResult(
+                False, error_code="unknown_appserver_event")
+
+        provider.stream.side_effect = stream
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(return_value="failed")
+        app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        current_job = {"value": 1}
+        app._job_is_current = lambda job_id: job_id == current_job["value"]
+        old_ss = tr.StreamSession()
+        app._ss = old_ss
+        meta = {"input": "long text", "origin": "text",
+                "is_code": False, "kind": "text"}
+
+        handled = app._stream_codex(
+            "long text", 1, old_ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+        current_job["value"] = 2
+        app._ss = tr.StreamSession()
+        for callback in deferred:
+            callback()
+
+        self.assertTrue(handled)
+        app._cancel_stream_flush.assert_not_called()
+        app._show_result.assert_not_called()
+
 
 # ============================================================
 # cc_update paths
@@ -1206,6 +1814,11 @@ class TestCCUpdatePaths(unittest.TestCase):
         vs = tr.version_string()
         self.assertIsInstance(vs, str)
         self.assertGreater(len(vs), 0)
+
+    def test_release_uses_version_4_major(self):
+        import cc_update
+        self.assertEqual(cc_update.VERSION_MAJOR, 4)
+        self.assertTrue(tr.version_string().startswith("4.0."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -1248,6 +1861,201 @@ class TestLogError(unittest.TestCase):
             self.assertIn("write_test", content)
             self.assertIn("sentinel_error_xyz", content)
         cc_core.DATA_DIR = orig_data_dir
+
+
+class TestPerfLog(unittest.TestCase):
+    def test_perf_log_keeps_only_safe_metadata(self):
+        import cc_core
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "perf.log")
+            with unittest.mock.patch.object(
+                    cc_core, "PERF_LOG_PATH", path):
+                cc_core.log_perf("provider_complete", {
+                    "provider": "codex_cli",
+                    "model": "gpt-5.4-mini",
+                    "chars": 42,
+                    "total_ms": 1234,
+                    "input": "private source text",
+                    "err": "secret path",
+                })
+            with open(path, encoding="utf-8") as log_file:
+                record = json.loads(log_file.read())
+
+        self.assertEqual(record["stage"], "provider_complete")
+        self.assertEqual(record["provider"], "codex_cli")
+        self.assertEqual(record["total_ms"], 1234)
+        self.assertEqual(record["runtime"], "test")
+        self.assertNotIn("input", record)
+        self.assertNotIn("err", record)
+        self.assertNotIn("private source text", json.dumps(record))
+
+    def test_perf_log_rotates_at_bound(self):
+        import cc_core
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "perf.log")
+            with open(path, "wb") as log_file:
+                log_file.write(b"x" * 100)
+            with unittest.mock.patch.object(
+                    cc_core, "PERF_LOG_PATH", path), \
+                    unittest.mock.patch.object(
+                        cc_core, "PERF_LOG_MAX_BYTES", 110):
+                cc_core.log_perf("translate_done", {"wall_ms": 5})
+
+            self.assertTrue(os.path.exists(path + ".1"))
+            with open(path, encoding="utf-8") as log_file:
+                self.assertEqual(
+                    json.loads(log_file.read())["wall_ms"], 5)
+
+    def test_dogfood_summary_uses_only_recent_app_route_events(self):
+        import cc_core
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "perf.log")
+            records = [
+                {"ts": "2026-08-05T12:00:00", "runtime": "app",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "streamed", "outcome": "success",
+                 "wall_ms": 1000},
+                {"ts": "2026-08-05T12:01:00", "runtime": "app",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "gpt-5.4-mini",
+                 "route": "stable_fallback", "outcome": "success",
+                 "wall_ms": 3000},
+                {"ts": "2026-08-05T12:02:00", "runtime": "app",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "stream_failed", "outcome": "failed",
+                 "wall_ms": 2000},
+                {"ts": "2026-08-05T12:03:00", "runtime": "test",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "streamed", "outcome": "success",
+                 "wall_ms": 1},
+                {"ts": "2026-07-01T12:00:00", "runtime": "app",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "stable_exec", "outcome": "success",
+                 "wall_ms": 1},
+                {"ts": "2026-08-06T12:00:00", "runtime": "app",
+                 "stage": "provider_route_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "streamed", "outcome": "success",
+                 "wall_ms": 1},
+                {"ts": "2026-08-05T12:04:00",
+                 "stage": "provider_stream_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "route": "streamed", "outcome": "success",
+                 "wall_ms": 1},
+                {"ts": "2026-08-05T12:05:00", "runtime": "app",
+                 "stage": "provider_stream_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "ok": True, "first_result_ms": 500, "total_ms": 2500},
+                {"ts": "2026-08-05T12:06:00", "runtime": "app",
+                 "stage": "provider_stream_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "ok": True, "first_result_ms": 800, "total_ms": 2600},
+                {"ts": "2026-08-05T12:07:00", "runtime": "app",
+                 "stage": "provider_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "ok": True, "chars": 500, "total_ms": 2000},
+                {"ts": "2026-08-05T12:08:00", "runtime": "app",
+                 "stage": "provider_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "ok": True, "chars": 600, "total_ms": 3000},
+                {"ts": "2026-08-05T12:09:00", "runtime": "app",
+                 "stage": "provider_complete",
+                 "provider": "codex_cli", "model": "auto",
+                 "ok": True, "chars": 20, "total_ms": 100},
+            ]
+            with open(path, "w", encoding="utf-8") as log_file:
+                for record in records:
+                    log_file.write(json.dumps(record) + "\n")
+
+            summary = cc_core.summarize_provider_dogfood(
+                path=path, now=datetime(2026, 8, 5, 17, 0, 0))
+
+        self.assertEqual(summary["sample_count"], 3)
+        self.assertEqual(summary["success_count"], 2)
+        self.assertEqual(summary["failed_count"], 1)
+        self.assertEqual(summary["route_counts"]["streamed"], 1)
+        self.assertEqual(summary["route_counts"]["stable_fallback"], 1)
+        self.assertEqual(summary["p50_ms"], 2000)
+        self.assertEqual(summary["p95_ms"], 3000)
+        self.assertEqual(summary["observation_days"], 1)
+        self.assertEqual(summary["stream_first_result_count"], 2)
+        self.assertEqual(summary["stream_first_result_p95_ms"], 800)
+        self.assertEqual(summary["stable_long_text_count"], 2)
+        self.assertEqual(summary["stable_long_text_p95_ms"], 3000)
+        self.assertEqual(summary["model_counts"], {
+            "auto": 2, "gpt-5.4-mini": 1})
+
+    def _rollout_summary(self, **overrides):
+        summary = {
+            "sample_count": 200,
+            "observation_days": 7,
+            "stream_first_result_p95_ms": 800,
+            "stable_long_text_p95_ms": 3000,
+            "route_counts": {"stream_failed": 0},
+        }
+        summary.update(overrides)
+        return summary
+
+    def test_rollout_gate_collects_until_request_volume_is_met(self):
+        import cc_core
+        result = cc_core.evaluate_codex_rollout(
+            self._rollout_summary(sample_count=199))
+
+        self.assertEqual(result["status"], "collecting")
+        self.assertEqual(result["reason"], "request_volume")
+
+    def test_rollout_gate_blocks_post_output_stream_failures(self):
+        import cc_core
+        result = cc_core.evaluate_codex_rollout(self._rollout_summary(
+            route_counts={"stream_failed": 1}))
+
+        self.assertEqual(result["status"], "needs_attention")
+        self.assertEqual(result["reason"], "post_output_failures")
+
+    def test_rollout_gate_requires_first_text_p95_improvement(self):
+        import cc_core
+        result = cc_core.evaluate_codex_rollout(self._rollout_summary(
+            stream_first_result_p95_ms=3500))
+
+        self.assertEqual(result["status"], "needs_attention")
+        self.assertEqual(result["reason"], "p95_not_improved")
+
+    def test_rollout_gate_never_auto_approves_manual_safety_checks(self):
+        import cc_core
+        result = cc_core.evaluate_codex_rollout(self._rollout_summary())
+
+        self.assertEqual(result["status"], "manual_review")
+        self.assertEqual(result["reason"], "manual_safety_checks")
+        self.assertIn("process_cleanup", result["manual_checks"])
+        self.assertIn("cross_request_isolation", result["manual_checks"])
+
+
+class TestInstallerContracts(unittest.TestCase):
+    def test_one_click_installer_includes_both_model_clis(self):
+        with open(
+                os.path.join(tr.APP_DIR, "install.ps1"),
+                encoding="utf-8") as script_file:
+            script = script_file.read()
+
+        self.assertIn("@anthropic-ai/claude-code@latest", script)
+        self.assertIn("@openai/codex@0.146.0", script)
+        self.assertIn("codex login status", script)
+        self.assertIn("'codex.exe', 'codex.cmd'", script)
+        self.assertNotIn("auth.json", script)
+
+    def test_codex_streaming_setting_uses_beta_label(self):
+        self.assertEqual(
+            tr.i18n.TRANSLATIONS["zh_CN"][
+                "settings.label.codex_streaming"],
+            "Codex 长文流式 (Beta)")
+        self.assertEqual(
+            tr.i18n.TRANSLATIONS["en_US"][
+                "settings.label.codex_streaming"],
+            "Codex long-text streaming (Beta)")
 
 
 # ============================================================
@@ -1541,6 +2349,100 @@ class TestDiagnosticsHelpers(unittest.TestCase):
         info = tr.infer_claude_backend({})
         self.assertEqual(info["mode"], "subscription")
 
+    def test_codex_report_uses_provider_specific_streaming_section(self):
+        app = object.__new__(tr.TranslatorApp)
+        snapshot = {
+            "app": {
+                "version": "test",
+                "git_deploy": True,
+                "app_dir": r"C:\app",
+                "data_dir": r"C:\data",
+                "config_path": r"C:\data\config.json",
+                "history_path": r"C:\data\history.json",
+                "cwd": r"C:\work",
+            },
+            "backend": {"label": "Claude subscription", "model": None},
+            "selected_provider": {
+                "id": "codex_cli",
+                "label": "OpenAI GPT (Codex)",
+                "model": "gpt-5.4-mini",
+                "status": {
+                    "version": "codex-cli 0.146.0",
+                    "authenticated": True,
+                    "auth_method": "chatgpt",
+                    "command": r"C:\codex.exe",
+                },
+                "streaming": {
+                    "enabled": True,
+                    "version_supported": True,
+                    "min_chars": 400,
+                    "last_route": {
+                        "mode": "stable_fallback",
+                        "error_code": "appserver_exited",
+                    },
+                },
+                "dogfood": {
+                    "days": 7,
+                    "observation_days": 3,
+                    "sample_count": 3,
+                    "success_count": 2,
+                    "cancelled_count": 0,
+                    "failed_count": 1,
+                    "p50_ms": 2000,
+                    "p95_ms": 3000,
+                    "route_counts": {
+                        "streamed": 1,
+                        "stable_exec": 1,
+                        "stable_fallback": 1,
+                        "stream_cancelled": 0,
+                        "stream_failed": 0,
+                    },
+                    "model_counts": {
+                        "auto": 2,
+                        "gpt-5.4-mini": 1,
+                    },
+                    "stream_first_result_count": 1,
+                    "stream_first_result_p95_ms": 700,
+                    "stable_long_text_count": 1,
+                    "stable_long_text_p95_ms": 2500,
+                },
+            },
+            "app_model": "gpt-5.4-mini",
+            "claude_cli": {
+                "version": "claude test",
+                "resolved": r"C:\claude.exe",
+            },
+            "login": {
+                "summary": "Claude login",
+                "path": r"C:\claude.json",
+            },
+            "powershell_policy": {"value": "RemoteSigned"},
+            "endpoint_probe": None,
+            "model_route_note": "Claude routing",
+            "last_result": {
+                "ok": None,
+                "title": "",
+                "preview": "",
+            },
+            "advice": ["No issue"],
+            "actions": ["Retry"],
+            "runtime_env": {"ANTHROPIC_API_KEY": "secret"},
+            "settings_sources": [],
+            "recent_errors": "",
+        }
+
+        report = app._format_diagnostics_report(snapshot)
+
+        self.assertIn("CODEX_CMD", report)
+        self.assertIn("appserver_exited", report)
+        self.assertIn("P50 2000 ms / P95 3000 ms", report)
+        self.assertIn("auto: 2", report)
+        self.assertIn("3/200", report)
+        self.assertIn("700 ms", report)
+        self.assertNotIn("CLAUDE_CMD", report)
+        self.assertNotIn("ANTHROPIC_API_KEY", report)
+        self.assertNotIn("Claude routing", report)
+
     def test_infer_backend_detects_agent_maestro(self):
         info = tr.infer_claude_backend({
             "ANTHROPIC_BASE_URL": "http://127.0.0.1:23333/api/anthropic",
@@ -1651,7 +2553,7 @@ def _make_headless_app():
     exercises the same code a user triggers."""
     app = object.__new__(tr.TranslatorApp)
     app._fresh_install = False
-    app.cfg = tr.load_config()
+    app.cfg = tr.Config(dict(tr.DEFAULT_CONFIG))
     lang = app.cfg.get(tr.CFG.LANGUAGE) or "en_US"
     tr.i18n.initialize(lang)
     app.theme = tr.resolve_theme(app.cfg)
@@ -1761,6 +2663,7 @@ class TestUiSmoke(unittest.TestCase):
         self.addCleanup(lambda: self._safe_destroy(app))
         # Seed non-default values so the restore has something visible to undo.
         app.cfg[tr.CFG.MODEL] = "opus"
+        app.cfg[tr.CFG.CLAUDE_MODEL] = "opus"
         app.cfg[tr.CFG.FONT_SIZE] = 20
         app._open_settings()
         win = app.settings_win
@@ -2661,10 +3564,10 @@ class TestUpdateStatusCopy(unittest.TestCase):
 
     def test_behind_state_reports_numeric_version(self):
         # A real update available shows the remote's numeric version, not a SHA.
-        seen = self._run_check_only_update("behind", remote_version="3.0.321")
+        seen = self._run_check_only_update("behind", remote_version="4.0.321")
         self.assertEqual(
             seen,
-            [(tr.i18n.get("update.found_version").format(version="3.0.321"),
+            [(tr.i18n.get("update.found_version").format(version="4.0.321"),
               "avail")])
 
     def test_behind_state_falls_back_to_sha_when_version_unknown(self):
@@ -2842,12 +3745,60 @@ class TestStreamClaudeHardening(unittest.TestCase):
         app, proc, popen, add_history, ok = self._run_stream(lines)
         self.assertTrue(ok)
         popen.assert_called_once()
+        self.assertEqual(
+            popen.call_args.args[0],
+            [
+                tr.CLAUDE_CMD, "-p", "--safe-mode", "--model", "sonnet",
+                "--system-prompt", "SP",
+                "--output-format", "stream-json",
+                "--include-partial-messages", "--verbose",
+                "--tools", "",
+                "--exclude-dynamic-system-prompt-sections",
+                "--no-session-persistence",
+            ],
+        )
+        self.assertEqual(
+            popen.call_args.kwargs,
+            {
+                "stdin": tr.subprocess.PIPE,
+                "stdout": tr.subprocess.PIPE,
+                "stderr": tr.subprocess.DEVNULL,
+                "text": True,
+                "encoding": "utf-8",
+                "creationflags": tr.subprocess.CREATE_NO_WINDOW,
+            },
+        )
+        self.assertEqual(proc.stdin.data, "<text>\n" + ("x" * 500) + "\n</text>")
         add_history.assert_called_once()
         # First positional arg is the original input text.
         self.assertEqual(add_history.call_args.args[0], app._last_input)
         # Pipes are cleaned up in the finally block.
         self.assertTrue(proc.stdout.closed)
         self.assertTrue(proc.stdin.closed)
+
+    def test_stream_uses_request_snapshot_not_live_config(self):
+        app = self._make_app()
+        app.cfg[tr.CFG.MODEL] = "opus"
+        meta = {
+            "input": app._last_input,
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "model": "haiku",
+            "system_prompt": "SNAPSHOT PROMPT",
+        }
+        proc = _FakeProc([_result_event("done")])
+        with unittest.mock.patch.object(
+                tr.subprocess, "Popen", return_value=proc) as popen, \
+                unittest.mock.patch.object(tr, "add_history"):
+            ok = app._stream_claude(
+                "x" * 500, app._job_id, app._ss, meta)
+
+        self.assertTrue(ok)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[argv.index("--model") + 1], "haiku")
+        self.assertEqual(
+            argv[argv.index("--system-prompt") + 1], "SNAPSHOT PROMPT")
 
     def test_error_result_event_is_failure(self):
         lines = [_sse("partial output"),
@@ -2950,6 +3901,29 @@ class TestCallClaudeOneShot(unittest.TestCase):
             _FakeCompleted(stdout=json.dumps({"result": "你好世界"})))
         self.assertTrue(ok)
         self.assertEqual(result, "你好世界")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                tr.CLAUDE_CMD, "-p", "--safe-mode", "--model", "sonnet",
+                "--system-prompt", "SP",
+                "--output-format", "json",
+                "--tools", "",
+                "--exclude-dynamic-system-prompt-sections",
+                "--no-session-persistence",
+            ],
+        )
+        self.assertEqual(
+            {key: run.call_args.kwargs[key] for key in (
+                "capture_output", "text", "encoding", "timeout",
+                "creationflags")},
+            {
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "timeout": 60,
+                "creationflags": tr.subprocess.CREATE_NO_WINDOW,
+            },
+        )
         # Payload is passed via stdin, not as an argv element.
         self.assertEqual(run.call_args.kwargs["input"], "<text>\nhello world\n</text>")
 
@@ -2957,6 +3931,22 @@ class TestCallClaudeOneShot(unittest.TestCase):
         ok, result, run = self._run(_FakeCompleted(stdout="just plain text"))
         self.assertTrue(ok)
         self.assertEqual(result, "just plain text")
+
+    def test_explicit_model_and_prompt_override_live_config(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                tr.subprocess, "run",
+                return_value=_FakeCompleted(
+                    stdout=json.dumps({"result": "ok"}))) as run:
+            ok, result = app._call_claude(
+                "hello", "SNAPSHOT PROMPT", model="haiku")
+
+        self.assertTrue(ok)
+        self.assertEqual(result, "ok")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--model") + 1], "haiku")
+        self.assertEqual(
+            argv[argv.index("--system-prompt") + 1], "SNAPSHOT PROMPT")
 
     def test_empty_result_falls_to_error(self):
         # Valid JSON but empty result, and empty stderr → "no result" error.
@@ -3017,6 +4007,21 @@ class TestCallClaudeVision(unittest.TestCase):
             _FakeCompleted(stdout=json.dumps({"result": "translated text"})))
         self.assertTrue(ok)
         self.assertEqual(result, "translated text")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                tr.CLAUDE_CMD, "-p", "--safe-mode", "--model", "sonnet",
+                "--system-prompt", tr.OCR_VISION_PROMPT,
+                "--output-format", "json",
+                "--tools", "",
+                "--no-session-persistence",
+            ],
+        )
+        self.assertEqual(run.call_args.kwargs["input"],
+                         tr.vision_image_mention("C:\\x\\img.png"))
+        self.assertEqual(run.call_args.kwargs["timeout"], 90)
+        self.assertEqual(run.call_args.kwargs["creationflags"],
+                         tr.subprocess.CREATE_NO_WINDOW)
 
     def test_plain_text_fallback(self):
         ok, result, run = self._run(_FakeCompleted(stdout="raw output"))
@@ -3063,6 +4068,14 @@ class TestJobIsolation(unittest.TestCase):
         jid2 = app._begin_job()
         self.assertEqual(jid2, 2)
         self.assertFalse(app._job_is_current(1))
+
+    def test_begin_job_cancels_previous_provider_request(self):
+        app = self._bare_app(job_id=0)
+        app._begin_job()
+        first = app._provider_cancel_event
+        app._begin_job()
+        self.assertTrue(first.is_set())
+        self.assertFalse(app._provider_cancel_event.is_set())
 
     def test_stream_flush_ignores_stale_job(self):
         app = self._bare_app(job_id=5)
@@ -3406,6 +4419,24 @@ class TestFollowUpAppend(unittest.TestCase):
         # _do_transform_result(mode, current, label) — 'current' is the input.
         self.assertEqual(captured["args"][1], "ORIG")
 
+    def test_stale_follow_up_does_not_mutate_new_popup(self):
+        app, old_win, _ = self._app(primary="OLD")
+        _, new_win, new_text = self._app(primary="NEW")
+        app.popup = new_win
+
+        app._apply_result_transform(
+            True, "OLD ACTION", "改写", expected_win=old_win)
+
+        self.assertEqual(new_text._content, "NEW")
+
+    def test_code_explanation_snapshots_primary_before_append(self):
+        app, win, text = self._app(primary="ORIG")
+
+        app._append_code_explanation(True, "ORIG", "EXPLANATION", win)
+
+        self.assertEqual(win._primary_result, "ORIG")
+        self.assertIn("EXPLANATION", text._content)
+
 
 class TestTranslationCacheLookup(unittest.TestCase):
     """Data layer for the instant-cache feature: an identical earlier selection
@@ -3488,6 +4519,14 @@ class TestCacheSignature(unittest.TestCase):
             self._app()._cache_signature(),
             self._app(**{tr.CFG.MODEL: "opus"})._cache_signature())
 
+    def test_changes_with_provider(self):
+        self.assertNotEqual(
+            self._app()._cache_signature(),
+            self._app(**{
+                tr.CFG.MODEL_PROVIDER: "codex_cli",
+                tr.CFG.CODEX_MODEL: "auto",
+            })._cache_signature())
+
     def test_changes_with_summary(self):
         self.assertNotEqual(
             self._app()._cache_signature(),
@@ -3501,6 +4540,29 @@ class TestCacheSignature(unittest.TestCase):
     def test_stable_for_identical_settings(self):
         self.assertEqual(
             self._app()._cache_signature(), self._app()._cache_signature())
+
+    def test_codex_signature_includes_current_prompt_revision(self):
+        signature = self._app(**{
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
+        })._cache_signature()
+
+        self.assertTrue(signature.endswith("|codex-format-v2"))
+
+    def test_claude_signature_preserves_legacy_shape(self):
+        signature = self._app()._cache_signature()
+
+        self.assertEqual(signature, "claude_cli|haiku|auto|sum0|zh")
+
+    def test_old_codex_signature_does_not_match_after_prompt_change(self):
+        app = self._app(**{
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
+        })
+        current = app._cache_signature()
+        old = current.rsplit("|", 1)[0]
+
+        self.assertNotEqual(current, old)
 
 
 class TestCacheShortCircuit(unittest.TestCase):

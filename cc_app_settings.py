@@ -38,6 +38,7 @@ from cc_core import (
     resolve_theme_name, resolve_theme,
     get_direction_labels, get_theme_labels, get_popup_layout_labels,
     get_ocr_engine_labels, get_tray_click_action_labels, get_model_labels,
+    get_provider_labels, get_provider_model_labels, provider_model,
 )
 
 
@@ -580,7 +581,10 @@ class SettingsMixin:
         layout_labels = get_popup_layout_labels()
         ocr_engine_labels = get_ocr_engine_labels()
         tray_click_labels = get_tray_click_action_labels()
-        model_labels = get_model_labels()
+        provider_labels = get_provider_labels()
+        current_provider = self.cfg.get(
+            CFG.MODEL_PROVIDER, DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
+        model_labels = get_provider_model_labels(current_provider)
 
         win = tk.Toplevel(self.root)
         win.withdraw()   # reveal at final geometry (no flash/jump)
@@ -676,15 +680,46 @@ class SettingsMixin:
         self._settings_section(
             body, row_state, i18n.get("settings.label.translate_section"),
             bg=bg, accent=accent, font=FONT)
+        provider_var = tk.StringVar(
+            value=provider_labels.get(current_provider, current_provider))
+        provider_combo = ttk.Combobox(
+            body, textvariable=provider_var, state="readonly", width=18,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=list(provider_labels.values()))
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.model_provider"),
+            provider_combo, bg=bg, fg=fg, font=FONT)
+
         model_var = tk.StringVar(
-            value=model_labels.get(self.cfg[CFG.MODEL], self.cfg[CFG.MODEL]))
+            value=model_labels.get(
+                provider_model(self.cfg, current_provider),
+                provider_model(self.cfg, current_provider)))
+        model_combo = ttk.Combobox(
+            body, textvariable=model_var, state="readonly", width=18,
+            style="CC.TCombobox", font=(FONT, 10),
+            values=list(model_labels.values()))
         self._settings_field(
             body, row_state, i18n.get("settings.label.translate_model"),
-            ttk.Combobox(
-                body, textvariable=model_var, state="readonly", width=18,
-                style="CC.TCombobox", font=(FONT, 10),
-                values=list(model_labels.values())),
+            model_combo,
             bg=bg, fg=fg, font=FONT)
+
+        label_to_provider = {v: k for k, v in provider_labels.items()}
+
+        def refresh_model_choices(_event=None):
+            provider_id = label_to_provider.get(
+                provider_var.get(), DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
+            labels = get_provider_model_labels(provider_id)
+            model_combo.config(values=list(labels.values()))
+            selected = provider_model(self.cfg, provider_id)
+            if selected not in labels:
+                selected = ("auto" if provider_id == "codex_cli"
+                            else DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
+            model_var.set(labels[selected])
+
+        def on_provider_selected(_event=None):
+            refresh_model_choices()
+
+        provider_combo.bind("<<ComboboxSelected>>", on_provider_selected)
 
         dir_var = tk.StringVar(
             value=direction_labels.get(self.cfg[CFG.DIRECTION],
@@ -703,6 +738,15 @@ class SettingsMixin:
             self.cfg.get(CFG.SUMMARY_ENABLED, False),
             bg=bg, fg=fg, font=FONT,
             help_text=i18n.get("settings.label.summary_help"),
+            help_ring=hint, help_glyph=hint)
+        codex_stream_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.codex_streaming"),
+            self.cfg.get(
+                CFG.CODEX_STREAMING_EXPERIMENTAL,
+                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL]),
+            bg=bg, fg=fg, font=FONT,
+            help_text=i18n.get("settings.label.codex_streaming_help"),
             help_ring=hint, help_glyph=hint)
 
         # ---- Section: 截图翻译 ----
@@ -903,7 +947,7 @@ class SettingsMixin:
         # then reset to the idle (empty / hidden) look.
         status_w = 0
         status_samples = [
-            (i18n.get("update.found_version").format(version="3.0.9999"), True),
+            (i18n.get("update.found_version").format(version="4.0.9999"), True),
             (i18n.get("update.no_update"), False),
         ]
         for sample_text, show_btn in status_samples:
@@ -952,13 +996,25 @@ class SettingsMixin:
         label_to_ocr_engine = {v: k for k, v in ocr_engine_labels.items()}
         label_to_tray_click = {v: k for k, v in tray_click_labels.items()}
         label_to_lang = {v: k for k, v in LANGUAGE_LABELS.items()}
-        label_to_model = {v: k for k, v in model_labels.items()}
 
         def apply_settings():
             try:
                 prev_warm_key = self._warm_key()
-                self.cfg[CFG.MODEL] = label_to_model.get(
+                previous_provider = self.cfg.get(
+                    CFG.MODEL_PROVIDER, DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
+                new_provider = label_to_provider.get(
+                    provider_var.get(), provider_var.get())
+                active_model_labels = get_provider_model_labels(new_provider)
+                label_to_model = {
+                    value: key for key, value in active_model_labels.items()}
+                new_model = label_to_model.get(
                     model_var.get(), model_var.get())
+                self.cfg[CFG.MODEL_PROVIDER] = new_provider
+                if new_provider == "codex_cli":
+                    self.cfg[CFG.CODEX_MODEL] = new_model
+                else:
+                    self.cfg[CFG.CLAUDE_MODEL] = new_model
+                    self.cfg[CFG.MODEL] = new_model
                 self.cfg[CFG.DIRECTION] = label_to_dir[dir_var.get()]
                 self.cfg[CFG.THEME] = label_to_theme[theme_var.get()]
                 self.cfg[CFG.POPUP_LAYOUT] = label_to_layout[layout_var.get()]
@@ -975,6 +1031,8 @@ class SettingsMixin:
                 self.cfg[CFG.OCR_HOTKEY_ENABLED] = bool(ocr_hotkey_sw.get())
                 self.cfg[CFG.CLIPBOARD_PROTECTION_ENABLED] = bool(clip_protect_sw.get())
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
+                self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = bool(
+                    codex_stream_sw.get())
                 
                 # Handle language change
                 new_lang = label_to_lang[lang_var.get()]
@@ -993,7 +1051,10 @@ class SettingsMixin:
                 # Model/direction feed the warm processes' fixed system prompt;
                 # rebuild the whole pool so the next translation (and any
                 # pre-warmed depth) uses the new config, not a stale prompt.
-                if self._warm_key() != prev_warm_key:
+                self._set_warm_provider(new_provider)
+                if (new_provider == "claude_cli"
+                        and (previous_provider != new_provider
+                             or self._warm_key() != prev_warm_key)):
                     self._reset_warm_pool()
                 
                 # If language changed, restart the app
@@ -1014,7 +1075,13 @@ class SettingsMixin:
             # persisting — the user still clicks Save to commit, or Close to
             # discard. Language is intentionally left untouched (it has no static
             # default and changing it forces an app relaunch).
-            model_var.set(model_labels[DEFAULT_CONFIG[CFG.MODEL]])
+            provider_var.set(
+                provider_labels[DEFAULT_CONFIG[CFG.MODEL_PROVIDER]])
+            refresh_model_choices()
+            default_model_labels = get_provider_model_labels(
+                DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
+            model_var.set(
+                default_model_labels[DEFAULT_CONFIG[CFG.CLAUDE_MODEL]])
             dir_var.set(direction_labels[DEFAULT_CONFIG[CFG.DIRECTION]])
             theme_var.set(theme_labels[DEFAULT_CONFIG[CFG.THEME]])
             layout_var.set(layout_labels[DEFAULT_CONFIG[CFG.POPUP_LAYOUT]])
@@ -1026,6 +1093,8 @@ class SettingsMixin:
             hist_limit_var.set(DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
             gap_var.set(DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
             summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
+            codex_stream_sw.set(
+                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])

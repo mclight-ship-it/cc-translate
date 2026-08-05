@@ -149,7 +149,6 @@ class WarmClaude:
             threading.Thread(target=_arm, daemon=True).start()
             return True
         except Exception as e:
-            # log_perf("warm_spawn_error") is a no-op in production; skip it.
             self.proc = None
             return False
 

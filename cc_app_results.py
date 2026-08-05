@@ -310,24 +310,33 @@ class ResultActionsMixin:
                 pass
         threading.Thread(
             target=self._do_retranslate,
-            args=(src, prompt + SYSTEM_SUFFIX, label), daemon=True).start()
+            args=(src, prompt + SYSTEM_SUFFIX, label,
+                  self._provider_selection(), win), daemon=True).start()
 
-    def _do_retranslate(self, src, prompt, label):
+    def _do_retranslate(self, src, prompt, label, selection=None,
+                        expected_win=None):
         try:
-            ok, result = self._call_claude(src, prompt)
+            ok, result = self._call_model(src, prompt, selection)
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_retranslation(ok, result, label))
+        self.root.after(
+            0, lambda: self._apply_retranslation(
+                ok, result, label, expected_win))
 
-    def _apply_retranslation(self, ok, result, label):
-        win = self.popup
+    def _apply_retranslation(self, ok, result, label, expected_win=None):
+        if expected_win is not None and self.popup is not expected_win:
+            return
+        win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
         btn = getattr(win, "_actions_btn", None)
         if ok:
             # Append below the existing translation with a labelled divider,
             # preserving the original result (like the code-explanation flow).
-            self._append_result_section(label, result)
+            if expected_win is None:
+                self._append_result_section(label, result)
+            else:
+                self._append_result_section(label, result, win)
         if btn is not None:
             try:
                 btn.config(text=i18n.get("result.actions"), state="normal",
@@ -358,12 +367,14 @@ class ResultActionsMixin:
             return i18n.get("result.language_chinese") if code == "zh" else en_name
         return zh_name
 
-    def _append_result_section(self, label, addition):
+    def _append_result_section(self, label, addition, expected_win=None):
         """Append a follow-up section (rewrite / retranslation) below the current
         result with a labelled divider, mirroring the code-explanation flow: the
         existing translation is preserved and the new output is added beneath it.
         Follow-up sections are annotations, so they are not written to history."""
-        win = self.popup
+        if expected_win is not None and self.popup is not expected_win:
+            return
+        win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
         # Snapshot the primary result before mutating the visible text so later
@@ -431,25 +442,35 @@ class ResultActionsMixin:
             except Exception:
                 pass
         threading.Thread(target=self._do_transform_result,
-                         args=(mode, primary, label), daemon=True).start()
+                         args=(mode, primary, label, self._provider_selection(),
+                               win),
+                         daemon=True).start()
 
-    def _do_transform_result(self, mode, current, label):
+    def _do_transform_result(self, mode, current, label, selection=None,
+                             expected_win=None):
         prompt = RESULT_ACTION_PROMPTS.get(mode, ("", ""))[1]
         try:
-            ok, result = self._call_claude(current, prompt)
+            ok, result = self._call_model(current, prompt, selection)
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
-        self.root.after(0, lambda: self._apply_result_transform(ok, result, label))
+        self.root.after(
+            0, lambda: self._apply_result_transform(
+                ok, result, label, expected_win))
 
-    def _apply_result_transform(self, ok, result, label):
-        win = self.popup
+    def _apply_result_transform(self, ok, result, label, expected_win=None):
+        if expected_win is not None and self.popup is not expected_win:
+            return
+        win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
         btn = getattr(win, "_actions_btn", None)
         if ok:
             # Append below the existing translation with a labelled divider,
             # preserving the original result (like the code-explanation flow).
-            self._append_result_section(label, result)
+            if expected_win is None:
+                self._append_result_section(label, result)
+            else:
+                self._append_result_section(label, result, win)
         if btn is not None:
             try:
                 btn.config(text=i18n.get("result.actions"), state="normal", cursor="hand2")
@@ -470,21 +491,30 @@ class ResultActionsMixin:
                 btn.config(text=i18n.get("result.explaining"), state="disabled", cursor="watch")
             except Exception:
                 pass
+        self._result_primary_text(win)
         base = win._text.get("1.0", "end-1c")
         src = self._last_input or base
-        threading.Thread(target=self._do_explain_code, args=(src, base),
-                         daemon=True).start()
+        threading.Thread(
+            target=self._do_explain_code,
+            args=(src, base, self._provider_selection(), win),
+            daemon=True).start()
 
-    def _do_explain_code(self, src, base):
+    def _do_explain_code(self, src, base, selection=None,
+                         expected_win=None):
         try:
-            ok, explanation = self._call_claude(src, CODE_EXPLAIN_APPEND_PROMPT)
+            ok, explanation = self._call_model(
+                src, CODE_EXPLAIN_APPEND_PROMPT, selection)
         except Exception as e:
             ok, explanation = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(
-            0, lambda: self._append_code_explanation(ok, base, explanation))
+            0, lambda: self._append_code_explanation(
+                ok, base, explanation, expected_win))
 
-    def _append_code_explanation(self, ok, base, explanation):
-        win = self.popup
+    def _append_code_explanation(self, ok, base, explanation,
+                                 expected_win=None):
+        if expected_win is not None and self.popup is not expected_win:
+            return
+        win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
         btn = getattr(win, "_explain_btn", None)
@@ -497,6 +527,7 @@ class ResultActionsMixin:
                     pass
             explanation = explanation or i18n.get("result.explain_failed")
             return
+        self._result_primary_text(win)
         divider = i18n.get("result.explain_divider")
         combined = base + divider + explanation
         # Final frame: highlight code blocks in the combined result.

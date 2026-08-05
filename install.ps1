@@ -1,4 +1,4 @@
-<#
+﻿<#
     CC Translate — one-line installer (Windows).
 
     Quick start (run in PowerShell):
@@ -8,10 +8,10 @@
     What it does, in order:
       1. Ensures git, Python 3.12 and Node.js LTS are installed (via winget).
       2. Clones (or updates) the repo into %USERPROFILE%\cc-translate.
-      3. Installs / upgrades the Claude Code CLI.
+      3. Installs / upgrades the Claude Code and compatible Codex CLIs.
       4. Installs the Python dependencies.
-      5. Reminds you to log in to Claude (a one-time browser OAuth that no
-         script can do for you).
+      5. Reminds you to log in to Claude and Codex (one-time browser OAuth
+         flows that no script can do for you).
       6. Launches CC Translate.
 
     Optional environment overrides (set before running):
@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 $Repo       = 'https://github.com/mclight-ship-it/cc-translate.git'
 $InstallDir = if ($env:CC_TRANSLATE_DIR) { $env:CC_TRANSLATE_DIR } else { Join-Path $HOME 'cc-translate' }
 $DryRun     = [bool]$env:CC_TRANSLATE_DRYRUN
+$CodexPackage = '@openai/codex@0.146.0'
 
 # ---------- small helpers ----------
 function Info($m) { Write-Host $m -ForegroundColor Gray }
@@ -36,7 +37,7 @@ function Have($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 function Update-SessionPath {
     # winget-installed tools land in PATH via the registry, but the current
     # process doesn't see them until we re-read it. Also fold in npm's global
-    # bin (where the Claude CLI installs its shim).
+    # bin (where the model CLIs install their shims).
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
     $parts   = @($machine, $user) | Where-Object { $_ }
@@ -55,6 +56,16 @@ function Get-NpmCmd {
     $guess = Join-Path $env:ProgramFiles 'nodejs\npm.cmd'
     if (Test-Path $guess) { return $guess }
     return 'npm.cmd'
+}
+
+function Get-CodexCmd {
+    foreach ($name in @('codex.exe', 'codex.cmd')) {
+        $c = Get-Command $name -ErrorAction SilentlyContinue
+        if ($c) { return $c.Source }
+    }
+    $guess = Join-Path $env:APPDATA 'npm\codex.cmd'
+    if (Test-Path $guess) { return $guess }
+    return 'codex.cmd'
 }
 
 function Ensure-Winget {
@@ -135,9 +146,9 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
 if (-not $DryRun) { Set-Location $InstallDir }
 Good "  ✓ 代码就绪"
 
-# ---------- 3. Claude Code CLI ----------
-Step 3 "安装 / 升级 Claude Code CLI"
-Warn "  （必须升到最新版：旧版 CLI 的参数不兼容，会导致翻译报错）"
+# ---------- 3. model CLIs ----------
+Step 3 "安装 / 升级模型 CLI（Claude Code + OpenAI Codex）"
+Warn "  （Claude 升到最新版；Codex 安装当前已验证兼容长文流式 Beta 的版本）"
 $npm = Get-NpmCmd
 Invoke-Or-DryRun "$npm install -g @anthropic-ai/claude-code@latest" {
     & $npm install -g '@anthropic-ai/claude-code@latest'
@@ -145,6 +156,16 @@ Invoke-Or-DryRun "$npm install -g @anthropic-ai/claude-code@latest" {
 Update-SessionPath
 if ((Have claude) -or $DryRun) { Good "  ✓ Claude CLI 就绪" }
 else { Warn "  ⚠ 装完仍找不到 claude——请确认 npm 全局目录（%APPDATA%\npm）在 PATH 中。" }
+Info "  安装已验证可用于 Codex 长文流式 Beta 的版本…"
+Invoke-Or-DryRun "$npm install -g $CodexPackage" {
+    & $npm install -g $CodexPackage
+}
+Update-SessionPath
+if ((Have codex) -or (Have codex.cmd) -or $DryRun) {
+    Good "  ✓ Codex CLI 就绪"
+} else {
+    Warn "  ⚠ 装完仍找不到 codex——请确认 npm 全局目录（%APPDATA%\npm）在 PATH 中。"
+}
 
 # ---------- 4. python deps ----------
 Step 4 "安装 Python 依赖"
@@ -181,7 +202,18 @@ function Test-ClaudeReady {
     return $false
 }
 
-Step 5 "登录 Claude（唯一需要你手动完成的一步）"
+function Test-CodexReady {
+    if ($DryRun) { return $false }
+    try {
+        $codex = Get-CodexCmd
+        & $codex login status *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+Step 5 "登录模型 CLI（需要你手动完成浏览器授权）"
 if (Test-ClaudeReady) {
     Good "  ✓ 检测到已登录的 Claude 账号，跳过。"
 } else {
@@ -190,6 +222,16 @@ if (Test-ClaudeReady) {
     Info  "      2) 运行:  claude    （若提示脚本被禁用，改用:  claude.cmd）"
     Info  "      3) 按提示在浏览器完成登录，成功后按 Ctrl+C 退出交互模式"
     Info  "  未登录时 CC Translate 会弹出「未登录」提示——登录后即可正常翻译。"
+}
+if (Test-CodexReady) {
+    Good "  ✓ 检测到已登录的 ChatGPT / Codex 账号，跳过。"
+} else {
+    Warn "  若要使用 OpenAI GPT，还需登录一次 Codex（Claude 默认路径不受影响）："
+    Info  "      1) 打开一个新的终端窗口"
+    Info  "      2) 运行:  codex login    （若提示脚本被禁用，改用:  codex.cmd login）"
+    Info  "      3) 在浏览器使用 ChatGPT 账号完成登录"
+    Info  "      4) 运行:  codex login status    确认登录成功"
+    Info  "  CC Translate 只复用 Codex CLI 的登录状态，不读取或保存认证 token。"
 }
 
 # ---------- 6. launch ----------

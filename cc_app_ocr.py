@@ -274,15 +274,26 @@ class OcrMixin:
         self._cancel_stream_flush()
         self._ss = StreamSession()
         job_id = self._begin_job()
+        selection = self._provider_selection()
+        cancel_event = getattr(self, "_provider_cancel_event", None)
         self.popup = self._make_loading_popup()
         self._animate_loading(0)
         threading.Thread(
-            target=self._do_translate_vision, args=(img_path, job_id),
+            target=self._do_translate_vision,
+            args=(img_path, job_id, selection, cancel_event),
             daemon=True).start()
 
-    def _do_translate_vision(self, img_path, job_id):
-        ok, result = self._call_claude_vision(img_path)
-        self._cleanup_ocr_temp(img_path)
+    def _do_translate_vision(self, img_path, job_id, selection=None,
+                             cancel_event=None):
+        try:
+            ok, result = self._call_model_image(
+                img_path, selection, cancel_event)
+        except Exception as exc:
+            log_error("provider_vision", exc)
+            ok = False
+            result = i18n.get("error.unexpected").format(error=exc)
+        finally:
+            self._cleanup_ocr_temp(img_path)
         self.root.after(0, lambda: self._show_result(ok, result, job_id))
 
     def _cleanup_ocr_temp(self, img_path):
@@ -292,7 +303,8 @@ class OcrMixin:
         except Exception as e:
             log_error("ocr_temp_cleanup", e)
 
-    def _call_claude_vision(self, img_path: str) -> Tuple[bool, str]:
+    def _call_claude_vision(
+            self, img_path: str, *, model=None) -> Tuple[bool, str]:
         """One-shot Claude call that reads the image via the CLI's `@path`
         reference and returns only the translation. Mirrors _call_claude's
         subprocess/JSON handling.
@@ -306,11 +318,12 @@ class OcrMixin:
             tool (which, in safe-mode headless runs, asks for permission and
             returns a "I need permission to read the file" message)."""
         payload = vision_image_mention(img_path)
+        model = model or self.cfg[CFG.MODEL]
         t0 = time.perf_counter()
         try:
             proc = subprocess.run(
                 [CLAUDE_CMD, "-p", "--safe-mode", "--model",
-                 self.cfg[CFG.MODEL],
+                 model,
                  "--system-prompt", OCR_VISION_PROMPT,
                  "--output-format", "json",
                  "--tools", "",

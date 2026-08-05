@@ -11,10 +11,14 @@ so existing ``tr.<name>`` references in the test-suite keep resolving.
 """
 
 import os
+import sys
+import json
 import time
 import shutil
 import queue
 import dataclasses
+import threading
+from datetime import datetime, timedelta
 
 import i18n
 
@@ -24,6 +28,13 @@ import i18n
 # ---------------------------------------------------------------------------
 APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+STREAM_MIN_CHARS = 400
+# Empty preserves every existing Claude cache signature. Bump only the provider
+# whose output contract changed so unrelated providers keep valid cached results.
+PROVIDER_PROMPT_REVISIONS = {
+    "claude_cli": "",
+    "codex_cli": "codex-format-v2",
+}
 
 
 def _resolve_data_dir():
@@ -149,10 +160,211 @@ def _user_data_path(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Error / perf logging.
 # ---------------------------------------------------------------------------
+PERF_LOG_PATH = os.path.join(DATA_DIR, "perf.log")
+PERF_LOG_MAX_BYTES = 512 * 1024
+PERF_DOGFOOD_DAYS = 7
+CODEX_ROLLOUT_MIN_REQUESTS = 200
+CODEX_ROLLOUT_MIN_DAYS = 7
+_PERF_SAFE_KEYS = {
+    "provider", "model", "mode", "route", "outcome", "task", "kind",
+    "chars", "images", "wall_ms", "spawn_ms",
+    "first_event_ms", "first_result_ms", "total_ms",
+    "ok", "cancelled", "killed", "is_error", "rc",
+    "has_stream_data", "error_code",
+}
+_perf_log_lock = threading.Lock()
+
+
+def _perf_runtime_context():
+    override = os.environ.get("CC_TRANSLATE_PERF_CONTEXT", "").strip().lower()
+    if override in {"app", "test"}:
+        return override
+    if "unittest" in sys.modules or "pytest" in sys.modules:
+        return "test"
+    return "app"
+
+
 def log_perf(stage, extra=None):
-    """Perf logging disabled — kept as a no-op so existing call sites are
-    unchanged. Re-enable here if latency profiling is ever needed again."""
-    return
+    """Append privacy-safe timing metadata to a bounded local JSONL log."""
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "stage": str(stage)[:80],
+        "runtime": _perf_runtime_context(),
+    }
+    for key, value in (extra or {}).items():
+        if key not in _PERF_SAFE_KEYS:
+            continue
+        if isinstance(value, (bool, int, float, str)) or value is None:
+            record[key] = value
+    try:
+        line = json.dumps(
+            record, ensure_ascii=True, separators=(",", ":")) + "\n"
+        encoded = line.encode("utf-8")
+        with _perf_log_lock:
+            if (os.path.exists(PERF_LOG_PATH)
+                    and os.path.getsize(PERF_LOG_PATH)
+                    + len(encoded) > PERF_LOG_MAX_BYTES):
+                backup = PERF_LOG_PATH + ".1"
+                try:
+                    os.replace(PERF_LOG_PATH, backup)
+                except OSError:
+                    return
+            with open(PERF_LOG_PATH, "ab") as log_file:
+                log_file.write(encoded)
+    except (OSError, TypeError, ValueError):
+        # Telemetry must never affect translation.
+        return
+
+
+def summarize_provider_dogfood(path=None, days=PERF_DOGFOOD_DAYS, now=None):
+    """Aggregate privacy-safe production provider routes from the bounded log."""
+    log_path = path or PERF_LOG_PATH
+    now = now or datetime.now()
+    cutoff = now - timedelta(days=days)
+    route_counts = {
+        "streamed": 0,
+        "stable_exec": 0,
+        "stable_fallback": 0,
+        "stream_cancelled": 0,
+        "stream_failed": 0,
+    }
+    model_counts = {}
+    durations = []
+    stream_first_result_durations = []
+    stable_long_text_durations = []
+    success = cancelled = failed = 0
+    first_sample_at = None
+    last_sample_at = None
+
+    for candidate in (log_path + ".1", log_path):
+        try:
+            with open(candidate, encoding="utf-8") as log_file:
+                lines = list(log_file)
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+                timestamp = datetime.strptime(
+                    record.get("ts", ""), "%Y-%m-%dT%H:%M:%S")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if ((timestamp < cutoff or timestamp > now)
+                    or record.get("runtime") != "app"
+                    or record.get("provider") != "codex_cli"):
+                continue
+            stage = record.get("stage")
+            if stage == "provider_stream_complete" and record.get("ok"):
+                first_result = record.get("first_result_ms")
+                if isinstance(first_result, (int, float)) and first_result >= 0:
+                    stream_first_result_durations.append(int(first_result))
+                continue
+            if (stage == "provider_complete"
+                    and record.get("ok")
+                    and isinstance(record.get("chars"), (int, float))
+                    and record["chars"] >= STREAM_MIN_CHARS):
+                total = record.get("total_ms")
+                if isinstance(total, (int, float)) and total >= 0:
+                    stable_long_text_durations.append(int(total))
+                continue
+            if stage != "provider_route_complete":
+                continue
+            if first_sample_at is None or timestamp < first_sample_at:
+                first_sample_at = timestamp
+            if last_sample_at is None or timestamp > last_sample_at:
+                last_sample_at = timestamp
+            route = record.get("route")
+            if route in route_counts:
+                route_counts[route] += 1
+            model = str(record.get("model") or "auto")
+            model_counts[model] = model_counts.get(model, 0) + 1
+            outcome = record.get("outcome")
+            if outcome == "success":
+                success += 1
+            elif outcome == "cancelled":
+                cancelled += 1
+            else:
+                failed += 1
+            duration = record.get("wall_ms")
+            if isinstance(duration, (int, float)) and duration >= 0:
+                durations.append(int(duration))
+
+    def percentile(values, fraction):
+        values.sort()
+        if not values:
+            return None
+        index = max(0, int(len(values) * fraction + 0.999999) - 1)
+        return values[min(index, len(values) - 1)]
+
+    observation_days = 0
+    if first_sample_at is not None and last_sample_at is not None:
+        observation_days = (
+            last_sample_at.date() - first_sample_at.date()).days + 1
+
+    return {
+        "days": days,
+        "observation_days": observation_days,
+        "sample_count": success + cancelled + failed,
+        "success_count": success,
+        "cancelled_count": cancelled,
+        "failed_count": failed,
+        "p50_ms": percentile(durations, 0.50),
+        "p95_ms": percentile(durations, 0.95),
+        "stream_first_result_count": len(stream_first_result_durations),
+        "stream_first_result_p95_ms": percentile(
+            stream_first_result_durations, 0.95),
+        "stable_long_text_count": len(stable_long_text_durations),
+        "stable_long_text_p95_ms": percentile(
+            stable_long_text_durations, 0.95),
+        "route_counts": route_counts,
+        "model_counts": model_counts,
+    }
+
+
+def evaluate_codex_rollout(summary):
+    """Evaluate automatic evidence without auto-enabling the Beta feature."""
+    samples = int(summary.get("sample_count") or 0)
+    observation_days = int(summary.get("observation_days") or 0)
+    routes = summary.get("route_counts") or {}
+    post_output_failures = int(routes.get("stream_failed") or 0)
+    stream_p95 = summary.get("stream_first_result_p95_ms")
+    stable_p95 = summary.get("stable_long_text_p95_ms")
+
+    checks = {
+        "request_volume": samples >= CODEX_ROLLOUT_MIN_REQUESTS,
+        "observation_window": observation_days >= CODEX_ROLLOUT_MIN_DAYS,
+        "no_post_output_failures": post_output_failures == 0,
+        "p95_improves": (
+            isinstance(stream_p95, (int, float))
+            and isinstance(stable_p95, (int, float))
+            and stream_p95 < stable_p95),
+    }
+    if post_output_failures:
+        status = "needs_attention"
+        reason = "post_output_failures"
+    elif not checks["request_volume"]:
+        status = "collecting"
+        reason = "request_volume"
+    elif not checks["observation_window"]:
+        status = "collecting"
+        reason = "observation_window"
+    elif stream_p95 is None or stable_p95 is None:
+        status = "collecting"
+        reason = "performance_comparison"
+    elif not checks["p95_improves"]:
+        status = "needs_attention"
+        reason = "p95_not_improved"
+    else:
+        status = "manual_review"
+        reason = "manual_safety_checks"
+    return {
+        "status": status,
+        "reason": reason,
+        "checks": checks,
+        "required_requests": CODEX_ROLLOUT_MIN_REQUESTS,
+        "required_days": CODEX_ROLLOUT_MIN_DAYS,
+        "manual_checks": ("process_cleanup", "cross_request_isolation"),
+    }
 
 
 def log_error(where: str, exc: BaseException) -> None:
@@ -180,6 +392,10 @@ class CFG:
     """String constants for every key in the user config dict.
     Use these instead of bare string literals to catch typos at lint time."""
     MODEL = "model"
+    MODEL_PROVIDER = "model_provider"
+    CLAUDE_MODEL = "claude_model"
+    CODEX_MODEL = "codex_model"
+    CODEX_STREAMING_EXPERIMENTAL = "codex_streaming_experimental"
     DOUBLE_PRESS_WINDOW = "double_press_window"
     FONT_SIZE = "font_size"
     DIRECTION = "direction"
@@ -206,8 +422,12 @@ class CFG:
 
 DEFAULT_CONFIG = {
     CFG.MODEL: "haiku",
+    CFG.MODEL_PROVIDER: "claude_cli",
+    CFG.CLAUDE_MODEL: "haiku",
+    CFG.CODEX_MODEL: "auto",
+    CFG.CODEX_STREAMING_EXPERIMENTAL: True,
     CFG.DOUBLE_PRESS_WINDOW: 0.5,
-    CFG.FONT_SIZE: 12,
+    CFG.FONT_SIZE: 10,
     CFG.DIRECTION: "auto",
     CFG.MAX_CHARS: 5000,
     CFG.THEME: "system",
@@ -482,9 +702,9 @@ POPUP_LAYOUT_LABELS_EN = {"dynamic": "Dynamic (Near Cursor)", "centered": "Class
 # (sends the whole image to Claude to read + translate). Local OCR recognises
 # text on-device and sends only that text to Claude. Both translate via Claude
 # online; only the text-recognition step differs.
-OCR_ENGINE_LABELS_ZH = {"claude": "Claude 视觉",
+OCR_ENGINE_LABELS_ZH = {"claude": "所选模型视觉",
                         "local": "本地 OCR"}
-OCR_ENGINE_LABELS_EN = {"claude": "Claude Vision",
+OCR_ENGINE_LABELS_EN = {"claude": "Selected model vision",
                         "local": "Local OCR"}
 # Translation model choices shown in Settings. The stored/routed value is the
 # bare model name (haiku/sonnet/opus); the parenthesised characteristic is a
@@ -496,6 +716,22 @@ MODEL_LABELS_ZH = {"haiku": "haiku（快速）",
 MODEL_LABELS_EN = {"haiku": "haiku (fast)",
                    "sonnet": "sonnet (balanced)",
                    "opus": "opus (most capable)"}
+PROVIDER_LABELS_ZH = {
+    "claude_cli": "Claude",
+    "codex_cli": "OpenAI GPT（Codex）",
+}
+PROVIDER_LABELS_EN = {
+    "claude_cli": "Claude",
+    "codex_cli": "OpenAI GPT (Codex)",
+}
+CODEX_MODEL_LABELS_ZH = {
+    "auto": "自动选择（质量优先）",
+    "gpt-5.4-mini": "gpt-5.4-mini（快速）",
+}
+CODEX_MODEL_LABELS_EN = {
+    "auto": "Auto (quality)",
+    "gpt-5.4-mini": "gpt-5.4-mini (fast)",
+}
 # What a single left-click on the tray icon does. Keys map to the four
 # window-opening actions the tray already exposes; the label is resolved by
 # app language. Non-window actions (pause / quit / update) are deliberately not
@@ -529,6 +765,26 @@ def get_ocr_engine_labels():
 
 def get_model_labels():
     return _labels_by_language(MODEL_LABELS_ZH, MODEL_LABELS_EN)
+
+
+def get_provider_labels():
+    return _labels_by_language(PROVIDER_LABELS_ZH, PROVIDER_LABELS_EN)
+
+
+def get_provider_model_labels(provider_id):
+    if provider_id == "codex_cli":
+        return _labels_by_language(
+            CODEX_MODEL_LABELS_ZH, CODEX_MODEL_LABELS_EN)
+    return get_model_labels()
+
+
+def provider_model(cfg, provider_id=None):
+    provider_id = provider_id or cfg.get(
+        CFG.MODEL_PROVIDER, DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
+    if provider_id == "codex_cli":
+        return cfg.get(CFG.CODEX_MODEL, DEFAULT_CONFIG[CFG.CODEX_MODEL])
+    return cfg.get(CFG.CLAUDE_MODEL, cfg.get(
+        CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL]))
 
 
 def get_tray_click_action_labels():

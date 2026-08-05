@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **Required before use:** CC Translate needs working Claude access — either a signed-in Claude subscription (Pro/Max) or a compatible local proxy endpoint (for example, Agent Maestro). Without either one, the app cannot translate and will not function.
+> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: Claude Code (subscription or compatible local proxy) or the official Codex CLI signed in with ChatGPT. Claude remains the default.
 
-An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. Built on the Claude Code CLI, it reuses your existing Claude capability and needs no separate API key.
+An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It supports parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers and needs no separate API key.
 
 ## Screenshots
 
@@ -37,7 +37,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="420"><br>
-  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (Claude vision or offline local OCR)</sub>
+  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (selected model vision or offline local OCR)</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="Translation history" width="420"><br>
@@ -49,7 +49,8 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
-- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between Claude vision recognition or an offline local OCR engine
+- **Claude / OpenAI GPT switching**: choose a model service in Settings. Claude keeps its existing warm pool and streaming path; GPT uses your local Codex CLI and ChatGPT sign-in.
+- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the selected model's vision support or an offline local OCR engine
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
@@ -58,7 +59,8 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
 - **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click
 - **Rewrite & distill**: from the popup, rewrite the translation in a casual / formal / professional tone, or distill it to key points
-- **Streaming for long text**: long text reveals its translation progressively
+- **Long-text streaming**: Claude progressively reveals long translations. Codex long-text app-server streaming is enabled by default as a Beta; it preserves source lists and emits summary points as Markdown bullets, preflights executable hooks before starting a model turn, and safely falls back to stable `codex exec` before output when necessary.
+- **Provider-aware diagnostics**: the Diagnostics window shows Codex version/sign-in, streaming compatibility and trigger rules, the latest request route, and a seven-day app-run summary with outcomes, models, routes, and P50/P95. Its advisory rollout gate tracks the 7-day / 200-request target and streamed-first-text versus stable-long-text P95 without changing saved settings.
 - **Smart selection detection**: automatically detects whether text is actually selected, so it won't mistranslate the whole field when nothing is selected in an input box (including cross-process apps like VS Code)
 - **Translation history**: open the history window from the tray — searchable and filterable by type
 - **Popup layout**: classic (screen-centered) or dynamic (follows the mouse), switchable in settings
@@ -71,23 +73,38 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 
 - Windows (uses Windows APIs for DPI awareness, multi-monitor positioning, and reading the theme from the registry)
 - Python 3.12+
-- Node.js (used to install the Claude Code CLI)
-- Working Claude access: either a signed-in Claude subscription (Pro/Max), or a compatible local proxy endpoint (for example, Agent Maestro)
+- Node.js (used to install the Claude Code and Codex CLIs)
+- At least one provider:
+  - Claude Code: a signed-in Claude subscription (Pro/Max), or a compatible local proxy endpoint (for example, Agent Maestro)
+  - OpenAI GPT: the official Codex CLI signed in with ChatGPT
 - ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
 ## Quick install (recommended)
 
 Run this one line in **PowerShell**. The script installs git / Python / Node as
-needed, clones the repo, installs the Claude CLI and Python dependencies, and
-launches the app:
+needed, clones the repo, installs the Claude CLI, the compatible Codex CLI, and
+Python dependencies, then launches the app:
 
 ```powershell
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-It automates **everything except logging in to Claude** — that's a one-time
-browser OAuth no script can do for you. When it finishes, run `claude` once to
-sign in (uses your existing Claude subscription, no extra charge).
+It automates **everything except account sign-in** — Claude and Codex each use
+a one-time browser OAuth flow that no script can complete for you. Claude
+remains the default. Run `claude` once to sign in; when you want GPT, run:
+
+```powershell
+codex login
+codex login status
+```
+
+Then open **Settings**, choose **OpenAI GPT (Codex)**, and save. CC Translate
+uses the CLI's cached ChatGPT sign-in but never reads or stores its auth tokens.
+
+For the GPT model, **Auto** remains the default and favors translation quality.
+Choose **gpt-5.4-mini (fast)** for generally lower and more consistent latency;
+it may preserve more English technical terms. Model availability depends on
+your ChatGPT plan, organization policy, and Codex CLI version.
 
 > Optional environment variables (set before running): `$env:CC_TRANSLATE_DIR`
 > to choose the install location (default `%USERPROFILE%\cc-translate`);
@@ -124,11 +141,16 @@ npm install -g @anthropic-ai/claude-code@latest
 claude --version   # confirm it's the latest; if clearly old, re-run the line above to force an update
 claude   # on first run, follow the prompt to sign in via browser, then Ctrl+C to exit interactive mode
 
+# Optional: install the GPT provider and sign in with ChatGPT
+npm install -g @openai/codex@0.146.0
+codex login
+codex login status
+
 # 4. Install Python dependencies
 pip install pynput pyperclip pystray Pillow
 # Optional enhancements (each feature auto-degrades/turns off if missing; core translation is unaffected):
 pip install Pygments   # code-block syntax highlighting (falls back to monochrome code style when missing)
-pip install winsdk     # offline local OCR engine for screenshot translation (Claude vision still works without it)
+pip install winsdk     # offline local OCR engine (selected model vision still works without it)
 pip install comtypes   # smart selection detection, avoids mistranslating a whole input box when nothing is selected (incl. cross-process apps like VS Code)
 # Or install everything at once (equivalent to all packages above): pip install -r requirements.txt
 
@@ -141,8 +163,10 @@ pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in t
 > **Even if you already had `claude` installed, run `npm install -g @anthropic-ai/claude-code@latest`
 > again before installing this tool**, and confirm with `claude --version`.
 
-> Note: `translator.pyw` auto-detects the location of the `claude` CLI (checks PATH first, then the npm global directory).
-> If it can't be found, make sure `claude` is on PATH, or that the npm global bin directory has been added to PATH.
+> Note: `translator.pyw` auto-detects both CLIs, including their npm global
+> installation directories. If one cannot be found, confirm its `.cmd` launcher
+> is on PATH. The app invokes Codex with an ephemeral, read-only working
+> directory and fails closed if Codex reports a tool event.
 
 ## Launching
 

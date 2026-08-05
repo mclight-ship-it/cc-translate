@@ -1,5 +1,12 @@
 # CC Translate — v2 UI 改版规划（UI_V2_PLAN）
 
+> **2026-08-05：本工作流已暂停。**
+>
+> 当前优先级切换为 Claude / GPT 多模型 provider。UI v2 的真实完成度、代码结构、
+> 本机开关、验证方法和恢复步骤统一记录在
+> [`UI_V2_HANDOFF.md`](UI_V2_HANDOFF.md)。恢复 UI 工作时以 handoff 文档为准；
+> 本文件中较早的进度表可能已落后于当前代码。
+
 本文件记录「AI flavor」新界面（v2 UI）从 POC 落地到线上产品的**整体规划**：
 开发顺序、依赖关系、风险登记，以及集成策略。配套的独立 POC 位于
 `C:\Users\skylerc\cc-translate-poc\poc3.py`（本仓库之外，仅作视觉北极星）。

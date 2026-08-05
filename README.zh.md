@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **使用前必看（必需）**：CC Translate 必须有可用的 Claude 能力——要么已登录 Claude 订阅（Pro/Max），要么接入兼容的本地代理端点（例如 Agent Maestro）。两者都没有时，App 将无法工作。
+> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：Claude Code（订阅或兼容本地代理），或已用 ChatGPT 登录的官方 Codex CLI。默认仍使用 Claude。
 
-这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。基于 Claude Code CLI，复用你已有的 Claude 能力，无需单独的 API key。
+这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它支持 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider，无需单独的 API key。
 
 ## 界面预览
 
@@ -37,7 +37,7 @@
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="420"><br>
-  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持 Claude 视觉或离线本地 OCR）</sub>
+  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持所选模型视觉或离线本地 OCR）</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="翻译历史" width="420"><br>
@@ -49,7 +49,8 @@
 ## 功能
 
 - **双击 Ctrl+C** 翻译剪贴板/选中文字，鼠标旁弹窗显示
-- **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持 Claude 视觉识别或离线本地 OCR 两种引擎
+- **Claude / OpenAI GPT 切换**：可在设置里选择模型服务；Claude 保留原有预热池和流式路径，GPT 使用本机 Codex CLI 与 ChatGPT 登录
+- **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持所选模型的视觉能力或离线本地 OCR
 - **快速输入翻译**：没有选中文字时双击 Ctrl+C，弹出输入框，手动输入要翻译的内容
 - **代码解释模式**：选中的是代码时，不强行翻译，而是用中文解释代码用途；文字与代码混排时正常翻译并保留代码原样
 - **词典模式**：选中单个单词时，返回中英双语词条（音标、词性、释义、例句）
@@ -58,7 +59,8 @@
 - **多目标语言**：自动检测中↔英，或固定译成中/英/日/韩/法/德/西
 - **弹窗内换向重译**：弹窗提供「重译」菜单，一键把选中内容重译成其他语言
 - **改写与提炼**：弹窗内可把译文改写为口语 / 正式 / 专业风格，或提炼要点
-- **长文流式**：长文本逐步显现译文
+- **长文流式**：Claude 会逐步显示长文结果；Codex app-server 长文流式 Beta 默认开启，保留原文列表并将摘要要点输出为 Markdown bullet，启动模型 turn 前会预检可执行 hook，输出前失败会安全回退到稳定的 `codex exec`
+- **按 Provider 分区的诊断**：诊断窗口会显示 Codex 版本/登录、流式兼容性和触发条件，以及最近请求路由和最近 7 天真实运行的成功/取消/失败、模型、路由及 P50/P95 摘要；建议性发布门禁会显示 7 天 / 200 次请求进度和流式首字对稳定长文完成的 P95 对照，但不会修改已保存设置
 - **智能选区识别**：自动判断是否真的选中了文字，避免在输入框里没选中时误翻整框内容（含 VS Code 等跨进程应用）
 - **翻译历史**：托盘打开历史窗口，可搜索、按类型筛选
 - **弹窗布局**：经典（屏幕居中）或动态（跟随鼠标），可在设置中切换
@@ -71,19 +73,33 @@
 
 - Windows（用到 Windows API 做 DPI 感知、多屏定位、注册表读主题）
 - Python 3.12+
-- Node.js（用于安装 Claude Code CLI）
-- 可用的 Claude 能力：已登录 Claude 订阅（Pro/Max），或兼容的本地代理端点（例如 Agent Maestro）
+- Node.js（用于安装 Claude Code 与 Codex CLI）
+- 至少一个 provider：
+  - Claude Code：已登录 Claude 订阅（Pro/Max），或兼容的本地代理端点（例如 Agent Maestro）
+  - OpenAI GPT：官方 Codex CLI，并已使用 ChatGPT 登录
 - ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
 
 ## 快速安装（推荐）
 
-在 **PowerShell** 里跑这一行，脚本会自动装好 git / Python / Node、拉取代码、安装 Claude CLI 与 Python 依赖，并启动程序：
+在 **PowerShell** 里跑这一行，脚本会自动装好 git / Python / Node、拉取代码、安装 Claude CLI、兼容的 Codex CLI 与 Python 依赖，并启动程序：
 
 ```powershell
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-它会自动完成**除登录 Claude 以外**的所有步骤——登录是一次性的浏览器授权，任何脚本都无法代劳。装完后按提示跑一次 `claude` 登录即可（用你现有的 Claude 订阅，不额外收费）。
+它会自动完成**除账号登录以外**的所有步骤——Claude 和 Codex 登录都是一次性的浏览器授权，任何脚本都无法代劳。安装器仍以 Claude 为默认；按提示运行 `claude` 登录 Claude，需要 GPT 时再运行：
+
+```powershell
+codex login
+codex login status
+```
+
+然后打开**设置**，选择 **OpenAI GPT（Codex）** 并保存。CC Translate 只复用
+Codex CLI 的本地 ChatGPT 登录状态，不读取或保存认证 token。
+
+GPT 模型默认使用偏重翻译质量的**自动选择**。如果更在意等待时间，可选择
+**gpt-5.4-mini（快速）**；它通常延迟更低、更稳定，但可能保留更多英文技术词。具体模型
+是否可用取决于 ChatGPT 套餐、组织策略和 Codex CLI 版本。
 
 > 可选环境变量（运行前设置）：`$env:CC_TRANSLATE_DIR` 指定安装目录（默认 `%USERPROFILE%\cc-translate`）；`$env:CC_TRANSLATE_DRYRUN="1"` 先“空跑”一遍，只显示每步会做什么、不做任何改动。
 
@@ -114,11 +130,16 @@ npm install -g @anthropic-ai/claude-code@latest
 claude --version   # 确认已是最新版；若明显偏旧，重跑上一行强制更新
 claude   # 首次运行按提示在浏览器登录，然后 Ctrl+C 退出交互模式
 
+# 可选：安装 GPT provider，并用 ChatGPT 登录
+npm install -g @openai/codex@0.146.0
+codex login
+codex login status
+
 # 4. 安装 Python 依赖
 pip install pynput pyperclip pystray Pillow
 # 可选增强（缺失时对应功能自动降级/关闭，不影响核心翻译）：
 pip install Pygments   # 代码块语法高亮（缺失时降级为单色代码样式）
-pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用 Claude 视觉识别）
+pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用所选模型视觉）
 pip install comtypes   # 智能选区识别，避免输入框内无选中时误翻整框（含 VS Code 等跨进程应用）
 # 或一键装全部（等价于上面所有包）：pip install -r requirements.txt
 
@@ -130,8 +151,9 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 > 旧版会导致翻译报错或结果异常。**即使你之前已经装过 `claude`，安装本工具前也请再跑一次
 > `npm install -g @anthropic-ai/claude-code@latest` 升级到最新版**，并用 `claude --version` 确认。
 
-> 提示：`translator.pyw` 会自动探测 `claude` CLI 的位置（先查 PATH，再查 npm 全局目录）。
-> 若找不到，请确保 `claude` 在 PATH 中，或 npm 全局 bin 目录已加入 PATH。
+> 提示：`translator.pyw` 会自动探测两个 CLI，也会识别 npm 全局安装目录。若找不到，
+> 请确认对应的 `.cmd` 启动器在 PATH 中。App 调用 Codex 时使用临时会话、只读沙箱和
+> 专用工作目录；一旦 JSONL 报告工具事件就会失败关闭。
 
 ## 启动方式
 

@@ -59,6 +59,7 @@ class WarmMixin:
         # count in _warm_pending so a concurrent call sees the reservation.
         plan = []   # list of profile names to spawn (one entry per process)
         with self._warm_lock:
+            generation = self._warm_generation
             for name in profiles:
                 if self._warm_profile_spec(name) is None:
                     continue
@@ -71,7 +72,7 @@ class WarmMixin:
         if not plan:
             return
 
-        def _work(plan=plan):
+        def _work(plan=plan, generation=generation):
             for name in plan:
                 w = None
                 try:
@@ -86,14 +87,23 @@ class WarmMixin:
                 except Exception as e:
                     log_error("warm_refill", e)
                     w = None
+                keep = False
                 with self._warm_lock:
-                    self._warm_pending[name] = max(
-                        0, self._warm_pending.get(name, 0) - 1)
-                    if w is not None:
+                    if generation == self._warm_generation:
+                        self._warm_pending[name] = max(
+                            0, self._warm_pending.get(name, 0) - 1)
+                    if (w is not None and self._warm_enabled
+                            and generation == self._warm_generation):
                         self._warm_pool.setdefault(name, []).append(w)
+                        keep = True
+                if w is not None and not keep:
+                    try:
+                        w.close()
+                    except Exception:
+                        pass
         threading.Thread(target=_work, daemon=True).start()
 
-    def _take_warm(self, profile):
+    def _take_warm(self, profile, expected_key=None):
         """Return one ready warm process for this profile, removing it from the
         pool, or None if none is ready. Evicts any stale-config processes it
         finds and triggers a refill so the pool stays topped up."""
@@ -102,7 +112,7 @@ class WarmMixin:
         spec = self._warm_profile_spec(profile)
         if spec is None:
             return None
-        key = spec[0]
+        key = expected_key or spec[0]
         chosen = None
         discard = []
         with self._warm_lock:
@@ -110,7 +120,7 @@ class WarmMixin:
             for w in self._warm_pool.get(profile, ()):
                 if chosen is None and w.usable(key):
                     chosen = w                       # take exactly one usable
-                elif w.ready and w.key != key:
+                elif expected_key is None and w.ready and w.key != key:
                     discard.append(w)                # stale config: evict
                 else:
                     keep.append(w)                   # still warming — keep
@@ -131,8 +141,10 @@ class WarmMixin:
         current config. Used when the model/direction changes so no process
         keeps a now-wrong system prompt."""
         with self._warm_lock:
+            self._warm_generation += 1
             procs = [w for lst in self._warm_pool.values() for w in lst]
             self._warm_pool = {}
+            self._warm_pending = {}
         for w in procs:
             try:
                 w.close()
@@ -140,10 +152,29 @@ class WarmMixin:
                 pass
         self._spawn_warm_async()
 
+    def _set_warm_provider(self, provider_id):
+        """Keep Claude's pool intact when selected and suspend it for others."""
+        should_enable = provider_id == "claude_cli"
+        if should_enable:
+            self._warm_enabled = True
+            return
+        self._warm_enabled = False
+        with self._warm_lock:
+            self._warm_generation += 1
+            procs = [w for lst in self._warm_pool.values() for w in lst]
+            self._warm_pool = {}
+            self._warm_pending = {}
+        for proc in procs:
+            try:
+                proc.close()
+            except Exception:
+                pass
+
     def close_warm_pool(self):
         """Terminate every warm process. Called on quit."""
         self._warm_enabled = False
         with self._warm_lock:
+            self._warm_generation += 1
             procs = [w for lst in self._warm_pool.values() for w in lst]
             self._warm_pool = {}
             self._warm_pending = {}
