@@ -26,6 +26,7 @@ from cc_providers.codex_appserver import (
     _supported_appserver_version,
     _validate_hook_preflight,
 )
+from cc_providers.registry import ProviderRegistry
 
 
 def _event(event_type, **values):
@@ -383,8 +384,90 @@ class TestCodexAppServerParser(unittest.TestCase):
                 "delta": "wrong",
             })
 
+    def test_rejects_model_event_before_request_identity_is_bound(self):
+        parser = CodexAppServerParser(lambda delta: None)
+        with self.assertRaisesRegex(
+                CodexAppServerProtocolError,
+                "before thread/start"):
+            parser.feed(json.dumps({
+                "method": "item/completed",
+                "params": {
+                    "threadId": "stale-thread",
+                    "turnId": "stale-turn",
+                    "item": {
+                        "type": "agentMessage",
+                        "text": "stale result",
+                    },
+                },
+            }))
+
 
 class TestCodexAppServerTransport(unittest.TestCase):
+    @staticmethod
+    def _success_messages(
+            work_dir, initialize_id, hooks_id, thread_id, turn_id, suffix):
+        messages = []
+        if initialize_id is not None:
+            messages.append({
+                "id": initialize_id,
+                "result": {"userAgent": "test"},
+            })
+        messages.extend((
+            {
+                "id": hooks_id,
+                "result": {
+                    "data": [{
+                        "cwd": work_dir,
+                        "errors": [],
+                        "hooks": [],
+                    }],
+                },
+            },
+            {
+                "id": thread_id,
+                "result": {"thread": {"id": f"thread-{suffix}"}},
+            },
+            {
+                "id": turn_id,
+                "result": {"turn": {"id": f"turn-{suffix}"}},
+            },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": f"thread-{suffix}",
+                    "turnId": f"turn-{suffix}",
+                    "itemId": f"item-{suffix}",
+                    "delta": f"partial-{suffix}",
+                },
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": f"thread-{suffix}",
+                    "turnId": f"turn-{suffix}",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": f"item-{suffix}",
+                        "text": f"final-{suffix}",
+                        "phase": "final_answer",
+                    },
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": f"thread-{suffix}",
+                    "turnId": f"turn-{suffix}",
+                    "turn": {
+                        "id": f"turn-{suffix}",
+                        "status": "completed",
+                        "error": None,
+                    },
+                },
+            },
+        ))
+        return messages
+
     def test_build_command_keeps_security_overrides(self):
         transport = CodexAppServerTransport(
             "codex.exe", r"C:\empty")
@@ -729,6 +812,195 @@ class TestCodexAppServerTransport(unittest.TestCase):
             turn_params["sandboxPolicy"],
             {"type": "readOnly", "networkAccess": False})
         self.assertEqual(turn_params["effort"], "low")
+
+    def test_two_requests_reuse_process_with_fresh_ephemeral_threads(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            messages = self._success_messages(
+                work_dir, 1, 2, 3, 4, "one")
+            messages.extend(self._success_messages(
+                work_dir, None, 5, 6, 7, "two"))
+            process = _FakeProcess(
+                "\n".join(json.dumps(message) for message in messages))
+            request = ProviderRequest(
+                task="translate",
+                model="auto-fast",
+                system_prompt="Translate.",
+                user_text="hello",
+                timeout_seconds=30,
+            )
+            transport = CodexAppServerTransport(
+                "codex.exe", work_dir, idle_timeout_seconds=0)
+            self.addCleanup(transport.shutdown)
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver."
+                    "_supported_appserver_version",
+                    return_value=True), \
+                    unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        return_value=process) as popen:
+                first = transport.stream(request, lambda delta: None)
+                second = transport.stream(request, lambda delta: None)
+
+        self.assertTrue(first.ok)
+        self.assertTrue(second.ok)
+        self.assertEqual(first.text, "final-one")
+        self.assertEqual(second.text, "final-two")
+        popen.assert_called_once()
+        sent = [
+            json.loads(line)
+            for line in process.stdin.getvalue().splitlines()
+        ]
+        methods = [message["method"] for message in sent]
+        self.assertEqual(methods.count("initialize"), 1)
+        self.assertEqual(methods.count("hooks/list"), 2)
+        self.assertEqual(methods.count("thread/start"), 2)
+        self.assertTrue(all(
+            message["params"]["ephemeral"]
+            for message in sent
+            if message["method"] == "thread/start"
+        ))
+        self.assertEqual(dict(second.metrics)["spawn_ms"], 0)
+        self.assertEqual(dict(second.metrics)["initialize_ms"], 0)
+
+    def test_shutdown_terminates_reused_process_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            messages = self._success_messages(
+                work_dir, 1, 2, 3, 4, "one")
+            process = _FakeProcess(
+                "\n".join(json.dumps(message) for message in messages))
+            transport = CodexAppServerTransport(
+                "codex.exe", work_dir, idle_timeout_seconds=0)
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver."
+                    "_supported_appserver_version",
+                    return_value=True), \
+                    unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        return_value=process):
+                result = transport.stream(
+                    ProviderRequest(
+                        task="translate",
+                        model="auto-fast",
+                        system_prompt="Translate.",
+                        user_text="hello",
+                        timeout_seconds=30,
+                    ),
+                    lambda delta: None,
+                )
+            transport.shutdown()
+            transport.shutdown()
+
+        self.assertTrue(result.ok)
+        process.kill.assert_called_once_with()
+
+    def test_cancelled_turn_is_discarded_and_next_request_restarts(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            first_messages = self._success_messages(
+                work_dir, 1, 2, 3, 4, "cancelled")
+            first_messages = first_messages[:5] + [{
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-cancelled",
+                    "turnId": "turn-cancelled",
+                    "turn": {
+                        "id": "turn-cancelled",
+                        "status": "interrupted",
+                        "error": None,
+                    },
+                },
+            }]
+            second_messages = self._success_messages(
+                work_dir, 6, 7, 8, 9, "next")
+            processes = [
+                _FakeProcess("\n".join(
+                    json.dumps(message) for message in first_messages)),
+                _FakeProcess("\n".join(
+                    json.dumps(message) for message in second_messages)),
+            ]
+            transport = CodexAppServerTransport(
+                "codex.exe", work_dir, idle_timeout_seconds=0)
+            self.addCleanup(transport.shutdown)
+            cancelled = threading.Event()
+
+            def cancel_after_first_delta(_delta):
+                cancelled.set()
+
+            request = ProviderRequest(
+                task="translate",
+                model="auto-fast",
+                system_prompt="Translate.",
+                user_text="hello",
+                timeout_seconds=30,
+            )
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver."
+                    "_supported_appserver_version",
+                    return_value=True), \
+                    unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        side_effect=processes) as popen:
+                first = transport.stream(
+                    request, cancel_after_first_delta, cancelled)
+                second = transport.stream(
+                    request, lambda delta: None, threading.Event())
+
+        self.assertFalse(first.ok)
+        self.assertEqual(first.error_code, "cancelled")
+        self.assertTrue(second.ok)
+        self.assertEqual(second.text, "final-next")
+        self.assertEqual(popen.call_count, 2)
+        processes[0].kill.assert_called_once_with()
+
+
+class TestCodexPersistentProvider(unittest.TestCase):
+    def test_profiles_use_separate_cached_transports(self):
+        provider = CodexCliProvider(command="codex.exe")
+        auto_request = ProviderRequest(
+            task="translate",
+            model="auto-fast",
+            system_prompt="Translate.",
+            user_text="short",
+        )
+        mini_request = ProviderRequest(
+            task="translate",
+            model="gpt-5.4-mini",
+            system_prompt="Translate.",
+            user_text="long",
+        )
+
+        with unittest.mock.patch(
+                "cc_providers.codex_appserver.CodexAppServerTransport"
+        ) as transport_type:
+            transports = [unittest.mock.Mock(), unittest.mock.Mock()]
+            transport_type.side_effect = transports
+            for transport in transports:
+                transport.stream.return_value = unittest.mock.sentinel.result
+            provider.stream(auto_request, lambda delta: None)
+            provider.stream(auto_request, lambda delta: None)
+            provider.stream(mini_request, lambda delta: None)
+            provider.shutdown()
+
+        self.assertEqual(transport_type.call_count, 2)
+        self.assertEqual(transports[0].stream.call_count, 2)
+        self.assertEqual(transports[1].stream.call_count, 1)
+        for transport in transports:
+            transport.shutdown.assert_called_once_with()
+
+
+class TestProviderRegistry(unittest.TestCase):
+    def test_shutdown_continues_after_provider_failure(self):
+        registry = ProviderRegistry()
+        failing = unittest.mock.Mock(provider_id="failing")
+        failing.shutdown.side_effect = OSError("busy")
+        healthy = unittest.mock.Mock(provider_id="healthy")
+        registry.register(failing)
+        registry.register(healthy)
+
+        with self.assertRaisesRegex(RuntimeError, "1 model provider"):
+            registry.shutdown()
+
+        failing.shutdown.assert_called_once_with()
+        healthy.shutdown.assert_called_once_with()
 
 
 class TestCodexDiscovery(unittest.TestCase):

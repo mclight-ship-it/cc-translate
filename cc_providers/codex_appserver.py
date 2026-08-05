@@ -189,12 +189,22 @@ class CodexAppServerParser:
     def _check_identity(self, params):
         thread_id = params.get("threadId")
         turn_id = params.get("turnId")
-        if self.thread_id and thread_id and thread_id != self.thread_id:
-            raise CodexAppServerProtocolError(
-                "invalid_appserver_message", "thread id changed")
-        if self.turn_id and turn_id and turn_id != self.turn_id:
-            raise CodexAppServerProtocolError(
-                "invalid_appserver_message", "turn id changed")
+        if thread_id:
+            if not self.thread_id:
+                raise CodexAppServerProtocolError(
+                    "invalid_appserver_message",
+                    "thread event arrived before thread/start")
+            if thread_id != self.thread_id:
+                raise CodexAppServerProtocolError(
+                    "invalid_appserver_message", "thread id changed")
+        if turn_id:
+            if not self.turn_id:
+                raise CodexAppServerProtocolError(
+                    "invalid_appserver_message",
+                    "turn event arrived before turn/start")
+            if turn_id != self.turn_id:
+                raise CodexAppServerProtocolError(
+                    "invalid_appserver_message", "turn id changed")
 
     def _handle_item(self, params, completed):
         self._check_identity(params)
@@ -236,11 +246,24 @@ class CodexAppServerParser:
 
 
 class CodexAppServerTransport:
-    """Run one isolated app-server process for one streamed request."""
+    """Reuse one app-server process while isolating every request by thread."""
 
-    def __init__(self, command, work_dir):
+    def __init__(self, command, work_dir, idle_timeout_seconds=300):
         self.command = command
         self.work_dir = work_dir
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self._stream_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._proc = None
+        self._output_queue = None
+        self._stdout_thread = None
+        self._stderr_thread = None
+        self._stderr_chunks = None
+        self._profile = None
+        self._next_request_id = 1
+        self._idle_timer = None
+        self._idle_generation = 0
+        self._closed = False
 
     def build_command(self, request):
         command = [
@@ -270,35 +293,25 @@ class CodexAppServerTransport:
                 False, error_code="workdir_failed",
                 error_detail=_sanitize_detail(str(exc)))
 
-        try:
-            proc = subprocess.Popen(
-                self.build_command(request),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                creationflags=_CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP,
-            )
-        except OSError as exc:
-            return ProviderResult(
-                False, error_code="cli_unavailable",
-                error_detail=_sanitize_detail(str(exc)))
-
-        spawn_ms = int((time.perf_counter() - started_at) * 1000)
-        output_queue = queue.Queue()
-        stderr_chunks = []
-        stdout_thread = threading.Thread(
-            target=_read_stdout, args=(proc.stdout, output_queue), daemon=True)
-        stderr_thread = threading.Thread(
-            target=_read_stream, args=(proc.stderr, stderr_chunks), daemon=True)
-        stdout_thread.start()
-        stderr_thread.start()
-        parser = CodexAppServerParser(on_delta)
         deadline = time.monotonic() + max(1.0, request.timeout_seconds)
+        if not self._acquire_stream_lock(deadline, cancel_event):
+            code = (
+                "cancelled"
+                if cancel_event is not None and cancel_event.is_set()
+                else "timeout"
+            )
+            return ProviderResult(
+                False, error_code=code,
+                metrics=(("total_ms", int(
+                    (time.perf_counter() - started_at) * 1000)),))
+
+        proc = None
+        reusable = False
+        spawn_ms = 0
+        parser = CodexAppServerParser(on_delta)
         first_event_ms = None
         first_result_ms = None
-        initialize_ms = None
+        initialize_ms = 0
         hook_preflight_ms = None
         thread_start_ms = None
         turn_start_ms = None
@@ -306,7 +319,6 @@ class CodexAppServerTransport:
         turn_first_event_ms = None
         turn_first_result_ms = None
         interrupt_sent = False
-        next_id = 1
 
         def metrics():
             values = [
@@ -346,31 +358,55 @@ class CodexAppServerTransport:
             proc.stdin.flush()
 
         try:
-            send("initialize", {
-                "clientInfo": {
-                    "name": "cc-translate",
-                    "version": "experimental-appserver-1",
-                },
-                "capabilities": {"experimentalApi": False},
-            }, next_id)
-            initialize_id = next_id
-            next_id += 1
+            self._cancel_idle_timer()
+            with self._state_lock:
+                if self._closed:
+                    return ProviderResult(
+                        False, error_code="appserver_shutdown",
+                        metrics=metrics())
+                proc = self._proc
+                output_queue = self._output_queue
+                same_profile = self._profile == request.model
+            if (proc is None or not same_profile
+                    or not self._process_running(proc)):
+                if proc is not None:
+                    self._stop_process(proc)
+                spawn_started_at = time.perf_counter()
+                try:
+                    proc = self._start_process(request)
+                except OSError as exc:
+                    return ProviderResult(
+                        False, error_code="cli_unavailable",
+                        error_detail=_sanitize_detail(str(exc)),
+                        metrics=metrics())
+                spawn_ms = int(
+                    (time.perf_counter() - spawn_started_at) * 1000)
+                output_queue = self._output_queue
 
-            while initialize_id not in parser.responses:
-                kind, payload = self._next_message(
-                    proc, output_queue, deadline, cancel_event)
-                if kind != "line":
-                    return self._early_result(kind, payload, parser, metrics())
-                parser.feed(payload)
-            initialize_ms = int((time.perf_counter() - started_at) * 1000)
+                initialize_id = self._take_request_id()
+                send("initialize", {
+                    "clientInfo": {
+                        "name": "cc-translate",
+                        "version": "experimental-appserver-1",
+                    },
+                    "capabilities": {"experimentalApi": False},
+                }, initialize_id)
+                while initialize_id not in parser.responses:
+                    kind, payload = self._next_message(
+                        proc, output_queue, deadline, cancel_event)
+                    if kind != "line":
+                        return self._early_result(
+                            kind, payload, parser, metrics())
+                    parser.feed(payload)
+                initialize_ms = int(
+                    (time.perf_counter() - started_at) * 1000)
+                send("initialized")
 
-            send("initialized")
             hook_started_at = time.perf_counter()
+            hooks_list_id = self._take_request_id()
             send("hooks/list", {
                 "cwds": [os.path.abspath(self.work_dir)],
-            }, next_id)
-            hooks_list_id = next_id
-            next_id += 1
+            }, hooks_list_id)
             while hooks_list_id not in parser.responses:
                 kind, payload = self._next_message(
                     proc, output_queue, deadline, cancel_event)
@@ -400,9 +436,8 @@ class CodexAppServerTransport:
             if runtime_model and runtime_model != "auto":
                 thread_params["model"] = runtime_model
             thread_started_at = time.perf_counter()
-            send("thread/start", thread_params, next_id)
-            thread_start_id = next_id
-            next_id += 1
+            thread_start_id = self._take_request_id()
+            send("thread/start", thread_params, thread_start_id)
 
             while thread_start_id not in parser.responses:
                 kind, payload = self._next_message(
@@ -436,18 +471,17 @@ class CodexAppServerTransport:
             if request.model == "gpt-5.4-mini":
                 turn_params["effort"] = "low"
             turn_started_at = time.perf_counter()
-            send("turn/start", turn_params, next_id)
-            turn_start_id = next_id
-            next_id += 1
+            turn_start_id = self._take_request_id()
+            send("turn/start", turn_params, turn_start_id)
 
             while parser.turn_status is None:
                 if (cancel_event is not None and cancel_event.is_set()
                         and parser.turn_id and not interrupt_sent):
+                    interrupt_id = self._take_request_id()
                     send("turn/interrupt", {
                         "threadId": parser.thread_id,
                         "turnId": parser.turn_id,
-                    }, next_id)
-                    next_id += 1
+                    }, interrupt_id)
                     interrupt_sent = True
                 kind, payload = self._next_message(
                     proc, output_queue, deadline,
@@ -487,6 +521,7 @@ class CodexAppServerTransport:
             if not parser.final_text.strip():
                 return ProviderResult(
                     False, error_code="no_result", metrics=metrics())
+            reusable = True
             return ProviderResult(
                 True, text=parser.final_text.strip(), metrics=metrics())
         except CodexAppServerProtocolError as exc:
@@ -500,8 +535,142 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)),
                 metrics=metrics())
         finally:
-            _kill_process(proc)
-            stderr_thread.join(timeout=1)
+            if reusable:
+                self._schedule_idle_shutdown()
+            elif proc is not None:
+                self._stop_process(proc)
+            self._stream_lock.release()
+
+    def shutdown(self):
+        """Terminate the persistent process and reject future requests."""
+        with self._state_lock:
+            self._closed = True
+            proc = self._proc
+        self._cancel_idle_timer()
+        if proc is not None:
+            self._stop_process(proc)
+
+    def _start_process(self, request):
+        with self._state_lock:
+            if self._closed:
+                raise OSError("app-server transport is shut down")
+            proc = subprocess.Popen(
+                self.build_command(request),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                creationflags=_CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP,
+            )
+            output_queue = queue.Queue()
+            stderr_chunks = []
+            stdout_thread = threading.Thread(
+                target=_read_stdout,
+                args=(proc.stdout, output_queue),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_read_stream,
+                args=(proc.stderr, stderr_chunks),
+                daemon=True,
+            )
+            self._proc = proc
+            self._output_queue = output_queue
+            self._stdout_thread = stdout_thread
+            self._stderr_thread = stderr_thread
+            self._stderr_chunks = stderr_chunks
+            self._profile = request.model
+            stdout_thread.start()
+            stderr_thread.start()
+            return proc
+
+    def _stop_process(self, proc):
+        with self._state_lock:
+            if self._proc is proc:
+                stdout_thread = self._stdout_thread
+                stderr_thread = self._stderr_thread
+                self._proc = None
+                self._output_queue = None
+                self._stdout_thread = None
+                self._stderr_thread = None
+                self._stderr_chunks = None
+                self._profile = None
+            else:
+                stdout_thread = None
+                stderr_thread = None
+        _kill_process(proc)
+        if isinstance(getattr(proc, "pid", None), int):
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        for reader in (stdout_thread, stderr_thread):
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(timeout=1)
+
+    def _take_request_id(self):
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        return request_id
+
+    def _cancel_idle_timer(self):
+        with self._state_lock:
+            self._idle_generation += 1
+            timer = self._idle_timer
+            self._idle_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_idle_shutdown(self):
+        if self.idle_timeout_seconds <= 0:
+            return
+        with self._state_lock:
+            if self._closed or self._proc is None:
+                return
+            self._idle_generation += 1
+            generation = self._idle_generation
+            old_timer = self._idle_timer
+            timer = threading.Timer(
+                self.idle_timeout_seconds,
+                self._expire_idle_process,
+                args=(generation,),
+            )
+            timer.daemon = True
+            self._idle_timer = timer
+        if old_timer is not None:
+            old_timer.cancel()
+        timer.start()
+
+    def _expire_idle_process(self, generation):
+        if not self._stream_lock.acquire(blocking=False):
+            return
+        try:
+            with self._state_lock:
+                if generation != self._idle_generation:
+                    return
+                self._idle_timer = None
+                proc = self._proc
+            if proc is not None:
+                self._stop_process(proc)
+        finally:
+            self._stream_lock.release()
+
+    def _acquire_stream_lock(self, deadline, cancel_event):
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self._stream_lock.acquire(timeout=min(0.05, remaining)):
+                return True
+
+    @staticmethod
+    def _process_running(proc):
+        poll = getattr(proc, "poll", None)
+        return poll() is None if callable(poll) else True
 
     @staticmethod
     def _next_message(proc, output_queue, deadline, cancel_event):

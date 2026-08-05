@@ -22,5 +22,13 @@ class ProviderRegistry:
         return tuple(self._providers)
 
     def shutdown(self):
+        errors = []
         for provider in tuple(self._providers.values()):
-            provider.shutdown()
+            try:
+                provider.shutdown()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise RuntimeError(
+                f"{len(errors)} model provider(s) failed to shut down"
+            ) from errors[0]

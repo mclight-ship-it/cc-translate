@@ -16,8 +16,8 @@
 - Codex 0.146.0 已在本机通过 ChatGPT 登录完成短文、长文、代码、对抗文本、图片和取消探针。
 - 取消探针完成后，确认没有遗留本 provider 启动的 `codex.exe` 进程。
 - Codex 稳定 `exec --json` 没有文字 delta，继续作为短文/图片路径和流式失败回退。
-- Codex 长文流式 Beta 默认开启：固定 Codex 0.146.0，使用每请求独立的
-  `app-server` stdio 会话和 `item/agentMessage/delta`，不跨请求复用上下文。
+- Codex 流式 Beta 默认开启：固定 Codex 0.146.0，按运行 profile 懒启动并复用
+  `app-server` stdio 进程，但每次翻译仍创建新的 `ephemeral` thread，不跨请求复用上下文。
 - 实验路径启动前失败会回退稳定 `exec`；已经显示 delta 后失败不会重复发起模型请求。
 - `initialize` 后、`thread/start` 前调用 `hooks/list`；只允许命令内容与路径均匹配的
   Windows Defender system-managed hook，用户、项目、插件、未知或异常 hook 均在 turn
@@ -116,12 +116,14 @@ exec/app-server：
   设置迁移到智能路由。截图继续使用 Auto 极速参数，不应用未经验证的文字长度路由。
 - 当前 perf 日志的 741 条记录中，249 条明确为 test，492 条缺少 runtime、只能标为
   legacy-unknown，没有可识别的 app 样本。旧记录不得冒充真实用户 P50/P95。
-
-Codex 0.146.0 官方协议支持一个长生命周期连接上创建多个 thread；若未来实验常驻
-app-server，应坚持每次翻译新建 `ephemeral` thread。Windows 没有官方 daemon，且当前
-分段计时显示 initialize 约 0.15–0.31 s、进程清理约 0.3 s，理论收益明显小于模型等待。
-因此常驻方案仍不直接上线，必须先通过跨请求无串话、取消、过载、Defender hook
-fail-closed 和退出无残留测试。
+- 常驻 app-server 完成两轮固定交错 A/B，共 32 次真实调用，32/32 成功且唯一标识检查
+  未发现跨请求串话。合并 8 组样本后，极速 Auto 首字中位从 5.11 s 降至 4.33 s，
+  mini 从 6.41 s 降至 5.56 s，约改善 0.78–0.85 s；远端排队仍有明显单次波动。
+- 常驻实现按 profile 分离进程，避免 Auto 极速参数与 mini 参数互相污染；每次请求重新
+  执行 `hooks/list` 并创建新的 `ephemeral` thread。仅正常完成才复用；取消、超时、EOF、
+  协议或安全错误都会销毁进程，下一请求懒重启。空闲 5 分钟或应用退出也会清理。
+- 产品代码真实探针验证了 Auto/mini 各自同 PID 连续复用、两个 profile PID 分离、取消后
+  更换 PID 并恢复成功，以及 provider shutdown 后全部本次创建的 PID 均已退出。
 
 安全结论：Codex CLI 没有一个可证明“彻底禁用所有工具”的稳定总开关。当前实现使用
 `--ignore-user-config`、`--ignore-rules`、`--strict-config`、清空 MCP、只读沙箱、专用工作
@@ -666,6 +668,8 @@ cc_providers/codex_jsonl.py
 - 在设置中的 Beta 开关后实现 `app-server` 路径，版本 4 默认开启。
 - 与稳定的 `codex exec` A/B 对比。
 - 验证协议、进程恢复、上下文隔离和版本兼容。
+- 复用已初始化进程，同时坚持每次翻译新建 `ephemeral` thread；按 profile 隔离进程。
+- 仅成功请求保留进程；取消或任何异常后重启，空闲和应用退出时显式清理。
 - 固定支持 0.146.0；其他版本在显示任何文字前回退 `exec`。
 - `hooks/list` 在 `thread/start` 前验证全部启用 hook；仅允许命令和 Defender 平台路径
   均精确符合预期的 system-managed hook。用户、项目、插件、未知、修改或预检异常

@@ -164,6 +164,9 @@ class CodexCliProvider:
             "CC Translate",
             "codex-work",
         )
+        self._appserver_lock = threading.Lock()
+        self._appserver_transports = {}
+        self._shutdown = False
 
     def diagnose(self):
         if not self.command:
@@ -400,12 +403,24 @@ class CodexCliProvider:
     def stream(self, request, on_delta, cancel_event=None):
         from .codex_appserver import CodexAppServerTransport
 
-        return CodexAppServerTransport(
-            self.command, self.work_dir).stream(
-                request, on_delta, cancel_event)
+        with self._appserver_lock:
+            if self._shutdown:
+                return ProviderResult(
+                    False, error_code="appserver_shutdown")
+            transport = self._appserver_transports.get(request.model)
+            if transport is None:
+                transport = CodexAppServerTransport(
+                    self.command, self.work_dir)
+                self._appserver_transports[request.model] = transport
+        return transport.stream(request, on_delta, cancel_event)
 
     def shutdown(self):
-        return None
+        with self._appserver_lock:
+            self._shutdown = True
+            transports = tuple(self._appserver_transports.values())
+            self._appserver_transports.clear()
+        for transport in transports:
+            transport.shutdown()
 
 
 def _kill_process(proc):

@@ -95,7 +95,7 @@ class TrayMixin:
 
         def on_quit(icon, item):
             icon.stop()
-            self.close_warm_pool()
+            self._shutdown_model_processes()
             self.root.after(0, self.root.destroy)
 
         menu = pystray.Menu(

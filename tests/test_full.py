@@ -1390,6 +1390,30 @@ class TestDoTranslateWarmRouting(unittest.TestCase):
             ["warm", "stream", "oneshot"],
         )
 
+class TestProviderLifecycle(unittest.TestCase):
+    def test_shutdown_cancels_work_and_closes_all_model_processes(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._provider_cancel_event = threading.Event()
+        app.close_warm_pool = unittest.mock.Mock()
+        app._provider_registry = unittest.mock.Mock()
+
+        app._shutdown_model_processes()
+
+        self.assertTrue(app._provider_cancel_event.is_set())
+        app.close_warm_pool.assert_called_once_with()
+        app._provider_registry.shutdown.assert_called_once_with()
+
+    def test_run_always_shuts_down_model_processes(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app.root.mainloop.side_effect = RuntimeError("Tk failed")
+        app._shutdown_model_processes = unittest.mock.Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "Tk failed"):
+            app.run()
+
+        app._shutdown_model_processes.assert_called_once_with()
+
 
 class TestProviderRouting(unittest.TestCase):
     def test_claude_text_facade_forwards_snapshot_model(self):

@@ -470,7 +470,7 @@ class AboutMixin:
                 self.tray.stop()
         except Exception:
             pass
-        self.close_warm_pool()
+        self._shutdown_model_processes()
         try:
             self.root.after(0, self.root.destroy)
         except Exception:

@@ -2326,7 +2326,24 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return True
 
     def run(self):
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            self._shutdown_model_processes()
+
+    def _shutdown_model_processes(self):
+        """Cancel active work and terminate all reusable model processes."""
+        cancel_event = getattr(self, "_provider_cancel_event", None)
+        if cancel_event is not None:
+            cancel_event.set()
+        self.close_warm_pool()
+        registry = getattr(self, "_provider_registry", None)
+        if registry is None:
+            return
+        try:
+            registry.shutdown()
+        except Exception as exc:
+            log_error("provider_shutdown", exc)
 
 
 def _acquire_single_instance_mutex():
