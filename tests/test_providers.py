@@ -205,6 +205,15 @@ class TestCodexCliProvider(unittest.TestCase):
         provider = CodexCliProvider(command="codex.exe", work_dir=r"C:\empty")
         self.assertNotIn("-m", provider.build_command(self._request()))
 
+    def test_fast_auto_profile_uses_auto_with_low_output_overhead(self):
+        provider = CodexCliProvider(
+            command="codex.exe", work_dir=r"C:\empty")
+        command = provider.build_command(self._request(model="auto-fast"))
+
+        self.assertNotIn("-m", command)
+        self.assertIn('model_reasoning_effort="none"', command)
+        self.assertIn('model_verbosity="low"', command)
+
     def test_complete_parses_final_message(self):
         output = "\n".join((
             _event("thread.started"),
@@ -398,6 +407,22 @@ class TestCodexAppServerTransport(unittest.TestCase):
         self.assertIn("check_for_update_on_startup=false", command)
         self.assertIn("project_root_markers=[]", command)
         self.assertIn('model_reasoning_effort="low"', command)
+
+    def test_fast_auto_profile_keeps_runtime_model_on_auto(self):
+        transport = CodexAppServerTransport(
+            "codex.exe", r"C:\empty")
+        request = ProviderRequest(
+            task="translate",
+            model="auto-fast",
+            system_prompt="Translate.",
+            user_text="hello",
+        )
+
+        command = transport.build_command(request)
+
+        self.assertIn('model_reasoning_effort="none"', command)
+        self.assertIn('model_verbosity="low"', command)
+        self.assertNotIn("auto-fast", command)
 
     def test_version_gate_accepts_only_pinned_protocol_version(self):
         self.addCleanup(_clear_appserver_version_cache)

@@ -732,11 +732,13 @@ PROVIDER_LABELS_EN = {
 }
 CODEX_MODEL_LABELS_ZH = {
     "auto": "自动选择（质量优先）",
-    "gpt-5.4-mini": "gpt-5.4-mini（快速）",
+    "auto-fast": "自动选择（极速首屏）",
+    "gpt-5.4-mini": "gpt-5.4-mini（轻量）",
 }
 CODEX_MODEL_LABELS_EN = {
     "auto": "Auto (quality)",
-    "gpt-5.4-mini": "gpt-5.4-mini (fast)",
+    "auto-fast": "Auto (faster first response)",
+    "gpt-5.4-mini": "gpt-5.4-mini (lightweight)",
 }
 # What a single left-click on the tray icon does. Keys map to the four
 # window-opening actions the tray already exposes; the label is resolved by

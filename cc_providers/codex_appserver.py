@@ -18,6 +18,7 @@ from .codex_cli import (
     _classify_error,
     _kill_process,
     _read_stream,
+    _runtime_model,
     _sanitize_detail,
     build_codex_prompt,
 )
@@ -395,8 +396,9 @@ class CodexAppServerTransport:
                     "web_search": "disabled",
                 },
             }
-            if request.model and request.model != "auto":
-                thread_params["model"] = request.model
+            runtime_model = _runtime_model(request.model)
+            if runtime_model and runtime_model != "auto":
+                thread_params["model"] = runtime_model
             thread_started_at = time.perf_counter()
             send("thread/start", thread_params, next_id)
             thread_start_id = next_id
@@ -429,8 +431,8 @@ class CodexAppServerTransport:
                     "networkAccess": False,
                 },
             }
-            if request.model and request.model != "auto":
-                turn_params["model"] = request.model
+            if runtime_model and runtime_model != "auto":
+                turn_params["model"] = runtime_model
             if request.model == "gpt-5.4-mini":
                 turn_params["effort"] = "low"
             turn_started_at = time.perf_counter()

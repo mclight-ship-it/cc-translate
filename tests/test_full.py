@@ -689,7 +689,7 @@ class TestModelLabels(unittest.TestCase):
             {"haiku", "sonnet", "opus"})
         self.assertEqual(
             set(tr.get_provider_model_labels("codex_cli")),
-            {"auto", "gpt-5.4-mini"})
+            {"auto", "auto-fast", "gpt-5.4-mini"})
 
 
 # ============================================================
@@ -4639,6 +4639,18 @@ class TestCacheSignature(unittest.TestCase):
         })._cache_signature()
 
         self.assertTrue(signature.endswith("|codex-format-v2"))
+
+    def test_fast_auto_profile_has_distinct_cache_signature(self):
+        quality = self._app(**{
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "auto",
+        })._cache_signature()
+        fast = self._app(**{
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "auto-fast",
+        })._cache_signature()
+
+        self.assertNotEqual(quality, fast)
 
     def test_claude_signature_preserves_legacy_shape(self):
         signature = self._app()._cache_signature()

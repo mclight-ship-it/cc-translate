@@ -46,7 +46,14 @@ _CODEX_CONFIG_OVERRIDES = (
     "project_root_markers=[]",
 )
 _MODEL_CONFIG_OVERRIDES = {
+    "auto-fast": (
+        'model_reasoning_effort="none"',
+        'model_verbosity="low"',
+    ),
     "gpt-5.4-mini": ('model_reasoning_effort="low"',),
+}
+_MODEL_RUNTIME_IDS = {
+    "auto-fast": "auto",
 }
 _SOURCE_LIST_MARKER_RE = re.compile(
     r"^\s*(?P<marker>[-*+•●◦▪▫‣·]|\d+[.)])\s+", re.MULTILINE)
@@ -83,6 +90,10 @@ def find_codex_cmd():
         if candidate and os.path.isfile(candidate):
             return candidate
     return None
+
+
+def _runtime_model(model):
+    return _MODEL_RUNTIME_IDS.get(model, model)
 
 
 def _native_codex_for_shim(path):
@@ -225,10 +236,11 @@ class CodexCliProvider:
         ]
         for override in _CODEX_CONFIG_OVERRIDES:
             command.extend(("-c", override))
-        if request.model and request.model != "auto":
-            command.extend(("-m", request.model))
-            for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
-                command.extend(("-c", override))
+        runtime_model = _runtime_model(request.model)
+        if runtime_model and runtime_model != "auto":
+            command.extend(("-m", runtime_model))
+        for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
+            command.extend(("-c", override))
         for image_path in request.image_paths:
             command.extend(("-i", image_path))
         command.append("-")
