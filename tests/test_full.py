@@ -150,9 +150,11 @@ class TestCFGConstants(unittest.TestCase):
         self.assertIsInstance(dc[tr.CFG.HISTORY_ENABLED], bool)
         self.assertIsInstance(dc[tr.CFG.AUTO_UPDATE_ENABLED], bool)
 
-    def test_release_defaults_enable_codex_streaming_and_use_font_10(self):
+    def test_release_defaults_use_smart_codex_streaming_and_font_10(self):
         self.assertIs(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
+        self.assertEqual(
+            tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
         self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
 
 
@@ -386,6 +388,13 @@ class TestConfigWrapper(unittest.TestCase):
         })
         self.assertEqual(cfg[tr.CFG.CLAUDE_MODEL], "sonnet")
         self.assertEqual(cfg[tr.CFG.MODEL], "sonnet")
+
+    def test_legacy_explicit_mini_migrates_to_smart_routing(self):
+        cfg = tr.Config({
+            tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
+        })
+
+        self.assertEqual(cfg[tr.CFG.CODEX_MODEL], "auto-fast")
 
 
 # ============================================================
@@ -689,7 +698,15 @@ class TestModelLabels(unittest.TestCase):
             {"haiku", "sonnet", "opus"})
         self.assertEqual(
             set(tr.get_provider_model_labels("codex_cli")),
-            {"auto", "auto-fast", "gpt-5.4-mini"})
+            {"auto-fast", "auto"})
+
+    def test_codex_labels_are_concise_and_smart_routing_is_first(self):
+        self._labels()
+        tr.i18n.set_language("zh_CN")
+        zh = tr.get_provider_model_labels("codex_cli")
+        self.assertEqual(list(zh), ["auto-fast", "auto"])
+        self.assertEqual(zh["auto-fast"], "智能路由（极速）")
+        self.assertEqual(zh["auto"], "自动选择（优质）")
 
 
 # ============================================================

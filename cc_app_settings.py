@@ -712,7 +712,8 @@ class SettingsMixin:
             model_combo.config(values=list(labels.values()))
             selected = provider_model(self.cfg, provider_id)
             if selected not in labels:
-                selected = ("auto" if provider_id == "codex_cli"
+                selected = (DEFAULT_CONFIG[CFG.CODEX_MODEL]
+                            if provider_id == "codex_cli"
                             else DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
             model_var.set(labels[selected])
 

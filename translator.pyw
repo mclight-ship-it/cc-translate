@@ -394,6 +394,10 @@ class Config(dict):
                 CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
         if CFG.CODEX_MODEL not in raw:
             self[CFG.CODEX_MODEL] = DEFAULT_CONFIG[CFG.CODEX_MODEL]
+        elif self[CFG.CODEX_MODEL] == "gpt-5.4-mini":
+            # The former standalone mini option is now an internal branch of
+            # smart routing, so migrate saved selections to the complete mode.
+            self[CFG.CODEX_MODEL] = "auto-fast"
         # Keep the old key synchronized for one downgrade-compatible release.
         self[CFG.MODEL] = self[CFG.CLAUDE_MODEL]
         self._coerce()

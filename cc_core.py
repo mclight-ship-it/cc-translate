@@ -431,7 +431,7 @@ DEFAULT_CONFIG = {
     CFG.MODEL: "haiku",
     CFG.MODEL_PROVIDER: "claude_cli",
     CFG.CLAUDE_MODEL: "haiku",
-    CFG.CODEX_MODEL: "auto",
+    CFG.CODEX_MODEL: "auto-fast",
     CFG.CODEX_STREAMING_EXPERIMENTAL: True,
     CFG.DOUBLE_PRESS_WINDOW: 0.5,
     CFG.FONT_SIZE: 10,
@@ -732,14 +732,12 @@ PROVIDER_LABELS_EN = {
     "codex_cli": "OpenAI GPT (Codex)",
 }
 CODEX_MODEL_LABELS_ZH = {
-    "auto": "自动选择（质量优先）",
-    "auto-fast": "极速模式（智能路由）",
-    "gpt-5.4-mini": "gpt-5.4-mini（轻量）",
+    "auto-fast": "智能路由（极速）",
+    "auto": "自动选择（优质）",
 }
 CODEX_MODEL_LABELS_EN = {
-    "auto": "Auto (quality)",
-    "auto-fast": "Fast mode (smart routing)",
-    "gpt-5.4-mini": "gpt-5.4-mini (lightweight)",
+    "auto-fast": "Smart routing (fast)",
+    "auto": "Auto select (quality)",
 }
 # What a single left-click on the tray icon does. Keys map to the four
 # window-opening actions the tray already exposes; the label is resolved by
