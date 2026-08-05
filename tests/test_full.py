@@ -1578,6 +1578,59 @@ class TestProviderRouting(unittest.TestCase):
         app._stream_codex.assert_not_called()
         app._call_model.assert_called_once()
 
+    def test_fast_profile_streams_dictionary_and_short_text(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app._ss = tr.StreamSession()
+        app._stream_codex = unittest.mock.Mock(return_value=True)
+        app._call_model = unittest.mock.Mock()
+        app._record_history = unittest.mock.Mock()
+        app.root = unittest.mock.Mock()
+
+        for job_id, text in enumerate(("青提", "A short sentence."), 1):
+            meta = {
+                "provider": "codex_cli",
+                "model": "auto-fast",
+                "input": text,
+                "system_prompt": "Translate.",
+            }
+            app._do_provider_translate(text, job_id, meta)
+
+        self.assertEqual(app._stream_codex.call_count, 2)
+        app._call_model.assert_not_called()
+
+    def test_fast_profile_selects_runtime_model_by_length(self):
+        self.assertEqual(
+            tr.codex_request_model("auto-fast", 2), "auto-fast")
+        self.assertEqual(
+            tr.codex_request_model("auto-fast", 399), "auto-fast")
+        self.assertEqual(
+            tr.codex_request_model("auto-fast", 400), "gpt-5.4-mini")
+        self.assertEqual(
+            tr.codex_request_model("auto", 1000), "auto")
+        self.assertEqual(
+            tr.codex_request_model("auto-fast", 1000, image=True),
+            "auto-fast")
+
+    def test_fast_profile_passes_resolved_model_to_stable_provider(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.complete.return_value = ProviderResult(True, text="ok")
+
+        app._call_model(
+            "x" * 400,
+            "Translate.",
+            tr.ProviderSelection("codex_cli", "auto-fast"),
+        )
+
+        request = provider.complete.call_args.args[0]
+        self.assertEqual(request.model, "gpt-5.4-mini")
+
     def test_codex_stream_route_uses_evidence_based_boundary(self):
         app = object.__new__(tr.TranslatorApp)
         app.cfg = tr.Config({

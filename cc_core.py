@@ -33,6 +33,7 @@ STREAM_MIN_CHARS = 400
 # on 0.146.0 showed stable exec winning near 200 chars and app-server revealing
 # first text materially earlier from roughly 400 chars onward.
 CODEX_STREAM_MIN_CHARS = 400
+CODEX_FAST_MINI_MIN_CHARS = 400
 # Empty preserves every existing Claude cache signature. Bump only the provider
 # whose output contract changed so unrelated providers keep valid cached results.
 PROVIDER_PROMPT_REVISIONS = {
@@ -732,12 +733,12 @@ PROVIDER_LABELS_EN = {
 }
 CODEX_MODEL_LABELS_ZH = {
     "auto": "自动选择（质量优先）",
-    "auto-fast": "自动选择（极速首屏）",
+    "auto-fast": "极速模式（智能路由）",
     "gpt-5.4-mini": "gpt-5.4-mini（轻量）",
 }
 CODEX_MODEL_LABELS_EN = {
     "auto": "Auto (quality)",
-    "auto-fast": "Auto (faster first response)",
+    "auto-fast": "Fast mode (smart routing)",
     "gpt-5.4-mini": "gpt-5.4-mini (lightweight)",
 }
 # What a single left-click on the tray icon does. Keys map to the four
@@ -793,6 +794,14 @@ def provider_model(cfg, provider_id=None):
         return cfg.get(CFG.CODEX_MODEL, DEFAULT_CONFIG[CFG.CODEX_MODEL])
     return cfg.get(CFG.CLAUDE_MODEL, cfg.get(
         CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL]))
+
+
+def codex_request_model(profile, text_length, *, image=False):
+    """Resolve a user-facing Codex profile to its per-request runtime profile."""
+    if (profile == "auto-fast" and not image
+            and text_length >= CODEX_FAST_MINI_MIN_CHARS):
+        return "gpt-5.4-mini"
+    return profile
 
 
 def get_tray_click_action_labels():

@@ -61,7 +61,7 @@ from cc_core import (
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
     log_perf, log_error,
     CFG, DEFAULT_CONFIG, STREAM_MIN_CHARS, CODEX_STREAM_MIN_CHARS,
-    PROVIDER_PROMPT_REVISIONS,
+    PROVIDER_PROMPT_REVISIONS, codex_request_model,
     UI_V2_ENV, ui_v2_enabled,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
@@ -932,7 +932,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 provider=selection.provider_id)
         request = ProviderRequest(
             task="text",
-            model=selection.model,
+            model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
             user_text=text,
         )
@@ -1626,11 +1626,13 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         stream_enabled = self.cfg.get(
             CFG.CODEX_STREAMING_EXPERIMENTAL,
             DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
+        fast_profile = selection.model == "auto-fast"
         stream_eligible = (
             selection.provider_id == CODEX_PROVIDER
             and stream_enabled
-            and len(text) >= CODEX_STREAM_MIN_CHARS
-            and not dictionary)
+            and (fast_profile or (
+                len(text) >= CODEX_STREAM_MIN_CHARS
+                and not dictionary)))
         if selection.provider_id == CODEX_PROVIDER and not stream_eligible:
             reason = (
                 "disabled" if not stream_enabled
@@ -1749,7 +1751,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         })
 
     def _stream_codex(self, text, job_id, ss, meta, selection):
-        """Stream Codex long text through experimental app-server.
+        """Stream an eligible Codex request through experimental app-server.
 
         A failure before any visible delta falls back to stable ``codex exec``.
         Once output is visible, a failure is surfaced rather than issuing a
@@ -1759,7 +1761,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             meta.get("system_prompt") or self._system_prompt_for(text))
         request = ProviderRequest(
             task="text",
-            model=selection.model,
+            model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
             user_text=text,
             timeout_seconds=90.0,

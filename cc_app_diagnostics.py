@@ -211,6 +211,7 @@ class DiagnosticsMixin:
                 "version_supported": appserver_version_supported(
                     status.version),
                 "min_chars": CODEX_STREAM_MIN_CHARS,
+                "fast_profile": selection.model == "auto-fast",
                 "last_route": dict(getattr(
                     self, "_last_provider_route", {}) or {}),
             }
@@ -345,11 +346,15 @@ class DiagnosticsMixin:
                 f"- {i18n.get('diagnostics.login_status')}: {login_text}",
             ])
             streaming = provider["streaming"]
+            trigger_key = (
+                "diagnostics.codex_stream_trigger_fast_value"
+                if streaming.get("fast_profile")
+                else "diagnostics.codex_stream_trigger_value")
             lines.extend([
                 f"- {i18n.get('diagnostics.codex_streaming')}: "
                 f"{_codex_streaming_status_text(streaming)}",
                 f"- {i18n.get('diagnostics.codex_stream_trigger')}: "
-                f"{i18n.get('diagnostics.codex_stream_trigger_value').format(chars=streaming.get('min_chars', CODEX_STREAM_MIN_CHARS))}",
+                f"{i18n.get(trigger_key).format(chars=streaming.get('min_chars', CODEX_STREAM_MIN_CHARS))}",
                 f"- {i18n.get('diagnostics.codex_stream_last_route')}: "
                 f"{_codex_route_text(streaming.get('last_route'))}",
             ])
