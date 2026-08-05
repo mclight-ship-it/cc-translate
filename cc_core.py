@@ -33,12 +33,11 @@ STREAM_MIN_CHARS = 400
 # on 0.146.0 showed stable exec winning near 200 chars and app-server revealing
 # first text materially earlier from roughly 400 chars onward.
 CODEX_STREAM_MIN_CHARS = 400
-CODEX_FAST_MINI_MIN_CHARS = 400
 # Empty preserves every existing Claude cache signature. Bump only the provider
 # whose output contract changed so unrelated providers keep valid cached results.
 PROVIDER_PROMPT_REVISIONS = {
     "claude_cli": "",
-    "codex_cli": "codex-format-v2",
+    "codex_cli": "codex-format-v3",
 }
 
 
@@ -796,9 +795,6 @@ def provider_model(cfg, provider_id=None):
 
 def codex_request_model(profile, text_length, *, image=False):
     """Resolve a user-facing Codex profile to its per-request runtime profile."""
-    if (profile == "auto-fast" and not image
-            and text_length >= CODEX_FAST_MINI_MIN_CHARS):
-        return "gpt-5.4-mini"
     return profile
 
 

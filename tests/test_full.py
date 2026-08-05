@@ -1642,20 +1642,22 @@ class TestProviderRouting(unittest.TestCase):
         self.assertEqual(app._stream_codex.call_count, 2)
         app._call_model.assert_not_called()
 
-    def test_fast_profile_selects_runtime_model_by_length(self):
+    def test_fast_profile_keeps_runtime_profile_for_all_lengths(self):
         self.assertEqual(
             tr.codex_request_model("auto-fast", 2), "auto-fast")
         self.assertEqual(
             tr.codex_request_model("auto-fast", 399), "auto-fast")
         self.assertEqual(
-            tr.codex_request_model("auto-fast", 400), "gpt-5.4-mini")
+            tr.codex_request_model("auto-fast", 400), "auto-fast")
+        self.assertEqual(
+            tr.codex_request_model("auto-fast", 1000), "auto-fast")
         self.assertEqual(
             tr.codex_request_model("auto", 1000), "auto")
         self.assertEqual(
             tr.codex_request_model("auto-fast", 1000, image=True),
             "auto-fast")
 
-    def test_fast_profile_passes_resolved_model_to_stable_provider(self):
+    def test_fast_profile_passes_fast_auto_to_stable_provider(self):
         from cc_providers.base import ProviderResult
 
         app = object.__new__(tr.TranslatorApp)
@@ -1670,7 +1672,7 @@ class TestProviderRouting(unittest.TestCase):
         )
 
         request = provider.complete.call_args.args[0]
-        self.assertEqual(request.model, "gpt-5.4-mini")
+        self.assertEqual(request.model, "auto-fast")
 
     def test_codex_stream_route_uses_evidence_based_boundary(self):
         app = object.__new__(tr.TranslatorApp)
@@ -2236,11 +2238,11 @@ class TestInstallerContracts(unittest.TestCase):
         self.assertEqual(
             tr.i18n.TRANSLATIONS["zh_CN"][
                 "settings.label.codex_streaming"],
-            "Codex 长文流式 (Beta)")
+            "Codex 流式输出 (Beta)")
         self.assertEqual(
             tr.i18n.TRANSLATIONS["en_US"][
                 "settings.label.codex_streaming"],
-            "Codex long-text streaming (Beta)")
+            "Codex streaming output (Beta)")
 
 
 # ============================================================
@@ -4732,7 +4734,7 @@ class TestCacheSignature(unittest.TestCase):
             tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
         })._cache_signature()
 
-        self.assertTrue(signature.endswith("|codex-format-v2"))
+        self.assertTrue(signature.endswith("|codex-format-v3"))
 
     def test_fast_auto_profile_has_distinct_cache_signature(self):
         quality = self._app(**{
@@ -4758,6 +4760,16 @@ class TestCacheSignature(unittest.TestCase):
         })
         current = app._cache_signature()
         old = current.rsplit("|", 1)[0]
+
+        self.assertNotEqual(current, old)
+
+    def test_smart_route_change_invalidates_v2_codex_cache(self):
+        app = self._app(**{
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "auto-fast",
+        })
+        current = app._cache_signature()
+        old = current.replace("|codex-format-v3", "|codex-format-v2")
 
         self.assertNotEqual(current, old)
 
