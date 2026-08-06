@@ -5,10 +5,10 @@
 
 ## 核心规则
 
-**每次 `git push` 之前必须跑单元测试，并且全部通过。**
+**每次 `git push` 之前必须通过与本次改动相关的测试。**
 
-- 测试位于 `tests/`，只覆盖纯函数（分类、词典判定、markdown-lite 解析、
-  代码块高亮降级、自动更新判定），不依赖 GUI / 剪贴板 / 网络 / Claude CLI。
+- 测试位于 `tests/`，包括纯函数、provider 协议和 mock UI 集成测试；不访问
+  网络或真实模型 CLI，共享剪贴板等系统边界必须 mock。
 - 只用标准库 `unittest`，**零额外运行时依赖**，对 app 功能无影响。
 - ⚠️ **测试还是自动更新的安全闸门**：应用夜间/手动 `git pull` 后会先 `py_compile`
   + 跑这套测试来校验新代码，任一失败就自动 `git reset --hard` 回滚并放弃重启。
@@ -24,7 +24,15 @@ python -m unittest discover -s tests
 ## 这条规则是如何强制的
 
 仓库自带一个 **pre-push 钩子**（`.githooks/pre-push`），它在每次 `git push`
-时自动跑测试，失败就**阻止推送**，不靠任何人的记性。
+时自动检查远端到待推送提交之间的文件：
+
+- 只改文档或图片资源：不跑单元测试。
+- 改独立模块或某个测试文件：只编译改动的 Python 文件，并跑映射到该区域的测试。
+- 改 `translator.pyw`、`cc_core.py`、通用 app 模块、hook 等跨域文件：跑完整测试。
+- 找不到安全映射时一律回退完整测试，不会静默漏测。
+
+失败会**阻止推送**，不靠任何人的记性。开发过程中只跑聚焦测试；发布时不再
+手动完整跑一遍、然后让 pre-push 重复跑第二遍。
 
 ### 换机器 / 新 clone 后，启用一次（重要）
 
@@ -70,10 +78,12 @@ GitHub 只渲染根目录的 `README.md`、且**没有内建的多语言切换**
 2. 若改动触及纯函数（`classify_selection`、`code_ratio`、`is_single_word`、
    `iter_rich_segments`、`highlight_code` 等），**同步更新或新增 `tests/` 用例**。
 3. 若改动涉及 README 内容，**中英两份（`README.md` 和 `README.zh.md`）一起改**，保持一致。
-4. 跑 `python -m unittest discover -s tests`，确认全绿。
-5. 用个人账号 `mclight-ship-it` 提交并推送到 `origin master`
+4. 开发过程中只跑本次改动对应的聚焦测试。
+5. 每次正式发布前将 `cc_update.py` 的 `VERSION_MINOR` 加 1；第三位继续使用
+   Git commit count。例如 `4.0.239` 的下一次发布为 `4.1.<build>`。
+6. 用个人账号 `mclight-ship-it` 提交并推送到 `origin master`
    （提交信息末尾加 `Co-authored-by: Copilot <...>`）。
-6. pre-push 钩子会再兜底跑一次测试；被拦截就说明有回归，修好再推。
+7. pre-push 钩子只运行一次必要测试；被拦截就说明有回归，修好再推。
 
 ## 目录速览
 

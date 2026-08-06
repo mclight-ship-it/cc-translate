@@ -1,7 +1,6 @@
 #!/bin/sh
-# pre-push hook: run the unit test suite before allowing a push.
-# A non-zero exit blocks the push, so broken pure-function behaviour can never
-# reach the remote. Uses only the standard library's unittest (no extra deps).
+# pre-push hook: compile changed Python files and run change-scoped tests.
+# Shared/cross-cutting changes fall back to the full suite.
 #
 # Enable it (once per clone) from the repo root:
 #     git config core.hooksPath .githooks
@@ -29,13 +28,103 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
-echo "pre-push: running unit tests with '$PYTHON'..."
-if "$PYTHON" -m unittest discover -s tests; then
-    echo "pre-push: tests passed — allowing push."
+ZERO_SHA="0000000000000000000000000000000000000000"
+CHANGED_FILES=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$ZERO_SHA" ] && continue
+    if [ "$remote_sha" = "$ZERO_SHA" ]; then
+        base="$(git hash-object -t tree /dev/null)"
+    else
+        base="$remote_sha"
+    fi
+    CHANGED_FILES="$CHANGED_FILES
+$(git diff --name-only "$base" "$local_sha")"
+done
+
+CHANGED_FILES="$(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | sort -u)"
+if [ -z "$CHANGED_FILES" ]; then
+    echo "pre-push: no changed files — allowing push."
     exit 0
-else
-    echo "" >&2
-    echo "pre-push: TESTS FAILED — push blocked." >&2
-    echo "pre-push: fix the failures, or use 'git push --no-verify' to bypass." >&2
-    exit 1
 fi
+
+DOCS_ONLY=true
+FULL_SUITE=false
+TEST_TARGETS=""
+
+add_target() {
+    case " $TEST_TARGETS " in
+        *" $1 "*) ;;
+        *) TEST_TARGETS="$TEST_TARGETS $1" ;;
+    esac
+}
+
+for path in $CHANGED_FILES; do
+    case "$path" in
+        *.py|*.pyw)
+            if [ -f "$path" ]; then
+                echo "pre-push: compiling $path"
+                "$PYTHON" -m py_compile "$path"
+            fi
+            ;;
+    esac
+
+    case "$path" in
+        *.md|docs/*|*.ico|*.png|*.jpg|*.jpeg|*.svg)
+            continue
+            ;;
+    esac
+    DOCS_ONLY=false
+
+    case "$path" in
+        tests/test_*.py)
+            module="$(printf '%s' "${path%.py}" | tr '/\\' '..')"
+            add_target "$module"
+            ;;
+        cc_update.py|cc_app_update.py|cc_app_about.py|_relaunch.ps1)
+            add_target tests.test_update
+            add_target tests.test_full.TestCCUpdatePaths
+            add_target tests.test_full.TestUpdateStatusCopy
+            add_target tests.test_full.TestAboutCheckUpdate
+            ;;
+        cc_rich.py)
+            add_target tests.test_rich_segments
+            add_target tests.test_highlight
+            add_target tests.test_full.TestRichTextEdgeCases
+            ;;
+        cc_ui_v2.py)
+            add_target tests.test_ui_v2
+            ;;
+        cc_ocr.py|cc_app_ocr.py)
+            add_target tests.test_full.TestOCRModule
+            add_target tests.test_full.TestOCRIntegrationInApp
+            ;;
+        *)
+            FULL_SUITE=true
+            ;;
+    esac
+done
+
+if [ "$DOCS_ONLY" = true ]; then
+    echo "pre-push: documentation/assets only — no unit tests needed."
+    exit 0
+fi
+
+if [ "$FULL_SUITE" = true ] || [ -z "$TEST_TARGETS" ]; then
+    echo "pre-push: cross-cutting change — running full unit suite..."
+    if "$PYTHON" -m unittest discover -s tests; then
+        echo "pre-push: full suite passed — allowing push."
+        exit 0
+    fi
+else
+    echo "pre-push: running affected tests:$TEST_TARGETS"
+    if "$PYTHON" -m unittest $TEST_TARGETS; then
+        echo "pre-push: affected tests passed — allowing push."
+        exit 0
+    fi
+fi
+
+echo "" >&2
+echo "pre-push: TESTS FAILED — push blocked." >&2
+echo "pre-push: fix the failures, or use 'git push --no-verify' to bypass." >&2
+exit 1
