@@ -1,8 +1,9 @@
 """Build the small branded Windows launcher used to host CC Translate.
 
 CC Translate remains a source-based Python app.  The launcher is a local copy of
-the active ``pythonw.exe`` with only its VERSIONINFO resource replaced, so Task
-Manager shows the product name instead of the interpreter's generic "Python".
+the active ``pythonw.exe`` with its VERSIONINFO and icon resources replaced, so
+Task Manager shows the app identity instead of the interpreter's generic Python
+name and icon.
 """
 
 import ctypes
@@ -18,6 +19,8 @@ FILE_DESCRIPTION = "CC Translate"
 LAUNCHER_PREFIX = "CCTranslate-"
 ORIGINAL_FILENAME = "CCTranslate.exe"
 _RT_VERSION = 16
+_RT_ICON = 3
+_RT_GROUP_ICON = 14
 _LANG_EN_US = 0x0409
 _UNICODE_CODEPAGE = 1200
 
@@ -112,8 +115,7 @@ def _win_error(message):
     return OSError(code, f"{message}: {ctypes.FormatError(code)}")
 
 
-def set_version_resource(executable, version):
-    """Replace ``executable``'s RT_VERSION resource using only Win32 APIs."""
+def _set_resources(executable, resources):
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     begin = kernel32.BeginUpdateResourceW
     begin.argtypes = (wintypes.LPCWSTR, wintypes.BOOL)
@@ -128,19 +130,72 @@ def set_version_resource(executable, version):
     end.argtypes = (wintypes.HANDLE, wintypes.BOOL)
     end.restype = wintypes.BOOL
 
-    payload = build_version_resource(version)
-    buffer = (ctypes.c_ubyte * len(payload)).from_buffer_copy(payload)
     handle = begin(os.fspath(executable), False)
     if not handle:
         raise _win_error("BeginUpdateResourceW failed")
-    if not update(
-            handle, ctypes.c_void_p(_RT_VERSION), ctypes.c_void_p(1),
-            _LANG_EN_US, buffer, len(payload)):
-        error = _win_error("UpdateResourceW failed")
+    buffers = []
+    try:
+        for resource_type, resource_id, language, payload in resources:
+            buffer = (ctypes.c_ubyte * len(payload)).from_buffer_copy(payload)
+            buffers.append(buffer)
+            if not update(
+                    handle, ctypes.c_void_p(resource_type),
+                    ctypes.c_void_p(resource_id), language, buffer,
+                    len(payload)):
+                raise _win_error(
+                    f"UpdateResourceW failed for {resource_type}:{resource_id}")
+    except Exception:
         end(handle, True)
-        raise error
+        raise
     if not end(handle, False):
         raise _win_error("EndUpdateResourceW failed")
+
+
+def set_version_resource(executable, version):
+    """Replace ``executable``'s RT_VERSION resource using only Win32 APIs."""
+    _set_resources(executable, (
+        (_RT_VERSION, 1, _LANG_EN_US, build_version_resource(version)),
+    ))
+
+
+def build_icon_resources(icon_path):
+    """Return a group-icon payload and the RT_ICON images from an ICO file."""
+    with open(icon_path, "rb") as source:
+        data = source.read()
+    if len(data) < 6:
+        raise ValueError("ICO file is truncated")
+    reserved, image_type, count = struct.unpack_from("<HHH", data)
+    if reserved != 0 or image_type != 1 or not count:
+        raise ValueError("ICO file has an invalid header")
+    directory_end = 6 + count * 16
+    if directory_end > len(data):
+        raise ValueError("ICO file has a truncated image directory")
+
+    group = bytearray(struct.pack("<HHH", reserved, image_type, count))
+    images = []
+    for index in range(count):
+        entry = struct.unpack_from("<BBBBHHII", data, 6 + index * 16)
+        width, height, colors, entry_reserved, planes, bit_count, size, offset = (
+            entry)
+        if not size or offset < directory_end or offset + size > len(data):
+            raise ValueError(f"ICO image {index + 1} is out of bounds")
+        resource_id = index + 1
+        group.extend(struct.pack(
+            "<BBBBHHIH", width, height, colors, entry_reserved, planes,
+            bit_count, size, resource_id))
+        images.append((resource_id, data[offset:offset + size]))
+    return bytes(group), tuple(images)
+
+
+def set_icon_resources(executable, icon_path):
+    """Replace the executable's primary icon with every ICO image size."""
+    group, images = build_icon_resources(icon_path)
+    resources = [
+        (_RT_ICON, resource_id, _LANG_EN_US, payload)
+        for resource_id, payload in images
+    ]
+    resources.append((_RT_GROUP_ICON, 1, _LANG_EN_US, group))
+    _set_resources(executable, resources)
 
 
 def read_version_string(executable, key):
@@ -180,20 +235,86 @@ def read_file_description(executable):
     return read_version_string(executable, "FileDescription")
 
 
-def _pythonw_fingerprint(pythonw):
+def _read_resource(executable, resource_type, resource_id):
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    load = kernel32.LoadLibraryExW
+    load.argtypes = (wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD)
+    load.restype = wintypes.HMODULE
+    find = kernel32.FindResourceW
+    find.argtypes = (wintypes.HMODULE, ctypes.c_void_p, ctypes.c_void_p)
+    find.restype = wintypes.HANDLE
+    load_resource = kernel32.LoadResource
+    load_resource.argtypes = (wintypes.HMODULE, wintypes.HANDLE)
+    load_resource.restype = wintypes.HANDLE
+    lock = kernel32.LockResource
+    lock.argtypes = (wintypes.HANDLE,)
+    lock.restype = ctypes.c_void_p
+    size_of = kernel32.SizeofResource
+    size_of.argtypes = (wintypes.HMODULE, wintypes.HANDLE)
+    size_of.restype = wintypes.DWORD
+    free = kernel32.FreeLibrary
+    free.argtypes = (wintypes.HMODULE,)
+    free.restype = wintypes.BOOL
+
+    module = load(os.fspath(executable), None, 0x00000002)
+    if not module:
+        return None
+    try:
+        resource = find(
+            module, ctypes.c_void_p(resource_id),
+            ctypes.c_void_p(resource_type))
+        if not resource:
+            return None
+        size = size_of(module, resource)
+        loaded = load_resource(module, resource)
+        pointer = lock(loaded) if loaded else None
+        if not size or not pointer:
+            return None
+        return ctypes.string_at(pointer, size)
+    finally:
+        free(module)
+
+
+def launcher_has_icon(executable, icon_path):
+    """Return whether the launcher's primary icon exactly matches the ICO."""
+    group, images = build_icon_resources(icon_path)
+    if _read_resource(executable, _RT_GROUP_ICON, 1) != group:
+        return False
+    return all(
+        _read_resource(executable, _RT_ICON, resource_id) == payload
+        for resource_id, payload in images
+    )
+
+
+def _launcher_fingerprint(pythonw, icon_path=None):
     digest = hashlib.sha256()
-    digest.update(os.path.normcase(os.path.abspath(pythonw)).encode("utf-8"))
-    with open(pythonw, "rb") as source:
-        for chunk in iter(lambda: source.read(128 * 1024), b""):
-            digest.update(chunk)
+    for path in (pythonw, icon_path):
+        if not path:
+            continue
+        digest.update(os.path.normcase(os.path.abspath(path)).encode("utf-8"))
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(128 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()[:12]
 
 
-def launcher_filename(pythonw, version):
+def _default_icon_path():
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in ("cc-dark.ico", "cc.ico"):
+        path = os.path.join(app_dir, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def launcher_filename(pythonw, version, icon_path=None):
     safe_version = re.sub(r"[^0-9A-Za-z._-]+", "-", str(version)).strip("-")
     if not safe_version:
         safe_version = "0"
-    return f"{LAUNCHER_PREFIX}{safe_version}-{_pythonw_fingerprint(pythonw)}.exe"
+    if icon_path is None:
+        icon_path = _default_icon_path()
+    fingerprint = _launcher_fingerprint(pythonw, icon_path)
+    return f"{LAUNCHER_PREFIX}{safe_version}-{fingerprint}.exe"
 
 
 def cleanup_old_launchers(launcher_dir, current):
@@ -214,14 +335,17 @@ def cleanup_old_launchers(launcher_dir, current):
             pass
 
 
-def ensure_branded_launcher(pythonw, launcher_dir, version):
+def ensure_branded_launcher(pythonw, launcher_dir, version, icon_path=None):
     """Create the version/interpreter-specific branded host and return its path."""
+    if icon_path is None:
+        icon_path = _default_icon_path()
     launcher_dir = os.path.abspath(launcher_dir)
     launcher = os.path.join(
-        launcher_dir, launcher_filename(pythonw, version))
+        launcher_dir, launcher_filename(pythonw, version, icon_path))
     if (os.path.isfile(launcher)
             and read_file_description(launcher) == FILE_DESCRIPTION
-            and read_version_string(launcher, "ProductVersion") == str(version)):
+            and read_version_string(launcher, "ProductVersion") == str(version)
+            and (not icon_path or launcher_has_icon(launcher, icon_path))):
         return launcher
 
     os.makedirs(launcher_dir, exist_ok=True)
@@ -229,8 +353,12 @@ def ensure_branded_launcher(pythonw, launcher_dir, version):
     try:
         shutil.copy2(pythonw, temp_path)
         set_version_resource(temp_path, version)
+        if icon_path:
+            set_icon_resources(temp_path, icon_path)
         if read_file_description(temp_path) != FILE_DESCRIPTION:
             raise OSError("branded launcher metadata verification failed")
+        if icon_path and not launcher_has_icon(temp_path, icon_path):
+            raise OSError("branded launcher icon verification failed")
         os.replace(temp_path, launcher)
     finally:
         try:

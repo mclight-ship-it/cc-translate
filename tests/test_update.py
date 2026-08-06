@@ -9,6 +9,7 @@ import unittest
 import unittest.mock
 import os
 import subprocess
+import struct
 import sys
 import tempfile
 
@@ -73,7 +74,7 @@ class TestClassifyUpdateState(unittest.TestCase):
 
 class TestFormatVersion(unittest.TestCase):
     def test_numeric_version_uses_release_minor_and_build(self):
-        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.4.241")
+        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.5.241")
 
     def test_sha_and_date(self):
         self.assertEqual(
@@ -93,24 +94,38 @@ class TestFormatVersion(unittest.TestCase):
 class TestBrandedLauncher(unittest.TestCase):
     def test_version_resource_contains_product_identity(self):
         import cc_launcher
-        payload = cc_launcher.build_version_resource("4.4.243")
+        payload = cc_launcher.build_version_resource("4.5.243")
         self.assertEqual(len(payload) % 4, 0)
         self.assertEqual(int.from_bytes(payload[:2], "little"), len(payload))
         self.assertIn("CC Translate".encode("utf-16le"), payload)
         self.assertIn("CCTranslate.exe".encode("utf-16le"), payload)
+
+    def test_icon_resource_contains_every_ico_image(self):
+        import cc_launcher
+        group, images = cc_launcher.build_icon_resources(
+            tr._cc_update.ICON_PATH)
+        self.assertEqual(struct.unpack_from("<HHH", group), (0, 1, len(images)))
+        self.assertEqual(len(group), 6 + 14 * len(images))
+        self.assertGreaterEqual(len(images), 1)
+        for index, (resource_id, payload) in enumerate(images, 1):
+            self.assertEqual(resource_id, index)
+            self.assertTrue(payload)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
     def test_generated_launcher_is_branded_and_runs_python(self):
         import cc_launcher
         with tempfile.TemporaryDirectory() as tmp:
             result = cc_launcher.ensure_branded_launcher(
-                tr._cc_update.PYTHONW, tmp, "4.4.243")
+                tr._cc_update.PYTHONW, tmp, "4.5.243",
+                tr._cc_update.ICON_PATH)
             self.assertTrue(result.startswith(tmp))
             self.assertEqual(
                 cc_launcher.read_file_description(result), "CC Translate")
             self.assertEqual(
                 cc_launcher.read_version_string(result, "ProductVersion"),
-                "4.4.243")
+                "4.5.243")
+            self.assertTrue(cc_launcher.launcher_has_icon(
+                result, tr._cc_update.ICON_PATH))
 
             marker = os.path.join(tmp, "ran.txt")
             code = (
@@ -123,11 +138,12 @@ class TestBrandedLauncher(unittest.TestCase):
                 self.assertEqual(f.read(), "ok")
 
             updated = cc_launcher.ensure_branded_launcher(
-                tr._cc_update.PYTHONW, tmp, "4.5.244")
+                tr._cc_update.PYTHONW, tmp, "4.6.244",
+                tr._cc_update.ICON_PATH)
             self.assertNotEqual(updated, result)
             self.assertEqual(
                 cc_launcher.read_version_string(updated, "ProductVersion"),
-                "4.5.244")
+                "4.6.244")
             self.assertTrue(os.path.exists(result))
             cc_launcher.cleanup_old_launchers(tmp, updated)
             self.assertFalse(os.path.exists(result))

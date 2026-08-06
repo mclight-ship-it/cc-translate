@@ -45,7 +45,7 @@ from cc_launcher import (
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 4
-VERSION_MINOR = 4
+VERSION_MINOR = 5
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
@@ -287,7 +287,9 @@ def _log(tag, exc):
 def ensure_branded_launcher():
     """Return the CC Translate-branded Python host, or None on creation failure."""
     try:
-        return _ensure_branded_launcher(PYTHONW, LAUNCHER_DIR, version_string())
+        icon_path = ICON_PATH if os.path.isfile(ICON_PATH) else None
+        return _ensure_branded_launcher(
+            PYTHONW, LAUNCHER_DIR, version_string(), icon_path)
     except Exception as e:
         _log("ensure_branded_launcher", e)
         return None
