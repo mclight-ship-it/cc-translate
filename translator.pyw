@@ -517,7 +517,12 @@ class Config(dict):
         if data:
             self.update(data)
         if CFG.MODEL_PROVIDER not in raw:
-            self[CFG.MODEL_PROVIDER] = DEFAULT_CONFIG[CFG.MODEL_PROVIDER]
+            # Configs from before provider selection existed contain only the
+            # legacy Claude "model" key. Preserve that explicit old choice;
+            # genuinely new/partial configs use the current GPT default.
+            self[CFG.MODEL_PROVIDER] = (
+                "claude_cli" if CFG.MODEL in raw
+                else DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
         if CFG.CLAUDE_MODEL not in raw:
             self[CFG.CLAUDE_MODEL] = raw.get(
                 CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])

@@ -33,26 +33,9 @@ winget install Python.Python.3.12 --accept-source-agreements --accept-package-ag
 
 ### 2. 安装模型 CLI
 
-至少配置一个 provider。Claude 是默认路径；若用户只计划使用 GPT，可以配置下面的 Codex 路径。
+至少配置一个 provider。OpenAI GPT 是默认路径；Claude Code 仍可作为备用。
 
-#### 2A. Claude Code（默认，⚠️ 必须升级到最新版）
-
-```bash
-npm install -g @anthropic-ai/claude-code@latest
-claude --version
-```
-
-> ⚠️ **这一步的升级绝不能跳过。** 本工具依赖较新的 `claude -p` 参数，旧版 CLI 会导致翻译
-> 报错或结果异常（这是最常见的故障原因）。**即使 `claude` 已经装过，也必须运行上面的
-> `@latest` 命令强制升级到最新版**，再用 `claude --version` 确认。切勿因为「已经装了」就略过。
-
-然后**让用户运行 `claude` 并在浏览器完成登录**（OAuth，用其 Claude 订阅，不额外收费）。
-你无法代替用户完成浏览器登录——请提示用户：运行 `claude`，按提示登录，成功后 Ctrl+C 退出交互模式。
-
-验证：`echo "translate to Chinese: hello" | claude -p --model haiku`
-应返回“你好”之类的中文翻译。若返回未登录错误，说明第 2 步登录未完成。
-
-#### 2B. OpenAI GPT（快速安装器会预装；登录可选）
+#### 2A. OpenAI GPT（默认；快速安装器会预装）
 
 ```bash
 npm install -g @openai/codex@0.146.0
@@ -62,9 +45,21 @@ codex login status
 ```
 
 `codex login` 会打开浏览器，让用户使用 ChatGPT 账号完成登录。不要读取或复制
-`~/.codex/auth.json`。登录后在 CC Translate 设置中选择 **OpenAI GPT（Codex）**。
-固定版本与当前已验证的 app-server 流式 Beta 协议匹配；稳定 `exec` 路径仍会在
-流式不可用时自动回退。
+`~/.codex/auth.json`。CC Translate 默认使用 **OpenAI GPT（Codex）** 的
+**智能路由（极速）**。固定版本与当前已验证的 app-server 流式 Beta 协议匹配；稳定
+`exec` 路径仍会在流式不可用时自动回退。
+
+#### 2B. Claude Code（备用，⚠️ 必须升级到最新版）
+
+```bash
+npm install -g @anthropic-ai/claude-code@latest
+claude --version
+```
+
+> ⚠️ **这一步的升级绝不能跳过。** 本工具依赖较新的 `claude -p` 参数，旧版 CLI 会导致翻译
+> 报错或结果异常。即使 `claude` 已经装过，也必须运行上面的 `@latest` 命令升级。
+
+如需使用 Claude，请让用户运行 `claude` 并在浏览器完成登录，然后在设置中切换模型服务。
 
 ### 3. 安装 Python 依赖
 
@@ -72,7 +67,7 @@ codex login status
 python -m pip install --upgrade pip pynput pyperclip pystray Pillow Pygments winsdk comtypes
 ```
 
-（`tkinter` 是 Python 自带的，无需安装。后三个为可选增强，缺失时对应功能自动降级/关闭，不影响核心翻译：`Pygments` 用于代码块语法高亮；`winsdk` 用于截图翻译的离线本地 OCR（缺失时仍可用所选模型视觉）；`comtypes` 用于智能选区识别，避免输入框内无选中时误翻整框。）
+（`tkinter` 是 Python 自带的，无需安装。后三个为可选增强，缺失时对应功能自动降级/关闭，不影响核心翻译：`Pygments` 用于代码块语法高亮；`winsdk` 用于截图翻译的离线本地 OCR（缺失时仍可用视觉模型）；`comtypes` 用于智能选区识别，避免输入框内无选中时误翻整框。）
 
 验证：`python -c "import pynput, pyperclip, pystray, PIL, tkinter; print('ok')"`
 

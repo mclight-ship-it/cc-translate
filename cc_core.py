@@ -428,7 +428,7 @@ class CFG:
 
 DEFAULT_CONFIG = {
     CFG.MODEL: "haiku",
-    CFG.MODEL_PROVIDER: "claude_cli",
+    CFG.MODEL_PROVIDER: "codex_cli",
     CFG.CLAUDE_MODEL: "haiku",
     CFG.CODEX_MODEL: "auto-fast",
     CFG.CODEX_STREAMING_EXPERIMENTAL: True,
@@ -704,13 +704,11 @@ THEME_LABELS_EN = {"system": "System", "light": "Light", "dark": "Dark"}
 POPUP_LAYOUT_LABELS_ZH = {"dynamic": "动态（跟随鼠标）", "centered": "经典（居中固定）"}
 POPUP_LAYOUT_LABELS_EN = {"dynamic": "Dynamic (Near Cursor)", "centered": "Classic (Centered)"}
 
-# OCR engine choices for screenshot translation. Claude Vision is the default
-# (sends the whole image to Claude to read + translate). Local OCR recognises
-# text on-device and sends only that text to Claude. Both translate via Claude
-# online; only the text-recognition step differs.
-OCR_ENGINE_LABELS_ZH = {"claude": "所选模型视觉",
+# OCR engine choices for screenshot translation. The legacy "claude" key means
+# the selected provider's vision model; local OCR recognises text on-device.
+OCR_ENGINE_LABELS_ZH = {"claude": "视觉模型",
                         "local": "本地 OCR"}
-OCR_ENGINE_LABELS_EN = {"claude": "Selected model vision",
+OCR_ENGINE_LABELS_EN = {"claude": "Vision model",
                         "local": "Local OCR"}
 # Translation model choices shown in Settings. The stored/routed value is the
 # bare model name (haiku/sonnet/opus); the parenthesised characteristic is a
@@ -723,12 +721,12 @@ MODEL_LABELS_EN = {"haiku": "haiku (fast)",
                    "sonnet": "sonnet (balanced)",
                    "opus": "opus (most capable)"}
 PROVIDER_LABELS_ZH = {
-    "claude_cli": "Claude",
     "codex_cli": "OpenAI GPT（Codex）",
+    "claude_cli": "Claude",
 }
 PROVIDER_LABELS_EN = {
-    "claude_cli": "Claude",
     "codex_cli": "OpenAI GPT (Codex)",
+    "claude_cli": "Claude",
 }
 CODEX_MODEL_LABELS_ZH = {
     "auto-fast": "智能路由（极速）",

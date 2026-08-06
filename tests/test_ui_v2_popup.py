@@ -287,14 +287,42 @@ class TestV2ResultPopup(unittest.TestCase):
         app.popup = win
         self._kill_later(win)
         self.assertTrue(hasattr(win, "_copy_set"))
+        self.assertEqual(
+            win._copy_btn.cget("text"), tr.i18n.get("result.copy"))
         before = str(win._copy_btn.cget("image"))
         with unittest.mock.patch.object(
                 app, "_copy_text_content", return_value=True) as copy_text:
             app._copy_result()
+        self.assertEqual(
+            win._copy_btn.cget("text"), tr.i18n.get("result.copied"))
         copy_text.assert_called_once_with("hello")
         after = str(win._copy_btn.cget("image"))
         self.assertNotEqual(before, after,
                             "copy feedback should swap the chip image")
+
+    def test_v2_follow_up_shows_processing_in_action_chip(self):
+        app = self._app(v2=True)
+        app._last_input = "a complete source sentence"
+        app._last_class = "text"
+        win = app._make_popup("translated sentence")
+        app.popup = win
+        self._kill_later(win)
+        app._maybe_add_result_actions_button(win)
+        btn = win._actions_btn
+        before = str(btn.cget("image"))
+
+        app._set_result_actions_busy(win, True)
+
+        self.assertEqual(
+            btn.cget("text"), tr.i18n.get("result.processing"))
+        self.assertEqual(str(btn.cget("state")), "disabled")
+        self.assertNotEqual(
+            before, str(btn.cget("image")),
+            "processing feedback should be baked into a new action-chip image")
+
+        app._set_result_actions_busy(win, False)
+        self.assertEqual(btn.cget("text"), tr.i18n.get("result.actions"))
+        self.assertEqual(str(btn.cget("state")), "normal")
 
     def test_v2_quick_input_is_single_line_no_scrollbar(self):
         app = self._app(v2=True)

@@ -36,6 +36,23 @@ except Exception:
 
 
 class ResultActionsMixin:
+    def _set_result_actions_busy(self, win, busy):
+        """Update both legacy text buttons and v2 image-backed action chips."""
+        btn = getattr(win, "_actions_btn", None) if win else None
+        if btn is None:
+            return
+        label = i18n.get("result.processing" if busy else "result.actions")
+        try:
+            chip_set = getattr(btn, "_chip_set", None)
+            if chip_set is not None:
+                chip_set(label)
+            btn.config(
+                text=label,
+                state="disabled" if busy else "normal",
+                cursor="watch" if busy else "hand2")
+        except Exception:
+            pass
+
     def _maybe_add_explain_button(self, win):
         """For a mixed prose+code selection, add a one-shot '解释代码' button to
         the result popup's title bar. Clicking it explains the code portion in
@@ -300,14 +317,7 @@ class ResultActionsMixin:
         label = i18n.get("result.retranslate_to").format(
             language=self._language_display_name(code, names[0], names[1]))
         win = self.popup
-        btn = getattr(win, "_actions_btn", None) if win else None
-        if btn is not None:
-            try:
-                btn.config(
-                    text=i18n.get("result.processing"), state="disabled",
-                    cursor="watch")
-            except Exception:
-                pass
+        self._set_result_actions_busy(win, True)
         threading.Thread(
             target=self._do_retranslate,
             args=(src, prompt + SYSTEM_SUFFIX, label,
@@ -329,7 +339,6 @@ class ResultActionsMixin:
         win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
-        btn = getattr(win, "_actions_btn", None)
         if ok:
             # Append below the existing translation with a labelled divider,
             # preserving the original result (like the code-explanation flow).
@@ -337,12 +346,7 @@ class ResultActionsMixin:
                 self._append_result_section(label, result)
             else:
                 self._append_result_section(label, result, win)
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.actions"), state="normal",
-                           cursor="hand2")
-            except Exception:
-                pass
+        self._set_result_actions_busy(win, False)
 
     def _current_popup_text(self):
         if self.popup and getattr(self.popup, "_text", None):
@@ -434,13 +438,7 @@ class ResultActionsMixin:
         if not primary:
             return
         label = i18n.get(item[0])
-        btn = getattr(win, "_actions_btn", None)
-        if btn is not None:
-            try:
-                btn.config(text=label + "…", state="disabled",
-                           cursor="watch")
-            except Exception:
-                pass
+        self._set_result_actions_busy(win, True)
         threading.Thread(target=self._do_transform_result,
                          args=(mode, primary, label, self._provider_selection(),
                                win),
@@ -463,7 +461,6 @@ class ResultActionsMixin:
         win = expected_win or self.popup
         if not win or not getattr(win, "_text", None):
             return
-        btn = getattr(win, "_actions_btn", None)
         if ok:
             # Append below the existing translation with a labelled divider,
             # preserving the original result (like the code-explanation flow).
@@ -471,11 +468,7 @@ class ResultActionsMixin:
                 self._append_result_section(label, result)
             else:
                 self._append_result_section(label, result, win)
-        if btn is not None:
-            try:
-                btn.config(text=i18n.get("result.actions"), state="normal", cursor="hand2")
-            except Exception:
-                pass
+        self._set_result_actions_busy(win, False)
 
     def _explain_code_in_result(self):
         """Button handler: explain the code in the current result. Runs the

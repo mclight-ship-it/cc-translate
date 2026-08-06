@@ -301,6 +301,7 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cfg[tr.CFG.MODEL], tr.DEFAULT_CONFIG[tr.CFG.MODEL])
         self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
         self.assertEqual(cfg[tr.CFG.FONT_SIZE], 10)
+        self.assertEqual(cfg[tr.CFG.MODEL_PROVIDER], "codex_cli")
 
     def test_saved_release_settings_override_new_defaults(self):
         with open(self._path, "w", encoding="utf-8") as f:
@@ -693,6 +694,7 @@ class TestModelLabels(unittest.TestCase):
     def test_provider_labels_and_models_are_separate(self):
         providers = tr.get_provider_labels()
         self.assertEqual(set(providers), {"claude_cli", "codex_cli"})
+        self.assertEqual(list(providers)[0], "codex_cli")
         self.assertEqual(
             set(tr.get_provider_model_labels("claude_cli")),
             {"haiku", "sonnet", "opus"})
@@ -707,6 +709,12 @@ class TestModelLabels(unittest.TestCase):
         self.assertEqual(list(zh), ["auto-fast", "auto"])
         self.assertEqual(zh["auto-fast"], "智能路由（极速）")
         self.assertEqual(zh["auto"], "自动选择（优质）")
+
+    def test_gpt_smart_routing_is_default(self):
+        self.assertEqual(
+            tr.DEFAULT_CONFIG[tr.CFG.MODEL_PROVIDER], "codex_cli")
+        self.assertEqual(
+            tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
 
 
 # ============================================================
@@ -2510,6 +2518,14 @@ class TestOCRIntegrationInApp(unittest.TestCase):
         self.assertIsInstance(
             tr.DEFAULT_CONFIG[tr.CFG.OCR_HOTKEY_ENABLED], bool)
 
+    def test_vision_engine_has_provider_neutral_label(self):
+        previous = tr.i18n.get_language()
+        self.addCleanup(lambda: tr.i18n.set_language(previous))
+        tr.i18n.set_language("zh_CN")
+        self.assertEqual(tr.get_ocr_engine_labels()["claude"], "视觉模型")
+        tr.i18n.set_language("en_US")
+        self.assertEqual(tr.get_ocr_engine_labels()["claude"], "Vision model")
+
     def test_vision_prompt_is_nonempty_string(self):
         self.assertIsInstance(tr.OCR_VISION_PROMPT, str)
         self.assertGreater(len(tr.OCR_VISION_PROMPT), 0)
@@ -2878,6 +2894,7 @@ class TestUiSmoke(unittest.TestCase):
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         # Seed non-default values so the restore has something visible to undo.
+        app.cfg[tr.CFG.MODEL_PROVIDER] = "claude_cli"
         app.cfg[tr.CFG.MODEL] = "opus"
         app.cfg[tr.CFG.CLAUDE_MODEL] = "opus"
         app.cfg[tr.CFG.FONT_SIZE] = 20
@@ -2891,7 +2908,16 @@ class TestUiSmoke(unittest.TestCase):
 
         widgets = list(walk(win))
 
-        # Locate the model combobox by its fixed value set (now display labels).
+        provider_labels = tr.get_provider_labels()
+        provider_combo = next(
+            (w for w in widgets
+             if isinstance(w, tr.ttk.Combobox)
+             and provider_labels["claude_cli"] in list(w.cget("values"))
+             and provider_labels["codex_cli"] in list(w.cget("values"))),
+            None)
+        self.assertIsNotNone(provider_combo, "provider combobox should exist")
+
+        # Locate the model combobox by its initial Claude value set.
         model_labels = tr.get_model_labels()
         model_combo = None
         for w in widgets:
@@ -2917,9 +2943,14 @@ class TestUiSmoke(unittest.TestCase):
                              "restore-defaults button should exist in footer")
         restore_btn.invoke()
 
-        # The form now shows defaults; nothing is persisted until Save.
-        self.assertEqual(model_combo.get(),
-                         model_labels[tr.DEFAULT_CONFIG[tr.CFG.MODEL]])
+        # The form now shows the GPT smart-routing defaults; nothing is
+        # persisted until Save.
+        self.assertEqual(
+            provider_combo.get(), provider_labels["codex_cli"])
+        codex_labels = tr.get_provider_model_labels("codex_cli")
+        self.assertEqual(list(model_combo.cget("values")),
+                         list(codex_labels.values()))
+        self.assertEqual(model_combo.get(), codex_labels["auto-fast"])
         self.assertEqual(app.cfg[tr.CFG.MODEL], "opus",
                          "restore should not persist until Save is clicked")
 
@@ -4759,6 +4790,33 @@ class TestFollowUpAppend(unittest.TestCase):
         app._apply_retranslation(False, "err", "译成日语")
         app._append_result_section.assert_not_called()
 
+    def test_follow_up_busy_state_rebakes_v2_action_chip(self):
+        app, win, _ = self._app()
+        btn = unittest.mock.Mock()
+        btn._chip_set = unittest.mock.Mock()
+        win._actions_btn = btn
+
+        app._set_result_actions_busy(win, True)
+
+        btn._chip_set.assert_called_once_with(
+            tr.i18n.get("result.processing"))
+        btn.config.assert_called_once_with(
+            text=tr.i18n.get("result.processing"),
+            state="disabled", cursor="watch")
+
+    def test_follow_up_completion_restores_v2_action_chip(self):
+        app, win, _ = self._app()
+        btn = unittest.mock.Mock()
+        btn._chip_set = unittest.mock.Mock()
+        win._actions_btn = btn
+
+        app._set_result_actions_busy(win, False)
+
+        btn._chip_set.assert_called_once_with(tr.i18n.get("result.actions"))
+        btn.config.assert_called_once_with(
+            text=tr.i18n.get("result.actions"),
+            state="normal", cursor="hand2")
+
     def test_transform_feeds_primary_to_worker(self):
         # After a prior append grows the popup text, a rewrite must still send
         # the PRIMARY translation (not the grown text) to the model.
@@ -4863,7 +4921,8 @@ class TestCacheSignature(unittest.TestCase):
 
     def _app(self, **over):
         app = object.__new__(tr.TranslatorApp)
-        cfg = {tr.CFG.DIRECTION: "auto", tr.CFG.MODEL: "haiku",
+        cfg = {tr.CFG.MODEL_PROVIDER: "claude_cli",
+               tr.CFG.DIRECTION: "auto", tr.CFG.MODEL: "haiku",
                tr.CFG.SUMMARY_ENABLED: False, tr.CFG.LANGUAGE: "zh"}
         cfg.update(over)
         app.cfg = cfg

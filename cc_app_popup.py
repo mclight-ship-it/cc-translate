@@ -1557,7 +1557,8 @@ class PopupMixin:
         if normal is None:
             return self._pill_button(parent, text or "", cmd, bg=popup_bg,
                                      fg=self._v2_tk_colors()["hint"])
-        b = tk.Button(parent, image=normal, command=cmd, bg=popup_bg,
+        b = tk.Button(parent, image=normal, text=text or "", command=cmd,
+                      bg=popup_bg,
                       activebackground=popup_bg, relief="flat", bd=0,
                       highlightthickness=0, cursor="hand2")
         b.image = normal
@@ -1571,7 +1572,7 @@ class PopupMixin:
             h = _bake(label, True)
             if n is not None:
                 b._chip_normal, b._chip_hover = n, h
-                b.config(image=n)
+                b.config(image=n, text=label or "")
         b._chip_set = _set
         if tooltip:
             self._make_tooltip(b, tooltip)

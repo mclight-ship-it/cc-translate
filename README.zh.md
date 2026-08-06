@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：Claude Code（订阅或兼容本地代理），或已用 ChatGPT 登录的官方 Codex CLI。默认仍使用 Claude。
+> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：已用 ChatGPT 登录的官方 Codex CLI，或 Claude Code（订阅或兼容本地代理）。默认使用 OpenAI GPT 智能路由。
 
 这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它支持 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider，无需单独的 API key。
 
@@ -37,7 +37,7 @@
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/screenshot-ocr.png" alt="截图翻译框选" width="420"><br>
-  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持所选模型视觉或离线本地 OCR）</sub>
+  <sub><b>截图翻译</b>：按 <code>Win+Shift+C</code> 框选屏幕任意区域，直接翻译图中文字（支持视觉模型或离线本地 OCR）</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="翻译历史" width="420"><br>
@@ -50,7 +50,7 @@
 
 - **双击 Ctrl+C** 翻译剪贴板/选中文字，鼠标旁弹窗显示
 - **Claude / OpenAI GPT 切换**：可在设置里选择模型服务；Claude 保留原有预热池和流式路径，GPT 使用本机 Codex CLI 与 ChatGPT 登录
-- **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持所选模型的视觉能力或离线本地 OCR
+- **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持视觉模型或离线本地 OCR
 - **快速输入翻译**：没有选中文字时双击 Ctrl+C，弹出输入框，手动输入要翻译的内容
 - **代码解释模式**：选中的是代码时，不强行翻译，而是用中文解释代码用途；文字与代码混排时正常翻译并保留代码原样
 - **词典模式**：选中单个单词时，返回中英双语词条（音标、词性、释义、例句）
@@ -87,19 +87,19 @@
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-它会自动完成**除账号登录以外**的所有步骤——Claude 和 Codex 登录都是一次性的浏览器授权，任何脚本都无法代劳。安装器仍以 Claude 为默认；按提示运行 `claude` 登录 Claude，需要 GPT 时再运行：
+它会自动完成**除账号登录以外**的所有步骤——Claude 和 Codex 登录都是一次性的浏览器授权，任何脚本都无法代劳。OpenAI GPT 现在是默认模型服务，请使用官方 Codex CLI 登录 ChatGPT：
 
 ```powershell
 codex login
 codex login status
 ```
 
-然后打开**设置**，选择 **OpenAI GPT（Codex）** 并保存。CC Translate 只复用
-Codex CLI 的本地 ChatGPT 登录状态，不读取或保存认证 token。
+CC Translate 只复用 Codex CLI 的本地 ChatGPT 登录状态，不读取或保存认证
+token。Claude 仍可在**设置**中作为备用模型服务选择。
 
-GPT 模型默认使用偏重翻译质量的**自动选择**。如果更在意等待时间，可选择
-**gpt-5.4-mini（快速）**；它通常延迟更低、更稳定，但可能保留更多英文技术词。具体模型
-是否可用取决于 ChatGPT 套餐、组织策略和 Codex CLI 版本。
+GPT 默认使用**智能路由（极速）**并增量显示文字；如果更看重翻译质量，可切换到
+**自动选择（优质）**。具体模型是否可用取决于 ChatGPT 套餐、组织策略和 Codex CLI
+版本。
 
 > 可选环境变量（运行前设置）：`$env:CC_TRANSLATE_DIR` 指定安装目录（默认 `%USERPROFILE%\cc-translate`）；`$env:CC_TRANSLATE_DRYRUN="1"` 先“空跑”一遍，只显示每步会做什么、不做任何改动。
 
@@ -139,7 +139,7 @@ codex login status
 pip install pynput pyperclip pystray Pillow
 # 可选增强（缺失时对应功能自动降级/关闭，不影响核心翻译）：
 pip install Pygments   # 代码块语法高亮（缺失时降级为单色代码样式）
-pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用所选模型视觉）
+pip install winsdk     # 截图翻译的离线本地 OCR 引擎（缺失时仍可用视觉模型）
 pip install comtypes   # 智能选区识别，避免输入框内无选中时误翻整框（含 VS Code 等跨进程应用）
 # 或一键装全部（等价于上面所有包）：pip install -r requirements.txt
 

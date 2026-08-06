@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: Claude Code (subscription or compatible local proxy) or the official Codex CLI signed in with ChatGPT. Claude remains the default.
+> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: the official Codex CLI signed in with ChatGPT, or Claude Code (subscription or compatible local proxy). OpenAI GPT smart routing is the default.
 
 An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It supports parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers and needs no separate API key.
 
@@ -37,7 +37,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/screenshot-ocr.png" alt="Screenshot translation region select" width="420"><br>
-  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (selected model vision or offline local OCR)</sub>
+  <sub><b>Screenshot translation</b>: press <code>Win+Shift+C</code> to drag-select any screen region and translate the text in it (vision model or offline local OCR)</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/history.png" alt="Translation history" width="420"><br>
@@ -50,7 +50,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
 - **Claude / OpenAI GPT switching**: choose a model service in Settings. Claude keeps its existing warm pool and streaming path; GPT uses your local Codex CLI and ChatGPT sign-in.
-- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the selected model's vision support or an offline local OCR engine
+- **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the vision model or an offline local OCR engine
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
@@ -90,21 +90,21 @@ irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/instal
 ```
 
 It automates **everything except account sign-in** — Claude and Codex each use
-a one-time browser OAuth flow that no script can complete for you. Claude
-remains the default. Run `claude` once to sign in; when you want GPT, run:
+a one-time browser OAuth flow that no script can complete for you. OpenAI GPT
+is the default. Sign in to the official Codex CLI with:
 
 ```powershell
 codex login
 codex login status
 ```
 
-Then open **Settings**, choose **OpenAI GPT (Codex)**, and save. CC Translate
-uses the CLI's cached ChatGPT sign-in but never reads or stores its auth tokens.
+CC Translate uses the CLI's cached ChatGPT sign-in but never reads or stores its
+auth tokens. Claude remains available as an alternate provider in **Settings**.
 
-For the GPT model, **Auto** remains the default and favors translation quality.
-Choose **gpt-5.4-mini (fast)** for generally lower and more consistent latency;
-it may preserve more English technical terms. Model availability depends on
-your ChatGPT plan, organization policy, and Codex CLI version.
+For GPT, **Smart routing (fast)** is the default and streams text incrementally.
+**Auto select (quality)** remains available when translation quality matters
+more than latency. Model availability depends on your ChatGPT plan,
+organization policy, and Codex CLI version.
 
 > Optional environment variables (set before running): `$env:CC_TRANSLATE_DIR`
 > to choose the install location (default `%USERPROFILE%\cc-translate`);
@@ -150,7 +150,7 @@ codex login status
 pip install pynput pyperclip pystray Pillow
 # Optional enhancements (each feature auto-degrades/turns off if missing; core translation is unaffected):
 pip install Pygments   # code-block syntax highlighting (falls back to monochrome code style when missing)
-pip install winsdk     # offline local OCR engine (selected model vision still works without it)
+pip install winsdk     # offline local OCR engine (the vision model still works without it)
 pip install comtypes   # smart selection detection, avoids mistranslating a whole input box when nothing is selected (incl. cross-process apps like VS Code)
 # Or install everything at once (equivalent to all packages above): pip install -r requirements.txt
 

@@ -1082,7 +1082,8 @@ class SettingsMixin:
             default_model_labels = get_provider_model_labels(
                 DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
             model_var.set(
-                default_model_labels[DEFAULT_CONFIG[CFG.CLAUDE_MODEL]])
+                default_model_labels[
+                    provider_model(DEFAULT_CONFIG)])
             dir_var.set(direction_labels[DEFAULT_CONFIG[CFG.DIRECTION]])
             theme_var.set(theme_labels[DEFAULT_CONFIG[CFG.THEME]])
             layout_var.set(layout_labels[DEFAULT_CONFIG[CFG.POPUP_LAYOUT]])
