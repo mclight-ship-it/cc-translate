@@ -1,11 +1,10 @@
 # CC Translate — v2 UI 改版规划（UI_V2_PLAN）
 
-> **2026-08-05：本工作流已暂停。**
+> **2026-08-06：本工作流已恢复。**
 >
-> 当前优先级切换为 Claude / GPT 多模型 provider。UI v2 的真实完成度、代码结构、
-> 本机开关、验证方法和恢复步骤统一记录在
-> [`UI_V2_HANDOFF.md`](UI_V2_HANDOFF.md)。恢复 UI 工作时以 handoff 文档为准；
-> 本文件中较早的进度表可能已落后于当前代码。
+> Claude / GPT 多模型 provider 已接入；首轮真实 Tk 暗色 / 亮色视觉基线和设置页
+> provider 复核、诊断窗口、OCR overlay v2 以及确定性暗亮基线已经完成。UI v2 的真实完成度、代码结构、本机开关和验证方法统一
+> 记录在 [`UI_V2_HANDOFF.md`](UI_V2_HANDOFF.md)。
 
 本文件记录「AI flavor」新界面（v2 UI）从 POC 落地到线上产品的**整体规划**：
 开发顺序、依赖关系、风险登记，以及集成策略。配套的独立 POC 位于
@@ -58,8 +57,8 @@ app 结构为「一个 Tk 主类 + 一堆 Mixin」。可见窗口表面共 8 个
 | 设置 | `cc_app_settings.py` | 1062 | 中 | ✅ 有 |
 | 历史记录 | `cc_app_history.py` | 392 | 中 | ✅ 有（卡片流） |
 | 关于 | `cc_app_about.py` | 425 | 低 | ✅ 有 |
-| 诊断 | `cc_app_diagnostics.py` | 568 | 很低 | ❌ 无 |
-| OCR 截图 overlay | `cc_app_ocr.py` | 340 | 中 | ❌ 无 |
+| 诊断 | `cc_app_diagnostics.py` | 568 | 很低 | ✅ 有 |
+| OCR 截图 overlay | `cc_app_ocr.py` | 340 | 中 | ✅ 有 |
 | 托盘菜单 | `cc_app_tray.py` | 179 | — | 🚫 系统原生，做不了 |
 
 **共享底层**（所有卡片窗口都依赖）：`_rounded_shell`（颜色键透明圆角）、
@@ -142,10 +141,11 @@ Phase 0  v2 皮肤地基 (cc_ui_v2.py)
 | Phase 0 | v2 皮肤地基 `cc_ui_v2.py` | ✅ |
 | Phase 1 | 译文弹窗（辉光渐变外壳 + 实心正文卡 + 渐变标题/图标；流式复用原几何引擎） | ✅ |
 | Phase 2 | 快速翻译 v2（渐变标题 + 渐变翻译胶囊 + 紫色输入框，复用皮肤/圆角外壳/IME 逻辑） | ✅ |
-| Phase 3 | 历史记录 v2 | ⬜ |
-| Phase 4 | 设置 v2 | ⬜ |
-| Phase 5 | 关于 v2 | ⬜ |
-| Phase 6 | 诊断 / OCR v2（可选） | ⬜ |
+| Phase 3 | 历史记录 v2 | ✅ |
+| Phase 4 | 设置 v2（含 Provider / Model / Codex streaming） | ✅ |
+| Phase 5 | 关于及 Support-author / 卸载确认次级窗口 v2 | ✅ |
+| Phase 6 | 诊断 / OCR v2 | ✅ |
+| 验证 | 固化真实 Tk 抓图工具；所有计划内表面可确定性抓取；设置页 provider 复核 | ✅ |
 | 收尾 | 默认开 + 删除 legacy 与开关 | ⬜ |
 
 > 细粒度任务与依赖同时记录在会话任务库（todos / todo_deps，前缀 `v2-`）。

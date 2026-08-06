@@ -2968,6 +2968,7 @@ def _make_headless_app():
     app.history_win = None
     app.about_win = None
     app.support_win = None
+    app._uninstall_win = None
     app.diagnostics_win = None
     app.quick_input_win = None
     app._settings_check = None
@@ -3002,7 +3003,8 @@ class TestUiSmoke(unittest.TestCase):
         the main thread, instead of during interpreter shutdown."""
         for name in (
                 "quick_input_win", "settings_win", "history_win",
-                "about_win", "support_win", "diagnostics_win"):
+                "about_win", "support_win", "diagnostics_win",
+                "_uninstall_win"):
             w = getattr(app, name, None)
             if w is None:
                 continue
@@ -3029,21 +3031,69 @@ class TestUiSmoke(unittest.TestCase):
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
 
-    def test_settings_comboboxes_share_width(self):
+    def test_settings_window_clamps_to_monitor_work_area(self):
+        with unittest.mock.patch(
+                "cc_app_settings.get_monitor_rect",
+                return_value=(0, 0, 900, 700)):
+            app = self._build("_open_settings")
+        app.settings_win.update_idletasks()
+        self.assertLessEqual(app.settings_win.winfo_width(), 892)
+        self.assertLessEqual(app.settings_win.winfo_height(), 692)
+        self.assertGreaterEqual(app.settings_win.winfo_x(), 0)
+        self.assertGreaterEqual(app.settings_win.winfo_y(), 0)
+
+    def test_settings_comboboxes_share_width_and_fit_english_labels(self):
         # Every settings dropdown must line up: they should all declare the same
-        # character width so no single field (e.g. the model picker) sticks out.
-        app = self._build("_open_settings")
+        # width, while retaining enough text space for the longest locale value.
+        original_language = tr.i18n.get_language()
+        self.addCleanup(lambda: tr.i18n.initialize(original_language))
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app.cfg[tr.CFG.LANGUAGE] = "en_US"
+        tr.i18n.initialize("en_US")
+        app._open_settings()
 
         def walk(w):
             yield w
             for child in w.winfo_children():
                 yield from walk(child)
 
-        widths = {int(w.cget("width"))
-                  for w in walk(app.settings_win)
-                  if isinstance(w, tr.ttk.Combobox)}
+        combos = [
+            w for w in walk(app.settings_win)
+            if isinstance(w, tr.ttk.Combobox)
+        ]
+        widths = {int(w.cget("width")) for w in combos}
         self.assertEqual(len(widths), 1,
                          f"comboboxes should share one width, got {widths}")
+        direction_values = set(tr.get_direction_labels().values())
+        direction_combo = next(
+            combo for combo in combos
+            if direction_values.issubset(set(combo.cget("values")))
+        )
+        direction_combo.update_idletasks()
+        for combo in combos:
+            values = list(combo.cget("values"))
+            if not values:
+                continue
+            combo_font = tr.tkfont.Font(
+                root=app.root, font=combo.cget("font"))
+            widest_label = max(
+                combo_font.measure(value) for value in values)
+            chrome_reserve = 3 * combo_font.measure("0")
+            self.assertGreaterEqual(
+                combo.winfo_width(),
+                widest_label + chrome_reserve,
+                "settings dropdown must fit its longest English label")
+        rect = tr.get_monitor_rect()
+        if rect:
+            left, _top, right, _bottom = rect
+            self.assertLessEqual(
+                app.settings_win.winfo_width(), right - left,
+                "settings window must fit the active monitor at high DPI")
+            self.assertGreaterEqual(app.settings_win.winfo_x(), left)
+            self.assertLessEqual(
+                app.settings_win.winfo_x() + app.settings_win.winfo_width(),
+                right)
 
     def test_settings_dropdown_list_has_left_padding(self):
         # The popdown listbox needs a flat background-coloured inset so item text
@@ -3129,6 +3179,18 @@ class TestUiSmoke(unittest.TestCase):
 
     def test_about_window_builds(self):
         self._build("_open_about")
+
+    def test_support_author_window_builds(self):
+        self._build("_open_support_author")
+
+    def test_uninstall_window_builds_without_uninstalling(self):
+        app = _make_headless_app()
+        app._perform_uninstall = unittest.mock.Mock(return_value=False)
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app._confirm_and_uninstall()
+        self.assertTrue(
+            app._uninstall_win is not None
+            and tr.tk.Toplevel.winfo_exists(app._uninstall_win))
 
     def test_history_window_builds(self):
         self._build("_open_history")

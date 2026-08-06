@@ -22,12 +22,18 @@ from typing import Tuple
 
 import i18n
 import cc_ocr
+import win32util
 from cc_warm import CLAUDE_CMD
 from cc_core import (
     CFG, DATA_DIR, TRIGGER_POLL_MS, StreamSession,
     OCR_VISION_PROMPT, vision_image_mention,
     log_error, log_perf,
 )
+
+try:
+    from PIL import Image, ImageEnhance, ImageTk
+except Exception:
+    Image = ImageEnhance = ImageTk = None
 
 
 class OcrMixin:
@@ -67,7 +73,7 @@ class OcrMixin:
         if not self._ocr_selecting:
             self._open_region_selector()
 
-    def _open_region_selector(self):
+    def _open_region_selector(self, screen_image=None):
         """Full-screen overlay for click-drag region selection. Outside the
         selection is dimmed; the selected area stays at normal brightness so the
         user can verify exactly what will be captured. ESC or a right-click
@@ -75,54 +81,141 @@ class OcrMixin:
         if self._ocr_selecting:
             return
         vx, vy, vw, vh = self._virtual_screen_rect()
+        v2on = self._v2_popup_on()
+        supplied_image = screen_image is not None
+        source_image = None
+        if v2on and Image is not None and ImageTk is not None:
+            source_image = screen_image
+            if source_image is None:
+                source_image = cc_ocr.grab_region(vx, vy, vw, vh)
+            if source_image is not None:
+                source_image = source_image.convert("RGB")
+                if source_image.size != (vw, vh):
+                    source_image = source_image.resize(
+                        (vw, vh), Image.Resampling.LANCZOS)
 
         overlay = tk.Toplevel(self.root)
+        overlay.withdraw()
         overlay.overrideredirect(True)
         overlay.attributes("-topmost", True)
+        overlay.title(i18n.get("tray.screenshot"))
+        overlay.geometry(f"{vw}x{vh}+{vx}+{vy}")
+        if source_image is not None and not supplied_image:
+            overlay.update_idletasks()
+            if not win32util.exclude_window_from_capture(overlay.winfo_id()):
+                source_image = None
+        overlay._v2 = bool(v2on and source_image is not None)
         dim_bg = "#101216"
         key_bg = "#00ff00"
         transparent_hole = False
-        try:
-            # Preferred path on Windows: make the canvas key color transparent,
-            # then draw dim masks around the drag box so the selected area is
-            # truly undimmed.
-            overlay.configure(bg=key_bg, cursor="crosshair")
-            overlay.attributes("-transparentcolor", key_bg)
-            transparent_hole = True
-        except Exception:
-            # Fallback for environments that do not support transparentcolor.
-            try:
-                overlay.attributes("-alpha", 0.28)
-            except Exception:
-                pass
+        if source_image is not None:
             overlay.configure(bg=dim_bg, cursor="crosshair")
-        overlay.geometry(f"{vw}x{vh}+{vx}+{vy}")
+        else:
+            try:
+                # Legacy/fallback path: make the canvas key colour transparent,
+                # then place stippled masks around the drag box.
+                overlay.configure(bg=key_bg, cursor="crosshair")
+                overlay.attributes("-transparentcolor", key_bg)
+                transparent_hole = True
+            except Exception:
+                try:
+                    overlay.attributes("-alpha", 0.28)
+                except Exception:
+                    pass
+                overlay.configure(bg=dim_bg, cursor="crosshair")
         self._ocr_selecting = True
         self._ocr_overlay = overlay
 
-        canvas_bg = key_bg if transparent_hole else dim_bg
+        canvas_bg = dim_bg if source_image is not None else (
+            key_bg if transparent_hole else dim_bg)
         canvas = tk.Canvas(overlay, bg=canvas_bg, highlightthickness=0,
                            cursor="crosshair")
         canvas.pack(fill="both", expand=True)
+        overlay._ocr_canvas = canvas
+        overlay._ocr_capture_mode = (
+            "image" if source_image is not None else
+            "transparent" if transparent_hole else "alpha")
 
-        shade_kwargs = {"fill": dim_bg, "outline": ""}
-        if transparent_hole:
-            shade_kwargs["stipple"] = "gray50"
-        shades = [
-            canvas.create_rectangle(0, 0, vw, vh, **shade_kwargs),  # top/full
-            canvas.create_rectangle(0, 0, 0, 0, **shade_kwargs),    # left
-            canvas.create_rectangle(0, 0, 0, 0, **shade_kwargs),    # right
-            canvas.create_rectangle(0, 0, 0, 0, **shade_kwargs),    # bottom
-        ]
+        shades = []
+        if source_image is not None:
+            dimmed = ImageEnhance.Brightness(source_image).enhance(0.58)
+            cool_tint = Image.new("RGB", source_image.size, (8, 12, 34))
+            dimmed = Image.blend(dimmed, cool_tint, 0.16)
+            dim_photo = ImageTk.PhotoImage(dimmed, master=overlay)
+            canvas.create_image(0, 0, anchor="nw", image=dim_photo)
+            overlay._ocr_dim_photo = dim_photo
+            overlay._ocr_source_image = source_image
+        else:
+            shade_kwargs = {"fill": dim_bg, "outline": ""}
+            if transparent_hole:
+                shade_kwargs["stipple"] = "gray50"
+            shades = [
+                canvas.create_rectangle(
+                    0, 0, vw, vh, **shade_kwargs),  # top/full
+                canvas.create_rectangle(
+                    0, 0, 0, 0, **shade_kwargs),    # left
+                canvas.create_rectangle(
+                    0, 0, 0, 0, **shade_kwargs),    # right
+                canvas.create_rectangle(
+                    0, 0, 0, 0, **shade_kwargs),    # bottom
+            ]
 
+        hint_text = i18n.get("ocr.drag_select_hint")
         hint = canvas.create_text(
             vw // 2, 30, fill="#e6e9f0",
             font=("Microsoft YaHei UI", 13),
-            text=i18n.get("ocr.drag_select_hint"))
+            text=hint_text)
+        accessible_hint = tk.Label(
+            overlay, text=hint_text, takefocus=0)
+        accessible_hint.place(x=-10000, y=-10000)
+        overlay._ocr_accessible_hint = accessible_hint
 
-        state = {"sx": 0, "sy": 0, "rect": None}
+        scale = max(1.0, min(2.5, self._ui_scale()))
+        state = {
+            "sx": 0, "sy": 0, "rect": None,
+            "selection_photo": None, "selection_image": None,
+            "click_anchor": None, "dragged": False,
+        }
+        overlay._ocr_selection_state = state
+        selection_items = []
+        handles = []
+        anchor_marker = []
+        if source_image is not None:
+            state["selection_image"] = canvas.create_image(
+                0, 0, anchor="nw", state="hidden")
+            selection_items = [
+                canvas.create_rectangle(
+                    0, 0, 0, 0, outline="#5546d9",
+                    width=max(6, int(round(6 * scale))), state="hidden"),
+                canvas.create_rectangle(
+                    0, 0, 0, 0, outline="#9878ff",
+                    width=max(4, int(round(4 * scale))), state="hidden"),
+                canvas.create_rectangle(
+                    0, 0, 0, 0, outline="#d8e9ff",
+                    width=max(2, int(round(1.5 * scale))), state="hidden"),
+            ]
+            for _ in range(4):
+                handles.append((
+                    canvas.create_oval(
+                        0, 0, 0, 0, fill="#6652e8", outline="",
+                        state="hidden"),
+                    canvas.create_oval(
+                        0, 0, 0, 0, fill="#eef6ff", outline="",
+                        state="hidden"),
+                ))
+            anchor_marker = [
+                canvas.create_oval(
+                    0, 0, 0, 0, fill="#6652e8", outline="", state="hidden"),
+                canvas.create_oval(
+                    0, 0, 0, 0, fill="#eef6ff", outline="", state="hidden"),
+            ]
+        overlay._ocr_selection_items = selection_items
+        overlay._ocr_handles = handles
+        overlay._ocr_anchor_marker = anchor_marker
 
         def set_dim_hole(x0, y0, x1, y1):
+            if not shades:
+                return
             x0 = max(0, min(vw, x0))
             x1 = max(0, min(vw, x1))
             y0 = max(0, min(vh, y0))
@@ -132,35 +225,146 @@ class OcrMixin:
             canvas.coords(shades[2], x1, y0, vw, y1)    # right
             canvas.coords(shades[3], 0, y1, vw, vh)     # bottom
 
+        def normalized_box(x0, y0, x1, y1):
+            x0, x1 = sorted((
+                max(0, min(vw, int(x0))),
+                max(0, min(vw, int(x1)))))
+            y0, y1 = sorted((
+                max(0, min(vh, int(y0))),
+                max(0, min(vh, int(y1)))))
+            return x0, y0, x1, y1
+
+        def set_selection(x0, y0, x1, y1):
+            x0, y0, x1, y1 = normalized_box(x0, y0, x1, y1)
+            set_dim_hole(x0, y0, x1, y1)
+            if source_image is None:
+                if state["rect"] is not None:
+                    canvas.coords(state["rect"], x0, y0, x1, y1)
+                return x0, y0, x1, y1
+            if x1 <= x0 or y1 <= y0:
+                canvas.itemconfigure(state["selection_image"], state="hidden")
+                for item in selection_items:
+                    canvas.itemconfigure(item, state="hidden")
+                for outer, inner in handles:
+                    canvas.itemconfigure(outer, state="hidden")
+                    canvas.itemconfigure(inner, state="hidden")
+                return x0, y0, x1, y1
+
+            crop = source_image.crop((x0, y0, x1, y1))
+            photo = ImageTk.PhotoImage(crop, master=overlay)
+            state["selection_photo"] = photo
+            canvas.coords(state["selection_image"], x0, y0)
+            canvas.itemconfigure(
+                state["selection_image"], image=photo, state="normal")
+            for item in selection_items:
+                canvas.coords(item, x0, y0, x1, y1)
+                canvas.itemconfigure(item, state="normal")
+                canvas.tag_raise(item)
+
+            outer_r = max(5, int(round(5 * scale)))
+            inner_r = max(2, int(round(2 * scale)))
+            for (cx, cy), (outer, inner) in zip(
+                    ((x0, y0), (x1, y0), (x0, y1), (x1, y1)), handles):
+                canvas.coords(
+                    outer, cx - outer_r, cy - outer_r,
+                    cx + outer_r, cy + outer_r)
+                canvas.coords(
+                    inner, cx - inner_r, cy - inner_r,
+                    cx + inner_r, cy + inner_r)
+                canvas.itemconfigure(outer, state="normal")
+                canvas.itemconfigure(inner, state="normal")
+                canvas.tag_raise(outer)
+                canvas.tag_raise(inner)
+            return x0, y0, x1, y1
+
+        def accept_selection(x0, y0, x1, y1):
+            x0, y0, x1, y1 = normalized_box(x0, y0, x1, y1)
+            width, height = x1 - x0, y1 - y0
+            selected_image = (
+                source_image.crop((x0, y0, x1, y1))
+                if source_image is not None and width >= 10 and height >= 10
+                else None)
+            self._close_region_selector()
+            if width < 10 or height < 10:
+                return
+            gx, gy = vx + x0, vy + y0
+            self.root.after(
+                0 if selected_image is not None else 120,
+                lambda: self._capture_and_translate(
+                    gx, gy, width, height, image=selected_image))
+
+        def set_anchor_marker(point):
+            if not anchor_marker:
+                return
+            if point is None:
+                for item in anchor_marker:
+                    canvas.itemconfigure(item, state="hidden")
+                return
+            cx, cy = point
+            outer_r = max(5, int(round(5 * scale)))
+            inner_r = max(2, int(round(2 * scale)))
+            canvas.coords(
+                anchor_marker[0], cx - outer_r, cy - outer_r,
+                cx + outer_r, cy + outer_r)
+            canvas.coords(
+                anchor_marker[1], cx - inner_r, cy - inner_r,
+                cx + inner_r, cy + inner_r)
+            for item in anchor_marker:
+                canvas.itemconfigure(item, state="normal")
+                canvas.tag_raise(item)
+
+        def click_point(x, y):
+            x, y, _, _ = normalized_box(x, y, x, y)
+            if state["click_anchor"] is None:
+                state["click_anchor"] = (x, y)
+                set_anchor_marker(state["click_anchor"])
+                return False
+            x0, y0 = state["click_anchor"]
+            state["click_anchor"] = None
+            set_anchor_marker(None)
+            accept_selection(x0, y0, x, y)
+            return True
+
+        overlay._ocr_set_selection = set_selection
+        overlay._ocr_accept_selection = accept_selection
+        overlay._ocr_click_point = click_point
+
         def on_down(e):
-            state["sx"], state["sy"] = e.x, e.y
-            if state["rect"]:
+            if source_image is not None and state["click_anchor"] is not None:
+                state["sx"], state["sy"] = state["click_anchor"]
+            else:
+                state["sx"], state["sy"] = e.x, e.y
+            state["dragged"] = False
+            if state["rect"] is not None:
                 canvas.delete(state["rect"])
-            state["rect"] = canvas.create_rectangle(
-                e.x, e.y, e.x, e.y, outline="#7aa2f7", width=2)
-            set_dim_hole(e.x, e.y, e.x, e.y)
+            if source_image is None:
+                state["rect"] = canvas.create_rectangle(
+                    e.x, e.y, e.x, e.y, outline="#7aa2f7", width=2)
+                set_selection(e.x, e.y, e.x, e.y)
+            elif state["click_anchor"] is None:
+                set_selection(e.x, e.y, e.x, e.y)
             canvas.delete(hint)
 
         def on_drag(e):
-            if state["rect"]:
-                x0, x1 = sorted((state["sx"], e.x))
-                y0, y1 = sorted((state["sy"], e.y))
-                canvas.coords(state["rect"], x0, y0, x1, y1)
-                set_dim_hole(x0, y0, x1, y1)
+            if state["rect"] is not None or source_image is not None:
+                if (abs(e.x - state["sx"]) >= 3
+                        or abs(e.y - state["sy"]) >= 3):
+                    state["dragged"] = True
+                    state["click_anchor"] = None
+                    set_anchor_marker(None)
+                set_selection(state["sx"], state["sy"], e.x, e.y)
 
         def on_up(e):
-            x0, y0 = min(state["sx"], e.x), min(state["sy"], e.y)
-            x1, y1 = max(state["sx"], e.x), max(state["sy"], e.y)
-            w, h = x1 - x0, y1 - y0
-            self._close_region_selector()
-            if w < 10 or h < 10:
-                return   # accidental click / tiny drag → cancel silently
-            # Translate canvas (overlay-local) coords back to virtual-screen
-            # coords for the grab. Delay it a beat so the dimming overlay is
-            # fully repainted away before we capture the underlying pixels.
-            gx, gy = vx + x0, vy + y0
-            self.root.after(
-                120, lambda: self._capture_and_translate(gx, gy, w, h))
+            if source_image is not None and not state["dragged"]:
+                click_point(e.x, e.y)
+                return
+            accept_selection(state["sx"], state["sy"], e.x, e.y)
+
+        def on_move(e):
+            if source_image is not None and state["click_anchor"] is not None:
+                x0, y0 = state["click_anchor"]
+                set_selection(x0, y0, e.x, e.y)
+                set_anchor_marker(state["click_anchor"])
 
         def cancel(_e=None):
             self._close_region_selector()
@@ -168,8 +372,11 @@ class OcrMixin:
         canvas.bind("<Button-1>", on_down)
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_up)
+        canvas.bind("<Motion>", on_move)
         canvas.bind("<Button-3>", cancel)
         overlay.bind("<Escape>", cancel)
+        overlay.deiconify()
+        overlay.lift()
         try:
             overlay.grab_set()
         except Exception:
@@ -190,16 +397,26 @@ class OcrMixin:
             except Exception:
                 pass
 
-    def _capture_and_translate(self, x, y, w, h):
-        """Grab the chosen region, then translate it via the configured OCR
-        engine (Claude Vision by default, or offline Windows OCR)."""
+    def _capture_and_translate(self, x, y, w, h, image=None):
+        """Persist the approved region, then translate it via the configured OCR
+        engine (vision by default, or offline Windows OCR)."""
         # Unique temp file per capture so overlapping OCR requests can't clobber
         # each other's screenshot (each path is cleaned up by its own worker).
         img_path = os.path.join(DATA_DIR, "tmp_ocr_%s.png" % uuid.uuid4().hex)
-        # The overlay is already destroyed; give the compositor one frame to
-        # repaint the uncovered screen before we grab it.
         self.root.update_idletasks()
-        if not cc_ocr.save_region(x, y, w, h, img_path):
+        saved = False
+        if image is not None:
+            try:
+                image.save(img_path, "PNG")
+                saved = True
+            except Exception as e:
+                log_error("ocr_save_preview_region", e)
+        else:
+            # Legacy/fallback selectors have no preview frame to preserve, so
+            # recapture after the overlay has repainted away.
+            saved = cc_ocr.save_region(x, y, w, h, img_path)
+        if not saved:
+            self._cleanup_ocr_temp(img_path)
             self._last_input = None
             self._last_origin = "ocr"
             self._last_class = "ocr"

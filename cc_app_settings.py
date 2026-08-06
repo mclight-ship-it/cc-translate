@@ -42,6 +42,31 @@ from cc_core import (
 )
 
 
+_SETTINGS_COMBO_MIN_WIDTH = 19
+_SETTINGS_COMBO_MAX_WIDTH = 24
+_SETTINGS_COMBO_CHROME_CHARS = 3
+
+
+def _settings_combo_width(font, value_groups):
+    values = [
+        str(value)
+        for group in value_groups
+        for value in group
+    ]
+    if not values:
+        return _SETTINGS_COMBO_MIN_WIDTH
+    char_width = max(1, font.measure("0"))
+    text_width = max(font.measure(value) for value in values)
+    text_chars = (text_width + char_width - 1) // char_width
+    return min(
+        _SETTINGS_COMBO_MAX_WIDTH,
+        max(
+            _SETTINGS_COMBO_MIN_WIDTH,
+            text_chars + _SETTINGS_COMBO_CHROME_CHARS,
+        ),
+    )
+
+
 class SettingsMixin:
     """Settings window + its image/form helpers (mixed into TranslatorApp)."""
 
@@ -168,7 +193,8 @@ class SettingsMixin:
         except Exception:
             return rgb_img
 
-    def _load_support_image(self, max_w, max_h):
+    def _load_support_image(self, max_w, max_h, *, bg_hex=None,
+                            corner_radius=0):
         """Return (PhotoImage, width, height) for the donation QR image.
 
         The RGBA asset is flattened onto the window background colour so its
@@ -189,16 +215,17 @@ class SettingsMixin:
         # Flatten the transparent gutter onto the window's own background colour
         # so it blends in both light and dark themes (a hard-coded white fill
         # left an ugly white seam in dark mode).
-        try:
-            bg_hex = self.theme["settings_bg"]
-        except Exception:
-            bg_hex = "#ffffff"
+        if bg_hex is None:
+            try:
+                bg_hex = self.theme["settings_bg"]
+            except Exception:
+                bg_hex = "#ffffff"
         try:
             h = bg_hex.lstrip("#")
             bg_rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
         except Exception:
             bg_rgb = (255, 255, 255)
-        key = (int(max_w), int(max_h), bg_rgb)
+        key = (int(max_w), int(max_h), bg_rgb, int(corner_radius))
         if key in cache:
             return cache[key]
         try:
@@ -222,6 +249,16 @@ class SettingsMixin:
                     base = base.resize((fit_w, fit_h), resample)
                 else:
                     fit_w, fit_h = src_w, src_h
+                if corner_radius:
+                    radius = max(
+                        1, min(int(corner_radius), fit_w // 2, fit_h // 2))
+                    mask = Image.new("L", (fit_w, fit_h), 0)
+                    from PIL import ImageDraw
+                    ImageDraw.Draw(mask).rounded_rectangle(
+                        (0, 0, fit_w - 1, fit_h - 1),
+                        radius=radius, fill=255)
+                    backdrop = Image.new("RGB", (fit_w, fit_h), bg_rgb)
+                    base = Image.composite(base, backdrop, mask)
                 # The rounded popup uses ROUND_KEY_COLOR (#010101) as its Win32
                 # transparent colour key, so ANY pixel that exactly equals that
                 # colour is punched out and the desktop/background shows through.
@@ -453,14 +490,51 @@ class SettingsMixin:
         self.root.option_add("*TCombobox*Listbox.borderWidth", 10)
         self.root.option_add("*TCombobox*Listbox.font", "{Microsoft YaHei UI} 10")
 
-    def _make_toggle(self, parent, initial, bg):
-        """A modern pill toggle switch. Returns the Canvas widget; call
-        widget.get() to read the current on/off state."""
+    def _make_toggle(self, parent, initial, bg, *, accessible_name=None):
+        """A modern pill toggle switch with .get() and .set(bool)."""
         t = self.theme
         accent = t["accent"]
         off = t["popup_border"]
         knob = "#ffffff"
         W, H = 42, 22
+
+        if accessible_name:
+            try:
+                from PIL import Image, ImageDraw, ImageTk
+
+                def _toggle_image(on):
+                    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                    draw = ImageDraw.Draw(img)
+                    track = accent if on else off
+                    draw.rounded_rectangle(
+                        (1, 1, W - 2, H - 2), radius=H // 2, fill=track)
+                    x = W - 12 if on else 12
+                    draw.ellipse(
+                        (x - 8, 3, x + 8, H - 3),
+                        fill=knob, outline=knob)
+                    return ImageTk.PhotoImage(img, master=self.root)
+
+                off_img = _toggle_image(False)
+                on_img = _toggle_image(True)
+                value = tk.BooleanVar(master=parent, value=bool(initial))
+                check = tk.Checkbutton(
+                    parent, variable=value, text=accessible_name,
+                    image=off_img, selectimage=on_img, compound="none",
+                    indicatoron=False, bg=bg, activebackground=bg,
+                    selectcolor=bg, relief="flat", offrelief="flat", bd=0,
+                    highlightthickness=2, highlightbackground=bg,
+                    highlightcolor=accent, takefocus=1, cursor="hand2")
+                check._toggle_images = (off_img, on_img)
+                check.get = lambda: bool(value.get())
+                check.set = lambda val: value.set(bool(val))
+                check.toggle = lambda _event=None: (
+                    check.invoke(), "break")[1]
+                check.bind("<space>", check.toggle)
+                check.bind("<Return>", check.toggle)
+                return check
+            except Exception:
+                pass
+
         c = tk.Canvas(parent, width=W, height=H, bg=bg,
                       highlightthickness=0, bd=0, cursor="hand2")
         st = {"on": bool(initial)}
@@ -482,6 +556,7 @@ class SettingsMixin:
         c.bind("<Button-1>", toggle)
         draw()
         c.get = lambda: st["on"]
+        c.toggle = toggle
 
         def _set(v):
             st["on"] = bool(v)
@@ -600,6 +675,18 @@ class SettingsMixin:
         win._v2_resizable = False
 
         FONT = "Microsoft YaHei UI"
+        combo_font = tkfont.Font(root=self.root, family=FONT, size=10)
+        combo_width = _settings_combo_width(combo_font, (
+            provider_labels.values(),
+            get_provider_model_labels("codex_cli").values(),
+            get_provider_model_labels("claude_cli").values(),
+            direction_labels.values(),
+            ocr_engine_labels.values(),
+            theme_labels.values(),
+            layout_labels.values(),
+            LANGUAGE_LABELS.values(),
+            tray_click_labels.values(),
+        ))
         radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
         outer = self._rounded_shell(win, radius, bg, border)
 
@@ -683,7 +770,8 @@ class SettingsMixin:
         provider_var = tk.StringVar(
             value=provider_labels.get(current_provider, current_provider))
         provider_combo = ttk.Combobox(
-            body, textvariable=provider_var, state="readonly", width=18,
+            body, textvariable=provider_var, state="readonly",
+            width=combo_width,
             style="CC.TCombobox", font=(FONT, 10),
             values=list(provider_labels.values()))
         self._settings_field(
@@ -695,7 +783,8 @@ class SettingsMixin:
                 provider_model(self.cfg, current_provider),
                 provider_model(self.cfg, current_provider)))
         model_combo = ttk.Combobox(
-            body, textvariable=model_var, state="readonly", width=18,
+            body, textvariable=model_var, state="readonly",
+            width=combo_width,
             style="CC.TCombobox", font=(FONT, 10),
             values=list(model_labels.values()))
         self._settings_field(
@@ -728,7 +817,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.translate_direction"),
             ttk.Combobox(
-                body, textvariable=dir_var, state="readonly", width=18,
+                body, textvariable=dir_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(direction_labels.values())),
             bg=bg, fg=fg, font=FONT)
@@ -761,7 +851,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.ocr_engine"),
             ttk.Combobox(
-                body, textvariable=ocr_engine_var, state="readonly", width=18,
+                body, textvariable=ocr_engine_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(ocr_engine_labels.values())),
             bg=bg, fg=fg, font=FONT)
@@ -781,7 +872,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.theme_field"),
             ttk.Combobox(
-                body, textvariable=theme_var, state="readonly", width=18,
+                body, textvariable=theme_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(theme_labels.values())),
             bg=bg, fg=fg, font=FONT)
@@ -793,7 +885,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.popup_layout"),
             ttk.Combobox(
-                body, textvariable=layout_var, state="readonly", width=18,
+                body, textvariable=layout_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(layout_labels.values())),
             bg=bg, fg=fg, font=FONT)
@@ -811,7 +904,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.language_field"),
             ttk.Combobox(
-                body, textvariable=lang_var, state="readonly", width=18,
+                body, textvariable=lang_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(LANGUAGE_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
@@ -880,7 +974,8 @@ class SettingsMixin:
         self._settings_field(
             body, row_state, i18n.get("settings.label.tray_click_action"),
             ttk.Combobox(
-                body, textvariable=tray_click_var, state="readonly", width=18,
+                body, textvariable=tray_click_var, state="readonly",
+                width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(tray_click_labels.values())),
             bg=bg, fg=fg, font=FONT)
@@ -1160,9 +1255,13 @@ class SettingsMixin:
         rect = get_monitor_rect()
         if rect:
             left, top, right, bottom = rect
+            w = min(w, max(1, right - left - 8))
+            h = min(h, max(1, bottom - top - 8))
             x = left + (right - left - w) // 2
             y = top + (bottom - top - h) // 2
         else:
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            w = min(w, max(1, sw - 8))
+            h = min(h, max(1, sh - 8))
             x, y = (sw - w) // 2, (sh - h) // 2
         self._reveal_rounded_window(win, w, h, x, y)

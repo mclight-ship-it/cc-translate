@@ -121,7 +121,7 @@ TRANSLATIONS = {
         "settings.label.current_version": "当前版本",
         "settings.label.close": "关闭",
         "quick_input.title": "快速翻译",
-        "quick_input.hint": "无选中文字时双击 Ctrl+C 启动本窗口，Ctrl+Enter 翻译",
+        "quick_input.hint": "按 Enter 翻译 · 无选中文字时双击 Ctrl+C 可打开本窗口",
         "quick_input.input_label": "输入要翻译的文本",
         "quick_input.translate": "翻译",
         "quick_input.empty": "请先输入要翻译的内容",
@@ -154,7 +154,7 @@ TRANSLATIONS = {
         "settings.label.codex_streaming": "Codex 流式输出 (Beta)",
         "settings.label.codex_streaming_help": "智能路由对所有文字启用增量显示，优质模式仅对长文本启用。启动前失败会自动使用稳定的非流式模式。",
         "uninstall.title": "卸载 CC Translate",
-        "uninstall.body": "这将删除程序文件夹和快捷方式（开机自启、开始菜单）。\n\n不会卸载 Python、Node.js 或 Claude CLI 等公共工具。\n\n此操作无法撤销。",
+        "uninstall.body": "这将删除程序文件夹和快捷方式（开机自启、开始菜单）。\n\n不会卸载 Python、Node.js、Claude CLI 或 Codex CLI 等公共工具。\n\n此操作无法撤销。",
         "uninstall.keep_data": "保留我的配置和历史记录",
         "uninstall.confirm": "确认卸载",
         "uninstall.cancel": "取消",
@@ -362,7 +362,7 @@ TRANSLATIONS = {
         "update.notice_no_version": "已更新并重启",
 
         # OCR
-        "ocr.drag_select_hint": "拖动选择要翻译的区域 · Esc 取消",
+        "ocr.drag_select_hint": "拖动框选，或依次点击两个角 · Esc 取消",
 
         # Misc
         "misc.custom_endpoint": "自定义兼容端点",
@@ -493,12 +493,12 @@ TRANSLATIONS = {
         "settings.label.codex_streaming": "Codex streaming output (Beta)",
         "settings.label.codex_streaming_help": "Smart routing streams all text incrementally; quality mode streams only long text. Failures before output automatically use the stable non-streaming path.",
         "quick_input.title": "Quick Translate",
-        "quick_input.hint": "Double Ctrl+C with no selection opens this window · Ctrl+Enter to translate",
+        "quick_input.hint": "Press Enter to translate · Double Ctrl+C with no selection opens this window",
         "quick_input.input_label": "Text to translate",
         "quick_input.translate": "Translate",
         "quick_input.empty": "Please enter text to translate.",
         "uninstall.title": "Uninstall CC Translate",
-        "uninstall.body": "This removes the program folder and its shortcuts (startup, Start Menu).\n\nShared tools like Python, Node.js and the Claude CLI are NOT uninstalled.\n\nThis cannot be undone.",
+        "uninstall.body": "This removes the program folder and its shortcuts (startup, Start Menu).\n\nShared tools such as Python, Node.js, Claude CLI, and Codex CLI are not removed.\n\nThis cannot be undone.",
         "uninstall.keep_data": "Keep my settings and history",
         "uninstall.confirm": "Uninstall",
         "uninstall.cancel": "Cancel",
@@ -722,7 +722,7 @@ TRANSLATIONS = {
         "update.notice_no_version": "Updated and restarted",
 
         # OCR
-        "ocr.drag_select_hint": "Drag to select area to translate · Esc to cancel",
+        "ocr.drag_select_hint": "Drag, or click two corners to select · Esc to cancel",
 
         # Misc
         "misc.custom_endpoint": "Endpoint",

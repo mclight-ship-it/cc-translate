@@ -12,6 +12,8 @@ via test_full's shared root) with the UI_V2 flag ON, and assert:
 The class is skipped when Pillow (the v2 renderer) or Tk is unavailable, since
 the v2 skin degrades to legacy in exactly that case.
 """
+import os
+import tempfile
 import time
 import unittest
 
@@ -19,6 +21,7 @@ import tkinter as tk
 
 from tests._tr import tr
 import tests.test_full as tf  # reuse its shared-root + headless-app helpers
+import cc_app_ocr
 
 try:
     import cc_ui_v2 as ccv2
@@ -237,6 +240,10 @@ class TestV2ResultPopup(unittest.TestCase):
                         "pill image")
         self.assertFalse(str(btn.cget("text")),
                          "v2 gradient pill button carries no text glyph")
+        self.assertEqual(
+            win._quick_input_hint.cget("text"),
+            tr.i18n.get("quick_input.hint"))
+        self.assertIn("Enter", win._quick_input_hint.cget("text"))
 
     def test_v2_quick_input_flag_off_is_legacy(self):
         app = self._app(v2=False)
@@ -349,6 +356,22 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertEqual(len(scrolls), 0,
                          "v2 single-line quick-input must have no scrollbar")
 
+    def test_v2_quick_input_enter_submits(self):
+        app = self._app(v2=True)
+        app._show_loading = unittest.mock.Mock()
+        app._open_quick_input()
+        win = app.quick_input_win
+        self._kill_later(win)
+        editor = win._quick_input_text
+        editor.insert("1.0", "translate this")
+        win.update()
+        editor.focus_force()
+
+        editor.event_generate("<KeyPress-Return>")
+        win.update()
+
+        app._show_loading.assert_called_once_with("translate this")
+
 
     # -- history window v2 skin --------------------------------------------
     def test_v2_history_uses_v2_skin(self):
@@ -441,6 +464,316 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertIsNotNone(win)
         self.assertFalse(getattr(win, "_v2", False),
                          "flag off must build the legacy settings window")
+
+    def test_v2_diagnostics_uses_v2_skin(self):
+        app = self._app(v2=True)
+        app._refresh_diagnostics_window = lambda _win=None: None
+        app._open_diagnostics()
+        win = app.diagnostics_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertTrue(getattr(win, "_v2", False))
+        self.assertFalse(getattr(win, "_v2_resizable", True))
+        self.assertEqual(
+            win._diag_theme["settings_bg"],
+            app._v2_window_theme()["settings_bg"])
+        self.assertEqual(win.title(), tr.i18n.get("diagnostics.title"))
+        self.assertIsInstance(win._diag_body, tk.Canvas)
+        self.assertTrue(getattr(win._diag_body, "_diag_rounded", False))
+        self.assertEqual(
+            win._diag_summary.cget("background"),
+            win._diag_theme["settings_bg"])
+        self.assertEqual(
+            win._diag_summary_wrap.cget("background"),
+            win._diag_theme["settings_bg"])
+        self.assertEqual(
+            int(win._diag_summary_wrap.cget("highlightthickness")), 0)
+        self.assertEqual(
+            tuple(win._diag_summary_wrap.pack_info()["pady"]), (2, 16))
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from walk(child)
+
+        self.assertTrue(any(
+            isinstance(widget, tk.Label)
+            and widget.cget("text") == tr.i18n.get("diagnostics.title")
+            for widget in walk(win)))
+        win.update_idletasks()
+        for button in (
+                win._diag_retry_btn, win._diag_copy_btn,
+                win._diag_close_btn, win._diag_refresh_btn):
+            self.assertGreater(button.winfo_height(), 1)
+            self.assertLessEqual(
+                button.winfo_y() + button.winfo_height(),
+                button.master.winfo_height())
+        self.assertEqual(
+            [
+                win._diag_retry_btn,
+                win._diag_copy_btn,
+                win._diag_close_btn,
+                win._diag_refresh_btn,
+            ],
+            list(win._diag_retry_btn.master.winfo_children()))
+        self.assertEqual(str(win._diag_copy_btn.cget("takefocus")), "1")
+        self.assertEqual(str(win._diag_close_btn.cget("takefocus")), "1")
+        self.assertTrue(win._diag_copy_btn.bind("<FocusIn>"))
+        self.assertTrue(win._diag_copy_btn.bind("<FocusOut>"))
+        app._set_diagnostics_button(win._diag_copy_btn, enabled=False)
+        self.assertEqual(str(win._diag_copy_btn.cget("takefocus")), "0")
+        app._set_diagnostics_button(win._diag_copy_btn, enabled=True)
+        self.assertEqual(str(win._diag_copy_btn.cget("takefocus")), "1")
+
+        callbacks = []
+        copied = []
+        app._copy_text_content = lambda text: copied.append(text) or True
+        win.after = lambda _delay, callback: callbacks.append(callback)
+        win._diag_report = "diagnostics report"
+        app._copy_diagnostics_report(win)
+        self.assertEqual(copied, ["diagnostics report"])
+        self.assertEqual(str(win._diag_copy_btn.cget("takefocus")), "1")
+        self.assertEqual(
+            win._diag_copy_btn.cget("text"),
+            tr.i18n.get("diagnostics.copied"))
+        callbacks[0]()
+        self.assertEqual(
+            win._diag_copy_btn.cget("text"),
+            tr.i18n.get("diagnostics.copy"))
+
+    def test_v2_diagnostics_flag_off_is_legacy(self):
+        app = self._app(v2=False)
+        app._refresh_diagnostics_window = lambda _win=None: None
+        app._open_diagnostics()
+        win = app.diagnostics_win
+        self._kill_later(win)
+        self.assertIsNotNone(win)
+        self.assertFalse(getattr(win, "_v2", False))
+
+    def test_v2_support_author_uses_v2_skin(self):
+        app = self._app(v2=True)
+        app._open_support_author()
+        win = app.support_win
+        self._kill_later(win)
+        self.assertTrue(getattr(win, "_v2", False))
+        self.assertFalse(getattr(win, "_v2_resizable", True))
+        self.assertTrue(win.bind("<Escape>"))
+        self.assertIsNotNone(getattr(win, "_support_image_label", None))
+        self.assertTrue(str(win._support_image_label.cget("image")))
+        self.assertEqual(
+            win._support_close_btn.cget("text"), tr.i18n.get("result.close"))
+        self.assertTrue(win._support_close_btn.bind("<FocusIn>"))
+
+    def test_v2_support_author_flag_off_is_legacy(self):
+        app = self._app(v2=False)
+        app._open_support_author()
+        win = app.support_win
+        self._kill_later(win)
+        self.assertFalse(getattr(win, "_v2", True))
+
+    def test_v2_uninstall_uses_safe_default_and_preserves_behavior(self):
+        app = self._app(v2=True)
+        app._perform_uninstall = unittest.mock.Mock(return_value=False)
+        app._confirm_and_uninstall()
+        win = app._uninstall_win
+        self._kill_later(win)
+        self.assertTrue(getattr(win, "_v2", False))
+        self.assertFalse(getattr(win, "_v2_resizable", True))
+        self.assertTrue(win._uninstall_keep_toggle.get())
+        self.assertIsInstance(win._uninstall_keep_toggle, tk.Checkbutton)
+        self.assertEqual(
+            win._uninstall_keep_toggle.cget("text"),
+            tr.i18n.get("uninstall.keep_data"))
+        self.assertEqual(
+            str(win._uninstall_keep_toggle.cget("takefocus")), "1")
+        self.assertTrue(win._uninstall_keep_toggle.bind("<space>"))
+        self.assertTrue(win._uninstall_keep_toggle.bind("<Return>"))
+        self.assertTrue(win._uninstall_cancel_btn.bind("<FocusIn>"))
+        self.assertTrue(win.bind("<Escape>"))
+        self.assertFalse(win._uninstall_status.winfo_manager())
+
+        win._uninstall_confirm_btn.invoke()
+        self.assertTrue(win._uninstall_status.winfo_manager())
+        win._uninstall_keep_toggle.set(False)
+        win._uninstall_confirm_btn.invoke()
+
+        self.assertEqual(
+            app._perform_uninstall.call_args_list,
+            [unittest.mock.call(remove_data=False),
+             unittest.mock.call(remove_data=True)])
+        self.assertEqual(
+            win._uninstall_status.cget("text"),
+            tr.i18n.get("uninstall.failed"))
+
+    def test_v2_uninstall_flag_off_is_legacy(self):
+        app = self._app(v2=False)
+        app._perform_uninstall = unittest.mock.Mock(return_value=False)
+        app._confirm_and_uninstall()
+        win = app._uninstall_win
+        self._kill_later(win)
+        self.assertFalse(getattr(win, "_v2", True))
+
+    def test_v2_ocr_overlay_dims_screen_and_restores_selected_pixels(self):
+        app = self._app(v2=True)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (0, 0, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+
+        app._open_region_selector(screen_image=screen)
+        win = app._ocr_overlay
+        self._kill_later(win)
+        self.assertTrue(getattr(win, "_v2", False))
+        self.assertEqual(win._ocr_capture_mode, "image")
+        self.assertEqual(win.title(), tr.i18n.get("tray.screenshot"))
+        self.assertEqual(
+            win._ocr_accessible_hint.cget("text"),
+            tr.i18n.get("ocr.drag_select_hint"))
+        self.assertEqual(
+            str(win._ocr_accessible_hint.cget("takefocus")), "0")
+        self.assertTrue(win.bind("<Escape>"))
+        self.assertTrue(win._ocr_canvas.bind("<Button-3>"))
+        self.assertEqual(len(win._ocr_selection_items), 3)
+
+        win._ocr_set_selection(90, 70, 520, 260)
+        win.update_idletasks()
+        self.assertIsNotNone(win._ocr_selection_state["selection_photo"])
+        self.assertEqual(
+            win._ocr_selection_state["selection_photo"].width(), 430)
+        self.assertEqual(
+            win._ocr_selection_state["selection_photo"].height(), 190)
+        for item in win._ocr_selection_items:
+            self.assertEqual(
+                win._ocr_canvas.itemcget(item, "state"), "normal")
+        widths = [
+            int(float(win._ocr_canvas.itemcget(item, "width")))
+            for item in win._ocr_selection_items
+        ]
+        self.assertGreater(widths[0], widths[1])
+        self.assertGreater(widths[1], widths[2])
+
+    def test_v2_ocr_overlay_normalizes_virtual_screen_selection(self):
+        app = self._app(v2=True)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (-200, 30, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+        app._open_region_selector(screen_image=screen)
+        win = app._ocr_overlay
+        self._kill_later(win)
+        captures = []
+        callbacks = []
+        app._capture_and_translate = (
+            lambda *args, **kwargs: captures.append((args, kwargs)))
+
+        with unittest.mock.patch.object(
+                app.root, "after",
+                side_effect=lambda delay, callback: callbacks.append(
+                    (delay, callback))):
+            win._ocr_accept_selection(520, 260, 90, 70)
+
+        self.assertFalse(app._ocr_selecting)
+        self.assertEqual(callbacks[0][0], 0)
+        callbacks[0][1]()
+        self.assertEqual(captures[0][0], (-110, 100, 430, 190))
+        self.assertEqual(captures[0][1]["image"].size, (430, 190))
+
+    def test_v2_ocr_overlay_supports_two_click_selection(self):
+        app = self._app(v2=True)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (0, 0, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+        app._open_region_selector(screen_image=screen)
+        win = app._ocr_overlay
+        self._kill_later(win)
+        callbacks = []
+        app._capture_and_translate = lambda *args, **kwargs: None
+
+        self.assertFalse(win._ocr_click_point(90, 70))
+        self.assertEqual(
+            win._ocr_selection_state["click_anchor"], (90, 70))
+        self.assertTrue(all(
+            win._ocr_canvas.itemcget(item, "state") == "normal"
+            for item in win._ocr_anchor_marker))
+        with unittest.mock.patch.object(
+                app.root, "after",
+                side_effect=lambda delay, callback: callbacks.append(
+                    (delay, callback))):
+            self.assertTrue(win._ocr_click_point(520, 260))
+        self.assertFalse(app._ocr_selecting)
+        self.assertEqual(callbacks[0][0], 0)
+
+    def test_v2_ocr_overlay_excludes_real_desktop_preview_from_capture(self):
+        app = self._app(v2=True)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (0, 0, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+
+        with unittest.mock.patch.object(
+                cc_app_ocr.cc_ocr, "grab_region", return_value=screen), \
+                unittest.mock.patch.object(
+                    cc_app_ocr.win32util, "exclude_window_from_capture",
+                    return_value=True) as exclude:
+            app._open_region_selector()
+
+        win = app._ocr_overlay
+        self._kill_later(win)
+        self.assertEqual(win._ocr_capture_mode, "image")
+        exclude.assert_called_once()
+
+    def test_v2_ocr_overlay_fails_closed_when_capture_exclusion_fails(self):
+        app = self._app(v2=True)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (0, 0, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+
+        with unittest.mock.patch.object(
+                cc_app_ocr.cc_ocr, "grab_region", return_value=screen), \
+                unittest.mock.patch.object(
+                    cc_app_ocr.win32util, "exclude_window_from_capture",
+                    return_value=False):
+            app._open_region_selector()
+
+        win = app._ocr_overlay
+        self._kill_later(win)
+        self.assertFalse(getattr(win, "_v2", False))
+        self.assertNotEqual(win._ocr_capture_mode, "image")
+
+    def test_v2_ocr_overlay_flag_off_keeps_legacy_selector(self):
+        app = self._app(v2=False)
+        app._ocr_selecting = False
+        app._ocr_overlay = None
+        app._virtual_screen_rect = lambda: (0, 0, 640, 360)
+        screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
+
+        app._open_region_selector(screen_image=screen)
+        win = app._ocr_overlay
+        self._kill_later(win)
+        self.assertFalse(getattr(win, "_v2", False))
+        self.assertNotEqual(win._ocr_capture_mode, "image")
+
+    def test_ocr_partial_preview_save_is_deleted(self):
+        app = self._app(v2=True)
+        app._destroy_popup = lambda: None
+        app._make_popup = lambda *args, **kwargs: object()
+
+        class PartialImage:
+            @staticmethod
+            def save(path, _format):
+                with open(path, "wb") as partial:
+                    partial.write(b"partial screenshot")
+                raise OSError("simulated save failure")
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                unittest.mock.patch.object(
+                    cc_app_ocr, "DATA_DIR", temp_dir), \
+                unittest.mock.patch.object(cc_app_ocr, "log_error"):
+            app._capture_and_translate(
+                0, 0, 100, 100, image=PartialImage())
+            self.assertEqual(os.listdir(temp_dir), [])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ Public API used by translator.pyw:
     prefer_dwm_rounded(hwnd)
     set_taskbar_presence(hwnd, present)
     get_toplevel_hwnd(hwnd) -> hwnd
+    exclude_window_from_capture(hwnd) -> bool
     activate_foreground(hwnd) -> bool
     acquire_single_instance_mutex(name) -> handle | None
 """
@@ -189,6 +190,27 @@ def get_toplevel_hwnd(hwnd):
         return top or hwnd
     except Exception:
         return hwnd
+
+
+def exclude_window_from_capture(hwnd):
+    """Exclude a top-level window from screen/window capture.
+
+    Returns True only when Windows accepted an exclusion affinity. Callers that
+    render sensitive desktop pixels should fail closed when this returns False.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        set_affinity = user32.SetWindowDisplayAffinity
+        set_affinity.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        set_affinity.restype = wintypes.BOOL
+        top = get_toplevel_hwnd(hwnd)
+        # WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+). WDA_MONITOR is the
+        # compatible fallback and renders the window blank in captured output.
+        if set_affinity(ctypes.c_void_p(top), 0x00000011):
+            return True
+        return bool(set_affinity(ctypes.c_void_p(top), 0x00000001))
+    except Exception:
+        return False
 
 
 def activate_foreground(hwnd):

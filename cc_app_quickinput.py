@@ -372,6 +372,7 @@ class QuickInputMixin:
             font=(FONT, 8) if v2on else (FONT, 9))
         info_lbl.pack(side="left", fill="x", expand=True, padx=(0, 10))
         status = info_lbl  # legacy code paths below reference `status`
+        win._quick_input_hint = info_lbl
 
         def submit(_e=None):
             text = editor.get("1.0", "end-1c").strip()
@@ -424,7 +425,7 @@ class QuickInputMixin:
         editor.bind("<Control-Return>", submit)
         if v2on:
             # Single-line field: Enter submits (return "break" so no newline is
-            # inserted). Ctrl+Enter still works too, matching the hint.
+            # inserted). Keep Ctrl+Enter as a compatible alternate shortcut.
             editor.bind("<Return>", submit)
         editor.bind("<Escape>", lambda e: win.destroy())
         win.bind("<Escape>", lambda e: win.destroy())

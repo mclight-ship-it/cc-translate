@@ -44,6 +44,7 @@ from cc_warm import CLAUDE_CMD
 from cc_update import is_git_deploy, version_string
 from cc_core import (
     APP_DIR, DATA_DIR, CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS,
+    V2_CORNER_RADIUS,
     CODEX_STREAM_MIN_CHARS,
     _user_data_path,
     get_provider_labels, summarize_provider_dogfood, evaluate_codex_rollout,
@@ -56,6 +57,31 @@ from cc_providers.codex_appserver import appserver_version_supported
 # create a cycle).
 CONFIG_PATH = _user_data_path("config.json")
 HISTORY_PATH = _user_data_path("history.json")
+
+
+def _paint_round_rect(canvas, x1, y1, x2, y2, radius, *, fill, tag):
+    radius = max(0, min(int(radius), int((x2 - x1) / 2),
+                        int((y2 - y1) / 2)))
+    shared = {"fill": fill, "outline": fill, "width": 0, "tags": tag}
+    canvas.create_rectangle(
+        x1 + radius, y1, x2 - radius, y2, **shared)
+    canvas.create_rectangle(
+        x1, y1 + radius, x2, y2 - radius, **shared)
+    diameter = 2 * radius
+    arc = {"fill": fill, "outline": fill, "style": "pieslice",
+           "tags": tag}
+    canvas.create_arc(
+        x1, y1, x1 + diameter, y1 + diameter,
+        start=90, extent=90, **arc)
+    canvas.create_arc(
+        x2 - diameter, y1, x2, y1 + diameter,
+        start=0, extent=90, **arc)
+    canvas.create_arc(
+        x1, y2 - diameter, x1 + diameter, y2,
+        start=180, extent=90, **arc)
+    canvas.create_arc(
+        x2 - diameter, y2 - diameter, x2, y2,
+        start=270, extent=90, **arc)
 
 
 def _codex_streaming_status_text(streaming):
@@ -508,18 +534,36 @@ class DiagnosticsMixin:
     def _can_retry_last_translation(self):
         return bool(self._last_input or self._last_origin == "ocr")
 
+    @staticmethod
+    def _set_diagnostics_button(btn, *, text=None, enabled=None, cursor=None):
+        if btn is None:
+            return
+        if text is not None:
+            setter = getattr(btn, "_chip_set", None)
+            if setter is not None:
+                setter(text)
+            else:
+                btn.config(text=text)
+        if enabled is not None:
+            setter = getattr(btn, "_chip_set_enabled", None)
+            if setter is not None:
+                setter(enabled)
+                btn.config(takefocus=bool(enabled))
+            else:
+                btn.config(state="normal" if enabled else "disabled")
+        if cursor is not None:
+            btn.config(cursor=cursor)
+
     def _retry_from_diagnostics(self, win):
         retry_btn = getattr(win, "_diag_retry_btn", None)
         if not self._can_retry_last_translation():
-            if retry_btn is not None:
-                retry_btn.config(
-                    state="disabled", cursor="arrow",
-                    text=i18n.get("diagnostics.retry_unavailable"))
+            self._set_diagnostics_button(
+                retry_btn, enabled=False, cursor="arrow",
+                text=i18n.get("diagnostics.retry_unavailable"))
             return
-        if retry_btn is not None:
-            retry_btn.config(
-                state="disabled", cursor="watch",
-                text=i18n.get("diagnostics.retrying"))
+        self._set_diagnostics_button(
+            retry_btn, enabled=False, cursor="watch",
+            text=i18n.get("diagnostics.retrying"))
         if self._last_input:
             win.destroy()
             self._retry()
@@ -538,27 +582,26 @@ class DiagnosticsMixin:
         refresh_btn = getattr(win, "_diag_refresh_btn", None)
         copy_btn = getattr(win, "_diag_copy_btn", None)
         retry_btn = getattr(win, "_diag_retry_btn", None)
+        theme = getattr(win, "_diag_theme", self.theme)
         if summary is not None:
-            summary.config(text=summary_text, fg=self.theme["accent"])
+            summary.config(text=summary_text, fg=theme["accent"])
         if text is not None:
             text.config(state="normal")
             text.delete("1.0", "end")
             text.insert("1.0", report)
             text.config(state="disabled")
         win._diag_report = report
-        if refresh_btn is not None:
-            refresh_btn.config(
-                state="normal", cursor="hand2",
-                text=i18n.get("diagnostics.redetect"))
-        if copy_btn is not None:
-            copy_btn.config(state="normal", cursor="hand2")
-        if retry_btn is not None:
-            can_retry = self._can_retry_last_translation()
-            retry_btn.config(
-                state="normal" if can_retry else "disabled",
-                cursor="hand2" if can_retry else "arrow",
-                text=(i18n.get("diagnostics.retry_translate")
-                      if can_retry else i18n.get("diagnostics.retry_unavailable")))
+        self._set_diagnostics_button(
+            refresh_btn, enabled=True, cursor="hand2",
+            text=i18n.get("diagnostics.redetect"))
+        self._set_diagnostics_button(
+            copy_btn, enabled=True, cursor="hand2")
+        can_retry = self._can_retry_last_translation()
+        self._set_diagnostics_button(
+            retry_btn, enabled=can_retry,
+            cursor="hand2" if can_retry else "arrow",
+            text=(i18n.get("diagnostics.retry_translate")
+                  if can_retry else i18n.get("diagnostics.retry_unavailable")))
 
     def _refresh_diagnostics_window(self, win=None):
         win = win or self.diagnostics_win
@@ -574,21 +617,24 @@ class DiagnosticsMixin:
         refresh_btn = getattr(win, "_diag_refresh_btn", None)
         copy_btn = getattr(win, "_diag_copy_btn", None)
         retry_btn = getattr(win, "_diag_retry_btn", None)
+        theme = getattr(win, "_diag_theme", self.theme)
         if summary is not None:
-            summary.config(text=i18n.get("diagnostics.refreshing"), fg=self.theme["popup_hint"])
+            summary.config(
+                text=i18n.get("diagnostics.refreshing"),
+                fg=theme["popup_hint"])
         if text is not None:
             text.config(state="normal")
             text.delete("1.0", "end")
             text.insert("1.0", i18n.get("diagnostics.refreshing"))
             text.config(state="disabled")
-        if refresh_btn is not None:
-            refresh_btn.config(state="disabled", cursor="watch", text=i18n.get("diagnostics.refreshing"))
-        if copy_btn is not None:
-            copy_btn.config(state="disabled", cursor="arrow")
-        if retry_btn is not None:
-            retry_btn.config(
-                state="disabled", cursor="watch",
-                text=i18n.get("diagnostics.refreshing"))
+        self._set_diagnostics_button(
+            refresh_btn, enabled=False, cursor="watch",
+            text=i18n.get("diagnostics.refreshing"))
+        self._set_diagnostics_button(
+            copy_btn, enabled=False, cursor="arrow")
+        self._set_diagnostics_button(
+            retry_btn, enabled=False, cursor="watch",
+            text=i18n.get("diagnostics.refreshing"))
 
         result_q = queue.Queue()
         win._diag_queue = result_q
@@ -628,14 +674,20 @@ class DiagnosticsMixin:
             return
         btn = getattr(win, "_diag_copy_btn", None)
         if self._copy_text_content(report) and btn is not None:
-            try:
-                btn.config(text=i18n.get("diagnostics.copied"))
-                win.after(1200, lambda: (
-                    tk.Toplevel.winfo_exists(win)
-                    and getattr(win, "_diag_copy_btn", None)
-                    and win._diag_copy_btn.config(text=i18n.get("diagnostics.copy"))))
-            except Exception:
-                pass
+            self._set_diagnostics_button(
+                btn, text=i18n.get("diagnostics.copied"))
+
+            def restore_label():
+                try:
+                    if not tk.Toplevel.winfo_exists(win):
+                        return
+                except tk.TclError:
+                    return
+                self._set_diagnostics_button(
+                    getattr(win, "_diag_copy_btn", None),
+                    text=i18n.get("diagnostics.copy"))
+
+            win.after(1200, restore_label)
 
     def _open_diagnostics(self):
         if self.diagnostics_win and tk.Toplevel.winfo_exists(self.diagnostics_win):
@@ -643,7 +695,9 @@ class DiagnosticsMixin:
             self._refresh_diagnostics_window(self.diagnostics_win)
             return
 
-        t = self.theme
+        v2on = self._v2_popup_on()
+        scale = self._ui_scale() if v2on else 1.0
+        t = self._v2_window_theme() if v2on else self.theme
         bg = t["settings_bg"]
         fg = t["settings_fg"]
         border = t["popup_border"]
@@ -657,90 +711,170 @@ class DiagnosticsMixin:
         win.lift()
         win.focus_force()
         self.diagnostics_win = win
+        win._v2 = v2on
+        win._v2_resizable = False
+        win._diag_theme = t
+        self._apply_taskbar_identity(win, i18n.get("diagnostics.title"))
 
-        card = self._rounded_shell(win, POPUP_CORNER_RADIUS, bg, border)
+        radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+        card = self._rounded_shell(win, radius, bg, border)
 
         bar = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bar.pack(fill="x", padx=16, pady=(12, 8))
-        logo_img = self._logo_image(18)
-        drag_targets = [bar]
-        if logo_img:
-            logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
-                                highlightthickness=0)
-            logo_lbl.image = logo_img
-            logo_lbl.pack(side="left", padx=(0, 8))
-            drag_targets.append(logo_lbl)
-        title_lbl = tk.Label(bar, text=i18n.get("diagnostics.title"), bg=bg,
-                             fg=accent, font=(FONT, 11, "bold"))
-        title_lbl.pack(side="left")
-        drag_targets.append(title_lbl)
-        close_btn = tk.Label(bar, text="✕", bg=bg, fg=hint,
-                             font=(FONT, 11), cursor="hand2", padx=6)
-        close_btn.pack(side="right")
-        close_btn.bind("<Button-1>", lambda e: win.destroy())
-        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
-        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
-        self._make_draggable(tuple(drag_targets), win)
-        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+        if v2on:
+            bar.pack(fill="x", padx=40, pady=(20, 14))
+            self._v2_brand_header(
+                bar, win, title=i18n.get("diagnostics.title"),
+                subtitle=None, bg=bg, hint=hint, accent=accent, font=FONT,
+                scale=scale, cache_tag="diagnostics_title")
+        else:
+            bar.pack(fill="x", padx=16, pady=(12, 8))
+            logo_img = self._logo_image(18)
+            drag_targets = [bar]
+            if logo_img:
+                logo_lbl = tk.Label(bar, image=logo_img, bg=bg, bd=0,
+                                    highlightthickness=0)
+                logo_lbl.image = logo_img
+                logo_lbl.pack(side="left", padx=(0, 8))
+                drag_targets.append(logo_lbl)
+            title_lbl = tk.Label(
+                bar, text=i18n.get("diagnostics.title"), bg=bg,
+                fg=accent, font=(FONT, 11, "bold"))
+            title_lbl.pack(side="left")
+            drag_targets.append(title_lbl)
+            close_btn = tk.Label(
+                bar, text="✕", bg=bg, fg=hint,
+                font=(FONT, 11), cursor="hand2", padx=6)
+            close_btn.pack(side="right")
+            close_btn.bind("<Button-1>", lambda e: win.destroy())
+            close_btn.bind(
+                "<Enter>", lambda e: close_btn.config(fg=t["status_err"]))
+            close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
+            self._make_draggable(tuple(drag_targets), win)
+            tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
 
-        summary = tk.Label(card, text=i18n.get("diagnostics.refreshing"), bg=bg, fg=hint,
-                           anchor="w", justify="left", font=(FONT, 9, "bold"))
-        summary.pack(fill="x", padx=16, pady=(10, 4))
+        summary_wrap = tk.Frame(
+            card, bg=bg, bd=0, highlightthickness=0)
+        summary_wrap.pack(
+            fill="x", padx=40 if v2on else 16,
+            pady=(2, 16) if v2on else (10, 4))
+        summary = tk.Label(
+            summary_wrap, text=i18n.get("diagnostics.refreshing"),
+            bg=bg, fg=hint, anchor="w", justify="left",
+            font=(FONT, 9, "bold"))
+        summary.pack(fill="x")
 
-        body = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        body_bg = t["list_bg"] if v2on else bg
+        if v2on:
+            body = tk.Canvas(
+                card, bg=bg, bd=0, highlightthickness=0)
+            body_inner = tk.Frame(
+                body, bg=body_bg, bd=0, highlightthickness=0)
+            inset = max(3, int(round(3 * scale)))
+            radius = max(10, int(round(10 * scale)))
+            body_window = body.create_window(
+                inset, inset, anchor="nw", window=body_inner)
+
+            def layout_rounded_body(event):
+                width = max(1, event.width)
+                height = max(1, event.height)
+                body.delete("diag_round_body")
+                _paint_round_rect(
+                    body, 0, 0, width - 1, height - 1, radius,
+                    fill=border, tag="diag_round_body")
+                _paint_round_rect(
+                    body, 1, 1, width - 2, height - 2, radius - 1,
+                    fill=body_bg, tag="diag_round_body")
+                body.tag_lower("diag_round_body")
+                body.coords(body_window, inset, inset)
+                body.itemconfigure(
+                    body_window,
+                    width=max(1, width - 2 * inset),
+                    height=max(1, height - 2 * inset))
+
+            body.bind("<Configure>", layout_rounded_body)
+            body._diag_rounded = True
+        else:
+            body = tk.Frame(
+                card, bg=body_bg, bd=0, highlightthickness=0)
+            body_inner = body
         text = tk.Text(
-            body, bg=t["bg"], fg=fg, wrap="word", relief="flat", bd=0,
-            padx=12, pady=10, font=(FONT, 10), highlightthickness=0,
+            body_inner, bg=body_bg if v2on else t["bg"], fg=fg,
+            wrap="word", relief="flat", bd=0,
+            padx=16 if v2on else 12, pady=14 if v2on else 10,
+            font=(FONT, 10), highlightthickness=0,
             insertwidth=0, selectbackground=t["sel_bg"])
         scroll = ttk.Scrollbar(
-            body, orient="vertical", style="CC.Vertical.TScrollbar",
+            body_inner, orient="vertical", style="CC.Vertical.TScrollbar",
             command=text.yview)
         text.config(yscrollcommand=scroll.set, state="disabled")
         text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        tk.Frame(card, bg=border, height=1).pack(fill="x", padx=16)
+        separator = None
+        if not v2on:
+            separator = tk.Frame(card, bg=border, height=1)
         bottom = tk.Frame(card, bg=bg, bd=0, highlightthickness=0)
-        bottom.pack(fill="x", padx=16, pady=(10, 14))
-        refresh_btn = self._pill_button(
-            bottom, i18n.get("diagnostics.redetect"), lambda: self._refresh_diagnostics_window(win),
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 10), padx=18, pady=6)
-        refresh_btn.pack(side="right")
-        close2 = self._pill_button(
-            bottom, i18n.get("settings.label.close"), win.destroy,
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 10), padx=18, pady=6)
-        close2.pack(side="right", padx=(0, 8))
-        copy_btn = self._pill_button(
-            bottom, i18n.get("diagnostics.copy"), lambda: self._copy_diagnostics_report(win),
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 10), padx=18, pady=6)
-        copy_btn.pack(side="right", padx=(0, 8))
-        retry_btn = self._pill_button(
-            bottom, i18n.get("diagnostics.retry_translate"),
-            lambda: self._retry_from_diagnostics(win),
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 10), padx=18, pady=6)
-        retry_btn.pack(side="right", padx=(0, 8))
+        bottom.pack(
+            side="bottom", fill="x", padx=40 if v2on else 16,
+            pady=(0, 20) if v2on else (10, 14))
+        actions = tk.Frame(bottom, bg=bg, bd=0, highlightthickness=0)
+        actions.pack(side="right")
+        if separator is not None:
+            separator.pack(side="bottom", fill="x", padx=16)
+        body.pack(
+            fill="both", expand=True, padx=40 if v2on else 12,
+            pady=(0, 14) if v2on else (0, 6))
+
+        def make_button(text_, command, *, primary=False):
+            if v2on:
+                button = self._v2_soft_button(
+                    actions, text_, command, grad=primary)
+                button.config(takefocus=True)
+                button.bind(
+                    "<FocusIn>",
+                    lambda _event, b=button: b.config(image=b._chip_hover)
+                    if getattr(b, "_chip_enabled", True) else None)
+                button.bind(
+                    "<FocusOut>",
+                    lambda _event, b=button: b.config(image=b._chip_normal))
+                return button
+            return self._pill_button(
+                actions, text_, command,
+                bg=t["list_bg"], fg=fg,
+                hover_bg=t["btn_active"], hover_fg=fg,
+                active_bg=t["list_sel"], active_fg=fg,
+                font=(FONT, 10), padx=18, pady=6)
+
+        retry_btn = make_button(
+            i18n.get("diagnostics.retry_translate"),
+            lambda: self._retry_from_diagnostics(win))
+        retry_btn.pack(side="left")
+        copy_btn = make_button(
+            i18n.get("diagnostics.copy"),
+            lambda: self._copy_diagnostics_report(win))
+        copy_btn.pack(side="left", padx=(10 if v2on else 8, 0))
+        close2 = make_button(
+            i18n.get("settings.label.close"), win.destroy)
+        close2.pack(side="left", padx=(10 if v2on else 8, 0))
+        refresh_btn = make_button(
+            i18n.get("diagnostics.redetect"),
+            lambda: self._refresh_diagnostics_window(win), primary=v2on)
+        refresh_btn.pack(side="left", padx=(10 if v2on else 8, 0))
 
         win._diag_summary = summary
+        win._diag_summary_wrap = summary_wrap
+        win._diag_body = body
         win._diag_text = text
         win._diag_refresh_btn = refresh_btn
+        win._diag_close_btn = close2
         win._diag_copy_btn = copy_btn
         win._diag_retry_btn = retry_btn
         win._diag_report = ""
         win.bind("<Escape>", lambda e: win.destroy())
 
-        w, h, x, y = self._centered_box()
+        if v2on:
+            w, h, x, y = self._scaled_centered_box(680, 520)
+        else:
+            w, h, x, y = self._centered_box()
         self._reveal_rounded_window(win, w, h, x, y)
         self._refresh_diagnostics_window(win)

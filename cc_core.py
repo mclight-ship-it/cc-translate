@@ -523,7 +523,7 @@ for _code, (_zh_name, _en_name) in LANGUAGES.items():
     DIRECTION_MODES[f"to_{_code}"] = (
         f"Translate the user's text into natural {_en_name}.")
     DIRECTION_LABELS_ZH[f"to_{_code}"] = f"总是译成{_zh_name}"
-    DIRECTION_LABELS_EN[f"to_{_code}"] = f"Always to {_en_name}"
+    DIRECTION_LABELS_EN[f"to_{_code}"] = f"To {_en_name}"
 
 
 def get_direction_labels():

@@ -1077,7 +1077,9 @@ class PopupMixin:
         hover preview shows the app name and icon rather than Tk's default
         'tk' title and feather icon."""
         try:
-            win.title(title or APP_NAME)
+            if title is not None:
+                win._taskbar_title = title
+            win.title(getattr(win, "_taskbar_title", None) or APP_NAME)
         except Exception:
             pass
         try:
@@ -1400,8 +1402,9 @@ class PopupMixin:
             lambda: ccv2.gradient_text(
                 title, ccv2.load_font("bold", 15, scale)))
         if title_img is not None:
-            title_lbl = tk.Label(heading, image=title_img, bg=bg, bd=0,
-                                 highlightthickness=0)
+            title_lbl = tk.Label(
+                heading, image=title_img, text=title, bg=bg, bd=0,
+                highlightthickness=0)
             title_lbl.image = title_img
         else:
             title_lbl = tk.Label(heading, text=title, bg=bg, fg=accent,
@@ -1414,9 +1417,11 @@ class PopupMixin:
             sub_lbl.pack(side="top", anchor="w", pady=(2, 0))
             drag_targets.append(sub_lbl)
         close_btn = self._v2_ghost_button(
-            bar, lambda: win.destroy(), icon="close", danger=True)
+            bar, lambda: win.destroy(), icon="close", danger=True,
+            tooltip=i18n.get("result.close"))
         close_btn.pack(side="right", anchor="n")
         self._make_draggable(tuple(drag_targets), win)
+        return close_btn
 
     def _v2_photo(self, key, factory):
         """Cache-and-keep a PhotoImage for the v2 popup header (Tk drops
@@ -1519,7 +1524,7 @@ class PopupMixin:
         return self._v2_photo(("herologo", path, s, round(scale, 2)), _bake)
 
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
-                        tooltip=None, min_w=0, grad=False):
+                        tooltip=None, min_w=0, grad=False, danger=False):
         """A soft translucent pill button (concept's 复制 / 操作 style) as a
         tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
         re-bake the label (copy-feedback / processing text). Falls back to a
@@ -1528,7 +1533,7 @@ class PopupMixin:
         triangle, so it never renders as a tofu box in the baked image. ``min_w``
         (device px) floors the baked width so sibling pills match (操作/复制).
         ``grad`` bakes a filled brand-gradient pill (the accented primary
-        action, e.g. 请喝咖啡)."""
+        action, e.g. 请喝咖啡); ``danger`` bakes a destructive error-colour pill."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         popup_bg = self._v2_tk_colors()["panel"]
@@ -1546,17 +1551,22 @@ class PopupMixin:
             lbl, has_caret = _clean(label)
             font = ccv2.load_font("reg", 10, scale) if lbl else None
             return self._v2_photo(
-                ("soft", lbl, icon, has_caret, hover, min_w, grad,
+                ("soft", lbl, icon, has_caret, hover, min_w, grad, danger,
                  round(scale, 2)),
                 lambda: ccv2.soft_pill(text=lbl, icon=icon, font=font,
                                        palette=pal, scale=scale, hover=hover,
-                                       caret=has_caret, min_w=min_w, grad=grad))
+                                       caret=has_caret, min_w=min_w, grad=grad,
+                                       danger=danger))
 
         normal = _bake(text, False)
         hover = _bake(text, True)
         if normal is None:
-            return self._pill_button(parent, text or "", cmd, bg=popup_bg,
-                                     fg=self._v2_tk_colors()["hint"])
+            colors = self._v2_window_theme()
+            fallback_bg = colors["status_err"] if danger else popup_bg
+            fallback_fg = "#ffffff" if danger else self._v2_tk_colors()["hint"]
+            return self._pill_button(
+                parent, text or "", cmd, bg=fallback_bg, fg=fallback_fg,
+                hover_bg=fallback_bg, hover_fg=fallback_fg)
         def _invoke():
             if getattr(b, "_chip_enabled", True):
                 return cmd()
@@ -1615,9 +1625,10 @@ class PopupMixin:
         active = _bake(False, active=True)
         active_hover = _bake(True, active=True)
         if normal is None:
-            return self._pill_button(parent, "", cmd, bg=popup_bg,
+            return self._pill_button(parent, tooltip or "", cmd, bg=popup_bg,
                                      fg=self._v2_tk_colors()["hint"])
-        b = tk.Button(parent, image=normal, command=cmd, bg=popup_bg,
+        b = tk.Button(parent, image=normal, text=tooltip or "", command=cmd,
+                      bg=popup_bg,
                       activebackground=popup_bg, relief="flat", bd=0,
                       highlightthickness=0, cursor="hand2")
         b.image = normal
@@ -1630,6 +1641,10 @@ class PopupMixin:
         b.bind("<Enter>", lambda e: b.config(
             image=(b._chip_active_hover if b._active else b._chip_hover)))
         b.bind("<Leave>", lambda e: b.config(
+            image=(b._chip_active if b._active else b._chip_normal)))
+        b.bind("<FocusIn>", lambda e: b.config(
+            image=(b._chip_active_hover if b._active else b._chip_hover)))
+        b.bind("<FocusOut>", lambda e: b.config(
             image=(b._chip_active if b._active else b._chip_normal)))
         if tooltip:
             self._make_tooltip(b, tooltip)

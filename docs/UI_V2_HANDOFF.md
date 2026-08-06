@@ -1,18 +1,17 @@
-# CC Translate — UI v2 暂停与恢复手册
+# CC Translate — UI v2 状态与恢复手册
 
-> 状态：**已暂停**
+> 状态：**已恢复，诊断窗口与 OCR overlay v2 已完成**
 >
-> 暂停日期：2026-08-05  
-> 暂停原因：Claude 订阅不可用，当前优先级切换为 Claude / GPT 多模型 provider。  
-> UI 基线提交：`99378ea`（About 窗口最后一轮视觉修正）  
+> 暂停日期：2026-08-05；恢复日期：2026-08-06
+> 旧 UI 基线提交：`99378ea`（About 窗口最后一轮视觉修正）
 > 原始规划：[`UI_V2_PLAN.md`](UI_V2_PLAN.md)
 
-本文记录 UI v2 暂停时的真实进度、代码结构、本机功能开关、验证方法、遗留项和恢复顺序。
-恢复 UI 工作时，应先阅读本文，不要仅依赖聊天记录或旧版进度表。
+本文记录 UI v2 的真实进度、代码结构、本机功能开关、验证方法、遗留项和后续顺序。
+继续 UI 工作时，应先阅读本文，不要仅依赖聊天记录或旧版进度表。
 
 ---
 
-## 1. 暂停时的产品状态
+## 1. 当前产品状态
 
 UI v2 仍处于 **dark launch**：
 
@@ -21,6 +20,30 @@ UI v2 仍处于 **dark launch**：
 - 开发者可通过本机环境变量启用 v2，在真实 App 中日常测试。
 - 设置页面目前没有公开的“启用新版 UI”开关。
 - 如果 Pillow 不可用，即使开关为 true，也会自动走 legacy UI。
+
+2026-08-06 恢复工作后已完成：
+
+- 固化 `tools/capture_ui_v2.py`，使用合成数据批量抓取真实 Tk 窗口。
+- 重新抓取 8 个已完成表面的暗色 / 亮色基线，共 16 张页面图。
+- 为设置页额外生成暗色 / 亮色 provider 区域 crop。
+- 检查 Provider、Model、翻译方向和 Codex streaming 布局。
+- 根据当前语言的最长选项动态计算所有设置下拉框的统一宽度，修复中英文翻译
+  方向文案被截断；宽度同时设有高 DPI 上限，窗口最终几何不会超出显示器工作区。
+- 将诊断窗口接入 v2 外壳，保留 legacy fallback、异步重检、报告复制和失败重试；
+  报告文本区已改为圆角卡片，中英文暗亮主题均已真实抓图验证。
+- OCR overlay 使用平滑降亮的桌面预览、正常亮度选区、宽荧光边框和四角节点；
+  支持拖动或依次点击两个角，保留 Esc / 右键取消和 legacy fallback。
+- OCR 使用用户确认的预览帧，不会在确认后重新截取变化中的内容；真实桌面预览窗口
+  必须成功启用 Windows capture exclusion，否则安全回退 legacy overlay。
+- About 下的 Support-author 和卸载确认次级窗口已接入 v2 外壳，同时保留
+  legacy fallback。Support-author 使用原二维码资源；卸载确认使用明确的危险按钮，
+  默认聚焦取消操作，并保留数据开关支持键盘和原生复选状态。
+- 抓图工具已纳入这两个次级窗口；中文暗亮主题和卸载英文长文暗亮主题均已真实抓图，
+  截图 fixture 不会执行真正卸载。
+- 抓图工具会在进程内强制 v2、固定开机启动状态和历史日期，并按所选语言生成标题；
+  宿主环境变量和本机状态不会污染基线。
+- 当前抓图环境为约 200% DPI；图片和 manifest 保存在 session artifact
+  目录，不提交用户数据或截图到仓库。
 
 暂停前最后处理的是 About 窗口：
 
@@ -47,13 +70,13 @@ UI v2 仍处于 **dark launch**：
 | 历史记录窗口 | ✅ v2 已实现，卡片式布局 | `cc_app_history.py::_open_history` |
 | 设置窗口 | ✅ v2 已实现 | `cc_app_settings.py::_open_settings` |
 | 关于窗口 | ✅ v2 已实现，暂停前最后精修 | `cc_app_about.py::_open_about` |
-| 诊断窗口 | ⬜ 仍为 legacy | `cc_app_diagnostics.py::_open_diagnostics` |
-| OCR 截图区域选择器 | ⬜ 仍为 legacy / 系统式 overlay | `cc_app_ocr.py::_open_region_selector` |
-| 请作者喝咖啡图片窗口 | ⬜ 仍为 legacy | `cc_app_about.py` |
-| 卸载确认窗口 | ⬜ 仍为 legacy | `cc_app_about.py::_confirm_and_uninstall` |
+| 诊断窗口 | ✅ v2 已实现 | `cc_app_diagnostics.py::_open_diagnostics` |
+| OCR 截图区域选择器 | ✅ v2 已实现，保留安全 legacy fallback | `cc_app_ocr.py::_open_region_selector` |
+| 请作者喝咖啡图片窗口 | ✅ v2 已实现，保留 legacy fallback | `cc_app_about.py::_open_support_author` |
+| 卸载确认窗口 | ✅ v2 已实现，保留 legacy fallback | `cc_app_about.py::_confirm_and_uninstall` |
 | 托盘菜单 / 系统通知 | 🚫 系统原生，不纳入皮肤 | `cc_app_tray.py` / `cc_app_update.py` |
 
-高频主链已经基本完成；未完成的主要是诊断、OCR overlay 和 About 下的次级窗口。
+所有计划内应用窗口已经完成；托盘菜单和系统通知继续使用系统原生表面。
 
 ---
 
@@ -358,13 +381,25 @@ About 名称使用更明显的紫 → 亮粉水平渐变：
 6. 暗色和亮色各抓一张。
 7. 对圆角、状态点、按钮、图标和文本 baseline 做局部放大。
 
-之前临时使用的抓图脚本已经按要求删除，仓库里当前没有固定的视觉回归工具。
-恢复 UI 工作时，建议第一步把该工具整理为受控的开发脚本，而不是每次临时重写。
+固定的开发抓图工具现位于：
+
+```text
+tools/capture_ui_v2.py
+```
+
+它使用合成内容构造真实 Tk 窗口，不启动热键、托盘或模型进程，不读取剪贴板和用户历史。
+默认输出到系统临时目录；也可通过 `--output-dir` 写入 session artifact 目录。示例：
+
+```powershell
+python tools\capture_ui_v2.py --surface all --theme both
+```
+
+抓取设置页时还会额外生成 provider / model 区域 crop，便于模型架构变化后快速复核。
 
 ### 7.3 每个页面至少检查
 
 - 暗色 / 亮色。
-- 100% / 当前 150% DPI；有条件再测 125%、200%。
+- 100% / 当前 200% DPI；有条件再测 125%、150%。
 - 四个圆角和 transparent-color 颗粒。
 - 首帧是否闪烁。
 - 控件左右边界和纵向 baseline。
@@ -386,10 +421,13 @@ tests/test_ui_v2.py
   纯渲染：palette、缩放、渐变、mask、卡片、按钮、输入框。
 
 tests/test_ui_v2_popup.py
-  Tk 集成：结果窗口、流式、快速翻译、历史、设置。
+  Tk 集成：结果窗口、流式、快速翻译、历史、设置、诊断、OCR overlay。
 
 tests/test_full.py
   功能开关、窗口构建 smoke、About 等通用行为。
+
+tests/test_capture_ui_v2.py
+  抓图参数、合成数据、输出目录、设置页 crop 和窗口夹具状态。
 ```
 
 运行：
@@ -406,6 +444,7 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 - 跑 flag-off 测试前要移除 `CC_UI_V2`，否则环境变量会强制 v2，导致 legacy 断言假失败。
 - 缺 Pillow、缺 Tk 或没有显示环境时，部分 GUI 测试可能跳过。
 - 全绿不代表视觉通过；仍必须执行第 7 节真实窗口抓图。
+- UI 回归按本次触及的表面执行；完全未修改的窗口无需重复运行视觉或窗口集成回归。
 
 ---
 
@@ -413,13 +452,8 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 
 ### 9.1 明确未完成
 
-- 诊断窗口 v2。
-- OCR 区域选择 overlay v2。
-- Support-author 图片窗口 v2。
-- 卸载确认窗口 v2。
 - 对外公开的新 UI 设置开关。
 - 真正的 Acrylic / 毛玻璃。
-- 固化的 PrintWindow 抓图工具和视觉基线。
 
 ### 9.2 需要持续关注
 
@@ -428,7 +462,8 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 - 主题切换后的 PhotoImage cache。
 - 流式窗口动态增高时的背景接缝。
 - GUI 测试在无显示环境中的跳过。
-- About 当前主要依赖 renderer 测试和通用窗口 smoke，缺少专用 v2 集成断言。
+- About 主窗口及两个次级窗口均有真实窗口 smoke；次级窗口另有 v2 / legacy、
+  安全卸载 fixture、默认状态和键盘路径的专用断言。
 
 ### 9.3 文档债务
 
@@ -438,9 +473,9 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 
 ---
 
-## 10. 恢复 UI 工作流时的建议顺序
+## 10. 后续 UI 工作建议顺序
 
-### Step 1 — 建立新基线
+### Step 1 — 建立新基线（✅ 2026-08-06 完成）
 
 1. 确认模型 provider 改造已经稳定，不要同时大改模型主链和 UI。
 2. 阅读本文、`UI_V2_PLAN.md` 和最新相关提交。
@@ -449,23 +484,12 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 5. 用 `CC_UI_V2=1` 启动真实 App。
 6. 重新抓取所有已完成页面的暗色 / 亮色基线。
 
-### Step 2 — 固化视觉验证工具
+### Step 2 — 使用固化的视觉验证工具（✅ 2026-08-06 完成）
 
-把 PrintWindow 抓图逻辑整理成仅开发使用的脚本：
+运行 `tools/capture_ui_v2.py` 建立基线。该工具支持页面、主题、语言和输出目录参数，
+并对设置页 provider 区域生成放大 crop；输出保持在临时/session 目录，不提交截图。
 
-```text
-tools/capture_ui_v2.py
-```
-
-要求：
-
-- 不进入生产运行路径。
-- 可指定页面和主题。
-- 输出到临时目录或 session artifact，不污染仓库。
-- 可对关键区域生成放大 crop。
-- 不把用户真实翻译内容写入测试截图。
-
-### Step 3 — 修复回归，而不是立刻做新页面
+### Step 3 — 修复回归，而不是立刻做新页面（✅ 设置页完成）
 
 模型 provider 改造可能会改变：
 
@@ -476,18 +500,17 @@ tools/capture_ui_v2.py
 
 应先保证已完成 v2 页面在新模型架构下仍然对齐，再继续新页面。
 
-### Step 4 — 继续未完成表面
+### Step 4 — 计划内表面已完成
 
 推荐顺序：
 
-1. **设置页 provider 新区域视觉整合**  
-   模型工作会直接新增“服务商 + 模型 + 登录状态”，优先保证它适配 v2。
-2. **诊断窗口**  
-   多 provider 后诊断内容会明显增加，等 provider 结构稳定后再做，避免返工。
-3. **OCR overlay**  
-   等 Claude / GPT 图片调用都稳定后再统一视觉。
-4. **卸载确认和 Support-author 次级窗口**。
-5. 评估是否公开 UI v2 开关。
+1. **诊断窗口**（✅ 2026-08-06 完成）
+   已接入 v2，并保留多 provider 报告、异步刷新、复制和重试行为。
+2. **OCR overlay**（✅ 2026-08-06 完成）
+   已完成平滑降亮、正常亮度选区、荧光边框、安全预览帧和两点点击路径。
+3. **卸载确认和 Support-author 次级窗口**（✅ 2026-08-06 完成）
+   已保留原业务与 legacy fallback，并完成中英文、暗亮主题真实抓图。
+4. **下一项：评估是否公开 UI v2 开关。**
 
 ### Step 5 — 每页完成标准
 
@@ -498,7 +521,8 @@ tools/capture_ui_v2.py
 - 两轮细节自审：对齐 / 间距 / 圆角 / 图标 / 状态。
 - DPI 和长文 / 错误态检查。
 - 自动化测试通过。
-- 无临时抓图脚本和 crop 遗留在仓库。
+- 无一次性抓图脚本和临时 crop 遗留在仓库；统一使用固定工具，图片输出到
+  临时/session artifact 目录。
 - 一页一个可回滚提交。
 
 ---
@@ -528,15 +552,14 @@ docs/GPT_PROVIDER_PLAN.md
 
 未来重新开始 UI v2 时，可以直接按此清单：
 
-- [ ] 阅读 `docs/UI_V2_HANDOFF.md`
-- [ ] 阅读 `docs/UI_V2_PLAN.md`
-- [ ] 确认 provider 改造状态和工作树
-- [ ] 运行完整测试
-- [ ] 设置 `CC_UI_V2=1`
-- [ ] 重启真实 App
-- [ ] 抓暗色 / 亮色全页面基线
-- [ ] 固化 PrintWindow 工具
-- [ ] 先修 provider 引入的 UI 回归
-- [ ] 再做设置 provider 区域 / 诊断 / OCR
+- [x] 阅读 `docs/UI_V2_HANDOFF.md`
+- [x] 阅读 `docs/UI_V2_PLAN.md`
+- [x] 确认 provider 改造状态和工作树
+- [x] 运行 UI v2 聚焦测试
+- [x] 使用真实 Tk 构建器批量打开 v2 表面
+- [x] 抓暗色 / 亮色全页面基线
+- [x] 固化 PrintWindow 工具
+- [x] 修复 provider 引入的设置页方向文案截断
+- [x] 完成诊断 / OCR v2
+- [ ] 继续 About 次级窗口
 - [ ] 每页真实抓图 + 自动化测试 + 独立提交
-

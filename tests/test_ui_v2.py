@@ -274,6 +274,46 @@ class TestConceptPolish(unittest.TestCase):
         # Hover brightens the fill/ink, so the two bakes differ.
         self.assertNotEqual(normal.tobytes(), hover.tobytes())
 
+    def test_gradient_soft_pill_hover_keeps_brand_fill(self):
+        pal = v2.get_palette("light")
+        normal = v2.soft_pill(
+            palette=pal, scale=1.0, hover=False, min_w=80, grad=True)
+        hover = v2.soft_pill(
+            palette=pal, scale=1.0, hover=True, min_w=80, grad=True)
+        center = (hover.width // 2, hover.height // 2)
+        self.assertNotEqual(normal.tobytes(), hover.tobytes())
+        self.assertNotEqual(hover.getpixel(center)[:3], (255, 255, 255))
+
+    def test_danger_soft_pill_is_filled_and_changes_on_hover(self):
+        def _luminance(rgb):
+            channels = []
+            for value in rgb:
+                value /= 255
+                channels.append(
+                    value / 12.92 if value <= 0.04045
+                    else ((value + 0.055) / 1.055) ** 2.4)
+            return (
+                0.2126 * channels[0]
+                + 0.7152 * channels[1]
+                + 0.0722 * channels[2])
+
+        for theme in ("dark", "light"):
+            with self.subTest(theme=theme):
+                pal = v2.get_palette(theme)
+                normal = v2.soft_pill(
+                    palette=pal, scale=1.0, hover=False,
+                    min_w=80, danger=True)
+                hover = v2.soft_pill(
+                    palette=pal, scale=1.0, hover=True,
+                    min_w=80, danger=True)
+                center = (normal.width // 2, normal.height // 2)
+                self.assertEqual(normal.getpixel(center)[3], 255)
+                self.assertNotEqual(normal.tobytes(), hover.tobytes())
+                for image in (normal, hover):
+                    fill = image.getpixel(center)[:3]
+                    contrast = 1.05 / (_luminance(fill) + 0.05)
+                    self.assertGreaterEqual(contrast, 4.5)
+
     def test_soft_pill_caret_widens_it(self):
         pal = self._pal()
         font = v2.load_font("reg", 10, 1.0)

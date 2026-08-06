@@ -712,11 +712,12 @@ def brand_badge(size_pt, palette, scale=1.0):
 
 
 def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
-              hover=False, caret=False, min_w=0, grad=False):
+              hover=False, caret=False, min_w=0, grad=False, danger=False):
     """A soft translucent rounded pill button (RGBA) — the concept's primary
     top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
     ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
-    pill radius and a gentle white fill that brightens on ``hover``. Every pill
+    pill radius and a gentle white fill that brightens on ``hover``. ``danger``
+    uses the palette's error colour for a destructive primary action. Every pill
     bakes to the SAME height (``SOFT_BTN_H_PTS``) regardless of whether it has an
     icon, so 复制 and 操作 are the same size and sit on the same line. ``min_w``
     (device px) floors the width so sibling pills match; the content is centred
@@ -749,11 +750,24 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
         # the whole surface with a faint white sheen.
         img = gradient_round(W, H, H // 2, stops=BRAND, angle=120)
         if hover:
-            sheen = Image.new("RGBA", (W, H), (255, 255, 255, 30))
-            sheen.putalpha(rounded_mask(W, H, H // 2))
+            sheen = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+            sheen.putalpha(
+                rounded_mask(W, H, H // 2).point(
+                    lambda alpha: alpha * 30 // 255))
             img.alpha_composite(sheen)
         ink = (255, 255, 255, 255)
         d = ImageDraw.Draw(img)
+    elif danger:
+        err = tuple(palette["err"])
+        if is_dark:
+            err = tuple(round(channel * 0.75) for channel in err)
+        if hover:
+            err = tuple(round(channel * 0.92) for channel in err)
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle(
+            (0, 0, W - 1, H - 1), radius=H // 2, fill=err + (255,))
+        ink = (255, 255, 255, 255)
     else:
         img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
