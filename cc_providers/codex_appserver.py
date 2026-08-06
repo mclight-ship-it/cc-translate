@@ -254,6 +254,8 @@ class CodexAppServerTransport:
         self.idle_timeout_seconds = idle_timeout_seconds
         self._stream_lock = threading.Lock()
         self._state_lock = threading.Lock()
+        self._prewarm_cancel_event = threading.Event()
+        self._foreground_waiters = 0
         self._proc = None
         self._output_queue = None
         self._stdout_thread = None
@@ -279,6 +281,125 @@ class CodexAppServerTransport:
             command.extend(("-c", override))
         return command
 
+    def ready_for(self, profile):
+        with self._state_lock:
+            return (
+                not self._closed
+                and self._profile == profile
+                and self._proc is not None
+                and self._process_running(self._proc)
+            )
+
+    def warm_up(self, request):
+        """Initialize and validate a process without starting a model turn."""
+        started_at = time.perf_counter()
+        if not self.command:
+            return ProviderResult(False, error_code="cli_not_installed")
+        if not _supported_appserver_version(self.command):
+            return ProviderResult(
+                False, error_code="appserver_version_unsupported")
+        try:
+            os.makedirs(self.work_dir, exist_ok=True)
+        except OSError as exc:
+            return ProviderResult(
+                False, error_code="workdir_failed",
+                error_detail=_sanitize_detail(str(exc)))
+
+        if self.ready_for(request.model):
+            return ProviderResult(
+                True,
+                metrics=(("total_ms", int(
+                    (time.perf_counter() - started_at) * 1000)),))
+
+        deadline = time.monotonic() + 10
+        if not self._acquire_stream_lock(
+                deadline, self._prewarm_cancel_event):
+            code = (
+                "cancelled"
+                if self._prewarm_cancel_event.is_set()
+                else "timeout"
+            )
+            return ProviderResult(False, error_code=code)
+        proc = None
+        reusable = False
+        started_process = False
+        parser = CodexAppServerParser(lambda _delta: None)
+
+        def metrics():
+            return (("total_ms", int(
+                (time.perf_counter() - started_at) * 1000)),)
+
+        try:
+            with self._state_lock:
+                if self._closed:
+                    return ProviderResult(
+                        False, error_code="appserver_shutdown",
+                        metrics=metrics())
+                proc = self._proc
+                output_queue = self._output_queue
+                same_profile = self._profile == request.model
+            if (proc is not None and same_profile
+                    and self._process_running(proc)):
+                reusable = True
+                return ProviderResult(True, metrics=metrics())
+            self._cancel_idle_timer()
+            if proc is not None:
+                self._stop_process(proc)
+            proc = self._start_process(request)
+            started_process = True
+            output_queue = self._output_queue
+
+            initialize_id = self._take_request_id()
+            self._send(proc, "initialize", {
+                "clientInfo": {
+                    "name": "cc-translate",
+                    "version": "experimental-appserver-1",
+                },
+                "capabilities": {"experimentalApi": False},
+            }, initialize_id)
+            while initialize_id not in parser.responses:
+                kind, payload = self._next_message(
+                    proc, output_queue, deadline,
+                    self._prewarm_cancel_event)
+                if kind != "line":
+                    return self._early_result(
+                        kind, payload, parser, metrics())
+                parser.feed(payload)
+            self._send(proc, "initialized")
+
+            hooks_id = self._take_request_id()
+            self._send(proc, "hooks/list", {
+                "cwds": [os.path.abspath(self.work_dir)],
+            }, hooks_id)
+            while hooks_id not in parser.responses:
+                kind, payload = self._next_message(
+                    proc, output_queue, deadline,
+                    self._prewarm_cancel_event)
+                if kind != "line":
+                    return self._early_result(
+                        kind, payload, parser, metrics())
+                parser.feed(payload)
+            _validate_hook_preflight(
+                parser.responses[hooks_id], self.work_dir)
+            reusable = True
+            return ProviderResult(True, metrics=metrics())
+        except CodexAppServerProtocolError as exc:
+            return ProviderResult(
+                False, error_code=exc.code,
+                error_detail=_sanitize_detail(exc.detail),
+                metrics=metrics())
+        except (OSError, ValueError) as exc:
+            return ProviderResult(
+                False, error_code="appserver_io_failed",
+                error_detail=_sanitize_detail(str(exc)),
+                metrics=metrics())
+        finally:
+            if reusable and started_process:
+                self._schedule_idle_shutdown(max_seconds=30)
+            elif started_process and proc is not None:
+                self._stop_process(proc)
+            self._stream_lock.release()
+
     def stream(self, request, on_delta, cancel_event=None):
         started_at = time.perf_counter()
         if not self.command:
@@ -294,7 +415,12 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)))
 
         deadline = time.monotonic() + max(1.0, request.timeout_seconds)
-        if not self._acquire_stream_lock(deadline, cancel_event):
+        self._begin_foreground_wait()
+        try:
+            acquired = self._acquire_stream_lock(deadline, cancel_event)
+        finally:
+            self._end_foreground_wait()
+        if not acquired:
             code = (
                 "cancelled"
                 if cancel_event is not None and cancel_event.is_set()
@@ -348,14 +474,7 @@ class CodexAppServerTransport:
             return tuple(values)
 
         def send(method, params=None, request_id=None):
-            envelope = {"method": method}
-            if request_id is not None:
-                envelope["id"] = request_id
-            if params is not None:
-                envelope["params"] = params
-            proc.stdin.write(json.dumps(
-                envelope, ensure_ascii=False, separators=(",", ":")) + "\n")
-            proc.stdin.flush()
+            self._send(proc, method, params, request_id)
 
         try:
             self._cancel_idle_timer()
@@ -546,6 +665,7 @@ class CodexAppServerTransport:
         with self._state_lock:
             self._closed = True
             proc = self._proc
+            self._prewarm_cancel_event.set()
         self._cancel_idle_timer()
         if proc is not None:
             self._stop_process(proc)
@@ -615,6 +735,17 @@ class CodexAppServerTransport:
         self._next_request_id += 1
         return request_id
 
+    @staticmethod
+    def _send(proc, method, params=None, request_id=None):
+        envelope = {"method": method}
+        if request_id is not None:
+            envelope["id"] = request_id
+        if params is not None:
+            envelope["params"] = params
+        proc.stdin.write(json.dumps(
+            envelope, ensure_ascii=False, separators=(",", ":")) + "\n")
+        proc.stdin.flush()
+
     def _cancel_idle_timer(self):
         with self._state_lock:
             self._idle_generation += 1
@@ -623,8 +754,11 @@ class CodexAppServerTransport:
         if timer is not None:
             timer.cancel()
 
-    def _schedule_idle_shutdown(self):
-        if self.idle_timeout_seconds <= 0:
+    def _schedule_idle_shutdown(self, max_seconds=None):
+        idle_seconds = self.idle_timeout_seconds
+        if max_seconds is not None:
+            idle_seconds = min(idle_seconds, max_seconds)
+        if idle_seconds <= 0:
             return
         with self._state_lock:
             if self._closed or self._proc is None:
@@ -633,7 +767,7 @@ class CodexAppServerTransport:
             generation = self._idle_generation
             old_timer = self._idle_timer
             timer = threading.Timer(
-                self.idle_timeout_seconds,
+                idle_seconds,
                 self._expire_idle_process,
                 args=(generation,),
             )
@@ -666,6 +800,17 @@ class CodexAppServerTransport:
                 return False
             if self._stream_lock.acquire(timeout=min(0.05, remaining)):
                 return True
+
+    def _begin_foreground_wait(self):
+        with self._state_lock:
+            self._foreground_waiters += 1
+            self._prewarm_cancel_event.set()
+
+    def _end_foreground_wait(self):
+        with self._state_lock:
+            self._foreground_waiters -= 1
+            if self._foreground_waiters == 0 and not self._closed:
+                self._prewarm_cancel_event.clear()
 
     @staticmethod
     def _process_running(proc):

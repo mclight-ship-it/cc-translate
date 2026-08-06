@@ -166,6 +166,7 @@ class CodexCliProvider:
         )
         self._appserver_lock = threading.Lock()
         self._appserver_transports = {}
+        self._appserver_warm_inflight = set()
         self._shutdown = False
 
     def diagnose(self):
@@ -413,6 +414,45 @@ class CodexCliProvider:
                     self.command, self.work_dir)
                 self._appserver_transports[request.model] = transport
         return transport.stream(request, on_delta, cancel_event)
+
+    def warm_up(self, model):
+        """Start app-server in the background without sending a model request."""
+        with self._appserver_lock:
+            if self._shutdown or model in self._appserver_warm_inflight:
+                return False
+            self._appserver_warm_inflight.add(model)
+        threading.Thread(
+            target=self._warm_appserver,
+            args=(model,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _warm_appserver(self, model):
+        from .base import ProviderRequest
+        from .codex_appserver import CodexAppServerTransport
+
+        try:
+            with self._appserver_lock:
+                if self._shutdown:
+                    return
+                transport = self._appserver_transports.get(model)
+                if transport is None:
+                    transport = CodexAppServerTransport(
+                        self.command, self.work_dir)
+                    self._appserver_transports[model] = transport
+            if transport.ready_for(model):
+                return
+            transport.warm_up(ProviderRequest(
+                task="warm_up",
+                model=model,
+                system_prompt="",
+                user_text="",
+                timeout_seconds=10,
+            ))
+        finally:
+            with self._appserver_lock:
+                self._appserver_warm_inflight.discard(model)
 
     def shutdown(self):
         with self._appserver_lock:

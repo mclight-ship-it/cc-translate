@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 
@@ -862,6 +863,132 @@ class TestCodexAppServerTransport(unittest.TestCase):
         self.assertEqual(dict(second.metrics)["spawn_ms"], 0)
         self.assertEqual(dict(second.metrics)["initialize_ms"], 0)
 
+    def test_warm_up_initializes_without_turn_then_stream_reuses_process(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            messages = [
+                {"id": 1, "result": {"userAgent": "test"}},
+                {
+                    "id": 2,
+                    "result": {
+                        "data": [{
+                            "cwd": work_dir,
+                            "errors": [],
+                            "hooks": [],
+                        }],
+                    },
+                },
+            ]
+            messages.extend(self._success_messages(
+                work_dir, None, 3, 4, 5, "after-warm"))
+            process = _FakeProcess(
+                "\n".join(json.dumps(message) for message in messages))
+            request = ProviderRequest(
+                task="translate",
+                model="auto-fast",
+                system_prompt="Translate.",
+                user_text="hello",
+                timeout_seconds=30,
+            )
+            transport = CodexAppServerTransport(
+                "codex.exe", work_dir, idle_timeout_seconds=0)
+            self.addCleanup(transport.shutdown)
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver."
+                    "_supported_appserver_version",
+                    return_value=True), \
+                    unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        return_value=process) as popen, \
+                    unittest.mock.patch.object(
+                        transport,
+                        "_schedule_idle_shutdown") as schedule, \
+                    unittest.mock.patch.object(
+                        transport,
+                        "_cancel_idle_timer") as cancel_idle:
+                warmed = transport.warm_up(request)
+                schedule.assert_called_once_with(max_seconds=30)
+                cancel_idle.assert_called_once_with()
+                schedule.reset_mock()
+                cancel_idle.reset_mock()
+                already_warm = transport.warm_up(request)
+                schedule.assert_not_called()
+                cancel_idle.assert_not_called()
+                result = transport.stream(request, lambda delta: None)
+
+        self.assertTrue(warmed.ok)
+        self.assertTrue(already_warm.ok)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, "final-after-warm")
+        popen.assert_called_once()
+        methods = [
+            json.loads(line)["method"]
+            for line in process.stdin.getvalue().splitlines()
+        ]
+        self.assertEqual(methods[:3], [
+            "initialize", "initialized", "hooks/list"])
+        self.assertNotIn("thread/start", methods[:3])
+        self.assertEqual(methods[3:], [
+            "hooks/list", "thread/start", "turn/start"])
+        self.assertEqual(dict(result.metrics)["initialize_ms"], 0)
+        self.assertEqual(schedule.call_args_list[-1], unittest.mock.call())
+
+    def test_stream_preempts_slow_warm_up(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            slow_process = _FakeProcess()
+            fast_process = _FakeProcess("\n".join(
+                json.dumps(message) for message in self._success_messages(
+                    work_dir, 2, 3, 4, 5, "foreground")))
+            request = ProviderRequest(
+                task="translate",
+                model="auto-fast",
+                system_prompt="Translate.",
+                user_text="hello",
+                timeout_seconds=30,
+            )
+            transport = CodexAppServerTransport(
+                "codex.exe", work_dir, idle_timeout_seconds=0)
+            self.addCleanup(transport.shutdown)
+            warm_entered = threading.Event()
+            warm_result = []
+            original_next_message = transport._next_message
+
+            def next_message(proc, output_queue, deadline, cancel_event):
+                if proc is slow_process:
+                    warm_entered.set()
+                    while not cancel_event.is_set():
+                        time.sleep(0.005)
+                    return "cancelled", None
+                return original_next_message(
+                    proc, output_queue, deadline, cancel_event)
+
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver."
+                    "_supported_appserver_version",
+                    return_value=True), \
+                    unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        side_effect=[slow_process, fast_process]) as popen, \
+                    unittest.mock.patch.object(
+                        transport, "_next_message",
+                        side_effect=next_message):
+                warm_thread = threading.Thread(
+                    target=lambda: warm_result.append(
+                        transport.warm_up(request)))
+                warm_thread.start()
+                self.assertTrue(warm_entered.wait(timeout=1))
+                started_at = time.monotonic()
+                result = transport.stream(request, lambda delta: None)
+                elapsed = time.monotonic() - started_at
+                warm_thread.join(timeout=1)
+
+        self.assertFalse(warm_thread.is_alive())
+        self.assertEqual(warm_result[0].error_code, "cancelled")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, "final-foreground")
+        self.assertLess(elapsed, 1)
+        self.assertEqual(popen.call_count, 2)
+        slow_process.kill.assert_called_once_with()
+
     def test_shutdown_terminates_reused_process_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as work_dir:
             messages = self._success_messages(
@@ -985,6 +1112,57 @@ class TestCodexPersistentProvider(unittest.TestCase):
         self.assertEqual(transports[1].stream.call_count, 1)
         for transport in transports:
             transport.shutdown.assert_called_once_with()
+
+    def test_warm_up_coalesces_inflight_requests(self):
+        provider = CodexCliProvider(command="codex.exe")
+        started = {}
+
+        class _DeferredThread:
+            def __init__(self, target, args=(), daemon=None):
+                started["target"] = target
+                started["args"] = args
+
+            def start(self):
+                return None
+
+        with unittest.mock.patch.object(
+                threading, "Thread", _DeferredThread):
+            self.assertTrue(provider.warm_up("auto-fast"))
+            self.assertFalse(provider.warm_up("auto-fast"))
+
+        transport = unittest.mock.Mock()
+        transport.ready_for.return_value = False
+        with unittest.mock.patch(
+                "cc_providers.codex_appserver.CodexAppServerTransport",
+                return_value=transport):
+            started["target"](*started["args"])
+        self.assertNotIn(
+            "auto-fast", provider._appserver_warm_inflight)
+        transport.warm_up.assert_called_once()
+        provider.shutdown()
+
+    def test_warm_up_skips_already_ready_transport(self):
+        provider = CodexCliProvider(command="codex.exe")
+        transport = unittest.mock.Mock()
+        transport.ready_for.return_value = True
+        provider._appserver_transports["auto-fast"] = transport
+        started = {}
+
+        class _DeferredThread:
+            def __init__(self, target, args=(), daemon=None):
+                started["target"] = target
+                started["args"] = args
+
+            def start(self):
+                return None
+
+        with unittest.mock.patch.object(
+                threading, "Thread", _DeferredThread):
+            self.assertTrue(provider.warm_up("auto-fast"))
+        started["target"](*started["args"])
+        transport.ready_for.assert_called_once_with("auto-fast")
+        transport.warm_up.assert_not_called()
+        provider.shutdown()
 
 
 class TestProviderRegistry(unittest.TestCase):

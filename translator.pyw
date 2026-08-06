@@ -1103,6 +1103,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     self.ctrl_down = True
                 elif self.ctrl_down and getattr(key, "char", None) == "\x03":
                     now = time.time()
+                    self._maybe_warm_codex()
                     if now - self.last_c_time <= self.cfg[CFG.DOUBLE_PRESS_WINDOW]:
                         self.last_c_time = 0.0
                         # Hand off to the main thread; never touch Tk from here.
@@ -1123,6 +1124,18 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         listener.daemon = True
         listener.start()
+
+    def _maybe_warm_codex(self):
+        """Overlap smart-route app-server startup with double-copy detection."""
+        selection = self._provider_selection()
+        if (selection.provider_id != CODEX_PROVIDER
+                or selection.model != "auto-fast"
+                or not self.cfg.get(
+                    CFG.CODEX_STREAMING_EXPERIMENTAL,
+                    DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])):
+            return False
+        return self._provider_registry.get(CODEX_PROVIDER).warm_up(
+            selection.model)
 
     # ---------- Trigger ----------
     def _pump_triggers(self):

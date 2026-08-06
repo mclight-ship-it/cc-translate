@@ -1416,6 +1416,35 @@ class TestProviderLifecycle(unittest.TestCase):
 
 
 class TestProviderRouting(unittest.TestCase):
+    def test_copy_trigger_prewarms_only_smart_codex_streaming(self):
+        app = object.__new__(tr.TranslatorApp)
+        provider = unittest.mock.Mock()
+        provider.warm_up.return_value = True
+        app._provider_registry = unittest.mock.Mock()
+        app._provider_registry.get.return_value = provider
+
+        cases = (
+            ("codex_cli", "auto-fast", True, True),
+            ("codex_cli", "auto", True, False),
+            ("codex_cli", "auto-fast", False, False),
+            ("claude_cli", "auto-fast", True, False),
+        )
+        for provider_id, model, streaming, expected in cases:
+            with self.subTest(
+                    provider=provider_id, model=model, streaming=streaming):
+                provider.reset_mock()
+                app.cfg = tr.Config({
+                    tr.CFG.MODEL_PROVIDER: provider_id,
+                    tr.CFG.CODEX_MODEL: model,
+                    tr.CFG.CODEX_STREAMING_EXPERIMENTAL: streaming,
+                })
+
+                self.assertEqual(app._maybe_warm_codex(), expected)
+                if expected:
+                    provider.warm_up.assert_called_once_with("auto-fast")
+                else:
+                    provider.warm_up.assert_not_called()
+
     def test_claude_text_facade_forwards_snapshot_model(self):
         app = object.__new__(tr.TranslatorApp)
         app._call_claude = unittest.mock.Mock(return_value=(True, "ok"))

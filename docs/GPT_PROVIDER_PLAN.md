@@ -131,6 +131,16 @@ exec/app-server：
   一个极速 profile 的常驻进程。质量 Auto 仍作为独立的“自动选择（优质）”选项保留。
 - Codex 缓存 revision 升至 `codex-format-v3`，旧版智能路由由 mini 生成的长文缓存不会
   冒充新极速 Auto 路由结果；历史记录本身不删除。
+- 空 `ephemeral` thread 预创建 A/B 只减少 59 ms 本地准备，首字仅赢 4/8，配对中位反而
+  慢 23 ms，因此不产品化。
+- 智能路由在第一次 Ctrl+C 时异步 initialize app-server，与双击检测和 120 ms 剪贴板
+  稳定等待重叠；预热只发送 `initialize` 与安全的 `hooks/list`，不创建 thread/turn、
+  不发送剪贴板或待翻译文本。正式翻译可抢占异常慢的推测性预热，不会被其 10 秒启动
+  截止时间阻塞。8 次冷启动 A/B 全部成功且标识完整，预热本身约 0.19–0.21 s，
+  第二次触发时 spawn/initialize 均为 0。
+- 预热进程实测约 38.4 MB 工作集、14.7 MB 私有内存。仅预热且未发生翻译时 30 秒自动
+  清理；成功翻译后才使用常规 5 分钟复用窗口。普通复制不会同步等待预热或刷新已就绪
+  进程的空闲期限。
 
 安全结论：Codex CLI 没有一个可证明“彻底禁用所有工具”的稳定总开关。当前实现使用
 `--ignore-user-config`、`--ignore-rules`、`--strict-config`、清空 MCP、只读沙箱、专用工作
