@@ -22,6 +22,7 @@ import shutil
 import tempfile
 import uuid
 import ctypes
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
@@ -134,6 +135,25 @@ TRIGGER_SETTLE_MS = 120
 # After a translate trigger, restore the clipboard the user had *before* their
 # Ctrl+C, so triggering a translation doesn't clobber their copy/paste workflow.
 CLIP_RESTORE_MS = 250
+
+
+@dataclass(frozen=True)
+class ClipboardSnapshot:
+    """Clipboard state captured before one physical Ctrl+C chord."""
+
+    text: Optional[str]
+    sequence_before: Optional[int]
+    can_restore: bool
+
+
+@dataclass(frozen=True)
+class ClipboardTrigger:
+    """Immutable clipboard state handed from the listener to the Tk thread."""
+
+    saved_text: Optional[str]
+    sequence_before: Optional[int]
+    can_restore: bool
+
 
 # Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
 # on Windows; the animation cycles through them for a modern indeterminate look.
@@ -731,8 +751,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self.ctrl_down = False
         self.win_down = False
         self.shift_down = False
-        self._clip_saved = None       # clipboard snapshot taken when Ctrl went down
-        self._clip_seq_before = None  # clipboard sequence before Ctrl+C copy
+        self._clip_chord_snapshot = None
+        self._pending_clipboard_snapshot = None
         self._uia = None              # cached IUIAutomation COM object (lazy-init)
         self.popup = None
         self.settings_win = None
@@ -1022,6 +1042,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         except Exception:
             return None
 
+    @staticmethod
+    def _clipboard_has_text():
+        """Whether Unicode text is available, or None when Windows cannot tell."""
+        try:
+            return bool(ctypes.windll.user32.IsClipboardFormatAvailable(13))
+        except Exception:
+            return None
+
     def _setup_scrollbar_style(self):
         """A minimal capsule scrollbar: just a thumb on the right, no arrow
         buttons. The native Windows ttk themes ignore colour options, so we
@@ -1087,35 +1115,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     return
                 if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                     if not self.ctrl_down:
-                        # Record clipboard generation before Ctrl+C so we can tell
-                        # whether this trigger actually copied a new selection.
-                        self._clip_seq_before = self._clipboard_sequence()
-                        # Snapshot clipboard before Ctrl+C so we can restore it
-                        # afterwards. Only do this when clipboard protection is
-                        # enabled — the snapshot itself is a clipboard read that
-                        # can race with system tools like Win+Shift+S.
-                        if self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
-                            try:
-                                self._clip_saved = pyperclip.paste()
-                            except Exception as e:
-                                self._clip_saved = None
-                                log_error("clip_snapshot", e)
+                        self._capture_clipboard_chord()
                     self.ctrl_down = True
                 elif self.ctrl_down and getattr(key, "char", None) == "\x03":
                     now = time.time()
                     self._maybe_warm_codex()
-                    if now - self.last_c_time <= self.cfg[CFG.DOUBLE_PRESS_WINDOW]:
-                        self.last_c_time = 0.0
-                        # Hand off to the main thread; never touch Tk from here.
-                        self._trigger_queue.put(now)
-                    else:
-                        self.last_c_time = now
+                    self._handle_copy_press(now)
             except Exception:
                 pass
 
         def on_release(key):
             if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                 self.ctrl_down = False
+                self._clip_chord_snapshot = None
             elif key in WIN_KEYS:
                 self.win_down = False
             elif key in SHIFT_KEYS:
@@ -1137,22 +1149,59 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return self._provider_registry.get(CODEX_PROVIDER).warm_up(
             selection.model)
 
+    def _capture_clipboard_chord(self):
+        """Capture state before one Ctrl+C without replacing the first copy."""
+        sequence_before = self._clipboard_sequence()
+        can_restore = False
+        saved_text = None
+        if self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
+            try:
+                has_text = self._clipboard_has_text()
+                if has_text is not False:
+                    saved_text = pyperclip.paste()
+                    can_restore = bool(saved_text) or has_text is True
+            except Exception as e:
+                log_error("clip_snapshot", e)
+        self._clip_chord_snapshot = ClipboardSnapshot(
+            saved_text, sequence_before, can_restore)
+
+    def _handle_copy_press(self, now):
+        """Pair two copy chords and queue their immutable clipboard state."""
+        chord = self._clip_chord_snapshot
+        if chord is None:
+            chord = ClipboardSnapshot(
+                None, self._clipboard_sequence(), False)
+        if now - self.last_c_time <= self.cfg[CFG.DOUBLE_PRESS_WINDOW]:
+            self.last_c_time = 0.0
+            original = self._pending_clipboard_snapshot or chord
+            self._pending_clipboard_snapshot = None
+            self._trigger_queue.put(ClipboardTrigger(
+                original.text,
+                chord.sequence_before,
+                original.can_restore,
+            ))
+            return True
+        self.last_c_time = now
+        self._pending_clipboard_snapshot = chord
+        return False
+
     # ---------- Trigger ----------
     def _pump_triggers(self):
         """Runs on the Tk main thread. Drains hotkey requests queued by the
         listener thread and coalesces a rapid burst into a single translation
         (the last one wins), then reschedules itself."""
-        fired = False
+        trigger = None
         try:
             while True:
-                self._trigger_queue.get_nowait()
-                fired = True
+                trigger = self._trigger_queue.get_nowait()
         except queue.Empty:
             pass
-        if fired and not self.paused:
+        if trigger is not None and not self.paused:
             # Small settle delay so the Ctrl+C copy lands on the clipboard
             # before we read it.
-            self.root.after(TRIGGER_SETTLE_MS, self._trigger)
+            self.root.after(
+                TRIGGER_SETTLE_MS,
+                lambda pending=trigger: self._trigger(pending))
         self.root.after(TRIGGER_POLL_MS, self._pump_triggers)
 
     def _focused_control_has_selection(self):
@@ -1274,10 +1323,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             log_error("uia_selection", e)
             return None
 
-    def _trigger(self):
+    def _trigger(self, trigger=None):
         # Always invoked on the main thread (via _pump_triggers → after).
-        seq_before = self._clip_seq_before
-        self._clip_seq_before = None
+        if trigger is None:
+            trigger = ClipboardTrigger(None, None, False)
+        seq_before = trigger.sequence_before
         try:
             text = pyperclip.paste()
         except Exception as e:
@@ -1286,7 +1336,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         seq_after = self._clipboard_sequence()
         # The selection is now on the clipboard; put back what the user had
         # before their Ctrl+C so we don't disturb their copy/paste workflow.
-        self.root.after(CLIP_RESTORE_MS, self._restore_clipboard)
+        if trigger.can_restore:
+            self.root.after(
+                CLIP_RESTORE_MS,
+                lambda: self._restore_clipboard(
+                    trigger.saved_text, seq_after))
         text = (text or "").strip()
 
         # Primary check: ask the focused Win32 control directly whether it has
@@ -1311,21 +1365,18 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         text = text[: self.cfg[CFG.MAX_CHARS]]
         self._show_loading(text)
 
-    def _restore_clipboard(self):
-        """Restore the pre-Ctrl+C clipboard snapshot. Skips when there was no
-        snapshot or it was empty/non-text (pyperclip can't round-trip images or
-        file lists, so we leave those rather than blanking the clipboard).
-        Respects the clipboard protection setting; disabled by default to avoid
-        interference with system clipboard tools like Win+Shift+S."""
+    def _restore_clipboard(self, saved_text, expected_sequence):
+        """Restore text only if nobody changed the clipboard after the trigger."""
         if not self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
             return
-        saved = self._clip_saved
-        self._clip_saved = None
-        if not saved:
+        if saved_text is None:
             return
         try:
-            if pyperclip.paste() != saved:
-                pyperclip.copy(saved)
+            if (expected_sequence is None
+                    or self._clipboard_sequence() != expected_sequence):
+                return
+            if pyperclip.paste() != saved_text:
+                pyperclip.copy(saved_text)
         except Exception as e:
             log_error("restore_clipboard", e)
 

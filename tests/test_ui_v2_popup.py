@@ -288,7 +288,10 @@ class TestV2ResultPopup(unittest.TestCase):
         self._kill_later(win)
         self.assertTrue(hasattr(win, "_copy_set"))
         before = str(win._copy_btn.cget("image"))
-        app._copy_result()
+        with unittest.mock.patch.object(
+                app, "_copy_text_content", return_value=True) as copy_text:
+            app._copy_result()
+        copy_text.assert_called_once_with("hello")
         after = str(win._copy_btn.cget("image"))
         self.assertNotEqual(before, after,
                             "copy feedback should swap the chip image")

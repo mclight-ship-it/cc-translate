@@ -3801,26 +3801,26 @@ class TestQuickInputFallback(unittest.TestCase):
         app = object.__new__(tr.TranslatorApp)
         app.cfg = tr.load_config()
         app.cfg[tr.CFG.MAX_CHARS] = 40
-        app._clip_seq_before = 20
         app.root = unittest.mock.Mock()
-        app._restore_clipboard = unittest.mock.Mock()
         app._show_loading = unittest.mock.Mock()
         app._open_quick_input = unittest.mock.Mock()
         return app
 
     def test_trigger_opens_quick_input_when_clipboard_not_updated(self):
         app = self._make_app()
+        trigger = tr.ClipboardTrigger(None, 20, False)
         with unittest.mock.patch.object(tr.pyperclip, "paste",
                                         return_value="existing clipboard text"), \
                 unittest.mock.patch.object(
                     app, "_clipboard_sequence", return_value=20):
-            app._trigger()
+            app._trigger(trigger)
         app._open_quick_input.assert_called_once_with()
         app._show_loading.assert_not_called()
-        app.root.after.assert_called_once()
+        app.root.after.assert_not_called()
 
     def test_trigger_translates_when_clipboard_updated(self):
         app = self._make_app()
+        trigger = tr.ClipboardTrigger(None, 20, False)
         # Mock the live Win32 focus probe so the test doesn't depend on whatever
         # control happens to be focused during the run (returning None means
         # "unknown", so _trigger falls through to the clipboard-sequence check).
@@ -3830,9 +3830,108 @@ class TestQuickInputFallback(unittest.TestCase):
                     app, "_focused_control_has_selection", return_value=None), \
                 unittest.mock.patch.object(
                     app, "_clipboard_sequence", return_value=21):
-            app._trigger()
+            app._trigger(trigger)
         app._open_quick_input.assert_not_called()
         app._show_loading.assert_called_once_with("hello")
+
+
+class TestClipboardProtection(unittest.TestCase):
+    def _make_app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.load_config()
+        app.cfg[tr.CFG.CLIPBOARD_PROTECTION_ENABLED] = True
+        app.cfg[tr.CFG.DOUBLE_PRESS_WINDOW] = 0.6
+        app.last_c_time = 0.0
+        app._clip_chord_snapshot = None
+        app._pending_clipboard_snapshot = None
+        app._trigger_queue = tr.queue.Queue()
+        return app
+
+    def test_released_ctrl_preserves_snapshot_from_first_copy(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", side_effect=[10, 11]), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_has_text", return_value=True), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste",
+                    side_effect=["original", "first selection"]):
+            app._capture_clipboard_chord()
+            self.assertFalse(app._handle_copy_press(1.0))
+            app._clip_chord_snapshot = None
+            app._capture_clipboard_chord()
+            self.assertTrue(app._handle_copy_press(1.2))
+
+        trigger = app._trigger_queue.get_nowait()
+        self.assertEqual(trigger.saved_text, "original")
+        self.assertEqual(trigger.sequence_before, 11)
+        self.assertTrue(trigger.can_restore)
+
+    def test_held_ctrl_uses_same_snapshot_for_both_copy_presses(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", return_value=10), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_has_text", return_value=True), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste", return_value="original"):
+            app._capture_clipboard_chord()
+            self.assertFalse(app._handle_copy_press(1.0))
+            self.assertTrue(app._handle_copy_press(1.2))
+
+        trigger = app._trigger_queue.get_nowait()
+        self.assertEqual(trigger.saved_text, "original")
+        self.assertEqual(trigger.sequence_before, 10)
+
+    def test_restore_skips_when_clipboard_changed_after_trigger(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", return_value=31), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste") as paste, \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "copy") as copy:
+            app._restore_clipboard("original", 30)
+        paste.assert_not_called()
+        copy.assert_not_called()
+
+    def test_restore_skips_when_sequence_tracking_is_unavailable(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", return_value=None), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste") as paste, \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "copy") as copy:
+            app._restore_clipboard("original", None)
+        paste.assert_not_called()
+        copy.assert_not_called()
+
+    def test_restore_writes_snapshot_when_sequence_is_unchanged(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", return_value=30), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste", return_value="selection"), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "copy") as copy:
+            app._restore_clipboard("original", 30)
+        copy.assert_called_once_with("original")
+
+    def test_empty_text_snapshot_is_restorable_but_non_text_is_not(self):
+        app = self._make_app()
+        with unittest.mock.patch.object(
+                app, "_clipboard_sequence", side_effect=[10, 11]), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_has_text", side_effect=[True, False]), \
+                unittest.mock.patch.object(
+                    tr.pyperclip, "paste", return_value=""):
+            app._capture_clipboard_chord()
+            empty_text = app._clip_chord_snapshot
+            app._capture_clipboard_chord()
+            non_text = app._clip_chord_snapshot
+        self.assertTrue(empty_text.can_restore)
+        self.assertFalse(non_text.can_restore)
 
 
 class TestLoadingPopupDismiss(unittest.TestCase):
