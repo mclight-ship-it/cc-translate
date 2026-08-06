@@ -900,6 +900,18 @@ class TestSummaryHelpers(unittest.TestCase):
         self.assertIn("## Translation", instr_en)
         self.assertIn("English", instr_en)
 
+    def test_codex_summary_instruction_is_compact_and_target_specific(self):
+        zh = tr.codex_summary_instruction("zh")
+        en = tr.codex_summary_instruction("en")
+
+        self.assertIn("Translate to Simplified Chinese", zh)
+        self.assertIn("`## 摘要`", zh)
+        self.assertIn("`## 译文`", zh)
+        self.assertIn("Translate to English", en)
+        self.assertIn("`## Summary`", en)
+        self.assertIn("`## Translation`", en)
+        self.assertLess(len(zh), len(tr.summary_instruction("zh")))
+
     def test_resolve_target_lang_auto_zh_ui(self):
         # zh UI, auto: Chinese source -> English target; English source -> zh.
         self.assertEqual(
@@ -907,6 +919,12 @@ class TestSummaryHelpers(unittest.TestCase):
             "en")
         self.assertEqual(
             tr.resolve_target_lang("auto", "zh_CN", "This is English prose."),
+            "zh")
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "zh_CN", "こんにちは世界"),
+            "zh")
+        self.assertEqual(
+            tr.resolve_target_lang("auto", "zh_CN", "안녕하세요 세계"),
             "zh")
 
     def test_resolve_target_lang_auto_en_ui(self):
@@ -1424,6 +1442,16 @@ class TestProviderLifecycle(unittest.TestCase):
 
 
 class TestProviderRouting(unittest.TestCase):
+    def test_startup_prewarms_selected_model_provider(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._spawn_warm_async = unittest.mock.Mock()
+        app._maybe_warm_codex = unittest.mock.Mock(return_value=True)
+
+        self.assertTrue(app._prewarm_startup_models())
+
+        app._spawn_warm_async.assert_called_once_with()
+        app._maybe_warm_codex.assert_called_once_with()
+
     def test_copy_trigger_prewarms_only_smart_codex_streaming(self):
         app = object.__new__(tr.TranslatorApp)
         provider = unittest.mock.Mock()
@@ -1516,8 +1544,57 @@ class TestProviderRouting(unittest.TestCase):
 
         self.assertEqual(meta["provider"], "codex_cli")
         self.assertEqual(meta["model"], "gpt-5.4")
+        self.assertEqual(meta["task"], "text")
         self.assertEqual(meta["system_prompt"], "prompt")
         self.assertIs(meta["cancel_event"], app._provider_cancel_event)
+
+    def test_codex_summary_uses_compact_provider_prompt(self):
+        app = object.__new__(tr.TranslatorApp)
+        text = "A long English source sentence. " * 30
+        app.cfg = tr.Config({
+            tr.CFG.MODEL_PROVIDER: "codex_cli",
+            tr.CFG.CODEX_MODEL: "auto-fast",
+            tr.CFG.DIRECTION: "auto",
+            tr.CFG.LANGUAGE: "zh",
+        })
+        app._last_input = text
+        app._last_origin = "text"
+        app._last_class = "text"
+        app._provider_cancel_event = tr.threading.Event()
+        app._history_kind = unittest.mock.Mock(return_value="text")
+        app._cache_signature = unittest.mock.Mock(return_value="sig")
+        app._should_summarize = unittest.mock.Mock(return_value=True)
+        app._system_prompt_for = unittest.mock.Mock(
+            return_value="CLAUDE LONG SUMMARY PROMPT")
+
+        meta = app._history_meta()
+
+        self.assertEqual(meta["task"], "translation_summary")
+        self.assertIn("Translate to Simplified Chinese", meta["system_prompt"])
+        self.assertIn("`## 摘要`", meta["system_prompt"])
+        self.assertIn("`## 译文`", meta["system_prompt"])
+        self.assertNotIn("CLAUDE LONG SUMMARY PROMPT", meta["system_prompt"])
+
+    def test_claude_summary_keeps_existing_prompt(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.MODEL_PROVIDER: "claude_cli",
+            tr.CFG.MODEL: "haiku",
+        })
+        app._last_input = "Long source"
+        app._last_origin = "text"
+        app._last_class = "text"
+        app._provider_cancel_event = tr.threading.Event()
+        app._history_kind = unittest.mock.Mock(return_value="text")
+        app._cache_signature = unittest.mock.Mock(return_value="sig")
+        app._should_summarize = unittest.mock.Mock(return_value=True)
+        app._system_prompt_for = unittest.mock.Mock(
+            return_value="CLAUDE LONG SUMMARY PROMPT")
+
+        meta = app._history_meta()
+
+        self.assertEqual(meta["task"], "translation_summary")
+        self.assertEqual(meta["system_prompt"], "CLAUDE LONG SUMMARY PROMPT")
 
     def test_unknown_provider_returns_explicit_error(self):
         app = object.__new__(tr.TranslatorApp)
@@ -1550,6 +1627,26 @@ class TestProviderRouting(unittest.TestCase):
         self.assertEqual(fields["chars"], 5)
         self.assertEqual(fields["total_ms"], 500)
         self.assertNotIn("text", fields)
+
+    def test_codex_facade_forwards_explicit_task(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        provider = unittest.mock.Mock()
+        provider.complete.return_value = ProviderResult(True, text="ok")
+        app._provider_registry = unittest.mock.Mock()
+        app._provider_registry.get.return_value = provider
+
+        app._call_model(
+            "long source",
+            "Compact summary prompt.",
+            tr.ProviderSelection("codex_cli", "auto-fast"),
+            task="translation_summary",
+        )
+
+        request = provider.complete.call_args.args[0]
+        self.assertEqual(request.task, "translation_summary")
+        self.assertEqual(request.system_prompt, "Compact summary prompt.")
 
     def test_long_codex_uses_experimental_stream_when_enabled(self):
         app = object.__new__(tr.TranslatorApp)
@@ -1761,6 +1858,7 @@ class TestProviderRouting(unittest.TestCase):
             "origin": "text",
             "is_code": False,
             "kind": "text",
+            "task": "translation_summary",
         }
 
         handled = app._stream_codex(
@@ -1773,6 +1871,8 @@ class TestProviderRouting(unittest.TestCase):
             app._last_provider_route["mode"], "stable_fallback")
         self.assertEqual(
             app._last_provider_route["error_code"], "appserver_exited")
+        request = provider.stream.call_args.args[0]
+        self.assertEqual(request.task, "translation_summary")
 
     def test_codex_stream_failure_after_delta_does_not_retry(self):
         from cc_providers.base import ProviderResult
@@ -2042,8 +2142,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 2)
-        self.assertTrue(tr.version_string().startswith("4.2."))
+        self.assertEqual(cc_update.VERSION_MINOR, 3)
+        self.assertTrue(tr.version_string().startswith("4.3."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -4967,7 +5067,7 @@ class TestCacheSignature(unittest.TestCase):
             tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
         })._cache_signature()
 
-        self.assertTrue(signature.endswith("|codex-format-v4"))
+        self.assertTrue(signature.endswith("|codex-format-v5"))
 
     def test_fast_auto_profile_has_distinct_cache_signature(self):
         quality = self._app(**{
@@ -5002,7 +5102,7 @@ class TestCacheSignature(unittest.TestCase):
             tr.CFG.CODEX_MODEL: "auto-fast",
         })
         current = app._cache_signature()
-        old = current.replace("|codex-format-v4", "|codex-format-v3")
+        old = current.replace("|codex-format-v5", "|codex-format-v4")
 
         self.assertNotEqual(current, old)
 

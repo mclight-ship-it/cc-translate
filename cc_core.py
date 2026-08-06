@@ -37,7 +37,7 @@ CODEX_STREAM_MIN_CHARS = 400
 # whose output contract changed so unrelated providers keep valid cached results.
 PROVIDER_PROMPT_REVISIONS = {
     "claude_cli": "",
-    "codex_cli": "codex-format-v4",
+    "codex_cli": "codex-format-v5",
 }
 
 
@@ -603,6 +603,17 @@ def resolve_target_lang(mode, app_language, text):
         # en UI pivot: any meaningful English -> Chinese; else -> English.
         return "zh" if source_has_english(text) else "en"
     # zh UI pivot: any meaningful Chinese -> English; else -> Chinese.
+    # Kana and Hangul previously counted as generic CJK and incorrectly sent
+    # Japanese/Korean source to English. Their presence disambiguates the text
+    # from Chinese even when it also contains Han characters.
+    has_ja_ko_script = any(
+        "\u3040" <= char <= "\u30ff"
+        or "\uff65" <= char <= "\uff9f"
+        or "\uac00" <= char <= "\ud7af"
+        for char in text
+    )
+    if has_ja_ko_script:
+        return "zh"
     return "en" if source_is_cjk(text) else "zh"
 
 

@@ -494,6 +494,17 @@ def summary_instruction(target_lang):
         "never in the source language.")
 
 
+def codex_summary_instruction(target_lang):
+    """Compact, benchmarked long-text contract for Codex only."""
+    sm, tr = summary_headings(target_lang)
+    lang_name = LANGUAGES.get(target_lang, (None, "the target language"))[1]
+    return (
+        f"Translate to {lang_name}. Start with `## {sm}` and 3-5 short `- ` "
+        f"bullets, then `## {tr}` and the complete translation. Preserve code "
+        "and identifiers exactly. Output only those sections."
+    )
+
+
 
 class Config(dict):
     """Typed, self-validating view over the user config.
@@ -956,9 +967,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._start_listener()
         self._start_tray()
 
-        # Pre-warm the first Claude process so the very first translation is
-        # fast too. Done in the background so startup stays responsive.
-        self._spawn_warm_async()
+        # Prepare the selected provider without blocking startup. Claude fills
+        # its warm pool; GPT initializes its safe app-server transport.
+        self._prewarm_startup_models()
 
         # Run shortcut/migration work in background so startup stays responsive
         # and the first hotkey trigger is not blocked by PowerShell startup.
@@ -1060,7 +1071,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return i18n.get("error.no_result")
 
     def _call_model(self, text, system_prompt, selection=None,
-                    cancel_event=None):
+                    cancel_event=None, task="text"):
         selection = selection or self._provider_selection()
         if selection.provider_id == CLAUDE_PROVIDER:
             return self._call_claude(
@@ -1069,7 +1080,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return False, i18n.get("error.unknown_provider").format(
                 provider=selection.provider_id)
         request = ProviderRequest(
-            task="text",
+            task=task,
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
             user_text=text,
@@ -1262,6 +1273,10 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return False
         return self._provider_registry.get(CODEX_PROVIDER).warm_up(
             selection.model)
+
+    def _prewarm_startup_models(self):
+        self._spawn_warm_async()
+        return self._maybe_warm_codex()
 
     def _capture_clipboard_chord(self):
         """Capture state before one Ctrl+C without replacing the first copy."""
@@ -1588,6 +1603,16 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         state. Must be called on the main thread at request start; the returned
         dict is then owned by that job's worker thread."""
         selection = self._provider_selection()
+        text = self._last_input or ""
+        summarize = self._should_summarize(text)
+        system_prompt = self._system_prompt_for(text)
+        task = "translation_summary" if summarize else "text"
+        if selection.provider_id == CODEX_PROVIDER and summarize:
+            mode = self.cfg.get(CFG.DIRECTION, "auto")
+            app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
+            target_lang = resolve_target_lang(
+                mode, app_language, text)
+            system_prompt = codex_summary_instruction(target_lang)
         return {
             "input": self._last_input,
             "origin": self._last_origin,
@@ -1597,8 +1622,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             "provider": selection.provider_id,
             "model": selection.model,
             "direction": self.cfg.get(CFG.DIRECTION, "auto"),
-            "summarize": self._should_summarize(self._last_input or ""),
-            "system_prompt": self._system_prompt_for(self._last_input or ""),
+            "summarize": summarize,
+            "task": task,
+            "system_prompt": system_prompt,
             "cancel_event": getattr(self, "_provider_cancel_event", None),
         }
 
@@ -1868,6 +1894,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 meta.get("system_prompt") or self._system_prompt_for(text),
                 selection,
                 cancel_event,
+                task=meta.get("task", "text"),
             )
         except Exception as exc:
             ok = False
@@ -1941,7 +1968,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         system_prompt = (
             meta.get("system_prompt") or self._system_prompt_for(text))
         request = ProviderRequest(
-            task="text",
+            task=meta.get("task", "text"),
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
             user_text=text,
