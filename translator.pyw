@@ -22,6 +22,7 @@ import shutil
 import tempfile
 import uuid
 import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
@@ -132,9 +133,8 @@ POPUP_SHELL_PAD = 1  # legacy 1px border inset; popups now use the rounded colou
 # translations" races seen right after startup.
 # (TRIGGER_POLL_MS lives in cc_core.py, re-exported below)
 TRIGGER_SETTLE_MS = 120
-# After a translate trigger, restore the clipboard the user had *before* their
-# Ctrl+C, so triggering a translation doesn't clobber their copy/paste workflow.
-CLIP_RESTORE_MS = 250
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,115 @@ class ClipboardTrigger:
     saved_text: Optional[str]
     sequence_before: Optional[int]
     can_restore: bool
+
+
+def _clipboard_restore_is_owned(
+        current_sequence, expected_sequence, current_text, selected_text):
+    """Whether the clipboard still belongs to the translation trigger."""
+    return (
+        expected_sequence is not None
+        and (
+            current_sequence == expected_sequence
+            or current_text == selected_text
+        )
+    )
+
+
+def _atomic_restore_clipboard_text(
+        saved_text, expected_sequence, selected_text, owner_hwnd):
+    """Compare and restore text while holding the Windows clipboard lock."""
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    open_clipboard = user32.OpenClipboard
+    open_clipboard.argtypes = [wintypes.HWND]
+    open_clipboard.restype = wintypes.BOOL
+    close_clipboard = user32.CloseClipboard
+    close_clipboard.argtypes = []
+    close_clipboard.restype = wintypes.BOOL
+    get_sequence = user32.GetClipboardSequenceNumber
+    get_sequence.argtypes = []
+    get_sequence.restype = wintypes.DWORD
+    has_format = user32.IsClipboardFormatAvailable
+    has_format.argtypes = [wintypes.UINT]
+    has_format.restype = wintypes.BOOL
+    get_data = user32.GetClipboardData
+    get_data.argtypes = [wintypes.UINT]
+    get_data.restype = wintypes.HANDLE
+    empty_clipboard = user32.EmptyClipboard
+    empty_clipboard.argtypes = []
+    empty_clipboard.restype = wintypes.BOOL
+    set_data = user32.SetClipboardData
+    set_data.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    set_data.restype = wintypes.HANDLE
+    global_alloc = kernel32.GlobalAlloc
+    global_alloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    global_alloc.restype = wintypes.HGLOBAL
+    global_lock = kernel32.GlobalLock
+    global_lock.argtypes = [wintypes.HGLOBAL]
+    global_lock.restype = wintypes.LPVOID
+    global_unlock = kernel32.GlobalUnlock
+    global_unlock.argtypes = [wintypes.HGLOBAL]
+    global_unlock.restype = wintypes.BOOL
+    global_free = kernel32.GlobalFree
+    global_free.argtypes = [wintypes.HGLOBAL]
+    global_free.restype = wintypes.HGLOBAL
+
+    deadline = time.monotonic() + 0.5
+    while not open_clipboard(owner_hwnd):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("OpenClipboard timed out")
+        time.sleep(0.01)
+
+    clipboard_open = True
+    memory = None
+    try:
+        current_text = None
+        if has_format(CF_UNICODETEXT):
+            handle = get_data(CF_UNICODETEXT)
+            if handle:
+                locked = global_lock(handle)
+                if not locked:
+                    raise ctypes.WinError()
+                try:
+                    current_text = ctypes.wstring_at(locked)
+                finally:
+                    global_unlock(handle)
+            else:
+                current_text = ""
+
+        current_sequence = int(get_sequence())
+        if not _clipboard_restore_is_owned(
+                current_sequence, expected_sequence,
+                current_text, selected_text):
+            return False
+        if current_text == saved_text:
+            return True
+
+        buffer = ctypes.create_unicode_buffer(saved_text)
+        memory = global_alloc(GMEM_MOVEABLE, ctypes.sizeof(buffer))
+        if not memory:
+            raise ctypes.WinError()
+        locked = global_lock(memory)
+        if not locked:
+            raise ctypes.WinError()
+        try:
+            ctypes.memmove(locked, ctypes.addressof(buffer),
+                           ctypes.sizeof(buffer))
+        finally:
+            global_unlock(memory)
+
+        if not empty_clipboard():
+            raise ctypes.WinError()
+        if not set_data(CF_UNICODETEXT, memory):
+            raise ctypes.WinError()
+        memory = None  # Windows owns the allocation after SetClipboardData.
+        return True
+    finally:
+        if memory:
+            global_free(memory)
+        if clipboard_open and not close_clipboard():
+            raise ctypes.WinError()
 
 
 # Loading spinner frames (rotating half-circle). Segoe UI Symbol renders these
@@ -1337,10 +1446,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # The selection is now on the clipboard; put back what the user had
         # before their Ctrl+C so we don't disturb their copy/paste workflow.
         if trigger.can_restore:
-            self.root.after(
-                CLIP_RESTORE_MS,
-                lambda: self._restore_clipboard(
-                    trigger.saved_text, seq_after))
+            self._restore_clipboard(trigger.saved_text, seq_after, text)
         text = (text or "").strip()
 
         # Primary check: ask the focused Win32 control directly whether it has
@@ -1365,20 +1471,22 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         text = text[: self.cfg[CFG.MAX_CHARS]]
         self._show_loading(text)
 
-    def _restore_clipboard(self, saved_text, expected_sequence):
-        """Restore text only if nobody changed the clipboard after the trigger."""
+    def _restore_clipboard(self, saved_text, expected_sequence, selected_text):
+        """Atomically restore text if the trigger still owns the clipboard."""
         if not self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
-            return
+            return False
         if saved_text is None:
-            return
+            return False
         try:
-            if (expected_sequence is None
-                    or self._clipboard_sequence() != expected_sequence):
-                return
-            if pyperclip.paste() != saved_text:
-                pyperclip.copy(saved_text)
+            return _atomic_restore_clipboard_text(
+                saved_text,
+                expected_sequence,
+                selected_text,
+                int(self.root.winfo_id()),
+            )
         except Exception as e:
             log_error("restore_clipboard", e)
+            return False
 
     # ---------- Translation ----------
     def _begin_job(self):

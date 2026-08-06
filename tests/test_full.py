@@ -2316,7 +2316,7 @@ class TestModuleLoadSmokeTest(unittest.TestCase):
             "MIN_POPUP_HEIGHT", "MIN_STREAM_VISIBLE_HEIGHT",
             "LOADING_SPINNER", "POPUP_CORNER_RADIUS", "LOADING_CORNER_RADIUS",
             "CENTERED_POPUP_W", "CENTERED_POPUP_H",
-            "TRIGGER_POLL_MS", "TRIGGER_SETTLE_MS", "CLIP_RESTORE_MS",
+            "TRIGGER_POLL_MS", "TRIGGER_SETTLE_MS",
             "DIRECTION_MODES", "DIRECTION_LABELS", "LANGUAGES",
             "DEFAULT_CONFIG", "THEMES", "CFG",
             "ROUND_KEY_COLOR",
@@ -3834,6 +3834,20 @@ class TestQuickInputFallback(unittest.TestCase):
         app._open_quick_input.assert_not_called()
         app._show_loading.assert_called_once_with("hello")
 
+    def test_trigger_restores_clipboard_immediately_after_reading_selection(self):
+        app = self._make_app()
+        app._restore_clipboard = unittest.mock.Mock()
+        trigger = tr.ClipboardTrigger("original", 20, True)
+        with unittest.mock.patch.object(
+                tr.pyperclip, "paste", return_value="hello"), \
+                unittest.mock.patch.object(
+                    app, "_focused_control_has_selection", return_value=True), \
+                unittest.mock.patch.object(
+                    app, "_clipboard_sequence", return_value=21):
+            app._trigger(trigger)
+        app._restore_clipboard.assert_called_once_with("original", 21, "hello")
+        app.root.after.assert_not_called()
+
 
 class TestClipboardProtection(unittest.TestCase):
     def _make_app(self):
@@ -3883,40 +3897,71 @@ class TestClipboardProtection(unittest.TestCase):
         self.assertEqual(trigger.saved_text, "original")
         self.assertEqual(trigger.sequence_before, 10)
 
-    def test_restore_skips_when_clipboard_changed_after_trigger(self):
-        app = self._make_app()
-        with unittest.mock.patch.object(
-                app, "_clipboard_sequence", return_value=31), \
-                unittest.mock.patch.object(
-                    tr.pyperclip, "paste") as paste, \
-                unittest.mock.patch.object(
-                    tr.pyperclip, "copy") as copy:
-            app._restore_clipboard("original", 30)
-        paste.assert_not_called()
-        copy.assert_not_called()
+    def test_restore_allows_delayed_format_sequence_change_for_same_selection(self):
+        self.assertTrue(tr._clipboard_restore_is_owned(
+            31, 30, "selection", "selection"))
 
-    def test_restore_skips_when_sequence_tracking_is_unavailable(self):
-        app = self._make_app()
-        with unittest.mock.patch.object(
-                app, "_clipboard_sequence", return_value=None), \
-                unittest.mock.patch.object(
-                    tr.pyperclip, "paste") as paste, \
-                unittest.mock.patch.object(
-                    tr.pyperclip, "copy") as copy:
-            app._restore_clipboard("original", None)
-        paste.assert_not_called()
-        copy.assert_not_called()
+    def test_restore_rejects_sequence_change_with_different_content(self):
+        self.assertFalse(tr._clipboard_restore_is_owned(
+            31, 30, "new copy", "selection"))
 
-    def test_restore_writes_snapshot_when_sequence_is_unchanged(self):
+    def test_restore_accepts_unchanged_sequence(self):
+        self.assertTrue(tr._clipboard_restore_is_owned(
+            30, 30, "selection", "selection"))
+
+    def test_restore_rejects_unavailable_sequence_tracking(self):
+        self.assertFalse(tr._clipboard_restore_is_owned(
+            30, None, "selection", "selection"))
+
+    def test_restore_delegates_to_atomic_windows_operation(self):
         app = self._make_app()
+        app.root = unittest.mock.Mock()
+        app.root.winfo_id.return_value = 123
         with unittest.mock.patch.object(
-                app, "_clipboard_sequence", return_value=30), \
+                tr, "_atomic_restore_clipboard_text",
+                return_value=True) as restore:
+            self.assertTrue(
+                app._restore_clipboard("original", 30, "selection"))
+        restore.assert_called_once_with("original", 30, "selection", 123)
+
+    def test_atomic_restore_publishes_empty_unicode_text(self):
+        current_buffer = tr.ctypes.create_unicode_buffer("selection")
+        restored_buffer = tr.ctypes.create_unicode_buffer("")
+
+        user32 = types.SimpleNamespace(
+            OpenClipboard=unittest.mock.Mock(return_value=True),
+            CloseClipboard=unittest.mock.Mock(return_value=True),
+            GetClipboardSequenceNumber=unittest.mock.Mock(return_value=30),
+            IsClipboardFormatAvailable=unittest.mock.Mock(return_value=True),
+            GetClipboardData=unittest.mock.Mock(return_value=101),
+            EmptyClipboard=unittest.mock.Mock(return_value=True),
+            SetClipboardData=unittest.mock.Mock(return_value=202),
+        )
+        kernel32 = types.SimpleNamespace(
+            GlobalAlloc=unittest.mock.Mock(return_value=202),
+            GlobalLock=unittest.mock.Mock(side_effect=[
+                tr.ctypes.addressof(current_buffer),
+                tr.ctypes.addressof(restored_buffer),
+            ]),
+            GlobalUnlock=unittest.mock.Mock(return_value=True),
+            GlobalFree=unittest.mock.Mock(return_value=None),
+        )
+
+        with unittest.mock.patch.object(
+                tr.ctypes.windll, "user32", user32), \
                 unittest.mock.patch.object(
-                    tr.pyperclip, "paste", return_value="selection"), \
-                unittest.mock.patch.object(
-                    tr.pyperclip, "copy") as copy:
-            app._restore_clipboard("original", 30)
-        copy.assert_called_once_with("original")
+                    tr.ctypes.windll, "kernel32", kernel32):
+            self.assertTrue(tr._atomic_restore_clipboard_text(
+                "", 30, "selection", 123))
+
+        kernel32.GlobalAlloc.assert_called_once_with(
+            tr.GMEM_MOVEABLE,
+            tr.ctypes.sizeof(tr.ctypes.create_unicode_buffer("")),
+        )
+        user32.EmptyClipboard.assert_called_once_with()
+        user32.SetClipboardData.assert_called_once_with(
+            tr.CF_UNICODETEXT, 202)
+        kernel32.GlobalFree.assert_not_called()
 
     def test_empty_text_snapshot_is_restorable_but_non_text_is_not(self):
         app = self._make_app()
