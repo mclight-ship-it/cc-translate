@@ -2042,8 +2042,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 1)
-        self.assertTrue(tr.version_string().startswith("4.1."))
+        self.assertEqual(cc_update.VERSION_MINOR, 2)
+        self.assertTrue(tr.version_string().startswith("4.2."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -4967,7 +4967,7 @@ class TestCacheSignature(unittest.TestCase):
             tr.CFG.CODEX_MODEL: "gpt-5.4-mini",
         })._cache_signature()
 
-        self.assertTrue(signature.endswith("|codex-format-v3"))
+        self.assertTrue(signature.endswith("|codex-format-v4"))
 
     def test_fast_auto_profile_has_distinct_cache_signature(self):
         quality = self._app(**{
@@ -4996,13 +4996,13 @@ class TestCacheSignature(unittest.TestCase):
 
         self.assertNotEqual(current, old)
 
-    def test_smart_route_change_invalidates_v2_codex_cache(self):
+    def test_prompt_change_invalidates_v3_codex_cache(self):
         app = self._app(**{
             tr.CFG.MODEL_PROVIDER: "codex_cli",
             tr.CFG.CODEX_MODEL: "auto-fast",
         })
         current = app._cache_signature()
-        old = current.replace("|codex-format-v3", "|codex-format-v2")
+        old = current.replace("|codex-format-v4", "|codex-format-v3")
 
         self.assertNotEqual(current, old)
 

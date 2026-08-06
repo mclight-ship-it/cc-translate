@@ -37,7 +37,7 @@ CODEX_STREAM_MIN_CHARS = 400
 # whose output contract changed so unrelated providers keep valid cached results.
 PROVIDER_PROMPT_REVISIONS = {
     "claude_cli": "",
-    "codex_cli": "codex-format-v3",
+    "codex_cli": "codex-format-v4",
 }
 
 

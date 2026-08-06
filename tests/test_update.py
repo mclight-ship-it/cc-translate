@@ -69,7 +69,7 @@ class TestClassifyUpdateState(unittest.TestCase):
 
 class TestFormatVersion(unittest.TestCase):
     def test_numeric_version_uses_release_minor_and_build(self):
-        self.assertEqual(tr._cc_update._format_numeric_version(240), "4.1.240")
+        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.2.241")
 
     def test_sha_and_date(self):
         self.assertEqual(
