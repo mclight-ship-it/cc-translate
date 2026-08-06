@@ -7,6 +7,10 @@ must stay stable, so we cover them with mocked git responses.
 """
 import unittest
 import unittest.mock
+import os
+import subprocess
+import sys
+import tempfile
 
 from tests._tr import tr
 
@@ -69,7 +73,7 @@ class TestClassifyUpdateState(unittest.TestCase):
 
 class TestFormatVersion(unittest.TestCase):
     def test_numeric_version_uses_release_minor_and_build(self):
-        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.3.241")
+        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.4.241")
 
     def test_sha_and_date(self):
         self.assertEqual(
@@ -84,6 +88,89 @@ class TestFormatVersion(unittest.TestCase):
     def test_missing_sha_is_unknown(self):
         self.assertEqual(tr._format_version(None, "2026-07-13"), "未知版本")
         self.assertEqual(tr._format_version("", None), "未知版本")
+
+
+class TestBrandedLauncher(unittest.TestCase):
+    def test_version_resource_contains_product_identity(self):
+        import cc_launcher
+        payload = cc_launcher.build_version_resource("4.4.243")
+        self.assertEqual(len(payload) % 4, 0)
+        self.assertEqual(int.from_bytes(payload[:2], "little"), len(payload))
+        self.assertIn("CC Translate".encode("utf-16le"), payload)
+        self.assertIn("CCTranslate.exe".encode("utf-16le"), payload)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_generated_launcher_is_branded_and_runs_python(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            result = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "4.4.243")
+            self.assertTrue(result.startswith(tmp))
+            self.assertEqual(
+                cc_launcher.read_file_description(result), "CC Translate")
+            self.assertEqual(
+                cc_launcher.read_version_string(result, "ProductVersion"),
+                "4.4.243")
+
+            marker = os.path.join(tmp, "ran.txt")
+            code = (
+                "from pathlib import Path;"
+                f"Path({marker!r}).write_text('ok', encoding='utf-8')")
+            completed = subprocess.run(
+                [result, "-c", code], timeout=15, check=False)
+            self.assertEqual(completed.returncode, 0)
+            with open(marker, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "ok")
+
+            updated = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "4.5.244")
+            self.assertNotEqual(updated, result)
+            self.assertEqual(
+                cc_launcher.read_version_string(updated, "ProductVersion"),
+                "4.5.244")
+            self.assertTrue(os.path.exists(result))
+            cc_launcher.cleanup_old_launchers(tmp, updated)
+            self.assertFalse(os.path.exists(result))
+
+
+class TestAutostartMigration(unittest.TestCase):
+    def test_failed_replacement_keeps_legacy_launcher(self):
+        cc = tr._cc_update
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, "QuickTranslate.vbs")
+            startup = os.path.join(tmp, "CC Translate.lnk")
+            with open(legacy, "w", encoding="utf-8") as f:
+                f.write("legacy")
+            with unittest.mock.patch.object(
+                    cc, "LEGACY_STARTUP_VBS", legacy), \
+                    unittest.mock.patch.object(cc, "STARTUP_LNK", startup), \
+                    unittest.mock.patch.object(
+                        cc, "_create_shortcut",
+                        side_effect=OSError("shortcut failed")):
+                self.assertFalse(cc.set_autostart(True))
+            self.assertTrue(os.path.exists(legacy))
+            self.assertFalse(os.path.exists(startup))
+
+    def test_successful_replacement_removes_legacy_launcher(self):
+        cc = tr._cc_update
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, "QuickTranslate.vbs")
+            startup = os.path.join(tmp, "CC Translate.lnk")
+            with open(legacy, "w", encoding="utf-8") as f:
+                f.write("legacy")
+
+            def create(path):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("shortcut")
+
+            with unittest.mock.patch.object(
+                    cc, "LEGACY_STARTUP_VBS", legacy), \
+                    unittest.mock.patch.object(cc, "STARTUP_LNK", startup), \
+                    unittest.mock.patch.object(
+                        cc, "_create_shortcut", side_effect=create):
+                self.assertTrue(cc.set_autostart(True))
+            self.assertFalse(os.path.exists(legacy))
+            self.assertTrue(os.path.exists(startup))
 
 
 class TestUninstaller(unittest.TestCase):

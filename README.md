@@ -155,7 +155,7 @@ pip install comtypes   # smart selection detection, avoids mistranslating a whol
 # Or install everything at once (equivalent to all packages above): pip install -r requirements.txt
 
 # 5. First run (make sure the current directory is the project root, cc-translate)
-pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in the Start Menu
+python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_branded_launcher() or cc_update.PYTHONW, cc_update.SCRIPT_PATH], cwd=cc_update.APP_DIR)"
 ```
 
 > ⚠️ **Make sure the Claude Code CLI is up to date**: this tool relies on newer `claude -p`
@@ -170,12 +170,14 @@ pythonw translator.pyw   # the first run auto-creates a "CC Translate" icon in t
 
 ## Launching
 
-After the first run it auto-creates a **CC Translate** icon in the Start Menu; afterwards you can launch it straight from the Start Menu (no command line needed).
+The first run creates a small local branded launcher plus a **CC Translate**
+icon in the Start Menu. The app still runs directly from this source checkout,
+but Windows Task Manager shows **CC Translate** instead of the generic
+**Python** process name. Afterwards, launch it straight from the Start Menu.
 
 ## Launch on startup (optional)
 
 Check "Launch on startup" in the app's **Settings** (this creates a shortcut in the Startup folder).
-Or manually place a shortcut to `run.vbs` in the Startup folder. `run.vbs` relies on `pythonw.exe` being on PATH.
 
 ## One-shot install instructions for AI assistants
 

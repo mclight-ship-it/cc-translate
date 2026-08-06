@@ -236,10 +236,14 @@ if (Test-CodexReady) {
 
 # ---------- 6. launch ----------
 Step 6 "启动 CC Translate"
-Invoke-Or-DryRun "Start-Process pythonw translator.pyw（工作目录 $InstallDir）" {
+Invoke-Or-DryRun "创建 CC Translate 启动器并启动（工作目录 $InstallDir）" {
     $pyw = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
     if (-not $pyw) { $pyw = 'pythonw' }
-    Start-Process $pyw -ArgumentList 'translator.pyw' -WorkingDirectory $InstallDir
+    $launcher = python -c "import cc_update; print(cc_update.ensure_branded_launcher() or '')"
+    if ($LASTEXITCODE -ne 0 -or -not $launcher -or -not (Test-Path $launcher)) {
+        $launcher = $pyw
+    }
+    Start-Process $launcher -ArgumentList 'translator.pyw' -WorkingDirectory $InstallDir
 }
 
 Write-Host ""

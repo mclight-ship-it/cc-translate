@@ -45,6 +45,7 @@ from cc_update import (
     is_git_deploy, local_head, remote_head, update_available, version_string,
     _format_version,
     is_autostart_enabled, set_autostart, ensure_startmenu_shortcut,
+    ensure_branded_launcher, cleanup_old_launchers,
     remove_shortcuts, spawn_uninstaller,
     _spawn_relauncher, _git, GIT_REMOTE, GIT_BRANCH, UPDATE_NET_TIMEOUT,
     LEGACY_STARTUP_VBS, SCRIPT_PATH, PYTHONW, STARTUP_LNK, STARTMENU_LNK,
@@ -1004,19 +1005,30 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
     def _run_startup_tasks(self):
         try:
-            ensure_startmenu_shortcut()
+            launcher = ensure_branded_launcher()
+            shortcuts_ok = ensure_startmenu_shortcut()
             # One-time migration: earlier versions auto-started via QuickTranslate.vbs.
             # Convert that into the new managed .lnk so the setting stays in sync.
             if os.path.exists(LEGACY_STARTUP_VBS) and not is_autostart_enabled():
-                set_autostart(True)
+                shortcuts_ok = set_autostart(True) and shortcuts_ok
             # First-run default: new installs start with autostart ON. Gated by a
             # persistent flag so we only ever do this once — after that the user's
             # choice in Settings is respected and never overridden.
             if not self.cfg.get(CFG.AUTOSTART_INITIALIZED, False):
+                initialized = True
                 if self._fresh_install and not is_autostart_enabled():
-                    set_autostart(True)
-                self.cfg[CFG.AUTOSTART_INITIALIZED] = True
-                save_config(self.cfg)
+                    initialized = set_autostart(True)
+                    shortcuts_ok = initialized and shortcuts_ok
+                if initialized:
+                    self.cfg[CFG.AUTOSTART_INITIALIZED] = True
+                    save_config(self.cfg)
+            # Versioned launcher names let an update prepare the next host while
+            # the current one is still running. Repair every enabled shortcut
+            # before removing old hosts so logon can never target a deleted exe.
+            if is_autostart_enabled():
+                shortcuts_ok = set_autostart(True) and shortcuts_ok
+            if shortcuts_ok:
+                cleanup_old_launchers(launcher)
         except Exception as e:
             log_error("startup_tasks", e)
 

@@ -23,12 +23,19 @@ Public API used by translator.pyw:
   LEGACY_STARTUP_VBS  — path checked on first run to migrate old launchers
   SCRIPT_PATH         — absolute path to translator.pyw (used by _spawn_relauncher)
   PYTHONW             — pythonw.exe in the active environment
+  LAUNCHER_PATH       — locally generated, Task Manager-branded Python host
 """
 
 import os
 import subprocess
 import sys
 import time
+
+from cc_core import DATA_DIR
+from cc_launcher import (
+    cleanup_old_launchers as _cleanup_old_launchers,
+    ensure_branded_launcher as _ensure_branded_launcher,
+)
 
 # ---------------------------------------------------------------------------
 # Paths — computed relative to *this* file's directory (= APP_DIR).
@@ -38,7 +45,7 @@ import time
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 4
-VERSION_MINOR = 3
+VERSION_MINOR = 4
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
@@ -49,6 +56,7 @@ STARTMENU_LNK = os.path.join(PROGRAMS_DIR, f"{APP_NAME}.lnk")
 LEGACY_STARTUP_VBS = os.path.join(STARTUP_DIR, "QuickTranslate.vbs")
 SCRIPT_PATH = os.path.join(APP_DIR, "translator.pyw")
 PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
+LAUNCHER_DIR = DATA_DIR
 
 # Start Menu / Startup shortcut icon. The Start Menu doesn't adapt to the
 # light/dark theme, so we ship the dark-tile artwork (white CC mark) which
@@ -276,6 +284,24 @@ def _log(tag, exc):
             pass
 
 
+def ensure_branded_launcher():
+    """Return the CC Translate-branded Python host, or None on creation failure."""
+    try:
+        return _ensure_branded_launcher(PYTHONW, LAUNCHER_DIR, version_string())
+    except Exception as e:
+        _log("ensure_branded_launcher", e)
+        return None
+
+
+def cleanup_old_launchers(current):
+    if not current:
+        return
+    try:
+        _cleanup_old_launchers(LAUNCHER_DIR, current)
+    except Exception as e:
+        _log("cleanup_old_launchers", e)
+
+
 def _spawn_relauncher(pid=None, data_dir=None):
     """Write a small detached PowerShell helper that waits for THIS process to
     fully exit (which releases the single-instance mutex), then starts a fresh
@@ -288,6 +314,7 @@ def _spawn_relauncher(pid=None, data_dir=None):
         pid = os.getpid()
     if data_dir is None:
         data_dir = APP_DIR
+    launcher = ensure_branded_launcher() or PYTHONW
     log = os.path.join(data_dir, "relaunch.log")
     script_path = os.path.join(data_dir, "_relaunch.ps1")
     ps = (
@@ -304,7 +331,7 @@ def _spawn_relauncher(pid=None, data_dir=None):
         "W 'old process gone (or wait timed out)'\n"
         "Start-Sleep -Milliseconds 600\n"
         "for ($try = 1; $try -le 5; $try++) {\n"
-        f"  $p = Start-Process -FilePath {_ps_squote(PYTHONW)} "
+        f"  $p = Start-Process -FilePath {_ps_squote(launcher)} "
         f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
         f"-WorkingDirectory {_ps_squote(APP_DIR)} -PassThru\n"
         "  W \"started attempt $try pid=$($p.Id)\"\n"
@@ -331,7 +358,7 @@ def _spawn_relauncher(pid=None, data_dir=None):
             f"for($i=0;$i -lt 300;$i++){{if(-not (Get-Process -Id {pid} "
             "-ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 100};"
             "Start-Sleep -Milliseconds 600;"
-            f"Start-Process -FilePath {_ps_squote(PYTHONW)} "
+            f"Start-Process -FilePath {_ps_squote(launcher)} "
             f"-ArgumentList {_ps_squote('\"' + SCRIPT_PATH + '\"')} "
             f"-WorkingDirectory {_ps_squote(APP_DIR)}"
         )
@@ -344,31 +371,35 @@ def _spawn_relauncher(pid=None, data_dir=None):
 
 
 def _create_shortcut(link_path):
-    """Create or update a .lnk pointing to this app's pythonw launcher."""
+    """Create or update a .lnk pointing to the branded app launcher."""
     try:
         import pythoncom  # noqa: F401
     except Exception:
         pass
+    launcher = ensure_branded_launcher() or PYTHONW
     ps = (
         "$ErrorActionPreference = 'Stop'; "
         "$ws = New-Object -ComObject WScript.Shell; "
         f"$l = $ws.CreateShortcut({_ps_squote(link_path)}); "
-        f"$l.TargetPath = {_ps_squote(PYTHONW)}; "
+        f"$l.TargetPath = {_ps_squote(launcher)}; "
         f"$l.Arguments = {_ps_squote('\"' + SCRIPT_PATH + '\"')}; "
         f"$l.WorkingDirectory = {_ps_squote(APP_DIR)}; "
         f"$l.IconLocation = {_ps_squote(ICON_PATH)}; "
         "$l.Save()"
     )
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                   creationflags=subprocess.CREATE_NO_WINDOW, timeout=15)
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps],
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=15, check=True)
 
 
 def ensure_startmenu_shortcut():
     """Ensure Start Menu has a launch entry for this app."""
     try:
         _create_shortcut(STARTMENU_LNK)
+        return True
     except Exception as e:
         _log("ensure_startmenu_shortcut", e)
+        return False
 
 
 def is_autostart_enabled():
@@ -377,22 +408,27 @@ def is_autostart_enabled():
 
 def set_autostart(enable):
     """Create or remove a Startup-folder shortcut to launch this app silently."""
-    try:
-        if os.path.exists(LEGACY_STARTUP_VBS):
-            os.remove(LEGACY_STARTUP_VBS)
-    except Exception:
-        pass
     if enable:
         try:
             _create_shortcut(STARTUP_LNK)
+            try:
+                if os.path.exists(LEGACY_STARTUP_VBS):
+                    os.remove(LEGACY_STARTUP_VBS)
+            except Exception as e:
+                _log("set_autostart_remove_legacy", e)
+            return True
         except Exception as e:
             _log("set_autostart_enable", e)
-    else:
+            return False
+    success = True
+    for path in (STARTUP_LNK, LEGACY_STARTUP_VBS):
         try:
-            if os.path.exists(STARTUP_LNK):
-                os.remove(STARTUP_LNK)
-        except Exception:
-            pass
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            _log("set_autostart_disable", e)
+            success = False
+    return success
 
 
 def remove_shortcuts():

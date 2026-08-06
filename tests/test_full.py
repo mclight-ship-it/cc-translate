@@ -2134,6 +2134,14 @@ class TestCCUpdatePaths(unittest.TestCase):
         self.assertIsInstance(cc_update.PYTHONW, str)
         self.assertGreater(len(cc_update.PYTHONW), 0)
 
+    def test_branded_launcher_dir_is_user_data_dir(self):
+        import cc_update
+        self.assertNotEqual(
+            os.path.normcase(cc_update.LAUNCHER_DIR), "")
+        self.assertEqual(
+            os.path.normcase(cc_update.LAUNCHER_DIR),
+            os.path.normcase(cc_update.DATA_DIR))
+
     def test_version_string_non_empty(self):
         vs = tr.version_string()
         self.assertIsInstance(vs, str)
@@ -2142,8 +2150,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 3)
-        self.assertTrue(tr.version_string().startswith("4.3."))
+        self.assertEqual(cc_update.VERSION_MINOR, 4)
+        self.assertTrue(tr.version_string().startswith("4.4."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -2158,6 +2166,70 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_legacy_startup_vbs_path_is_in_startup_dir(self):
         import cc_update
         self.assertTrue(cc_update.LEGACY_STARTUP_VBS.startswith(cc_update.STARTUP_DIR))
+
+    def test_startup_repairs_autostart_before_cleaning_old_launchers(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._fresh_install = False
+        app.cfg = tr.Config(dict(tr.DEFAULT_CONFIG))
+        app.cfg[tr.CFG.AUTOSTART_INITIALIZED] = True
+        events = []
+        with unittest.mock.patch.object(
+                tr, "ensure_branded_launcher",
+                side_effect=lambda: events.append("launcher") or "new.exe"), \
+                unittest.mock.patch.object(
+                    tr, "ensure_startmenu_shortcut",
+                    side_effect=lambda: events.append("startmenu") or True), \
+                unittest.mock.patch.object(
+                    tr, "is_autostart_enabled", return_value=True), \
+                unittest.mock.patch.object(
+                    tr, "set_autostart",
+                    side_effect=lambda enabled: events.append(
+                        f"autostart:{enabled}") or True), \
+                unittest.mock.patch.object(
+                    tr, "cleanup_old_launchers",
+                    side_effect=lambda current: events.append(
+                        f"cleanup:{current}")):
+            app._run_startup_tasks()
+        self.assertEqual(
+            events,
+            ["launcher", "startmenu", "autostart:True", "cleanup:new.exe"])
+
+    def test_startup_keeps_old_launchers_if_shortcut_refresh_fails(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._fresh_install = False
+        app.cfg = tr.Config(dict(tr.DEFAULT_CONFIG))
+        app.cfg[tr.CFG.AUTOSTART_INITIALIZED] = True
+        with unittest.mock.patch.object(
+                tr, "ensure_branded_launcher", return_value="new.exe"), \
+                unittest.mock.patch.object(
+                    tr, "ensure_startmenu_shortcut", return_value=False), \
+                unittest.mock.patch.object(
+                    tr, "is_autostart_enabled", return_value=False), \
+                unittest.mock.patch.object(
+                    tr, "cleanup_old_launchers") as cleanup:
+            app._run_startup_tasks()
+        cleanup.assert_not_called()
+
+    def test_fresh_install_retries_autostart_after_creation_failure(self):
+        app = object.__new__(tr.TranslatorApp)
+        app._fresh_install = True
+        app.cfg = tr.Config(dict(tr.DEFAULT_CONFIG))
+        app.cfg[tr.CFG.AUTOSTART_INITIALIZED] = False
+        with unittest.mock.patch.object(
+                tr, "ensure_branded_launcher", return_value="new.exe"), \
+                unittest.mock.patch.object(
+                    tr, "ensure_startmenu_shortcut", return_value=True), \
+                unittest.mock.patch.object(
+                    tr, "is_autostart_enabled", return_value=False), \
+                unittest.mock.patch.object(
+                    tr, "set_autostart", return_value=False), \
+                unittest.mock.patch.object(tr, "save_config") as save, \
+                unittest.mock.patch.object(
+                    tr, "cleanup_old_launchers") as cleanup:
+            app._run_startup_tasks()
+        self.assertFalse(app.cfg[tr.CFG.AUTOSTART_INITIALIZED])
+        save.assert_not_called()
+        cleanup.assert_not_called()
 
 
 # ============================================================
@@ -4678,12 +4750,14 @@ class TestShortcutQuoting(unittest.TestCase):
 
         def fake_run(cmd, **kw):
             captured["cmd"] = cmd
+            captured["kwargs"] = kw
             return None
 
         link = r"C:\Users\O'Brien\Start Menu\CC Translate.lnk"
         with unittest.mock.patch.object(cc_update.subprocess, "run", fake_run), \
-                unittest.mock.patch.object(cc_update, "PYTHONW",
-                                           r"C:\Py'thon\pythonw.exe"), \
+                unittest.mock.patch.object(
+                    cc_update, "ensure_branded_launcher",
+                    return_value=r"C:\CC O'Brien\CCTranslate.exe"), \
                 unittest.mock.patch.object(cc_update, "SCRIPT_PATH",
                                            r"C:\App\translator.pyw"), \
                 unittest.mock.patch.object(cc_update, "APP_DIR", r"C:\App"), \
@@ -4694,8 +4768,9 @@ class TestShortcutQuoting(unittest.TestCase):
         # The apostrophe paths must appear single-quote-doubled (escaped), never
         # as a bare '...{value}...' that an apostrophe would terminate early.
         self.assertIn("'C:\\Users\\O''Brien\\Start Menu\\CC Translate.lnk'", ps)
-        self.assertIn("'C:\\Py''thon\\pythonw.exe'", ps)
+        self.assertIn("'C:\\CC O''Brien\\CCTranslate.exe'", ps)
         self.assertNotIn("O'Brien'", ps.replace("O''Brien", ""))
+        self.assertTrue(captured["kwargs"]["check"])
 
 
 class TestTranslateAsTextEscapeHatch(unittest.TestCase):
@@ -4895,28 +4970,30 @@ class TestFollowUpAppend(unittest.TestCase):
         app, win, _ = self._app()
         btn = unittest.mock.Mock()
         btn._chip_set = unittest.mock.Mock()
+        btn._chip_set_enabled = unittest.mock.Mock()
         win._actions_btn = btn
 
         app._set_result_actions_busy(win, True)
 
         btn._chip_set.assert_called_once_with(
             tr.i18n.get("result.processing"))
+        btn._chip_set_enabled.assert_called_once_with(False)
         btn.config.assert_called_once_with(
-            text=tr.i18n.get("result.processing"),
-            state="disabled", cursor="watch")
+            text=tr.i18n.get("result.processing"), cursor="watch")
 
     def test_follow_up_completion_restores_v2_action_chip(self):
         app, win, _ = self._app()
         btn = unittest.mock.Mock()
         btn._chip_set = unittest.mock.Mock()
+        btn._chip_set_enabled = unittest.mock.Mock()
         win._actions_btn = btn
 
         app._set_result_actions_busy(win, False)
 
         btn._chip_set.assert_called_once_with(tr.i18n.get("result.actions"))
+        btn._chip_set_enabled.assert_called_once_with(True)
         btn.config.assert_called_once_with(
-            text=tr.i18n.get("result.actions"),
-            state="normal", cursor="hand2")
+            text=tr.i18n.get("result.actions"), cursor="hand2")
 
     def test_transform_feeds_primary_to_worker(self):
         # After a prior append grows the popup text, a rewrite must still send

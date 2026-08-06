@@ -1557,15 +1557,24 @@ class PopupMixin:
         if normal is None:
             return self._pill_button(parent, text or "", cmd, bg=popup_bg,
                                      fg=self._v2_tk_colors()["hint"])
-        b = tk.Button(parent, image=normal, text=text or "", command=cmd,
+        def _invoke():
+            if getattr(b, "_chip_enabled", True):
+                return cmd()
+            return None
+
+        b = tk.Button(parent, image=normal, text=text or "", command=_invoke,
                       bg=popup_bg,
                       activebackground=popup_bg, relief="flat", bd=0,
                       highlightthickness=0, cursor="hand2")
         b.image = normal
         b._chip_normal = normal
         b._chip_hover = hover
-        b.bind("<Enter>", lambda e: b.config(image=b._chip_hover))
+        b.bind(
+            "<Enter>",
+            lambda e: b.config(image=b._chip_hover)
+            if getattr(b, "_chip_enabled", True) else None)
         b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
+        b._chip_enabled = True
 
         def _set(label):
             n = _bake(label, False)
@@ -1574,6 +1583,13 @@ class PopupMixin:
                 b._chip_normal, b._chip_hover = n, h
                 b.config(image=n, text=label or "")
         b._chip_set = _set
+
+        def _set_enabled(enabled):
+            b._chip_enabled = bool(enabled)
+            b.config(state="normal")
+            if not enabled:
+                b.config(image=b._chip_normal)
+        b._chip_set_enabled = _set_enabled
         if tooltip:
             self._make_tooltip(b, tooltip)
         return b

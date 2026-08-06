@@ -310,12 +310,15 @@ class TestV2ResultPopup(unittest.TestCase):
         app._maybe_add_result_actions_button(win)
         btn = win._actions_btn
         before = str(btn.cget("image"))
+        original_command = str(btn.cget("command"))
 
         app._set_result_actions_busy(win, True)
 
         self.assertEqual(
             btn.cget("text"), tr.i18n.get("result.processing"))
-        self.assertEqual(str(btn.cget("state")), "disabled")
+        self.assertEqual(str(btn.cget("state")), "normal")
+        self.assertFalse(btn._chip_enabled)
+        self.assertEqual(str(btn.cget("command")), original_command)
         self.assertNotEqual(
             before, str(btn.cget("image")),
             "processing feedback should be baked into a new action-chip image")
@@ -323,6 +326,7 @@ class TestV2ResultPopup(unittest.TestCase):
         app._set_result_actions_busy(win, False)
         self.assertEqual(btn.cget("text"), tr.i18n.get("result.actions"))
         self.assertEqual(str(btn.cget("state")), "normal")
+        self.assertTrue(btn._chip_enabled)
 
     def test_v2_quick_input_is_single_line_no_scrollbar(self):
         app = self._app(v2=True)

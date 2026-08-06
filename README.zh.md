@@ -144,7 +144,7 @@ pip install comtypes   # 智能选区识别，避免输入框内无选中时误�
 # 或一键装全部（等价于上面所有包）：pip install -r requirements.txt
 
 # 5. 首次运行（确保当前目录是项目根目录 cc-translate）
-pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Translate”图标
+python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_branded_launcher() or cc_update.PYTHONW, cc_update.SCRIPT_PATH], cwd=cc_update.APP_DIR)"
 ```
 
 > ⚠️ **务必更新到最新版 Claude Code CLI**：本工具依赖较新的 `claude -p` 命令行参数，
@@ -157,12 +157,13 @@ pythonw translator.pyw   # 首次运行会自动创建开始菜单里的“CC Tr
 
 ## 启动方式
 
-首次运行后会自动在开始菜单创建 **CC Translate** 图标，后续可直接在开始菜单启动（无需命令行）。
+首次运行会在本地生成一个很小的品牌启动器，并在开始菜单创建
+**CC Translate** 图标。应用仍直接运行当前源码目录，但 Windows 任务管理器会显示
+**CC Translate**，不再显示通用的 **Python**。后续直接从开始菜单启动即可。
 
 ## 开机自启（可选）
 
 在应用的**设置**里勾选“开机自动启动”即可（会在启动文件夹创建快捷方式）。
-或手动把 `run.vbs` 的快捷方式放进启动文件夹。`run.vbs` 依赖 `pythonw.exe` 在 PATH 中。
 
 ## 给 AI 助手的一键安装说明
 

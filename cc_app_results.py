@@ -44,12 +44,17 @@ class ResultActionsMixin:
         label = i18n.get("result.processing" if busy else "result.actions")
         try:
             chip_set = getattr(btn, "_chip_set", None)
-            if chip_set is not None:
+            chip_set_enabled = getattr(btn, "_chip_set_enabled", None)
+            if chip_set is not None and chip_set_enabled is not None:
                 chip_set(label)
-            btn.config(
-                text=label,
-                state="disabled" if busy else "normal",
-                cursor="watch" if busy else "hand2")
+                chip_set_enabled(not busy)
+                btn.config(
+                    text=label, cursor="watch" if busy else "hand2")
+            else:
+                btn.config(
+                    text=label,
+                    state="disabled" if busy else "normal",
+                    cursor="watch" if busy else "hand2")
         except Exception:
             pass
 
