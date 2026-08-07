@@ -419,11 +419,16 @@ class CFG:
     AUTOSTART_INITIALIZED = "autostart_initialized"
     SUMMARY_ENABLED = "summary_enabled"
     TRAY_CLICK_ACTION = "tray_click_action"
-    # Dark-launch flag for the v2 UI redesign. Ships to everyone (auto-update)
-    # but stays OFF by default, so the new UI can be merged to master and
-    # dogfooded in the real app without exposing unfinished pages to users.
-    # Flip via the CC_UI_V2 env var (dev-only) or this config key (opt-in).
+    # V2 is the production UI. Keep the saved flag and environment override so
+    # support/dev builds can still force the legacy UI when diagnosing a
+    # regression.
     UI_V2 = "ui_v2"
+    # One-time marker for configs that saved the old dark-launch default. Before
+    # this marker existed, Settings persisted ``ui_v2: false`` even though no
+    # user-facing opt-out existed; migrate that generated value once so existing
+    # users receive v2 too. A later explicit false is preserved.
+    UI_V2_DEFAULT_MIGRATED = "ui_v2_default_migrated"
+    ACRYLIC_ENABLED = "acrylic_enabled"
 
 
 DEFAULT_CONFIG = {
@@ -448,17 +453,17 @@ DEFAULT_CONFIG = {
     CFG.AUTOSTART_INITIALIZED: False,
     CFG.SUMMARY_ENABLED: False,
     CFG.TRAY_CLICK_ACTION: "settings",
-    CFG.UI_V2: False,
+    CFG.UI_V2: True,
+    CFG.UI_V2_DEFAULT_MIGRATED: True,
+    CFG.ACRYLIC_ENABLED: False,
 }
 
 
 # ---------------------------------------------------------------------------
-# v2 UI dark-launch flag.
+# v2 UI selection.
 # ---------------------------------------------------------------------------
-# Environment variable that force-enables the v2 UI for the current process,
-# independent of the saved config. Intended for the developer to dogfood the
-# new UI in the real installed app without persisting a setting (and without
-# any surface a normal user could stumble into).
+# Environment variable that selects the UI for the current process, independent
+# of the saved config. ``CC_UI_V2=0`` remains the emergency legacy fallback.
 UI_V2_ENV = "CC_UI_V2"
 
 
@@ -469,9 +474,8 @@ def ui_v2_enabled(cfg=None):
       1. CC_UI_V2 env var — "1"/"true"/"yes"/"on" forces ON, "0"/"false"/"no"/
          "off" forces OFF. Lets a developer flip the new UI on (or explicitly
          off) for one run without touching saved config.
-      2. The saved config flag CFG.UI_V2 (opt-in for internal testers).
-      3. Off by default, so production users are unaffected even though the v2
-         code ships to everyone via auto-update.
+      2. The saved config flag CFG.UI_V2.
+      3. On by default; legacy remains available through an explicit false.
     """
     raw = os.environ.get(UI_V2_ENV)
     if raw is not None:
@@ -483,12 +487,12 @@ def ui_v2_enabled(cfg=None):
         # Any other value is ignored (fall through to config), so a typo can't
         # silently pin the flag one way.
     if cfg is None:
-        return False
+        return DEFAULT_CONFIG[CFG.UI_V2]
     try:
-        return bool(cfg.get(CFG.UI_V2, False))
+        return bool(cfg.get(CFG.UI_V2, DEFAULT_CONFIG[CFG.UI_V2]))
     except AttributeError:
         # Allow a plain dict-less caller (defensive; cfg is normally a mapping).
-        return False
+        return DEFAULT_CONFIG[CFG.UI_V2]
 
 
 # ---------------------------------------------------------------------------

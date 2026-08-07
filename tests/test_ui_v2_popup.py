@@ -110,6 +110,45 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertGreater(face.width(), 0)
         self.assertGreater(face.height(), 0)
 
+    def test_v2_acrylic_uses_native_backdrop_without_snapshot(self):
+        app = self._app(v2=True)
+        app.cfg[tr.CFG.ACRYLIC_ENABLED] = True
+        with unittest.mock.patch(
+                "cc_app_popup.win32util.acrylic_capability",
+                return_value=(True, "available")), unittest.mock.patch(
+                "cc_app_popup.win32util.apply_acrylic",
+                return_value=True) as apply_native, unittest.mock.patch(
+                "cc_app_popup.win32util.set_window_color_key",
+                return_value=0) as set_child_key:
+            win = app._make_popup("native glass")
+        app.popup = win
+        self._kill_later(win)
+        self.assertTrue(win._acrylic_requested)
+        self.assertTrue(win._acrylic_active)
+        apply_native.assert_called()
+        self.assertTrue(set_child_key.called)
+        self.assertFalse(
+            hasattr(win, "_acrylic_snapshot"),
+            "production Acrylic must never create a screenshot preview")
+
+    def test_v2_acrylic_failure_restores_opaque_surface(self):
+        app = self._app(v2=True)
+        app.cfg[tr.CFG.ACRYLIC_ENABLED] = True
+        with unittest.mock.patch(
+                "cc_app_popup.win32util.acrylic_capability",
+                return_value=(True, "available")), unittest.mock.patch(
+                "cc_app_popup.win32util.apply_acrylic",
+                return_value=False), unittest.mock.patch(
+                "cc_app_popup.win32util.remove_acrylic",
+                return_value=True):
+            win = app._make_popup("safe fallback")
+        app.popup = win
+        self._kill_later(win)
+        self.assertFalse(win._acrylic_requested)
+        self.assertFalse(win._acrylic_active)
+        self.assertNotEqual(
+            str(win.cget("background")).lower(), "#000000")
+
     def test_v2_header_has_gradient_title_and_logo(self):
         app = self._app(v2=True)
         win = app._make_popup("译文")

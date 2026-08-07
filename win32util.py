@@ -3,7 +3,8 @@
 All the raw native calls the app needs — DPI awareness, multi-monitor work-area
 geometry, rounded-window regions, the single-instance mutex — live here instead
 of being scattered through translator.pyw. Keeping them in one dependency-free
-module (it imports only ctypes) makes the native surface easy to find, reason
+module (it imports only standard-library modules) makes the native surface easy
+to find, reason
 about, and stub in tests, and shrinks the main file.
 
 Every function degrades gracefully: if a native API is missing or fails, it
@@ -18,12 +19,258 @@ Public API used by translator.pyw:
     set_taskbar_presence(hwnd, present)
     get_toplevel_hwnd(hwnd) -> hwnd
     exclude_window_from_capture(hwnd) -> bool
+    acrylic_capability() -> (available: bool, reason: str)
+    apply_acrylic(hwnd, tint_rgb, tint_opacity=0.4) -> bool
+    remove_acrylic(hwnd) -> bool
+    set_window_color_key(hwnd, rgb) -> int | None
+    restore_window_exstyle(hwnd, exstyle) -> bool
     activate_foreground(hwnd) -> bool
     acquire_single_instance_mutex(name) -> handle | None
 """
 
 import ctypes
 from ctypes import wintypes
+import sys
+import winreg
+
+
+ACRYLIC_TINT_OPACITY = 0.40
+
+ACRYLIC_AVAILABLE = "available"
+ACRYLIC_REMOTE_SESSION = "remote_session"
+ACRYLIC_HIGH_CONTRAST = "high_contrast"
+ACRYLIC_TRANSPARENCY_DISABLED = "transparency_disabled"
+ACRYLIC_COMPOSITION_DISABLED = "composition_disabled"
+ACRYLIC_UNSUPPORTED_WINDOWS = "unsupported_windows"
+ACRYLIC_API_UNAVAILABLE = "api_unavailable"
+
+
+class _HIGHCONTRASTW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("dwFlags", wintypes.DWORD),
+        ("lpszDefaultScheme", wintypes.LPWSTR),
+    ]
+
+
+class _ACCENT_POLICY(ctypes.Structure):
+    _fields_ = [
+        ("AccentState", ctypes.c_int),
+        ("AccentFlags", ctypes.c_int),
+        ("GradientColor", wintypes.DWORD),
+        ("AnimationId", ctypes.c_int),
+    ]
+
+
+class _WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
+    _fields_ = [
+        ("Attribute", ctypes.c_int),
+        ("Data", ctypes.c_void_p),
+        ("SizeOfData", ctypes.c_size_t),
+    ]
+
+
+class _MARGINS(ctypes.Structure):
+    _fields_ = [
+        ("cxLeftWidth", ctypes.c_int),
+        ("cxRightWidth", ctypes.c_int),
+        ("cyTopHeight", ctypes.c_int),
+        ("cyBottomHeight", ctypes.c_int),
+    ]
+
+
+def _windows_build():
+    try:
+        return int(sys.getwindowsversion().build)
+    except Exception:
+        return 0
+
+
+def _high_contrast_enabled():
+    try:
+        info = _HIGHCONTRASTW()
+        info.cbSize = ctypes.sizeof(info)
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            0x0042, info.cbSize, ctypes.byref(info), 0)  # SPI_GETHIGHCONTRAST
+        return bool(ok and (info.dwFlags & 0x00000001))
+    except Exception:
+        return False
+
+
+def _transparency_enabled():
+    try:
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+            value, _ = winreg.QueryValueEx(key, "EnableTransparency")
+        return bool(value)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return True
+
+
+def _composition_enabled():
+    try:
+        enabled = wintypes.BOOL()
+        result = ctypes.windll.dwmapi.DwmIsCompositionEnabled(
+            ctypes.byref(enabled))
+        return result == 0 and bool(enabled.value)
+    except Exception:
+        return False
+
+
+def acrylic_capability():
+    """Return whether native real-time Acrylic can be offered on this session.
+
+    The result is policy-aware: remote sessions, High Contrast, disabled system
+    transparency, disabled DWM composition, and unsupported Windows builds are
+    rejected before a window is styled. The reason is a stable code for i18n.
+    """
+    try:
+        if ctypes.windll.user32.GetSystemMetrics(0x1000):  # SM_REMOTESESSION
+            return False, ACRYLIC_REMOTE_SESSION
+    except Exception:
+        return False, ACRYLIC_API_UNAVAILABLE
+    if _high_contrast_enabled():
+        return False, ACRYLIC_HIGH_CONTRAST
+    if not _transparency_enabled():
+        return False, ACRYLIC_TRANSPARENCY_DISABLED
+    if not _composition_enabled():
+        return False, ACRYLIC_COMPOSITION_DISABLED
+    # ACCENT_ENABLE_ACRYLICBLURBEHIND is available from Windows 10 1809.
+    if _windows_build() < 17763:
+        return False, ACRYLIC_UNSUPPORTED_WINDOWS
+    try:
+        if not getattr(ctypes.windll.user32, "SetWindowCompositionAttribute"):
+            return False, ACRYLIC_API_UNAVAILABLE
+    except Exception:
+        return False, ACRYLIC_API_UNAVAILABLE
+    return True, ACRYLIC_AVAILABLE
+
+
+def _accent_gradient_color(tint_rgb, opacity):
+    red, green, blue = (max(0, min(255, int(value))) for value in tint_rgb)
+    alpha = max(0, min(255, int(round(float(opacity) * 255))))
+    # AccentPolicy expects ABGR, not the more common ARGB ordering.
+    return (alpha << 24) | (blue << 16) | (green << 8) | red
+
+
+def _set_accent_policy(hwnd, state, tint_rgb=(0, 0, 0), opacity=0.0):
+    try:
+        set_attribute = ctypes.windll.user32.SetWindowCompositionAttribute
+        set_attribute.argtypes = [
+            wintypes.HWND, ctypes.POINTER(_WINDOWCOMPOSITIONATTRIBDATA)]
+        set_attribute.restype = wintypes.BOOL
+        policy = _ACCENT_POLICY(
+            int(state),
+            2 if state else 0,
+            _accent_gradient_color(tint_rgb, opacity) if state else 0,
+            0,
+        )
+        data = _WINDOWCOMPOSITIONATTRIBDATA(
+            19,  # WCA_ACCENT_POLICY
+            ctypes.cast(ctypes.pointer(policy), ctypes.c_void_p),
+            ctypes.sizeof(policy),
+        )
+        return bool(set_attribute(
+            wintypes.HWND(get_toplevel_hwnd(hwnd)), ctypes.byref(data)))
+    except Exception:
+        return False
+
+
+def apply_acrylic(hwnd, tint_rgb, tint_opacity=ACRYLIC_TINT_OPACITY):
+    """Apply native, DWM-composited Acrylic to a top-level HWND.
+
+    No screenshots or polling are involved: movement and resize are composed by
+    Windows in real time. Callers must paint backdrop areas black, as required
+    by the classic Win32 client-area backdrop path.
+    """
+    available, _ = acrylic_capability()
+    if not available:
+        return False
+    top = get_toplevel_hwnd(hwnd)
+    try:
+        margins = _MARGINS(-1, -1, -1, -1)
+        if ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                wintypes.HWND(top), ctypes.byref(margins)) != 0:
+            return False
+    except Exception:
+        return False
+    # ACCENT_ENABLE_ACRYLICBLURBEHIND = 4.
+    if _set_accent_policy(top, 4, tint_rgb, tint_opacity):
+        return True
+    remove_acrylic(top)
+    return False
+
+
+def remove_acrylic(hwnd):
+    """Remove a previously applied backdrop and restore normal client painting."""
+    top = get_toplevel_hwnd(hwnd)
+    accent_ok = _set_accent_policy(top, 0)
+    try:
+        margins = _MARGINS(0, 0, 0, 0)
+        frame_ok = (
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                wintypes.HWND(top), ctypes.byref(margins)) == 0)
+    except Exception:
+        frame_ok = False
+    return bool(accent_ok and frame_ok)
+
+
+def set_window_color_key(hwnd, rgb=(0, 0, 0)):
+    """Make one child HWND's exact RGB background transparent to its parent.
+
+    Returns the previous extended style so callers can restore it on failure,
+    or ``None`` when Windows rejects the operation. Unlike Tk's top-level
+    ``-transparentcolor``, this is intentionally applied to child widgets: it
+    reveals the parent HWND's DWM Acrylic while preserving non-key text pixels.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        get_style = (
+            getattr(user32, "GetWindowLongPtrW", None)
+            or user32.GetWindowLongW)
+        set_style = (
+            getattr(user32, "SetWindowLongPtrW", None)
+            or user32.SetWindowLongW)
+        get_style.argtypes = [wintypes.HWND, ctypes.c_int]
+        get_style.restype = ctypes.c_ssize_t
+        set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_style.restype = ctypes.c_ssize_t
+        set_layered = user32.SetLayeredWindowAttributes
+        set_layered.argtypes = [
+            wintypes.HWND, wintypes.COLORREF, wintypes.BYTE, wintypes.DWORD]
+        set_layered.restype = wintypes.BOOL
+        handle = wintypes.HWND(int(hwnd))
+        old_style = int(get_style(handle, -20))  # GWL_EXSTYLE
+        if not set_style(handle, -20, old_style | 0x00080000):
+            # SetWindowLongPtr returns the previous value, which can legitimately
+            # be zero. A zero return is therefore not itself a failure.
+            pass
+        red, green, blue = (max(0, min(255, int(v))) for v in rgb)
+        colorref = red | (green << 8) | (blue << 16)
+        if not set_layered(handle, colorref, 255, 0x00000001):  # LWA_COLORKEY
+            set_style(handle, -20, old_style)
+            return None
+        return old_style
+    except Exception:
+        return None
+
+
+def restore_window_exstyle(hwnd, exstyle):
+    """Restore an HWND extended style saved by :func:`set_window_color_key`."""
+    try:
+        user32 = ctypes.windll.user32
+        set_style = (
+            getattr(user32, "SetWindowLongPtrW", None)
+            or user32.SetWindowLongW)
+        set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_style.restype = ctypes.c_ssize_t
+        set_style(wintypes.HWND(int(hwnd)), -20, ctypes.c_ssize_t(int(exstyle)))
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------

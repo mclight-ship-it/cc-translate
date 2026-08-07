@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""cc_ui_v2 — rendering foundation for the v2 UI redesign (dark-launch).
+"""cc_ui_v2 — rendering foundation for the production v2 UI.
 
 This is the SKIN LAYER every v2 page depends on: it bakes the concept
 aesthetic — deep-navy base + the tri-colour brand gradient (blue -> violet ->
@@ -17,12 +17,11 @@ Design constraints (see docs/UI_V2_PLAN.md):
     gradient every frame would lag, so :class:`GradientBackground` bakes ONCE
     at a max size and CROPS per frame (the card grows downward from a fixed
     top, so a top-anchored crop of a fixed-width bake is stable frame to frame).
-  * Phase-1 scope: opaque navy gradient + glow only. Real frosted glass / DWM
-    acrylic is deliberately deferred (risk #1/#2) — the ``glass_bg`` hook exists
-    but is off by default.
+  * Opaque mode bakes the stable navy face. The optional Acrylic Beta is applied
+    separately at the HWND boundary in ``win32util``/``cc_app_popup``; it never
+    uses the screenshot-style ``glass_bg`` test hook.
 
-This module is NOT wired to any page yet; v2 pages branch on ``ui_v2_enabled``
-and call into here as they land.
+All app-owned windows use this layer when ``ui_v2_enabled`` resolves true.
 """
 
 import math

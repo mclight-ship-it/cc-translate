@@ -1,6 +1,6 @@
 # CC Translate — UI v2 状态与恢复手册
 
-> 状态：**已恢复，诊断窗口与 OCR overlay v2 已完成**
+> 状态：**UI v2 已设为生产默认；Acrylic Beta 已接入**
 >
 > 暂停日期：2026-08-05；恢复日期：2026-08-06
 > 旧 UI 基线提交：`99378ea`（About 窗口最后一轮视觉修正）
@@ -13,13 +13,15 @@
 
 ## 1. 当前产品状态
 
-UI v2 仍处于 **dark launch**：
+UI v2 已完成默认发布：
 
-- 新 UI 代码已经合入 `master`，但默认关闭。
-- 普通用户默认继续使用 legacy UI。
-- 开发者可通过本机环境变量启用 v2，在真实 App 中日常测试。
-- 设置页面目前没有公开的“启用新版 UI”开关。
+- 新 UI 是新安装和现有用户升级后的默认界面。
+- 旧 dark-launch 配置会一次性迁移到 v2，避免历史自动保存的
+  `ui_v2: false` 把普通用户留在 legacy。
+- legacy 代码仍保留；`CC_UI_V2=0` 或迁移后的显式 `ui_v2: false`
+  可用于诊断回退。
 - 如果 Pillow 不可用，即使开关为 true，也会自动走 legacy UI。
+- 设置页提供“毛玻璃效果 (Beta)”；默认关闭，只在 v2 和系统能力允许时生效。
 
 2026-08-06 恢复工作后已完成：
 
@@ -89,14 +91,17 @@ UI v2 仍处于 **dark launch**：
 ```python
 class CFG:
     UI_V2 = "ui_v2"
+    ACRYLIC_ENABLED = "acrylic_enabled"
 
 
 DEFAULT_CONFIG = {
-    CFG.UI_V2: False,
+    CFG.UI_V2: True,
+    CFG.ACRYLIC_ENABLED: False,
 }
 ```
 
-生产默认值是 `False`，因此仅仅把 v2 代码合入 `master` 不会自动影响普通用户。
+生产默认值是 `True`。`Config` 使用 `ui_v2_default_migrated` 做一次性迁移：
+旧配置中由 dark launch 自动保存的 false 会升级为 true；迁移后再显式设置的 false 会保留。
 
 ### 3.2 本机环境变量
 
@@ -112,7 +117,7 @@ CC_UI_V2
 2. `CC_UI_V2=0/false/no/off/空字符串`：强制 legacy。
 3. 环境变量是未知值：忽略，继续读取配置。
 4. 读取 `%APPDATA%\CC Translate\config.json` 中的 `ui_v2`。
-5. 都没有时使用默认值 `False`。
+5. 都没有时使用默认值 `True`。
 
 对应逻辑在：
 
@@ -140,7 +145,7 @@ ui_v2_enabled(self.cfg) AND cc_ui_v2.PIL_OK
 也就是说：
 
 - 开关打开 + Pillow 正常：使用 v2。
-- 开关关闭：使用 legacy。
+- 显式关闭：使用 legacy。
 - Pillow 导入失败：安全降级 legacy。
 
 共享判定和主题适配主要位于 `cc_app_popup.py`。
@@ -272,7 +277,13 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 - Pillow 是可选依赖；不可用时必须允许 legacy 继续工作。
 - 最终窗口圆角使用二值硬 mask，避免 transparent-color 边缘出现半透明颗粒。
 - 窗口边线采用与底色接近的同色相，只做明度变化，不使用彩虹边框。
-- 当前没有真正的 Acrylic / 毛玻璃，仍是稳定的不透明表面。
+- 默认仍是稳定的不透明表面。
+- Acrylic Beta 打开且系统支持时，v2 共享背景改由原生 DWM 实时合成。
+  正式实现不截屏、不轮询，也不使用 `glass_bg` 测试 hook。
+- 用户选定的背景色调强度为 40%。远程 POC 的模糊半径 20 只代表视觉偏好；
+  正式 DWM Acrylic 的模糊半径由 Windows 管理，产品不会伪造对应参数。
+- 远程桌面、高对比度、系统透明效果关闭、DWM 合成关闭或系统版本不支持时，
+  设置开关禁用并显示具体原因，窗口继续使用不透明 v2。
 
 ### 5.2 `cc_app_popup.py`：Tk 与窗口外壳集成
 
@@ -280,7 +291,8 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 
 - `_v2_popup_on()`：统一功能开关。
 - `_v2_palette()` / `_v2_window_theme()`：把 Pillow palette 转成 Tk 可用颜色。
-- `_rounded_shell_v2()`：颜色键透明窗口、Canvas 外壳、内容 frame。
+- `_rounded_shell_v2()`：普通 v2 使用顶层颜色键圆角；Acrylic 使用非 layered
+  顶层 HWND、真实 Win32 圆角 region、Canvas 外壳和内容 frame。
 - `_v2_photo()`：按主题、尺寸和状态缓存 `PhotoImage`。
 - `_v2_brand_header()`：共享品牌标题区域。
 - `_v2_soft_button()` / `_v2_ghost_button()`：共享控件。
@@ -302,6 +314,22 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 
 v2 只应改变表现，不应复制或改变这些业务逻辑。恢复工作时继续遵守这个边界，避免出现
 “legacy 一套业务、v2 又一套业务”的双重维护。
+
+### 5.4 Acrylic Beta
+
+- 配置：`CFG.ACRYLIC_ENABLED`，默认 `False`。
+- 能力探测和 Win32 调用：`win32util.acrylic_capability()` /
+  `win32util.apply_acrylic()`。
+- 统一应用点：`cc_app_popup.py::_reveal_rounded_window()`，结果窗口的专用首帧
+  路径也调用同一 helper。
+- Acrylic 使用 DWM `ACCENT_ENABLE_ACRYLICBLURBEHIND` 和 40% ABGR tint。
+- 经典 Tk 子控件会自行绘制不透明背景，因此 Acrylic reveal 前会对黑色背景的
+  child HWND 设置 `WS_EX_LAYERED` + `LWA_COLORKEY`。黑色背景显示父 HWND 的
+  原生材料，文字和非黑色控件像素保持不透明。
+- 如果 native Acrylic 或任一 child-HWND 色键调用失败，会恢复所有 extended
+  styles、移除 backdrop，并立即重绘完整的不透明 v2 表面，不能留下黑色窗口。
+- 当前开发机是 Remote Session，只能验证禁用路径和 API/窗口集成，真实视觉必须在
+  Windows 11 本地物理会话验收。
 
 ---
 
@@ -452,8 +480,7 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 
 ### 9.1 明确未完成
 
-- 对外公开的新 UI 设置开关。
-- 真正的 Acrylic / 毛玻璃。
+- Acrylic Beta 的 Windows 11 本地物理会话视觉验收。
 
 ### 9.2 需要持续关注
 
@@ -462,6 +489,7 @@ Remove-Item Env:CC_UI_V2 -ErrorAction SilentlyContinue
 - 主题切换后的 PhotoImage cache。
 - 流式窗口动态增高时的背景接缝。
 - GUI 测试在无显示环境中的跳过。
+- Acrylic 依赖 Windows DWM 和系统透明策略；远程桌面不会用截图方案假装可用。
 - About 主窗口及两个次级窗口均有真实窗口 smoke；次级窗口另有 v2 / legacy、
   安全卸载 fixture、默认状态和键盘路径的专用断言。
 

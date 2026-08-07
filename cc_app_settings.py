@@ -27,6 +27,7 @@ from tkinter import ttk
 from tkinter import font as tkfont
 
 import i18n
+import win32util
 
 from win32util import get_monitor_rect
 from cc_update import version_string, is_autostart_enabled, set_autostart
@@ -490,22 +491,24 @@ class SettingsMixin:
         self.root.option_add("*TCombobox*Listbox.borderWidth", 10)
         self.root.option_add("*TCombobox*Listbox.font", "{Microsoft YaHei UI} 10")
 
-    def _make_toggle(self, parent, initial, bg, *, accessible_name=None):
+    def _make_toggle(self, parent, initial, bg, *, accessible_name=None,
+                     enabled=True):
         """A modern pill toggle switch with .get() and .set(bool)."""
         t = self.theme
         accent = t["accent"]
         off = t["popup_border"]
+        disabled_track = t["popup_hint"]
         knob = "#ffffff"
-        W, H = 42, 22
+        W, H = 42, 24
 
         if accessible_name:
             try:
                 from PIL import Image, ImageDraw, ImageTk
 
-                def _toggle_image(on):
+                def _toggle_image(on, is_enabled=True):
                     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
                     draw = ImageDraw.Draw(img)
-                    track = accent if on else off
+                    track = (accent if on else off) if is_enabled else disabled_track
                     draw.rounded_rectangle(
                         (1, 1, W - 2, H - 2), radius=H // 2, fill=track)
                     x = W - 12 if on else 12
@@ -514,34 +517,69 @@ class SettingsMixin:
                         fill=knob, outline=knob)
                     return ImageTk.PhotoImage(img, master=self.root)
 
-                off_img = _toggle_image(False)
-                on_img = _toggle_image(True)
+                off_img = _toggle_image(False, enabled)
+                on_img = _toggle_image(True, enabled)
                 value = tk.BooleanVar(master=parent, value=bool(initial))
+                if not enabled:
+                    wrapper = tk.Frame(
+                        parent, width=W, height=H, bg=bg, bd=0,
+                        highlightthickness=0, takefocus=0, cursor="arrow")
+                    wrapper.pack_propagate(False)
+                    check = tk.Checkbutton(
+                        wrapper, variable=value, text=accessible_name,
+                        image=off_img, selectimage=on_img, compound="none",
+                        indicatoron=False, bg=bg, activebackground=bg,
+                        selectcolor=bg, relief="flat", offrelief="flat", bd=0,
+                        highlightthickness=0, takefocus=0, cursor="arrow",
+                        state="disabled")
+                    check.place(x=0, y=0, width=W, height=H)
+                    visual = tk.Label(
+                        wrapper, image=on_img if value.get() else off_img,
+                        bg=bg, bd=0, highlightthickness=0, takefocus=0)
+                    visual.place(x=0, y=0, width=W, height=H)
+                    wrapper._toggle_images = (off_img, on_img)
+                    wrapper._accessible_control = check
+                    wrapper.get = lambda: bool(value.get())
+
+                    def _set_disabled(val):
+                        value.set(bool(val))
+                        visual.configure(image=on_img if value.get() else off_img)
+
+                    wrapper.set = _set_disabled
+                    wrapper.toggle = lambda _event=None: "break"
+                    wrapper.enabled = False
+                    return wrapper
                 check = tk.Checkbutton(
                     parent, variable=value, text=accessible_name,
                     image=off_img, selectimage=on_img, compound="none",
                     indicatoron=False, bg=bg, activebackground=bg,
                     selectcolor=bg, relief="flat", offrelief="flat", bd=0,
                     highlightthickness=2, highlightbackground=bg,
-                    highlightcolor=accent, takefocus=1, cursor="hand2")
+                    highlightcolor=accent, takefocus=1 if enabled else 0,
+                    cursor="hand2" if enabled else "arrow",
+                    state="normal")
                 check._toggle_images = (off_img, on_img)
                 check.get = lambda: bool(value.get())
                 check.set = lambda val: value.set(bool(val))
                 check.toggle = lambda _event=None: (
-                    check.invoke(), "break")[1]
+                    check.invoke() if enabled else None, "break")[1]
                 check.bind("<space>", check.toggle)
                 check.bind("<Return>", check.toggle)
+                check.enabled = bool(enabled)
                 return check
             except Exception:
                 pass
 
-        c = tk.Canvas(parent, width=W, height=H, bg=bg,
-                      highlightthickness=0, bd=0, cursor="hand2")
+        c = tk.Canvas(
+            parent, width=W, height=H, bg=bg, highlightthickness=0, bd=0,
+            cursor="hand2" if enabled else "arrow",
+            takefocus=1 if enabled else 0)
         st = {"on": bool(initial)}
 
         def draw():
             c.delete("all")
-            track = accent if st["on"] else off
+            track = (
+                accent if st["on"] else off) if enabled else disabled_track
             # Pill = rectangle capped with two circles.
             c.create_oval(2, 2, 20, H - 2, fill=track, outline=track)
             c.create_oval(W - 20, 2, W - 2, H - 2, fill=track, outline=track)
@@ -550,13 +588,19 @@ class SettingsMixin:
             c.create_oval(kx - 8, 3, kx + 8, H - 3, fill=knob, outline=knob)
 
         def toggle(_e=None):
-            st["on"] = not st["on"]
-            draw()
+            if enabled:
+                st["on"] = not st["on"]
+                draw()
+            return "break"
 
-        c.bind("<Button-1>", toggle)
+        if enabled:
+            c.bind("<Button-1>", toggle)
+            c.bind("<space>", toggle)
+            c.bind("<Return>", toggle)
         draw()
         c.get = lambda: st["on"]
         c.toggle = toggle
+        c.enabled = bool(enabled)
 
         def _set(v):
             st["on"] = bool(v)
@@ -582,15 +626,16 @@ class SettingsMixin:
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
                              bg, fg, font, help_text=None, help_ring=None,
-                             help_glyph=None):
+                             help_glyph=None, enabled=True):
         row = row_state["value"]
+        label_fg = fg if enabled else (help_ring or fg)
         if help_text:
             # Label + circular "?" help badge sit together in column 0 so the
             # icon follows the feature name (not the far-right switch).
             cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
             cell.grid(row=row, column=0, sticky="w", pady=8)
             label_font = (font, 10)
-            tk.Label(cell, text=text_, bg=bg, fg=fg, font=label_font).pack(
+            tk.Label(cell, text=text_, bg=bg, fg=label_fg, font=label_font).pack(
                 side="left")
             icon = self._make_help_icon_image(
                 help_ring or fg, help_glyph or fg, bg,
@@ -599,18 +644,25 @@ class SettingsMixin:
                 if not hasattr(self, "_help_icon_imgs"):
                     self._help_icon_imgs = []
                 self._help_icon_imgs.append(icon)   # keep ref alive
-                help_lbl = tk.Label(cell, image=icon, bg=bg, bd=0,
-                                    highlightthickness=0, cursor="hand2")
+                help_lbl = tk.Label(
+                    cell, image=icon, text=help_text, compound="none",
+                    bg=bg, bd=0, takefocus=1,
+                    highlightthickness=2, highlightbackground=bg,
+                    highlightcolor=help_ring or fg, cursor="hand2")
                 help_lbl.image = icon
             else:
-                help_lbl = tk.Label(cell, text="(?)", bg=bg, fg=help_ring or fg,
-                                    font=(font, 10), cursor="hand2")
+                help_lbl = tk.Label(
+                    cell, text="(?)", bg=bg, fg=help_ring or fg,
+                    font=(font, 10), cursor="hand2", takefocus=1,
+                    highlightthickness=2, highlightbackground=bg,
+                    highlightcolor=help_ring or fg)
             help_lbl.pack(side="left", padx=(6, 0))
             self._make_tooltip(help_lbl, help_text)
         else:
-            tk.Label(body, text=text_, bg=bg, fg=fg, font=(font, 10)).grid(
+            tk.Label(body, text=text_, bg=bg, fg=label_fg, font=(font, 10)).grid(
                 row=row, column=0, sticky="w", pady=8)
-        sw = self._make_toggle(body, initial, bg)
+        sw = self._make_toggle(
+            body, initial, bg, accessible_name=text_, enabled=enabled)
         sw.grid(row=row, column=1, sticky="e", pady=8)
         row_state["value"] = row + 1
         return sw
@@ -878,6 +930,44 @@ class SettingsMixin:
                 values=list(theme_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
+        acrylic_sw = None
+        if v2on:
+            acrylic_available, acrylic_reason = win32util.acrylic_capability()
+            acrylic_help = i18n.get("settings.label.acrylic_help")
+            if not acrylic_available:
+                reason_keys = {
+                    win32util.ACRYLIC_REMOTE_SESSION:
+                        "settings.label.acrylic_unavailable_remote",
+                    win32util.ACRYLIC_HIGH_CONTRAST:
+                        "settings.label.acrylic_unavailable_high_contrast",
+                    win32util.ACRYLIC_TRANSPARENCY_DISABLED:
+                        "settings.label.acrylic_unavailable_transparency",
+                    win32util.ACRYLIC_COMPOSITION_DISABLED:
+                        "settings.label.acrylic_unavailable_composition",
+                    win32util.ACRYLIC_UNSUPPORTED_WINDOWS:
+                        "settings.label.acrylic_unavailable_windows",
+                    win32util.ACRYLIC_API_UNAVAILABLE:
+                        "settings.label.acrylic_unavailable_windows",
+                }
+                acrylic_help = "{}\n\n{}".format(
+                    acrylic_help,
+                    i18n.get(reason_keys.get(
+                        acrylic_reason,
+                        "settings.label.acrylic_unavailable_windows")))
+            acrylic_sw = self._settings_toggle_row(
+                body, row_state,
+                i18n.get("settings.label.acrylic_enabled"),
+                self.cfg.get(
+                    CFG.ACRYLIC_ENABLED,
+                    DEFAULT_CONFIG[CFG.ACRYLIC_ENABLED]),
+                bg=bg, fg=fg, font=FONT,
+                help_text=acrylic_help,
+                help_ring=hint, help_glyph=hint,
+                enabled=acrylic_available)
+            win._settings_acrylic_switch = acrylic_sw
+            win._settings_acrylic_capability = (
+                acrylic_available, acrylic_reason)
+
         layout_var = tk.StringVar(
             value=layout_labels.get(
                 self.cfg.get(CFG.POPUP_LAYOUT, "dynamic"),
@@ -1092,8 +1182,10 @@ class SettingsMixin:
         label_to_ocr_engine = {v: k for k, v in ocr_engine_labels.items()}
         label_to_tray_click = {v: k for k, v in tray_click_labels.items()}
         label_to_lang = {v: k for k, v in LANGUAGE_LABELS.items()}
+        restore_defaults_pending = False
 
         def apply_settings():
+            nonlocal restore_defaults_pending
             try:
                 prev_warm_key = self._warm_key()
                 previous_provider = self.cfg.get(
@@ -1129,7 +1221,16 @@ class SettingsMixin:
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
                 self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = bool(
                     codex_stream_sw.get())
-                
+                if acrylic_sw is not None:
+                    self.cfg[CFG.ACRYLIC_ENABLED] = bool(acrylic_sw.get())
+                elif restore_defaults_pending:
+                    self.cfg[CFG.ACRYLIC_ENABLED] = DEFAULT_CONFIG[
+                        CFG.ACRYLIC_ENABLED]
+                if restore_defaults_pending:
+                    self.cfg[CFG.UI_V2] = DEFAULT_CONFIG[CFG.UI_V2]
+                    self.cfg[CFG.UI_V2_DEFAULT_MIGRATED] = DEFAULT_CONFIG[
+                        CFG.UI_V2_DEFAULT_MIGRATED]
+
                 # Handle language change
                 new_lang = label_to_lang[lang_var.get()]
                 old_lang = self.cfg.get(CFG.LANGUAGE)
@@ -1167,10 +1268,12 @@ class SettingsMixin:
                     fg=t["status_err"])
 
         def restore_defaults():
+            nonlocal restore_defaults_pending
             # Repopulate every form widget with its DEFAULT_CONFIG value without
             # persisting — the user still clicks Save to commit, or Close to
             # discard. Language is intentionally left untouched (it has no static
             # default and changing it forces an app relaunch).
+            restore_defaults_pending = True
             provider_var.set(
                 provider_labels[DEFAULT_CONFIG[CFG.MODEL_PROVIDER]])
             refresh_model_choices()
@@ -1192,6 +1295,8 @@ class SettingsMixin:
             summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
             codex_stream_sw.set(
                 DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
+            if acrylic_sw is not None:
+                acrylic_sw.set(DEFAULT_CONFIG[CFG.ACRYLIC_ENABLED])
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])

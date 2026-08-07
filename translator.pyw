@@ -528,6 +528,14 @@ class Config(dict):
         super().__init__(DEFAULT_CONFIG)
         if data:
             self.update(data)
+        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
+            # Settings used to serialize the internal dark-launch default
+            # (ui_v2=false) into ordinary user configs even though users had no
+            # UI control for it. Move every pre-release config to the production
+            # v2 default once; the marker lets a subsequent explicit false keep
+            # selecting legacy.
+            self[CFG.UI_V2] = True
+            self[CFG.UI_V2_DEFAULT_MIGRATED] = True
         if CFG.MODEL_PROVIDER not in raw:
             # Configs from before provider selection existed contain only the
             # legacy Claude "model" key. Preserve that explicit old choice;
