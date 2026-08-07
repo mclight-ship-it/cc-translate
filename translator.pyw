@@ -652,7 +652,14 @@ def load_config() -> "Config":
     cfg = Config()
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = Config(json.load(f))
+            raw = json.load(f)
+        cfg = Config(raw)
+        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
+            migrated = dict(raw)
+            migrated[CFG.UI_V2] = cfg[CFG.UI_V2]
+            migrated[CFG.UI_V2_DEFAULT_MIGRATED] = cfg[
+                CFG.UI_V2_DEFAULT_MIGRATED]
+            save_config(migrated)
     except FileNotFoundError:
         pass
     except Exception as e:

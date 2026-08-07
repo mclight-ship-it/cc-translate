@@ -319,6 +319,26 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], False)
         self.assertEqual(cfg[tr.CFG.FONT_SIZE], 16)
 
+    def test_ui_v2_migration_is_persisted_and_runs_only_once(self):
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump({tr.CFG.UI_V2: False}, f)
+        self._patch_config_path(self._path)
+
+        migrated = tr.load_config()
+        with open(self._path, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+
+        self.assertIs(migrated[tr.CFG.UI_V2], True)
+        self.assertIs(saved[tr.CFG.UI_V2], True)
+        self.assertIs(saved[tr.CFG.UI_V2_DEFAULT_MIGRATED], True)
+
+        saved[tr.CFG.UI_V2] = False
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump(saved, f)
+
+        explicit_legacy = tr.load_config()
+        self.assertIs(explicit_legacy[tr.CFG.UI_V2], False)
+
     def test_legacy_model_migrates_to_claude_model(self):
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump({tr.CFG.MODEL: "opus"}, f)
@@ -2165,8 +2185,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 7)
-        self.assertTrue(tr.version_string().startswith("4.7."))
+        self.assertEqual(cc_update.VERSION_MINOR, 8)
+        self.assertTrue(tr.version_string().startswith("4.8."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
