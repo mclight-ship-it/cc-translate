@@ -107,6 +107,7 @@ class TestCFGConstants(unittest.TestCase):
         "AUTO_UPDATE_ENABLED", "AUTO_UPDATE_HOUR",
         "OCR_ENGINE", "OCR_HOTKEY_ENABLED",
         "CLIPBOARD_PROTECTION_ENABLED",
+        "PLAIN_TEXT_PASTE_ENABLED",
         "AUTOSTART_INITIALIZED",
         "SUMMARY_ENABLED",
         "LABS_DEFAULTS_MIGRATED",
@@ -159,6 +160,8 @@ class TestCFGConstants(unittest.TestCase):
             tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED], True)
         self.assertIs(
             tr.DEFAULT_CONFIG[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], True)
+        self.assertIs(
+            tr.DEFAULT_CONFIG[tr.CFG.PLAIN_TEXT_PASTE_ENABLED], False)
         self.assertEqual(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
         self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
@@ -2254,8 +2257,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 17)
-        self.assertTrue(tr.version_string().startswith("4.17."))
+        self.assertEqual(cc_update.VERSION_MINOR, 18)
+        self.assertTrue(tr.version_string().startswith("4.18."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()

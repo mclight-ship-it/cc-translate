@@ -55,6 +55,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
 - **Long-text summary (Beta)**: on by default; longer natural-language text leads with a short summary before the full translation, and can be turned off in Labs
+- **Paste as plain text (Beta)**: optionally reserve `Ctrl+Shift+K` to remove clipboard formatting and paste the text immediately; image- and file-only clipboards are left untouched
 - **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
 - **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click

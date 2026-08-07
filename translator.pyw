@@ -52,6 +52,10 @@ from cc_update import (
 )
 import cc_update as _cc_update
 import cc_ocr
+from cc_plain_paste import (
+    PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
+    shortcut_keys_released,
+)
 
 # Shared foundation layer (paths, logging, config keys, direction prompts,
 # model prompts). Re-exported here so existing tr.<name> references resolve.
@@ -938,6 +942,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._last_provider_route = {}
         self._trigger_queue = queue.Queue()
         self._ocr_queue = queue.Queue()   # Win+Shift+C requests → main thread
+        self._plain_paste_queue = queue.Queue()
+        self._plain_paste_pending = False
+        self._plain_paste_hotkey = None
+        self._plain_paste_hotkey_available = None
+        self._plain_paste_hotkey_error = None
         self._ocr_selecting = False       # region-selector overlay is open
         self._ss = StreamSession()
         # Monotonic in-flight job id. Every new translation/OCR request bumps
@@ -987,6 +996,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         except Exception as e:
             log_error("root_iconbitmap", e)
         self.root.withdraw()
+        self.root.bind("<Destroy>", self._on_root_destroy, add="+")
 
         # Match tk's logical scaling to the real screen DPI so text is crisp
         # and correctly sized after declaring DPI awareness above.
@@ -1003,7 +1013,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # order instead of piling up and firing in a burst.
         self.root.after(TRIGGER_POLL_MS, self._pump_triggers)
         self.root.after(TRIGGER_POLL_MS, self._pump_ocr)
+        self.root.after(TRIGGER_POLL_MS, self._pump_plain_paste)
 
+        self._configure_plain_paste_hotkey()
         self._start_listener()
         self._start_tray()
 
@@ -1262,6 +1274,69 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         )
 
     # ---------- Hotkey detection ----------
+    def _on_root_destroy(self, event):
+        if event.widget is self.root:
+            self._shutdown_plain_paste_hotkey()
+
+    def _configure_plain_paste_hotkey(self):
+        """Apply the saved plain-text paste setting without restarting."""
+        self._shutdown_plain_paste_hotkey()
+        if not self.cfg.get(
+                CFG.PLAIN_TEXT_PASTE_ENABLED,
+                DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED]):
+            self._plain_paste_hotkey_available = None
+            self._plain_paste_hotkey_error = None
+            return True
+
+        service = PlainPasteHotkey(
+            lambda: self._plain_paste_queue.put(time.monotonic()))
+        self._plain_paste_hotkey = service
+        available = service.start()
+        self._plain_paste_hotkey_available = available
+        self._plain_paste_hotkey_error = service.error_code
+        if not available:
+            service.stop()
+            if not service.is_alive:
+                self._plain_paste_hotkey = None
+        return available
+
+    def _shutdown_plain_paste_hotkey(self):
+        service = getattr(self, "_plain_paste_hotkey", None)
+        self._plain_paste_hotkey = None
+        if service is not None:
+            service.stop()
+
+    def _pump_plain_paste(self):
+        """Wait for the shortcut keys to be released, then paste once."""
+        try:
+            while True:
+                self._plain_paste_queue.get_nowait()
+                self._plain_paste_pending = True
+        except queue.Empty:
+            pass
+
+        if self._plain_paste_pending and shortcut_keys_released():
+            self._plain_paste_pending = False
+            self._paste_clipboard_as_plain_text()
+        self.root.after(TRIGGER_POLL_MS, self._pump_plain_paste)
+
+    def _paste_clipboard_as_plain_text(self):
+        if not self.cfg.get(
+                CFG.PLAIN_TEXT_PASTE_ENABLED,
+                DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED]):
+            return False
+        try:
+            converted = convert_clipboard_to_plain_text(
+                int(self.root.winfo_id()))
+            if not converted:
+                return False
+            if not send_ctrl_v():
+                raise RuntimeError("SendInput did not accept the full Ctrl+V chord")
+            return True
+        except Exception as exc:
+            log_error("plain_text_paste", exc)
+            return False
+
     def _start_listener(self):
         WIN_KEYS = (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r)
         SHIFT_KEYS = (keyboard.Key.shift, keyboard.Key.shift_l,

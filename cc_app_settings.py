@@ -634,7 +634,7 @@ class SettingsMixin:
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
                              bg, fg, font, help_text=None, help_ring=None,
-                             help_glyph=None, enabled=True):
+                             help_glyph=None, shortcut_text=None, enabled=True):
         row = row_state["value"]
         label_fg = fg if enabled else (help_ring or fg)
         if help_text:
@@ -645,6 +645,11 @@ class SettingsMixin:
             label_font = (font, 10)
             tk.Label(cell, text=text_, bg=bg, fg=label_fg, font=label_font).pack(
                 side="left")
+            if shortcut_text:
+                tk.Label(
+                    cell, text=shortcut_text, bg=bg,
+                    fg=help_ring or fg, font=(font, 9)).pack(
+                        side="left", padx=(8, 0))
             icon = self._make_help_icon_image(
                 help_ring or fg, help_glyph or fg, bg,
                 diameter=self._help_badge_diameter(label_font))
@@ -1027,6 +1032,16 @@ class SettingsMixin:
             bg=bg, fg=fg, font=FONT,
             help_text=i18n.get("settings.label.clipboard_protection_help"),
             help_ring=hint, help_glyph=hint)
+        plain_paste_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.plain_text_paste"),
+            self.cfg.get(
+                CFG.PLAIN_TEXT_PASTE_ENABLED,
+                DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED]),
+            bg=bg, fg=fg, font=FONT,
+            help_text=i18n.get("settings.label.plain_text_paste_help"),
+            help_ring=hint, help_glyph=hint,
+            shortcut_text="Ctrl+Shift+K")
 
         # ---- Section: 更新 ----
         self._settings_section(
@@ -1142,6 +1157,14 @@ class SettingsMixin:
         status = tk.Label(footer, text="", bg=bg, fg=t["status_ok"],
                           font=(FONT, 9))
         status.pack(side="left", padx=(12, 0))
+        if (self.cfg.get(
+                CFG.PLAIN_TEXT_PASTE_ENABLED,
+                DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED])
+                and getattr(
+                    self, "_plain_paste_hotkey_available", None) is False):
+            status.config(
+                text=i18n.get("settings.label.plain_text_paste_unavailable"),
+                fg=t["status_err"])
 
         label_to_dir = {v: k for k, v in direction_labels.items()}
         label_to_theme = {v: k for k, v in theme_labels.items()}
@@ -1186,6 +1209,8 @@ class SettingsMixin:
                 self.cfg[CFG.OCR_HOTKEY_ENABLED] = bool(ocr_hotkey_sw.get())
                 self.cfg[CFG.CLIPBOARD_PROTECTION_ENABLED] = bool(clip_protect_sw.get())
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
+                self.cfg[CFG.PLAIN_TEXT_PASTE_ENABLED] = bool(
+                    plain_paste_sw.get())
                 # Streaming is now an always-on capability with safe startup
                 # fallback rather than a user-facing experiment.
                 self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
@@ -1200,6 +1225,7 @@ class SettingsMixin:
                 self.cfg[CFG.LANGUAGE] = new_lang
                 
                 self._save_config(self.cfg)
+                plain_paste_available = self._configure_plain_paste_hotkey()
                 if autostart_sw.get() != is_autostart_enabled():
                     set_autostart(autostart_sw.get())
                 # Re-arm the nightly timer so an auto-update toggle change takes
@@ -1223,8 +1249,16 @@ class SettingsMixin:
                                   fg=t["status_ok"])
                     self.root.after(600, self._relaunch)
                 else:
-                    status.config(text=i18n.get("settings.label.saved_notice"),
-                                  fg=t["status_ok"])
+                    if (self.cfg[CFG.PLAIN_TEXT_PASTE_ENABLED]
+                            and not plain_paste_available):
+                        status.config(
+                            text=i18n.get(
+                                "settings.label.plain_text_paste_unavailable"),
+                            fg=t["status_err"])
+                    else:
+                        status.config(
+                            text=i18n.get("settings.label.saved_notice"),
+                            fg=t["status_ok"])
             except Exception as e:
                 status.config(
                     text=f"{i18n.get('settings.label.save_failed')}: {e}",
@@ -1259,6 +1293,7 @@ class SettingsMixin:
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])
+            plain_paste_sw.set(DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED])
             auto_update_sw.set(DEFAULT_CONFIG[CFG.AUTO_UPDATE_ENABLED])
             # Autostart isn't stored in the config dict (it's OS state); a fresh
             # install enables it, so that's the default we restore to.

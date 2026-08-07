@@ -416,6 +416,7 @@ class CFG:
     OCR_HOTKEY_ENABLED = "ocr_hotkey_enabled"
     LANGUAGE = "language"
     CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
+    PLAIN_TEXT_PASTE_ENABLED = "plain_text_paste_enabled"
     AUTOSTART_INITIALIZED = "autostart_initialized"
     SUMMARY_ENABLED = "summary_enabled"
     # One-time marker for promoting the initial Labs features to on-by-default
@@ -452,6 +453,7 @@ DEFAULT_CONFIG = {
     CFG.OCR_ENGINE: "claude",
     CFG.OCR_HOTKEY_ENABLED: True,
     CFG.CLIPBOARD_PROTECTION_ENABLED: True,
+    CFG.PLAIN_TEXT_PASTE_ENABLED: False,
     CFG.AUTOSTART_INITIALIZED: False,
     CFG.SUMMARY_ENABLED: True,
     CFG.LABS_DEFAULTS_MIGRATED: True,

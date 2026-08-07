@@ -464,6 +464,8 @@ class TestV2ResultPopup(unittest.TestCase):
 
     def test_v2_settings_groups_labs_and_version_actions(self):
         app = self._app(v2=True)
+        app.cfg[tr.CFG.PLAIN_TEXT_PASTE_ENABLED] = True
+        app._plain_paste_hotkey_available = False
         app._open_settings()
         win = app.settings_win
         self._kill_later(win)
@@ -483,6 +485,18 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertIn(tr.i18n.get("settings.label.summary_enabled"), texts)
         self.assertIn(
             tr.i18n.get("settings.label.clipboard_protection"), texts)
+        self.assertIn(
+            tr.i18n.get("settings.label.plain_text_paste"), texts)
+        self.assertIn("Ctrl+Shift+K", texts)
+        self.assertIn(
+            tr.i18n.get("settings.label.plain_text_paste_unavailable"),
+            texts)
+        plain_paste_toggle = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Checkbutton)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.plain_text_paste"))
+        self.assertTrue(plain_paste_toggle.get())
         self.assertIn(tr.i18n.get("settings.label.language_field"), texts)
         self.assertNotIn("Codex 流式输出 (Beta)", texts)
         self.assertNotIn("Codex streaming output (Beta)", texts)
