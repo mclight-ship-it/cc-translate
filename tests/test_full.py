@@ -2254,8 +2254,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 16)
-        self.assertTrue(tr.version_string().startswith("4.16."))
+        self.assertEqual(cc_update.VERSION_MINOR, 17)
+        self.assertTrue(tr.version_string().startswith("4.17."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()

@@ -1069,6 +1069,12 @@ class SettingsMixin:
         # converging both entry points on this one UI.
         self._settings_check = on_check_update_click
 
+        auto_update_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.auto_update"),
+            self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
+            bg=bg, fg=fg, font=FONT)
+
         version_cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         tk.Label(
             version_cell, text=version_string(), bg=bg, fg=hint,
@@ -1084,11 +1090,6 @@ class SettingsMixin:
             body, row_state, i18n.get("settings.label.current_version"),
             version_cell, bg=bg, fg=fg, font=FONT)
 
-        auto_update_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.auto_update"),
-            self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
-            bg=bg, fg=fg, font=FONT)
         upd_row = row_state["value"]
         upd_status.grid(row=upd_row, column=0, sticky="w", pady=(0, 4))
         upd_apply_btn.grid(row=upd_row, column=1, sticky="e", pady=(0, 4))

@@ -553,6 +553,32 @@ class TestV2ResultPopup(unittest.TestCase):
             and child.cget("text") == tr.version_string()
         ]
         self.assertEqual(len(version_labels), 1)
+        auto_update_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text") == tr.i18n.get("settings.label.auto_update"))
+        current_version_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.current_version"))
+        status_label = next(
+            widget for widget in widgets
+            if widget is not current_version_label
+            and isinstance(widget, tk.Label)
+            and widget.master is current_version_label.master
+            and widget.cget("text") == "")
+        self.assertLess(
+            auto_update_label.grid_info()["row"],
+            current_version_label.grid_info()["row"])
+        self.assertEqual(
+            status_label.grid_info()["row"],
+            current_version_label.grid_info()["row"] + 1)
+        app._begin_update = lambda *, check_only, on_status: on_status(
+            tr.i18n.get("update.no_update"), "ok")
+        app._settings_check()
+        win.update_idletasks()
+        self.assertEqual(status_label.cget("text"), tr.i18n.get("update.no_update"))
 
         combo_widths = {
             int(widget.cget("width"))
