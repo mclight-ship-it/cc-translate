@@ -2465,6 +2465,15 @@ class TestPerfLog(unittest.TestCase):
 
 
 class TestInstallerContracts(unittest.TestCase):
+    def test_one_click_installer_has_no_utf8_bom(self):
+        with open(
+                os.path.join(tr.APP_DIR, "install.ps1"),
+                "rb") as script_file:
+            script = script_file.read()
+
+        self.assertFalse(script.startswith(b"\xef\xbb\xbf"))
+        self.assertTrue(script.startswith(b"<#"))
+
     def test_one_click_installer_includes_both_model_clis(self):
         with open(
                 os.path.join(tr.APP_DIR, "install.ps1"),

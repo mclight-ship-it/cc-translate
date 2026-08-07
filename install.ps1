@@ -1,4 +1,4 @@
-﻿<#
+<#
     CC Translate — one-line installer (Windows).
 
     Quick start (run in PowerShell):
