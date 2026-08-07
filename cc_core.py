@@ -428,7 +428,6 @@ class CFG:
     # user-facing opt-out existed; migrate that generated value once so existing
     # users receive v2 too. A later explicit false is preserved.
     UI_V2_DEFAULT_MIGRATED = "ui_v2_default_migrated"
-    ACRYLIC_ENABLED = "acrylic_enabled"
 
 
 DEFAULT_CONFIG = {
@@ -455,7 +454,6 @@ DEFAULT_CONFIG = {
     CFG.TRAY_CLICK_ACTION: "settings",
     CFG.UI_V2: True,
     CFG.UI_V2_DEFAULT_MIGRATED: True,
-    CFG.ACRYLIC_ENABLED: False,
 }
 
 

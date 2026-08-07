@@ -681,7 +681,6 @@ class PopupMixin:
         win.geometry(f"{w}x{h}+-4000+-4000")
         win.deiconify()
         win.update()
-        self._apply_acrylic_window(win)
         win._round_redraw()
 
         if not reveal:
@@ -1135,22 +1134,12 @@ class PopupMixin:
         return card
 
     def _rounded_shell_v2(self, win, radius, card_bg, border):
-        """Build the shared v2 shell.
-
-        Normal mode paints the stable opaque face. Acrylic Beta paints the Win32
-        backdrop key (black) instead; DWM replaces those pixels with a live,
-        tinted blur when the window is revealed. Black child-widget surfaces use
-        a child-HWND colour key to reveal that parent material while text and
-        non-black control pixels remain opaque. No screenshot/refresh loop is
-        involved.
-        """
+        """Build the shared opaque v2 shell."""
         pal = self._v2_palette()
         scale = self._ui_scale()
         margin = ccv2.scaled(V2_HALO_PTS, scale)
         gb = ccv2.GradientBackground(pal, scale=scale)
         win._v2_gb = gb
-        win._acrylic_requested = self._acrylic_requested()
-        win._acrylic_active = False
 
         # The content card only has to clear the four rounded corner ARCS, not
         # sit inset by the full radius. The baked `face` already fills the whole
@@ -1165,19 +1154,12 @@ class PopupMixin:
         card_inset = margin + max(4, int(radius * 0.30) + 2)
         win._card_inset = card_inset
 
-        if win._acrylic_requested:
-            # A layered top-level conflicts with the DWM backdrop. Acrylic uses
-            # a normal black client area plus a real rounded window region.
-            win.configure(bg=card_bg)
-            canvas_bg = card_bg
-        else:
-            win.configure(bg=ROUND_KEY_COLOR)
-            canvas_bg = ROUND_KEY_COLOR
-            try:
-                win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
-            except Exception:
-                pass
-        cv = tk.Canvas(win, bg=canvas_bg, highlightthickness=0, bd=0,
+        win.configure(bg=ROUND_KEY_COLOR)
+        try:
+            win.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
+        except Exception:
+            pass
+        cv = tk.Canvas(win, bg=ROUND_KEY_COLOR, highlightthickness=0, bd=0,
                        takefocus=0)
         cv.pack(fill="both", expand=True)
         card = tk.Frame(cv, bg=card_bg, bd=0, highlightthickness=0)
@@ -1247,23 +1229,16 @@ class PopupMixin:
             # sits inset by `radius` so its square corners hide inside the
             # rounded shape; the radius-wide reveal around it is the SAME navy, so
             # only the perimeter hairline shows.
-            if win._acrylic_requested:
-                win32util.round_apply_region(
-                    win32util.get_toplevel_hwnd(int(win.winfo_id())), radius)
+            face = gb.rounded_face(w, h, radius)
+            photo = ccv2.to_photo(face, master=cv)
+            if photo is not None:
+                win._v2_face = photo
+                cv.create_image(
+                    0, 0, anchor="nw", image=photo, tags="cc_shell")
+            else:
                 _draw_round_rect(
                     cv, 0, 0, w, h, radius,
                     fill=card_bg, outline=border, tags="cc_shell")
-            else:
-                face = gb.rounded_face(w, h, radius)
-                photo = ccv2.to_photo(face, master=cv)
-                if photo is not None:
-                    win._v2_face = photo
-                    cv.create_image(
-                        0, 0, anchor="nw", image=photo, tags="cc_shell")
-                else:
-                    _draw_round_rect(
-                        cv, 0, 0, w, h, radius, fill=card_bg,
-                        outline=border, tags="cc_shell")
             cv.tag_lower("cc_shell")
             cv.coords(item, card_inset, card_inset)
             cv.itemconfigure(item, width=w - 2 * card_inset,
@@ -1314,116 +1289,6 @@ class PopupMixin:
         name = "light" if resolve_theme_name(self.cfg) == "light" else "dark"
         return ccv2.get_palette(name)
 
-    def _acrylic_requested(self):
-        """Whether this v2 window should request the native Acrylic backdrop."""
-        try:
-            enabled = bool(self.cfg.get(CFG.ACRYLIC_ENABLED, False))
-        except (AttributeError, TypeError):
-            return False
-        if not enabled or not self._v2_popup_on():
-            return False
-        available, _ = win32util.acrylic_capability()
-        return available
-
-    def _acrylic_tint(self):
-        """Theme tint for native Acrylic; opacity is fixed at the chosen 40%."""
-        return tuple(ccv2.flat_base(self._v2_palette()))
-
-    def _apply_acrylic_window(self, win):
-        if not getattr(win, "_acrylic_requested", False):
-            return False
-        try:
-            active = win32util.apply_acrylic(
-                int(win.winfo_id()),
-                self._acrylic_tint(),
-                win32util.ACRYLIC_TINT_OPACITY,
-            )
-        except Exception as exc:
-            log_error("apply_acrylic", exc)
-            active = False
-        win._acrylic_active = bool(active)
-        if active:
-            active = self._prepare_acrylic_widgets(win)
-            win._acrylic_active = bool(active)
-        if not active:
-            self._fallback_from_acrylic(win)
-            log_error(
-                "apply_acrylic",
-                RuntimeError("Windows rejected the native Acrylic backdrop"))
-        return bool(active)
-
-    @staticmethod
-    def _widget_background(widget):
-        try:
-            value = widget.cget("background")
-            red, green, blue = widget.winfo_rgb(value)
-            return red // 257, green // 257, blue // 257
-        except Exception:
-            return None
-
-    def _prepare_acrylic_widgets(self, win):
-        """Reveal the parent's native backdrop through black Tk child surfaces."""
-        keyed = []
-        stack = [win]
-        shell_canvas = getattr(win, "_round_canvas", None)
-        while stack:
-            widget = stack.pop()
-            try:
-                stack.extend(widget.winfo_children())
-            except Exception:
-                pass
-            if widget is win:
-                continue
-            if widget is not shell_canvas and self._widget_background(
-                    widget) != (0, 0, 0):
-                continue
-            try:
-                hwnd = int(widget.winfo_id())
-            except Exception:
-                continue
-            old_style = win32util.set_window_color_key(hwnd, (0, 0, 0))
-            if old_style is None:
-                for keyed_hwnd, keyed_style in reversed(keyed):
-                    win32util.restore_window_exstyle(keyed_hwnd, keyed_style)
-                return False
-            keyed.append((hwnd, old_style))
-        win._acrylic_child_styles = keyed
-        return bool(keyed)
-
-    def _fallback_from_acrylic(self, win):
-        """Restore a readable opaque v2 surface after any native API failure."""
-        try:
-            win32util.remove_acrylic(int(win.winfo_id()))
-        except Exception as exc:
-            log_error("remove_acrylic", exc)
-        for hwnd, old_style in reversed(
-                getattr(win, "_acrylic_child_styles", ())):
-            win32util.restore_window_exstyle(hwnd, old_style)
-        win._acrylic_child_styles = []
-        win._acrylic_requested = False
-        win._acrylic_active = False
-        pal = self._v2_palette()
-        opaque_bg = ccv2.rgb_to_hex(
-            ccv2.panel_match_color(pal, self._ui_scale()))
-        stack = [win]
-        while stack:
-            widget = stack.pop()
-            try:
-                stack.extend(widget.winfo_children())
-            except Exception:
-                pass
-            if self._widget_background(widget) == (0, 0, 0):
-                try:
-                    widget.configure(background=opaque_bg)
-                except Exception:
-                    pass
-        redraw = getattr(win, "_round_redraw", None)
-        if redraw is not None:
-            try:
-                redraw()
-            except Exception as exc:
-                log_error("redraw_after_acrylic_fallback", exc)
-
     def _v2_margin(self):
         """Extra inset (physical px) the v2 shell reserves between the rounded
         window edge and the content card, on top of the corner radius. Now 0 —
@@ -1443,9 +1308,7 @@ class PopupMixin:
         thin brand hairline baked at the perimeter."""
         pal = self._v2_palette()
         scale = self._ui_scale()
-        panel = (
-            "#000000" if self._acrylic_requested()
-            else ccv2.rgb_to_hex(ccv2.panel_match_color(pal, scale)))
+        panel = ccv2.rgb_to_hex(ccv2.panel_match_color(pal, scale))
         sub = ccv2.rgb_to_hex(pal["sub"])
         # A subtle border a touch lighter than the panel (hairline on navy).
         if pal["is_dark"]:
@@ -1470,9 +1333,7 @@ class PopupMixin:
         pal = self._v2_palette()
         v2c = self._v2_tk_colors()
         is_dark = pal["is_dark"]
-        # Keep inset controls based on the normal opaque surface. In Acrylic
-        # mode only the shared backdrop areas use the black DWM composition key.
-        panel = tuple(ccv2.panel_match_color(pal, self._ui_scale()))
+        panel = ccv2.hex_to_rgb(v2c["panel"])
         accent = ccv2.hex_to_rgb(v2c["accent"])
         ink = (255, 255, 255) if is_dark else (20, 30, 70)
 
@@ -2410,7 +2271,6 @@ class PopupMixin:
         win.geometry(f"{w}x{h}+{off}+{off}")
         win.deiconify()
         win.update_idletasks()
-        self._apply_acrylic_window(win)
         win._round_redraw()
         win.geometry(f"{w}x{h}+{x}+{y}")
         self._remember_window_xy(win, x, y)

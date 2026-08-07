@@ -27,7 +27,6 @@ from tkinter import ttk
 from tkinter import font as tkfont
 
 import i18n
-import win32util
 
 from win32util import get_monitor_rect
 from cc_update import version_string, is_autostart_enabled, set_autostart
@@ -930,44 +929,6 @@ class SettingsMixin:
                 values=list(theme_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
-        acrylic_sw = None
-        if v2on:
-            acrylic_available, acrylic_reason = win32util.acrylic_capability()
-            acrylic_help = i18n.get("settings.label.acrylic_help")
-            if not acrylic_available:
-                reason_keys = {
-                    win32util.ACRYLIC_REMOTE_SESSION:
-                        "settings.label.acrylic_unavailable_remote",
-                    win32util.ACRYLIC_HIGH_CONTRAST:
-                        "settings.label.acrylic_unavailable_high_contrast",
-                    win32util.ACRYLIC_TRANSPARENCY_DISABLED:
-                        "settings.label.acrylic_unavailable_transparency",
-                    win32util.ACRYLIC_COMPOSITION_DISABLED:
-                        "settings.label.acrylic_unavailable_composition",
-                    win32util.ACRYLIC_UNSUPPORTED_WINDOWS:
-                        "settings.label.acrylic_unavailable_windows",
-                    win32util.ACRYLIC_API_UNAVAILABLE:
-                        "settings.label.acrylic_unavailable_windows",
-                }
-                acrylic_help = "{}\n\n{}".format(
-                    acrylic_help,
-                    i18n.get(reason_keys.get(
-                        acrylic_reason,
-                        "settings.label.acrylic_unavailable_windows")))
-            acrylic_sw = self._settings_toggle_row(
-                body, row_state,
-                i18n.get("settings.label.acrylic_enabled"),
-                self.cfg.get(
-                    CFG.ACRYLIC_ENABLED,
-                    DEFAULT_CONFIG[CFG.ACRYLIC_ENABLED]),
-                bg=bg, fg=fg, font=FONT,
-                help_text=acrylic_help,
-                help_ring=hint, help_glyph=hint,
-                enabled=acrylic_available)
-            win._settings_acrylic_switch = acrylic_sw
-            win._settings_acrylic_capability = (
-                acrylic_available, acrylic_reason)
-
         layout_var = tk.StringVar(
             value=layout_labels.get(
                 self.cfg.get(CFG.POPUP_LAYOUT, "dynamic"),
@@ -1221,11 +1182,6 @@ class SettingsMixin:
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
                 self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = bool(
                     codex_stream_sw.get())
-                if acrylic_sw is not None:
-                    self.cfg[CFG.ACRYLIC_ENABLED] = bool(acrylic_sw.get())
-                elif restore_defaults_pending:
-                    self.cfg[CFG.ACRYLIC_ENABLED] = DEFAULT_CONFIG[
-                        CFG.ACRYLIC_ENABLED]
                 if restore_defaults_pending:
                     self.cfg[CFG.UI_V2] = DEFAULT_CONFIG[CFG.UI_V2]
                     self.cfg[CFG.UI_V2_DEFAULT_MIGRATED] = DEFAULT_CONFIG[
@@ -1295,8 +1251,6 @@ class SettingsMixin:
             summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
             codex_stream_sw.set(
                 DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
-            if acrylic_sw is not None:
-                acrylic_sw.set(DEFAULT_CONFIG[CFG.ACRYLIC_ENABLED])
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])

@@ -112,7 +112,6 @@ class TestCFGConstants(unittest.TestCase):
         "TRAY_CLICK_ACTION",
         "UI_V2",
         "UI_V2_DEFAULT_MIGRATED",
-        "ACRYLIC_ENABLED",
     }
 
     def test_cfg_has_all_attributes(self):
@@ -159,7 +158,6 @@ class TestCFGConstants(unittest.TestCase):
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
         self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
         self.assertIs(tr.DEFAULT_CONFIG[tr.CFG.UI_V2], True)
-        self.assertIs(tr.DEFAULT_CONFIG[tr.CFG.ACRYLIC_ENABLED], False)
 
 
 # ============================================================
@@ -2185,8 +2183,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 8)
-        self.assertTrue(tr.version_string().startswith("4.8."))
+        self.assertEqual(cc_update.VERSION_MINOR, 9)
+        self.assertTrue(tr.version_string().startswith("4.9."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3066,69 +3064,11 @@ class TestUiSmoke(unittest.TestCase):
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
 
-    def test_settings_disables_acrylic_in_remote_session(self):
-        app = _make_headless_app()
-        self.addCleanup(lambda: self._safe_destroy(app))
-        with unittest.mock.patch(
-                "cc_app_settings.win32util.acrylic_capability",
-                return_value=(False, "remote_session")):
-            app._open_settings()
-        switch = app.settings_win._settings_acrylic_switch
-        self.assertFalse(switch.enabled)
-        self.assertEqual(
-            str(switch._accessible_control.cget("state")), "disabled")
-        self.assertEqual(
-            switch._accessible_control.cget("text"),
-            tr.i18n.get("settings.label.acrylic_enabled"))
-        self.assertEqual(
-            app.settings_win._settings_acrylic_capability,
-            (False, "remote_session"))
-
-    def test_settings_saves_and_restores_acrylic_default(self):
-        app = _make_headless_app()
-        self.addCleanup(lambda: self._safe_destroy(app))
-        app.cfg[tr.CFG.ACRYLIC_ENABLED] = True
-        app._save_config = unittest.mock.Mock()
-        with unittest.mock.patch(
-                "cc_app_settings.win32util.acrylic_capability",
-                return_value=(True, "available")), unittest.mock.patch(
-                "cc_app_popup.win32util.apply_acrylic",
-                return_value=True), unittest.mock.patch(
-                "cc_app_popup.win32util.set_window_color_key",
-                return_value=0):
-            app._open_settings()
-        win = app.settings_win
-        switch = win._settings_acrylic_switch
-        self.assertTrue(switch.enabled)
-        self.assertTrue(switch.get())
-
-        def walk(widget):
-            yield widget
-            for child in widget.winfo_children():
-                yield from walk(child)
-
-        widgets = list(walk(win))
-        restore = next(
-            widget for widget in widgets
-            if isinstance(widget, tr.tk.Button)
-            and widget.cget("text") == tr.i18n.get(
-                "settings.label.restore_defaults"))
-        restore.invoke()
-        self.assertFalse(switch.get())
-        save = next(
-            widget for widget in widgets
-            if isinstance(widget, tr.tk.Button)
-            and widget.cget("text") == tr.i18n.get("ui.save"))
-        save.invoke()
-        self.assertIs(app.cfg[tr.CFG.ACRYLIC_ENABLED], False)
-        app._save_config.assert_called_once()
-
-    def test_legacy_settings_restore_defaults_clears_hidden_ui_flags(self):
+    def test_legacy_settings_restore_defaults_restores_ui_v2(self):
         app = _make_headless_app()
         self.addCleanup(lambda: self._safe_destroy(app))
         app.cfg[tr.CFG.UI_V2] = False
         app.cfg[tr.CFG.UI_V2_DEFAULT_MIGRATED] = True
-        app.cfg[tr.CFG.ACRYLIC_ENABLED] = True
         app._save_config = unittest.mock.Mock()
 
         saved_env = os.environ.pop(tr.UI_V2_ENV, None)
@@ -3137,7 +3077,6 @@ class TestUiSmoke(unittest.TestCase):
                 lambda: os.environ.__setitem__(tr.UI_V2_ENV, saved_env))
         app._open_settings()
         win = app.settings_win
-        self.assertFalse(hasattr(win, "_settings_acrylic_switch"))
 
         def walk(widget):
             yield widget
@@ -3157,7 +3096,6 @@ class TestUiSmoke(unittest.TestCase):
 
         restore.invoke()
         self.assertIs(app.cfg[tr.CFG.UI_V2], False)
-        self.assertIs(app.cfg[tr.CFG.ACRYLIC_ENABLED], True)
         save.invoke()
 
         self.assertIs(
@@ -3165,9 +3103,6 @@ class TestUiSmoke(unittest.TestCase):
         self.assertIs(
             app.cfg[tr.CFG.UI_V2_DEFAULT_MIGRATED],
             tr.DEFAULT_CONFIG[tr.CFG.UI_V2_DEFAULT_MIGRATED])
-        self.assertIs(
-            app.cfg[tr.CFG.ACRYLIC_ENABLED],
-            tr.DEFAULT_CONFIG[tr.CFG.ACRYLIC_ENABLED])
         app._save_config.assert_called_once()
 
     def test_settings_window_clamps_to_monitor_work_area(self):

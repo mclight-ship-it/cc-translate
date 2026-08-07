@@ -17,9 +17,8 @@ Design constraints (see docs/UI_V2_PLAN.md):
     gradient every frame would lag, so :class:`GradientBackground` bakes ONCE
     at a max size and CROPS per frame (the card grows downward from a fixed
     top, so a top-anchored crop of a fixed-width bake is stable frame to frame).
-  * Opaque mode bakes the stable navy face. The optional Acrylic Beta is applied
-    separately at the HWND boundary in ``win32util``/``cc_app_popup``; it never
-    uses the screenshot-style ``glass_bg`` test hook.
+  * The shell bakes a stable opaque navy face; ``glass_bg`` remains a test hook
+    and is not used by the production UI.
 
 All app-owned windows use this layer when ``ui_v2_enabled`` resolves true.
 """
