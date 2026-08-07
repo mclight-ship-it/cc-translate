@@ -74,7 +74,7 @@ class TestClassifyUpdateState(unittest.TestCase):
 
 class TestFormatVersion(unittest.TestCase):
     def test_numeric_version_uses_release_minor_and_build(self):
-        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.10.241")
+        self.assertEqual(tr._cc_update._format_numeric_version(241), "4.11.241")
 
     def test_sha_and_date(self):
         self.assertEqual(
@@ -119,6 +119,7 @@ class TestBrandedLauncher(unittest.TestCase):
                 tr._cc_update.PYTHONW, tmp, "4.5.243",
                 tr._cc_update.ICON_PATH)
             self.assertTrue(result.startswith(tmp))
+            self.assertEqual(os.path.basename(result), "CCTranslate.exe")
             self.assertEqual(
                 cc_launcher.read_file_description(result), "CC Translate")
             self.assertEqual(
@@ -140,13 +141,16 @@ class TestBrandedLauncher(unittest.TestCase):
             updated = cc_launcher.ensure_branded_launcher(
                 tr._cc_update.PYTHONW, tmp, "4.6.244",
                 tr._cc_update.ICON_PATH)
-            self.assertNotEqual(updated, result)
+            self.assertEqual(updated, result)
             self.assertEqual(
                 cc_launcher.read_version_string(updated, "ProductVersion"),
-                "4.6.244")
-            self.assertTrue(os.path.exists(result))
+                "4.5.243")
+            legacy = os.path.join(tmp, "CCTranslate-4.4.242-deadbeef.exe")
+            with open(legacy, "wb") as f:
+                f.write(b"legacy")
             cc_launcher.cleanup_old_launchers(tmp, updated)
-            self.assertFalse(os.path.exists(result))
+            self.assertTrue(os.path.exists(result))
+            self.assertFalse(os.path.exists(legacy))
 
 
 class TestAutostartMigration(unittest.TestCase):

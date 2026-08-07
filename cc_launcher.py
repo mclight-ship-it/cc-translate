@@ -8,9 +8,7 @@ name and icon.
 
 import ctypes
 from ctypes import wintypes
-import hashlib
 import os
-import re
 import shutil
 import struct
 
@@ -286,18 +284,6 @@ def launcher_has_icon(executable, icon_path):
     )
 
 
-def _launcher_fingerprint(pythonw, icon_path=None):
-    digest = hashlib.sha256()
-    for path in (pythonw, icon_path):
-        if not path:
-            continue
-        digest.update(os.path.normcase(os.path.abspath(path)).encode("utf-8"))
-        with open(path, "rb") as source:
-            for chunk in iter(lambda: source.read(128 * 1024), b""):
-                digest.update(chunk)
-    return digest.hexdigest()[:12]
-
-
 def _default_icon_path():
     app_dir = os.path.dirname(os.path.abspath(__file__))
     for name in ("cc-dark.ico", "cc.ico"):
@@ -307,14 +293,11 @@ def _default_icon_path():
     return None
 
 
-def launcher_filename(pythonw, version, icon_path=None):
-    safe_version = re.sub(r"[^0-9A-Za-z._-]+", "-", str(version)).strip("-")
-    if not safe_version:
-        safe_version = "0"
-    if icon_path is None:
-        icon_path = _default_icon_path()
-    fingerprint = _launcher_fingerprint(pythonw, icon_path)
-    return f"{LAUNCHER_PREFIX}{safe_version}-{fingerprint}.exe"
+def launcher_filename():
+    # Windows remembers tray-icon visibility against the executable path.
+    # Keep this name stable across app releases so an upgrade does not appear
+    # to be a brand-new tray app and return the icon to the overflow area.
+    return ORIGINAL_FILENAME
 
 
 def cleanup_old_launchers(launcher_dir, current):
@@ -336,15 +319,19 @@ def cleanup_old_launchers(launcher_dir, current):
 
 
 def ensure_branded_launcher(pythonw, launcher_dir, version, icon_path=None):
-    """Create the version/interpreter-specific branded host and return its path."""
+    """Create the stable-path branded host and return its path.
+
+    The launcher is an identity shim rather than the source app itself, so an
+    already valid launcher is intentionally kept across app versions. Its
+    VERSIONINFO reflects the release that first created it; the live app version
+    remains available inside CC Translate.
+    """
     if icon_path is None:
         icon_path = _default_icon_path()
     launcher_dir = os.path.abspath(launcher_dir)
-    launcher = os.path.join(
-        launcher_dir, launcher_filename(pythonw, version, icon_path))
+    launcher = os.path.join(launcher_dir, launcher_filename())
     if (os.path.isfile(launcher)
             and read_file_description(launcher) == FILE_DESCRIPTION
-            and read_version_string(launcher, "ProductVersion") == str(version)
             and (not icon_path or launcher_has_icon(launcher, icon_path))):
         return launcher
 
