@@ -485,6 +485,24 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertNotIn("Codex 流式输出 (Beta)", texts)
         self.assertNotIn("Codex streaming output (Beta)", texts)
 
+        labs_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.labs_section"))
+        update_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.update_section"))
+        win.update_idletasks()
+        self.assertGreater(
+            labs_label.winfo_rootx(), win.winfo_rootx() + win.winfo_width() // 2,
+            "Labs should be in the right Settings column")
+        self.assertGreater(
+            labs_label.winfo_rooty(), update_label.winfo_rooty(),
+            "Labs should be the last section in the right Settings column")
+
         check_button = next(
             widget for widget in widgets
             if isinstance(widget, tk.Button)

@@ -546,9 +546,6 @@ def settings_provider_crop(tr, win, image):
         tr.i18n.get("settings.label.model_provider"),
         tr.i18n.get("settings.label.translate_model"),
         tr.i18n.get("settings.label.translate_direction"),
-        tr.i18n.get("settings.label.labs_section"),
-        tr.i18n.get("settings.label.summary_enabled"),
-        tr.i18n.get("settings.label.clipboard_protection"),
     }
     boxes = []
     for widget in _walk(win):
