@@ -487,7 +487,7 @@ class TestV2ResultPopup(unittest.TestCase):
             tr.i18n.get("settings.label.clipboard_protection"), texts)
         self.assertIn(
             tr.i18n.get("settings.label.plain_text_paste"), texts)
-        self.assertIn("Ctrl+Shift+K", texts)
+        self.assertNotIn("Ctrl+Shift+K", texts)
         self.assertIn(
             tr.i18n.get("settings.label.plain_text_paste_unavailable"),
             texts)

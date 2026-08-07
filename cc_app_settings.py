@@ -634,7 +634,7 @@ class SettingsMixin:
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
                              bg, fg, font, help_text=None, help_ring=None,
-                             help_glyph=None, shortcut_text=None, enabled=True):
+                             help_glyph=None, enabled=True):
         row = row_state["value"]
         label_fg = fg if enabled else (help_ring or fg)
         if help_text:
@@ -645,11 +645,6 @@ class SettingsMixin:
             label_font = (font, 10)
             tk.Label(cell, text=text_, bg=bg, fg=label_fg, font=label_font).pack(
                 side="left")
-            if shortcut_text:
-                tk.Label(
-                    cell, text=shortcut_text, bg=bg,
-                    fg=help_ring or fg, font=(font, 9)).pack(
-                        side="left", padx=(8, 0))
             icon = self._make_help_icon_image(
                 help_ring or fg, help_glyph or fg, bg,
                 diameter=self._help_badge_diameter(label_font))
@@ -1040,8 +1035,7 @@ class SettingsMixin:
                 DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED]),
             bg=bg, fg=fg, font=FONT,
             help_text=i18n.get("settings.label.plain_text_paste_help"),
-            help_ring=hint, help_glyph=hint,
-            shortcut_text="Ctrl+Shift+K")
+            help_ring=hint, help_glyph=hint)
 
         # ---- Section: 更新 ----
         self._settings_section(
