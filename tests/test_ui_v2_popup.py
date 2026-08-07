@@ -455,6 +455,42 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertGreaterEqual(
             len(image_btns), 1,
             "v2 settings chrome uses a baked image button (ghost close)")
+        close_btn = next(
+            c for c in image_btns
+            if c.cget("text") == tr.i18n.get("settings.label.close"))
+        self.assertNotEqual(close_btn.cget("text"), "result.close")
+
+    def test_tooltip_is_singleton_and_closes_with_owner(self):
+        app = self._app(v2=True)
+        owner = tk.Toplevel(app.root)
+        button = tk.Button(owner, text="Close")
+        button.pack()
+        owner.deiconify()
+        owner.update()
+        self._kill_later(owner)
+        before = set(app.root.winfo_children())
+
+        app._make_tooltip(button, "Close", delay_ms=0)
+        button.event_generate("<Enter>")
+        app.root.update()
+        tooltips = set(app.root.winfo_children()) - before
+        self.assertEqual(len(tooltips), 1)
+
+        button.event_generate("<FocusIn>")
+        button.event_generate("<Enter>")
+        app.root.update()
+        self.assertEqual(set(app.root.winfo_children()) - before, tooltips)
+
+        button.event_generate("<ButtonPress-1>")
+        app.root.update()
+        self.assertEqual(set(app.root.winfo_children()) - before, set())
+
+        button.event_generate("<Enter>")
+        app.root.update()
+        self.assertEqual(len(set(app.root.winfo_children()) - before), 1)
+        owner.destroy()
+        app.root.update()
+        self.assertEqual(set(app.root.winfo_children()) - before, set())
 
     def test_v2_settings_flag_off_is_legacy(self):
         app = self._app(v2=False)
@@ -561,7 +597,8 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertIsNotNone(getattr(win, "_support_image_label", None))
         self.assertTrue(str(win._support_image_label.cget("image")))
         self.assertEqual(
-            win._support_close_btn.cget("text"), tr.i18n.get("result.close"))
+            win._support_close_btn.cget("text"),
+            tr.i18n.get("settings.label.close"))
         self.assertTrue(win._support_close_btn.bind("<FocusIn>"))
 
     def test_v2_support_author_flag_off_is_legacy(self):

@@ -1410,7 +1410,7 @@ class PopupMixin:
             drag_targets.append(sub_lbl)
         close_btn = self._v2_ghost_button(
             bar, lambda: win.destroy(), icon="close", danger=True,
-            tooltip=i18n.get("result.close"))
+            tooltip=i18n.get("settings.label.close"))
         close_btn.pack(side="right", anchor="n")
         self._make_draggable(tuple(drag_targets), win)
         return close_btn
@@ -1937,15 +1937,47 @@ class PopupMixin:
 
     def _make_tooltip(self, widget, text, delay_ms=400):
         """Attach a rounded, theme-aware tooltip to a widget. Shows on enter
-        after a delay, hides on leave. The tooltip is topmost so it never hides
-        behind a borderless -topmost dialog (e.g. the settings window). Rounded
-        corners come from a transparent colour-key canvas (same technique as the
-        rounded window shells) so the old hard grey rectangle is gone."""
+        after a delay, and hides on leave, click, or widget destruction. The
+        tooltip is topmost so it never hides behind a borderless -topmost dialog
+        (e.g. the settings window). Rounded corners come from a transparent
+        colour-key canvas (same technique as the rounded window shells) so the
+        old hard grey rectangle is gone."""
         tooltip_var = {"job": None, "tooltip": None}
 
-        def show_tooltip(e):
-            def do_show():
+        def cancel_job():
+            job = tooltip_var["job"]
+            tooltip_var["job"] = None
+            if job is not None:
                 try:
+                    self.root.after_cancel(job)
+                except tk.TclError:
+                    pass
+
+        def destroy_tooltip():
+            tt = tooltip_var["tooltip"]
+            tooltip_var["tooltip"] = None
+            if tt is not None:
+                try:
+                    tt.destroy()
+                except tk.TclError:
+                    pass
+
+        def show_tooltip(_event):
+            tt = tooltip_var["tooltip"]
+            if tt is not None:
+                try:
+                    if tt.winfo_exists():
+                        return
+                except tk.TclError:
+                    pass
+                tooltip_var["tooltip"] = None
+
+            def do_show():
+                tooltip_var["job"] = None
+                tt = None
+                try:
+                    if not widget.winfo_exists():
+                        return
                     fill, border, fg, radius = self._tooltip_colors()
                     tt = tk.Toplevel(self.root)
                     tt.wm_overrideredirect(True)
@@ -1987,34 +2019,26 @@ class PopupMixin:
                     tt.wm_geometry(f"{tw}x{th}+{x}+{y}")
                     tt.lift()
                     tooltip_var["tooltip"] = tt
-                except Exception:
-                    pass
+                except tk.TclError:
+                    if tt is not None:
+                        try:
+                            tt.destroy()
+                        except tk.TclError:
+                            pass
 
-            if tooltip_var["job"]:
-                try:
-                    self.root.after_cancel(tooltip_var["job"])
-                except Exception:
-                    pass
+            cancel_job()
             tooltip_var["job"] = self.root.after(delay_ms, do_show)
 
-        def hide_tooltip(e):
-            if tooltip_var["job"]:
-                try:
-                    self.root.after_cancel(tooltip_var["job"])
-                except Exception:
-                    pass
-                tooltip_var["job"] = None
-            if tooltip_var["tooltip"]:
-                try:
-                    tooltip_var["tooltip"].destroy()
-                except Exception:
-                    pass
-                tooltip_var["tooltip"] = None
+        def hide_tooltip(_event):
+            cancel_job()
+            destroy_tooltip()
 
         widget.bind("<Enter>", show_tooltip, add="+")
         widget.bind("<Leave>", hide_tooltip, add="+")
         widget.bind("<FocusIn>", show_tooltip, add="+")
         widget.bind("<FocusOut>", hide_tooltip, add="+")
+        widget.bind("<ButtonPress-1>", hide_tooltip, add="+")
+        widget.bind("<Destroy>", hide_tooltip, add="+")
 
     def _mono_family(self):
         """Resolve a monospace family once (VSCode-ish preference order)."""
