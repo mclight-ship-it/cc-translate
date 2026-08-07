@@ -16,7 +16,7 @@
 - Codex 0.146.0 已在本机通过 ChatGPT 登录完成短文、长文、代码、对抗文本、图片和取消探针。
 - 取消探针完成后，确认没有遗留本 provider 启动的 `codex.exe` 进程。
 - Codex 稳定 `exec --json` 没有文字 delta，继续作为短文/图片路径和流式失败回退。
-- Codex 流式 Beta 默认开启：固定 Codex 0.146.0，按运行 profile 懒启动并复用
+- Codex 流式输出始终开启：固定 Codex 0.146.0，按运行 profile 懒启动并复用
   `app-server` stdio 进程，但每次翻译仍创建新的 `ephemeral` thread，不跨请求复用上下文。
 - 实验路径启动前失败会回退稳定 `exec`；已经显示 delta 后失败不会重复发起模型请求。
 - `initialize` 后、`thread/start` 前调用 `hooks/list`；只允许命令内容与路径均匹配的
@@ -37,11 +37,11 @@
   译文必须保持条目数、顺序、层级和列表类型，不得压成正文段落。Claude prompt 未改。
 - 新增有界的隐私安全 `perf.log`，记录 provider、模型、字符数和分段耗时，不记录原文、
   译文、图片路径、认证信息或原始异常详情。
-- 诊断报告已按当前 provider 分区；Codex 区显示版本/登录、实验流式开关与版本兼容性、
+- 诊断报告已按当前 provider 分区；Codex 区显示版本/登录、流式版本兼容性、
   当前 profile 的触发规则，以及最近请求的流式/稳定 exec/缓存/取消/回退状态和安全错误码。
   路由状态不记录原文、译文或认证数据。
-- 设置页统一将 Codex 流式输出标为 `Beta`，并移除只读“服务状态”字段及后台探测；
-  Codex 安装、版本和登录状态继续由诊断窗口集中显示。
+- 设置页已移除 Codex 流式开关；Codex 安装、版本、登录状态与流式兼容性继续由诊断窗口
+  集中显示。
 - 一键安装器同时安装 Claude Code 最新版和已验证的 Codex CLI 0.146.0；Codex 登录仍由
   用户通过浏览器完成，安装器只调用 `codex login status`，不读取认证文件。
 - `perf.log` 新增 app/test 运行来源和每请求终态路由事件；诊断仅聚合最近 7 天真实

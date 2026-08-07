@@ -874,21 +874,26 @@ class SettingsMixin:
                 values=list(direction_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
+        # ---- Section: 实验室 ----
+        self._settings_section(
+            body, row_state, i18n.get("settings.label.labs_section"),
+            bg=bg, accent=accent, font=FONT)
         summary_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.summary_enabled"),
-            self.cfg.get(CFG.SUMMARY_ENABLED, False),
+            self.cfg.get(
+                CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]),
             bg=bg, fg=fg, font=FONT,
             help_text=i18n.get("settings.label.summary_help"),
             help_ring=hint, help_glyph=hint)
-        codex_stream_sw = self._settings_toggle_row(
+        clip_protect_sw = self._settings_toggle_row(
             body, row_state,
-            i18n.get("settings.label.codex_streaming"),
+            i18n.get("settings.label.clipboard_protection"),
             self.cfg.get(
-                CFG.CODEX_STREAMING_EXPERIMENTAL,
-                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL]),
+                CFG.CLIPBOARD_PROTECTION_ENABLED,
+                DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED]),
             bg=bg, fg=fg, font=FONT,
-            help_text=i18n.get("settings.label.codex_streaming_help"),
+            help_text=i18n.get("settings.label.clipboard_protection_help"),
             help_ring=hint, help_glyph=hint)
 
         # ---- Section: 截图翻译 ----
@@ -1015,13 +1020,6 @@ class SettingsMixin:
             body, row_state,
             i18n.get("settings.label.auto_start_boot"), is_autostart_enabled(),
             bg=bg, fg=fg, font=FONT)
-        clip_protect_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.clipboard_protection"),
-            self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False),
-            bg=bg, fg=fg, font=FONT,
-            help_text=i18n.get("settings.label.clipboard_protection_help"),
-            help_ring=hint, help_glyph=hint)
         self._settings_field(
             body, row_state, i18n.get("settings.label.tray_click_action"),
             ttk.Combobox(
@@ -1035,14 +1033,8 @@ class SettingsMixin:
         self._settings_section(
             body, row_state, i18n.get("settings.label.update_section"),
             bg=bg, accent=accent, font=FONT)
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.current_version"),
-            tk.Label(body, text=version_string(), bg=bg, fg=hint,
-                     font=(FONT, 10)),
-            bg=bg, fg=fg, font=FONT)
         # Inline status line + an "更新并重启" button that only appears once a
-        # newer version has been found (checking never updates on its own — the
-        # user decides). Both are created before the row that references them.
+        # newer version has been found (checking never updates on its own).
         upd_status = tk.Label(body, text="", bg=bg, fg=hint, font=(FONT, 9))
         upd_apply_btn = tk.Button(
             body, text=i18n.get("settings.update_and_restart"),
@@ -1078,12 +1070,26 @@ class SettingsMixin:
         # converging both entry points on this one UI.
         self._settings_check = on_check_update_click
 
-        auto_update_sw = self._settings_toggle_row_with_action(
+        version_cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        tk.Label(
+            version_cell, text=version_string(), bg=bg, fg=hint,
+            font=(FONT, 10)).pack(side="left", padx=(0, 12))
+        self._pill_button(
+            version_cell, i18n.get("settings.label.check_update_action"),
+            on_check_update_click,
+            bg=t["list_bg"], fg=fg,
+            hover_bg=t["btn_active"], hover_fg=fg,
+            active_bg=t["list_sel"], active_fg=fg,
+            font=(FONT, 9), padx=14, pady=3).pack(side="right")
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.current_version"),
+            version_cell, bg=bg, fg=fg, font=FONT)
+
+        auto_update_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_update"),
             self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
-            i18n.get("settings.label.check_update_action"), on_check_update_click,
-            bg=bg, fg=fg, font=FONT, theme=t)
+            bg=bg, fg=fg, font=FONT)
         upd_row = row_state["value"]
         upd_status.grid(row=upd_row, column=0, sticky="w", pady=(0, 4))
         upd_apply_btn.grid(row=upd_row, column=1, sticky="e", pady=(0, 4))
@@ -1180,8 +1186,9 @@ class SettingsMixin:
                 self.cfg[CFG.OCR_HOTKEY_ENABLED] = bool(ocr_hotkey_sw.get())
                 self.cfg[CFG.CLIPBOARD_PROTECTION_ENABLED] = bool(clip_protect_sw.get())
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
-                self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = bool(
-                    codex_stream_sw.get())
+                # Streaming is now an always-on capability with safe startup
+                # fallback rather than a user-facing experiment.
+                self.cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
                 if restore_defaults_pending:
                     self.cfg[CFG.UI_V2] = DEFAULT_CONFIG[CFG.UI_V2]
                     self.cfg[CFG.UI_V2_DEFAULT_MIGRATED] = DEFAULT_CONFIG[
@@ -1249,8 +1256,6 @@ class SettingsMixin:
             hist_limit_var.set(DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
             gap_var.set(DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
             summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
-            codex_stream_sw.set(
-                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])

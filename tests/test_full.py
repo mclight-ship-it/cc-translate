@@ -109,6 +109,7 @@ class TestCFGConstants(unittest.TestCase):
         "CLIPBOARD_PROTECTION_ENABLED",
         "AUTOSTART_INITIALIZED",
         "SUMMARY_ENABLED",
+        "LABS_DEFAULTS_MIGRATED",
         "TRAY_CLICK_ACTION",
         "UI_V2",
         "UI_V2_DEFAULT_MIGRATED",
@@ -151,9 +152,13 @@ class TestCFGConstants(unittest.TestCase):
         self.assertIsInstance(dc[tr.CFG.HISTORY_ENABLED], bool)
         self.assertIsInstance(dc[tr.CFG.AUTO_UPDATE_ENABLED], bool)
 
-    def test_release_defaults_use_smart_codex_streaming_and_font_10(self):
+    def test_release_defaults_enable_beta_features_and_font_10(self):
         self.assertIs(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
+        self.assertIs(
+            tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED], True)
+        self.assertIs(
+            tr.DEFAULT_CONFIG[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], True)
         self.assertEqual(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
         self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
@@ -304,7 +309,7 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cfg[tr.CFG.FONT_SIZE], 10)
         self.assertEqual(cfg[tr.CFG.MODEL_PROVIDER], "codex_cli")
 
-    def test_saved_release_settings_override_new_defaults(self):
+    def test_removed_streaming_opt_out_migrates_on_load(self):
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump({
                 tr.CFG.CODEX_STREAMING_EXPERIMENTAL: False,
@@ -314,8 +319,38 @@ class TestConfigPersistence(unittest.TestCase):
 
         cfg = tr.load_config()
 
-        self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], False)
+        self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
         self.assertEqual(cfg[tr.CFG.FONT_SIZE], 16)
+        with open(self._path, encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertIs(saved[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
+
+    def test_labs_defaults_migration_is_persisted_and_runs_once(self):
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump({
+                tr.CFG.SUMMARY_ENABLED: False,
+                tr.CFG.CLIPBOARD_PROTECTION_ENABLED: False,
+            }, f)
+        self._patch_config_path(self._path)
+
+        migrated = tr.load_config()
+        with open(self._path, encoding="utf-8") as f:
+            saved = json.load(f)
+
+        self.assertIs(migrated[tr.CFG.SUMMARY_ENABLED], True)
+        self.assertIs(
+            migrated[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], True)
+        self.assertIs(saved[tr.CFG.LABS_DEFAULTS_MIGRATED], True)
+
+        saved[tr.CFG.SUMMARY_ENABLED] = False
+        saved[tr.CFG.CLIPBOARD_PROTECTION_ENABLED] = False
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump(saved, f)
+
+        opted_out = tr.load_config()
+        self.assertIs(opted_out[tr.CFG.SUMMARY_ENABLED], False)
+        self.assertIs(
+            opted_out[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], False)
 
     def test_ui_v2_migration_is_persisted_and_runs_only_once(self):
         with open(self._path, "w", encoding="utf-8") as f:
@@ -375,6 +410,24 @@ class TestConfigWrapper(unittest.TestCase):
             tr.CFG.UI_V2_DEFAULT_MIGRATED: True,
         })
         self.assertIs(cfg[tr.CFG.UI_V2], False)
+
+    def test_old_labs_defaults_migrate_on_once(self):
+        cfg = tr.Config({
+            tr.CFG.SUMMARY_ENABLED: False,
+            tr.CFG.CLIPBOARD_PROTECTION_ENABLED: False,
+        })
+        self.assertIs(cfg[tr.CFG.SUMMARY_ENABLED], True)
+        self.assertIs(cfg[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], True)
+        self.assertIs(cfg[tr.CFG.LABS_DEFAULTS_MIGRATED], True)
+
+    def test_explicit_labs_opt_out_survives_after_migration(self):
+        cfg = tr.Config({
+            tr.CFG.SUMMARY_ENABLED: False,
+            tr.CFG.CLIPBOARD_PROTECTION_ENABLED: False,
+            tr.CFG.LABS_DEFAULTS_MIGRATED: True,
+        })
+        self.assertIs(cfg[tr.CFG.SUMMARY_ENABLED], False)
+        self.assertIs(cfg[tr.CFG.CLIPBOARD_PROTECTION_ENABLED], False)
 
     def test_json_serializable(self):
         # save_config json.dumps the config; a dict subclass must serialize.
@@ -735,6 +788,14 @@ class TestModelLabels(unittest.TestCase):
             set(tr.get_provider_model_labels("codex_cli")),
             {"auto-fast", "auto"})
 
+    def test_provider_labels_include_vendor_and_product(self):
+        self._labels()
+        for lang in ("zh_CN", "en_US"):
+            tr.i18n.set_language(lang)
+            labels = tr.get_provider_labels()
+            self.assertIn("OpenAI GPT", labels["codex_cli"])
+            self.assertEqual(labels["claude_cli"], "Anthropic Claude")
+
     def test_codex_labels_are_concise_and_smart_routing_is_first(self):
         self._labels()
         tr.i18n.set_language("zh_CN")
@@ -1007,8 +1068,8 @@ class TestSummaryHelpers(unittest.TestCase):
         self.assertNotIn("## 摘要", instr)
         self.assertIn("English", instr)
 
-    def test_summary_default_off(self):
-        self.assertFalse(tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED])
+    def test_summary_default_on(self):
+        self.assertTrue(tr.DEFAULT_CONFIG[tr.CFG.SUMMARY_ENABLED])
 
 
 class TestShouldSummarize(unittest.TestCase):
@@ -2183,8 +2244,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 11)
-        self.assertTrue(tr.version_string().startswith("4.11."))
+        self.assertEqual(cc_update.VERSION_MINOR, 12)
+        self.assertTrue(tr.version_string().startswith("4.12."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -2486,15 +2547,12 @@ class TestInstallerContracts(unittest.TestCase):
         self.assertIn("'codex.exe', 'codex.cmd'", script)
         self.assertNotIn("auth.json", script)
 
-    def test_codex_streaming_setting_uses_beta_label(self):
-        self.assertEqual(
-            tr.i18n.TRANSLATIONS["zh_CN"][
-                "settings.label.codex_streaming"],
-            "Codex 流式输出 (Beta)")
-        self.assertEqual(
-            tr.i18n.TRANSLATIONS["en_US"][
-                "settings.label.codex_streaming"],
-            "Codex streaming output (Beta)")
+    def test_removed_codex_streaming_setting_has_no_ui_copy(self):
+        for lang in ("zh_CN", "en_US"):
+            strings = tr.i18n.TRANSLATIONS[lang]
+            self.assertNotIn("settings.label.codex_streaming", strings)
+            self.assertNotIn("settings.label.codex_streaming_help", strings)
+            self.assertIn("diagnostics.codex_streaming", strings)
 
 
 # ============================================================

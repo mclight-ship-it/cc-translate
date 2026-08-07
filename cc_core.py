@@ -418,6 +418,9 @@ class CFG:
     CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
     AUTOSTART_INITIALIZED = "autostart_initialized"
     SUMMARY_ENABLED = "summary_enabled"
+    # One-time marker for promoting the initial Labs features to on-by-default
+    # without overriding a later explicit opt-out.
+    LABS_DEFAULTS_MIGRATED = "labs_defaults_migrated"
     TRAY_CLICK_ACTION = "tray_click_action"
     # V2 is the production UI. Keep the saved flag and environment override so
     # support/dev builds can still force the legacy UI when diagnosing a
@@ -448,9 +451,10 @@ DEFAULT_CONFIG = {
     CFG.AUTO_UPDATE_HOUR: 3,
     CFG.OCR_ENGINE: "claude",
     CFG.OCR_HOTKEY_ENABLED: True,
-    CFG.CLIPBOARD_PROTECTION_ENABLED: False,
+    CFG.CLIPBOARD_PROTECTION_ENABLED: True,
     CFG.AUTOSTART_INITIALIZED: False,
-    CFG.SUMMARY_ENABLED: False,
+    CFG.SUMMARY_ENABLED: True,
+    CFG.LABS_DEFAULTS_MIGRATED: True,
     CFG.TRAY_CLICK_ACTION: "settings",
     CFG.UI_V2: True,
     CFG.UI_V2_DEFAULT_MIGRATED: True,
@@ -735,11 +739,11 @@ MODEL_LABELS_EN = {"haiku": "haiku (fast)",
                    "opus": "opus (most capable)"}
 PROVIDER_LABELS_ZH = {
     "codex_cli": "OpenAI GPT（Codex）",
-    "claude_cli": "Claude",
+    "claude_cli": "Anthropic Claude",
 }
 PROVIDER_LABELS_EN = {
     "codex_cli": "OpenAI GPT (Codex)",
-    "claude_cli": "Claude",
+    "claude_cli": "Anthropic Claude",
 }
 CODEX_MODEL_LABELS_ZH = {
     "auto-fast": "智能路由（极速）",

@@ -54,12 +54,12 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
 - **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
-- **Long-text summary (Beta)**: when translating longer natural-language text, it leads with a short summary of the key points before the full translation
+- **Long-text summary (Beta)**: on by default; longer natural-language text leads with a short summary before the full translation, and can be turned off in Labs
 - **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish
 - **Re-translate/switch direction in the popup**: a "Re-translate" menu re-translates the selection into another language in one click
 - **Rewrite & distill**: from the popup, rewrite the translation in a casual / formal / professional tone, or distill it to key points
-- **Long-text streaming**: Claude progressively reveals long translations. Codex long-text app-server streaming is enabled by default as a Beta; it preserves source lists and emits summary points as Markdown bullets, preflights executable hooks before starting a model turn, and safely falls back to stable `codex exec` before output when necessary.
+- **Long-text streaming**: Claude progressively reveals long translations. Codex app-server streaming is always on; it preserves source lists and emits summary points as Markdown bullets, preflights executable hooks before starting a model turn, and safely falls back to stable `codex exec` before output when necessary.
 - **Provider-aware diagnostics**: the Diagnostics window shows Codex version/sign-in, streaming compatibility and trigger rules, the latest request route, and a seven-day app-run summary with outcomes, models, routes, and P50/P95. Its advisory rollout gate tracks the 7-day / 200-request target and streamed-first-text versus stable-long-text P95 without changing saved settings.
 - **Smart selection detection**: automatically detects whether text is actually selected, so it won't mistranslate the whole field when nothing is selected in an input box (including cross-process apps like VS Code)
 - **Translation history**: open the history window from the tray — searchable and filterable by type

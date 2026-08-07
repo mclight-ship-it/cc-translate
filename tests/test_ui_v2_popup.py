@@ -460,6 +460,43 @@ class TestV2ResultPopup(unittest.TestCase):
             if c.cget("text") == tr.i18n.get("settings.label.close"))
         self.assertNotEqual(close_btn.cget("text"), "result.close")
 
+    def test_v2_settings_groups_labs_and_version_actions(self):
+        app = self._app(v2=True)
+        app._open_settings()
+        win = app.settings_win
+        self._kill_later(win)
+
+        def _walk(widget):
+            yield widget
+            for child in widget.winfo_children():
+                yield from _walk(child)
+
+        widgets = list(_walk(win))
+        texts = {
+            str(widget.cget("text"))
+            for widget in widgets
+            if "text" in widget.keys()
+        }
+        self.assertIn(tr.i18n.get("settings.label.labs_section"), texts)
+        self.assertIn(tr.i18n.get("settings.label.summary_enabled"), texts)
+        self.assertIn(
+            tr.i18n.get("settings.label.clipboard_protection"), texts)
+        self.assertIn(tr.i18n.get("settings.label.language_field"), texts)
+        self.assertNotIn("Codex 流式输出 (Beta)", texts)
+        self.assertNotIn("Codex streaming output (Beta)", texts)
+
+        check_button = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Button)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.check_update_action"))
+        version_labels = [
+            child for child in check_button.master.winfo_children()
+            if isinstance(child, tk.Label)
+            and child.cget("text") == tr.version_string()
+        ]
+        self.assertEqual(len(version_labels), 1)
+
     def test_tooltip_is_singleton_and_closes_with_owner(self):
         app = self._app(v2=True)
         owner = tk.Toplevel(app.root)

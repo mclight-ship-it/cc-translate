@@ -536,6 +536,13 @@ class Config(dict):
             # selecting legacy.
             self[CFG.UI_V2] = True
             self[CFG.UI_V2_DEFAULT_MIGRATED] = True
+        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
+            # Earlier releases serialized both Labs features as false by
+            # default. Promote existing configs once, then preserve any later
+            # explicit opt-out.
+            self[CFG.SUMMARY_ENABLED] = True
+            self[CFG.CLIPBOARD_PROTECTION_ENABLED] = True
+            self[CFG.LABS_DEFAULTS_MIGRATED] = True
         if CFG.MODEL_PROVIDER not in raw:
             # Configs from before provider selection existed contain only the
             # legacy Claude "model" key. Preserve that explicit old choice;
@@ -654,11 +661,28 @@ def load_config() -> "Config":
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f)
         cfg = Config(raw)
+        migrated = dict(raw)
+        config_changed = False
         if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
-            migrated = dict(raw)
             migrated[CFG.UI_V2] = cfg[CFG.UI_V2]
             migrated[CFG.UI_V2_DEFAULT_MIGRATED] = cfg[
                 CFG.UI_V2_DEFAULT_MIGRATED]
+            config_changed = True
+        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
+            migrated[CFG.SUMMARY_ENABLED] = cfg[CFG.SUMMARY_ENABLED]
+            migrated[CFG.CLIPBOARD_PROTECTION_ENABLED] = cfg[
+                CFG.CLIPBOARD_PROTECTION_ENABLED]
+            migrated[CFG.LABS_DEFAULTS_MIGRATED] = cfg[
+                CFG.LABS_DEFAULTS_MIGRATED]
+            config_changed = True
+        if not cfg[CFG.CODEX_STREAMING_EXPERIMENTAL]:
+            # Streaming no longer has a user-facing opt-out. Upgrade saved
+            # "off" values so existing users do not get stuck on a hidden
+            # setting after the control is removed.
+            cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
+            migrated[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
+            config_changed = True
+        if config_changed:
             save_config(migrated)
     except FileNotFoundError:
         pass
@@ -1310,7 +1334,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         sequence_before = self._clipboard_sequence()
         can_restore = False
         saved_text = None
-        if self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
+        if self.cfg.get(
+                CFG.CLIPBOARD_PROTECTION_ENABLED,
+                DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED]):
             try:
                 has_text = self._clipboard_has_text()
                 if has_text is not False:
@@ -1520,7 +1546,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
 
     def _restore_clipboard(self, saved_text, expected_sequence, selected_text):
         """Atomically restore text if the trigger still owns the clipboard."""
-        if not self.cfg.get(CFG.CLIPBOARD_PROTECTION_ENABLED, False):
+        if not self.cfg.get(
+                CFG.CLIPBOARD_PROTECTION_ENABLED,
+                DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED]):
             return False
         if saved_text is None:
             return False
@@ -1691,7 +1719,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         Applies to both plain text and mixed prose+code selections (the summary
         prompt keeps any code verbatim). Screenshots (ocr) are excluded for now
         because they take a separate one-shot vision path, not this pipeline."""
-        if not self.cfg.get(CFG.SUMMARY_ENABLED, False):
+        if not self.cfg.get(
+                CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]):
             return False
         if self._last_origin == "ocr":
             return False
@@ -1757,7 +1786,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             selection.provider_id,
             str(selection.model or "auto"),
             str(self.cfg.get(CFG.DIRECTION, "auto")),
-            "sum1" if self.cfg.get(CFG.SUMMARY_ENABLED, False) else "sum0",
+            "sum1" if self.cfg.get(
+                CFG.SUMMARY_ENABLED,
+                DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]) else "sum0",
             str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language()),
         ]
         prompt_revision = PROVIDER_PROMPT_REVISIONS.get(
