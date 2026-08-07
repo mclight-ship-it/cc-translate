@@ -42,7 +42,7 @@ from cc_core import (
 )
 
 
-_SETTINGS_COMBO_MIN_WIDTH = 19
+_SETTINGS_COMBO_MIN_WIDTH = 10
 _SETTINGS_COMBO_MAX_WIDTH = 24
 _SETTINGS_COMBO_CHROME_CHARS = 3
 
@@ -728,15 +728,8 @@ class SettingsMixin:
         FONT = "Microsoft YaHei UI"
         combo_font = tkfont.Font(root=self.root, family=FONT, size=10)
         combo_width = _settings_combo_width(combo_font, (
-            provider_labels.values(),
             get_provider_model_labels("codex_cli").values(),
             get_provider_model_labels("claude_cli").values(),
-            direction_labels.values(),
-            ocr_engine_labels.values(),
-            theme_labels.values(),
-            layout_labels.values(),
-            LANGUAGE_LABELS.values(),
-            tray_click_labels.values(),
         ))
         radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
         outer = self._rounded_shell(win, radius, bg, border)

@@ -811,6 +811,16 @@ class TestModelLabels(unittest.TestCase):
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
 
 
+class TestSettingsLabels(unittest.TestCase):
+    def test_english_autostart_names_windows_sign_in(self):
+        previous = tr.i18n.get_language()
+        self.addCleanup(lambda: tr.i18n.set_language(previous))
+        tr.i18n.set_language("en_US")
+        self.assertEqual(
+            tr.i18n.get("settings.label.auto_start_boot"),
+            "Start CC Translate when I sign in to Windows")
+
+
 # ============================================================
 # Rich-text rendering: edge cases
 # ============================================================
@@ -2244,8 +2254,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 14)
-        self.assertTrue(tr.version_string().startswith("4.14."))
+        self.assertEqual(cc_update.VERSION_MINOR, 15)
+        self.assertTrue(tr.version_string().startswith("4.15."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()

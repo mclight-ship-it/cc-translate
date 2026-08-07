@@ -18,6 +18,7 @@ import time
 import unittest
 
 import tkinter as tk
+from tkinter import ttk
 
 from tests._tr import tr
 import tests.test_full as tf  # reuse its shared-root + headless-app helpers
@@ -551,6 +552,15 @@ class TestV2ResultPopup(unittest.TestCase):
             and child.cget("text") == tr.version_string()
         ]
         self.assertEqual(len(version_labels), 1)
+
+        combo_widths = {
+            int(widget.cget("width"))
+            for widget in widgets
+            if isinstance(widget, ttk.Combobox)
+        }
+        self.assertEqual(
+            len(combo_widths), 1,
+            "All Settings dropdowns should match the Model dropdown width")
 
     def test_tooltip_is_singleton_and_closes_with_owner(self):
         app = self._app(v2=True)
