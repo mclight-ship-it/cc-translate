@@ -495,16 +495,26 @@ class TestV2ResultPopup(unittest.TestCase):
             if isinstance(widget, tk.Label)
             and widget.cget("text")
             == tr.i18n.get("settings.label.update_section"))
-        behavior_label = next(
+        system_label = next(
             widget for widget in widgets
             if isinstance(widget, tk.Label)
             and widget.cget("text")
-            == tr.i18n.get("settings.label.behavior_section"))
-        appearance_label = next(
+            == tr.i18n.get("settings.label.system_section"))
+        max_chars_label = next(
             widget for widget in widgets
             if isinstance(widget, tk.Label)
             and widget.cget("text")
-            == tr.i18n.get("settings.label.appearance_section"))
+            == tr.i18n.get("settings.label.max_chars"))
+        screenshot_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.screenshot_section"))
+        double_press_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.double_press_window"))
         win.update_idletasks()
         self.assertGreater(
             labs_label.winfo_rootx(), win.winfo_rootx() + win.winfo_width() // 2,
@@ -513,12 +523,22 @@ class TestV2ResultPopup(unittest.TestCase):
             labs_label.winfo_rooty(), update_label.winfo_rooty(),
             "Update should be the last section in the right Settings column")
         self.assertLess(
-            behavior_label.winfo_rootx(),
+            max_chars_label.winfo_rootx(),
             win.winfo_rootx() + win.winfo_width() // 2,
-            "Behavior should be in the left Settings column")
+            "Maximum characters should be in the left Translation section")
+        self.assertLess(
+            max_chars_label.winfo_rooty(), screenshot_label.winfo_rooty(),
+            "Maximum characters should remain inside the Translation section")
         self.assertGreater(
-            behavior_label.winfo_rooty(), appearance_label.winfo_rooty(),
-            "Behavior should be the last section in the left Settings column")
+            system_label.winfo_rootx(),
+            win.winfo_rootx() + win.winfo_width() // 2,
+            "System should be in the right Settings column")
+        self.assertGreater(
+            double_press_label.winfo_rootx(),
+            win.winfo_rootx() + win.winfo_width() // 2,
+            "Double-click interval should be grouped under System")
+        self.assertNotIn(
+            tr.i18n.get("settings.label.behavior_section"), texts)
 
         check_button = next(
             widget for widget in widgets

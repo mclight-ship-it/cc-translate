@@ -874,6 +874,14 @@ class SettingsMixin:
                 values=list(direction_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
+        max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.max_chars"),
+            ttk.Spinbox(
+                body, textvariable=max_var, from_=500, to=20000, increment=500,
+                width=10, style="CC.TSpinbox", font=(FONT, 10)),
+            bg=bg, fg=fg, font=FONT)
+
         # ---- Section: 截图翻译 ----
         self._settings_section(
             body, row_state, i18n.get("settings.label.screenshot_section"),
@@ -944,10 +952,14 @@ class SettingsMixin:
                 values=list(LANGUAGE_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
 
-        # ---- Section: 行为 ----
+        # ----- Right column -----
+        body = right_col
+        row_state = right_state
+        # ---- Section: 系统 ----
         self._settings_section(
-            body, row_state, i18n.get("settings.label.behavior_section"),
+            body, row_state, i18n.get("settings.label.system_section"),
             bg=bg, accent=accent, font=FONT)
+
         gap_var = tk.DoubleVar(value=self.cfg[CFG.DOUBLE_PRESS_WINDOW])
         self._settings_field(
             body, row_state, i18n.get("settings.label.double_press_window"),
@@ -961,22 +973,14 @@ class SettingsMixin:
             value=tray_click_labels.get(
                 self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings"),
                 tray_click_labels["settings"]))
-
-        max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
         self._settings_field(
-            body, row_state, i18n.get("settings.label.max_chars"),
-            ttk.Spinbox(
-                body, textvariable=max_var, from_=500, to=20000, increment=500,
-                width=10, style="CC.TSpinbox", font=(FONT, 10)),
+            body, row_state, i18n.get("settings.label.tray_click_action"),
+            ttk.Combobox(
+                body, textvariable=tray_click_var, state="readonly",
+                width=combo_width,
+                style="CC.TCombobox", font=(FONT, 10),
+                values=list(tray_click_labels.values())),
             bg=bg, fg=fg, font=FONT)
-
-        # ----- Right column -----
-        body = right_col
-        row_state = right_state
-        # ---- Section: 系统 ----
-        self._settings_section(
-            body, row_state, i18n.get("settings.label.system_section"),
-            bg=bg, accent=accent, font=FONT)
 
         history_sw = self._settings_toggle_row_with_action(
             body, row_state,
@@ -997,14 +1001,6 @@ class SettingsMixin:
         autostart_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_start_boot"), is_autostart_enabled(),
-            bg=bg, fg=fg, font=FONT)
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.tray_click_action"),
-            ttk.Combobox(
-                body, textvariable=tray_click_var, state="readonly",
-                width=combo_width,
-                style="CC.TCombobox", font=(FONT, 10),
-                values=list(tray_click_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 实验室 ----
