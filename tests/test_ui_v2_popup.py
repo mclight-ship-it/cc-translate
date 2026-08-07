@@ -23,6 +23,7 @@ from tkinter import ttk
 from tests._tr import tr
 import tests.test_full as tf  # reuse its shared-root + headless-app helpers
 import cc_app_ocr
+import cc_app_settings
 
 try:
     import cc_ui_v2 as ccv2
@@ -561,6 +562,8 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertEqual(
             len(combo_widths), 1,
             "All Settings dropdowns should match the Model dropdown width")
+        self.assertEqual(
+            cc_app_settings._expanded_settings_combo_width(20), 22)
 
     def test_tooltip_is_singleton_and_closes_with_owner(self):
         app = self._app(v2=True)

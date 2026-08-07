@@ -45,6 +45,8 @@ from cc_core import (
 _SETTINGS_COMBO_MIN_WIDTH = 10
 _SETTINGS_COMBO_MAX_WIDTH = 24
 _SETTINGS_COMBO_CHROME_CHARS = 3
+_SETTINGS_COMBO_WIDTH_SCALE_NUMERATOR = 11
+_SETTINGS_COMBO_WIDTH_SCALE_DENOMINATOR = 10
 
 
 def _settings_combo_width(font, value_groups):
@@ -65,6 +67,13 @@ def _settings_combo_width(font, value_groups):
             text_chars + _SETTINGS_COMBO_CHROME_CHARS,
         ),
     )
+
+
+def _expanded_settings_combo_width(width):
+    return (
+        width * _SETTINGS_COMBO_WIDTH_SCALE_NUMERATOR
+        + _SETTINGS_COMBO_WIDTH_SCALE_DENOMINATOR - 1
+    ) // _SETTINGS_COMBO_WIDTH_SCALE_DENOMINATOR
 
 
 class SettingsMixin:
@@ -727,10 +736,11 @@ class SettingsMixin:
 
         FONT = "Microsoft YaHei UI"
         combo_font = tkfont.Font(root=self.root, family=FONT, size=10)
-        combo_width = _settings_combo_width(combo_font, (
-            get_provider_model_labels("codex_cli").values(),
-            get_provider_model_labels("claude_cli").values(),
-        ))
+        combo_width = _expanded_settings_combo_width(
+            _settings_combo_width(combo_font, (
+                get_provider_model_labels("codex_cli").values(),
+                get_provider_model_labels("claude_cli").values(),
+            )))
         radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
         outer = self._rounded_shell(win, radius, bg, border)
 
