@@ -944,9 +944,6 @@ class SettingsMixin:
                 values=list(LANGUAGE_LABELS.values())),
             bg=bg, fg=fg, font=FONT)
 
-        # ----- Right column -----
-        body = right_col
-        row_state = right_state
         # ---- Section: 行为 ----
         self._settings_section(
             body, row_state, i18n.get("settings.label.behavior_section"),
@@ -973,6 +970,9 @@ class SettingsMixin:
                 width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
+        # ----- Right column -----
+        body = right_col
+        row_state = right_state
         # ---- Section: 系统 ----
         self._settings_section(
             body, row_state, i18n.get("settings.label.system_section"),
@@ -1006,6 +1006,28 @@ class SettingsMixin:
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(tray_click_labels.values())),
             bg=bg, fg=fg, font=FONT)
+
+        # ---- Section: 实验室 ----
+        self._settings_section(
+            body, row_state, i18n.get("settings.label.labs_section"),
+            bg=bg, accent=accent, font=FONT)
+        summary_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.summary_enabled"),
+            self.cfg.get(
+                CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]),
+            bg=bg, fg=fg, font=FONT,
+            help_text=i18n.get("settings.label.summary_help"),
+            help_ring=hint, help_glyph=hint)
+        clip_protect_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.clipboard_protection"),
+            self.cfg.get(
+                CFG.CLIPBOARD_PROTECTION_ENABLED,
+                DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED]),
+            bg=bg, fg=fg, font=FONT,
+            help_text=i18n.get("settings.label.clipboard_protection_help"),
+            help_ring=hint, help_glyph=hint)
 
         # ---- Section: 更新 ----
         self._settings_section(
@@ -1097,28 +1119,6 @@ class SettingsMixin:
         upd_status.config(text="")
         upd_apply_btn.grid_remove()       # hidden until a version is found
         row_state["value"] += 1
-
-        # ---- Section: 实验室 ----
-        self._settings_section(
-            body, row_state, i18n.get("settings.label.labs_section"),
-            bg=bg, accent=accent, font=FONT)
-        summary_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.summary_enabled"),
-            self.cfg.get(
-                CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]),
-            bg=bg, fg=fg, font=FONT,
-            help_text=i18n.get("settings.label.summary_help"),
-            help_ring=hint, help_glyph=hint)
-        clip_protect_sw = self._settings_toggle_row(
-            body, row_state,
-            i18n.get("settings.label.clipboard_protection"),
-            self.cfg.get(
-                CFG.CLIPBOARD_PROTECTION_ENABLED,
-                DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED]),
-            bg=bg, fg=fg, font=FONT,
-            help_text=i18n.get("settings.label.clipboard_protection_help"),
-            help_ring=hint, help_glyph=hint)
 
         # ---- Footer: status + action buttons ----
         # v2 drops the hairline divider (the padding separates the row); legacy

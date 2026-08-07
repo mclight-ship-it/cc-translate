@@ -495,13 +495,30 @@ class TestV2ResultPopup(unittest.TestCase):
             if isinstance(widget, tk.Label)
             and widget.cget("text")
             == tr.i18n.get("settings.label.update_section"))
+        behavior_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.behavior_section"))
+        appearance_label = next(
+            widget for widget in widgets
+            if isinstance(widget, tk.Label)
+            and widget.cget("text")
+            == tr.i18n.get("settings.label.appearance_section"))
         win.update_idletasks()
         self.assertGreater(
             labs_label.winfo_rootx(), win.winfo_rootx() + win.winfo_width() // 2,
             "Labs should be in the right Settings column")
-        self.assertGreater(
+        self.assertLess(
             labs_label.winfo_rooty(), update_label.winfo_rooty(),
-            "Labs should be the last section in the right Settings column")
+            "Update should be the last section in the right Settings column")
+        self.assertLess(
+            behavior_label.winfo_rootx(),
+            win.winfo_rootx() + win.winfo_width() // 2,
+            "Behavior should be in the left Settings column")
+        self.assertGreater(
+            behavior_label.winfo_rooty(), appearance_label.winfo_rooty(),
+            "Behavior should be the last section in the left Settings column")
 
         check_button = next(
             widget for widget in widgets
