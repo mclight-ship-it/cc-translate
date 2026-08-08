@@ -36,6 +36,22 @@ except Exception:
     Image = ImageEnhance = ImageTk = None
 
 
+def _region_hint_position(virtual_rect, monitor_rect):
+    """Return canvas-local center coordinates for the active monitor."""
+    vx, vy, vw, vh = virtual_rect
+    fallback = (vw // 2, vh // 2)
+    if not monitor_rect:
+        return fallback
+    left, top, right, bottom = monitor_rect
+    left = max(vx, left)
+    top = max(vy, top)
+    right = min(vx + vw, right)
+    bottom = min(vy + vh, bottom)
+    if right <= left or bottom <= top:
+        return fallback
+    return ((left + right) // 2 - vx, (top + bottom) // 2 - vy)
+
+
 class OcrMixin:
     def _virtual_screen_rect(self):
         """(x, y, w, h) of the whole virtual desktop in Windows virtual-screen
@@ -161,10 +177,13 @@ class OcrMixin:
             ]
 
         hint_text = i18n.get("ocr.drag_select_hint")
+        hint_position = _region_hint_position(
+            (vx, vy, vw, vh), win32util.get_monitor_rect())
         hint = canvas.create_text(
-            vw // 2, 30, fill="#e6e9f0",
+            *hint_position, fill="#e6e9f0",
             font=("Microsoft YaHei UI", 13),
             text=hint_text)
+        overlay._ocr_hint_position = hint_position
         accessible_hint = tk.Label(
             overlay, text=hint_text, takefocus=0)
         accessible_hint.place(x=-10000, y=-10000)

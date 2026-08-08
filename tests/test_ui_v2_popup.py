@@ -802,7 +802,10 @@ class TestV2ResultPopup(unittest.TestCase):
         app._virtual_screen_rect = lambda: (0, 0, 640, 360)
         screen = ccv2.Image.new("RGB", (640, 360), (110, 135, 170))
 
-        app._open_region_selector(screen_image=screen)
+        with unittest.mock.patch.object(
+                cc_app_ocr.win32util, "get_monitor_rect",
+                return_value=(0, 0, 640, 360)):
+            app._open_region_selector(screen_image=screen)
         win = app._ocr_overlay
         self._kill_later(win)
         self.assertTrue(getattr(win, "_v2", False))
@@ -813,6 +816,7 @@ class TestV2ResultPopup(unittest.TestCase):
             tr.i18n.get("ocr.drag_select_hint"))
         self.assertEqual(
             str(win._ocr_accessible_hint.cget("takefocus")), "0")
+        self.assertEqual(win._ocr_hint_position, (320, 180))
         self.assertTrue(win.bind("<Escape>"))
         self.assertTrue(win._ocr_canvas.bind("<Button-3>"))
         self.assertEqual(len(win._ocr_selection_items), 3)
@@ -833,6 +837,21 @@ class TestV2ResultPopup(unittest.TestCase):
         ]
         self.assertGreater(widths[0], widths[1])
         self.assertGreater(widths[1], widths[2])
+
+    def test_ocr_hint_centers_on_cursor_monitor_in_virtual_desktop(self):
+        virtual_rect = (-1920, -200, 5760, 1400)
+
+        self.assertEqual(
+            cc_app_ocr._region_hint_position(
+                virtual_rect, (-1920, 0, 0, 1040)),
+            (960, 720))
+        self.assertEqual(
+            cc_app_ocr._region_hint_position(
+                virtual_rect, (0, 0, 1920, 1040)),
+            (2880, 720))
+        self.assertEqual(
+            cc_app_ocr._region_hint_position(virtual_rect, None),
+            (2880, 700))
 
     def test_v2_ocr_overlay_normalizes_virtual_screen_selection(self):
         app = self._app(v2=True)
