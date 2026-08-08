@@ -37,9 +37,9 @@ except Exception:
 
 
 def _region_hint_position(virtual_rect, monitor_rect):
-    """Return canvas-local center coordinates for the active monitor."""
+    """Return canvas-local top-center coordinates for the active monitor."""
     vx, vy, vw, vh = virtual_rect
-    fallback = (vw // 2, vh // 2)
+    fallback = (vw // 2, 30)
     if not monitor_rect:
         return fallback
     left, top, right, bottom = monitor_rect
@@ -49,7 +49,7 @@ def _region_hint_position(virtual_rect, monitor_rect):
     bottom = min(vy + vh, bottom)
     if right <= left or bottom <= top:
         return fallback
-    return ((left + right) // 2 - vx, (top + bottom) // 2 - vy)
+    return ((left + right) // 2 - vx, top - vy + 30)
 
 
 class OcrMixin:
