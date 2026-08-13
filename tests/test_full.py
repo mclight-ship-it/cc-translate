@@ -1947,7 +1947,7 @@ class TestProviderRouting(unittest.TestCase):
         app._stream_codex.assert_called_once()
         app._call_model.assert_not_called()
 
-    def test_codex_stream_failure_before_delta_allows_exec_fallback(self):
+    def test_codex_stream_failure_before_delta_retries_then_falls_back(self):
         from cc_providers.base import ProviderResult
 
         app = object.__new__(tr.TranslatorApp)
@@ -1955,7 +1955,8 @@ class TestProviderRouting(unittest.TestCase):
         app._provider_registry = unittest.mock.Mock()
         provider = app._provider_registry.get.return_value
         provider.stream.return_value = ProviderResult(
-            False, error_code="appserver_exited")
+            False, error_code="appserver_exited",
+            metrics=(("turn_submitted", False),))
         app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
         app._record_history = unittest.mock.Mock()
         app._provider_error_text = unittest.mock.Mock(return_value="failed")
@@ -1973,6 +1974,7 @@ class TestProviderRouting(unittest.TestCase):
             tr.ProviderSelection("codex_cli", "auto"))
 
         self.assertFalse(handled)
+        self.assertEqual(provider.stream.call_count, 2)
         app._provider_error_text.assert_not_called()
         self.assertEqual(
             app._last_provider_route["mode"], "stable_fallback")
@@ -1980,6 +1982,253 @@ class TestProviderRouting(unittest.TestCase):
             app._last_provider_route["error_code"], "appserver_exited")
         request = provider.stream.call_args.args[0]
         self.assertEqual(request.task, "translation_summary")
+
+    def test_codex_stream_protocol_retry_can_recover_without_exec_fallback(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.side_effect = [
+            ProviderResult(
+                False, error_code="unknown_appserver_event",
+                metrics=(("turn_submitted", False),)),
+            ProviderResult(
+                True, text="translated",
+                metrics=(
+                    ("turn_submitted", True),
+                    ("first_result_ms", 1000),
+                    ("total_ms", 1500),
+                )),
+        ]
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock()
+        ss = tr.StreamSession()
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        with unittest.mock.patch.object(tr, "log_perf") as perf:
+            handled = app._stream_codex(
+                "long text", 1, ss, meta,
+                tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertTrue(handled)
+        self.assertEqual(provider.stream.call_count, 2)
+        self.assertEqual(app._last_provider_route["mode"], "streamed")
+        app._record_history.assert_called_once()
+        app._provider_error_text.assert_not_called()
+        stream_events = [
+            fields for stage, fields in (call.args for call in perf.call_args_list)
+            if stage == "provider_stream_complete"
+        ]
+        self.assertEqual([event["attempt"] for event in stream_events], [1, 2])
+        self.assertGreaterEqual(stream_events[1]["first_result_ms"], 1000)
+
+    def test_codex_stream_failure_after_turn_submission_is_not_retried(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = lambda _delay, callback: callback()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            False,
+            error_code="unknown_appserver_event",
+            metrics=(("turn_submitted", True),),
+        )
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+        app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        ss = tr.StreamSession()
+        app._ss = ss
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertTrue(handled)
+        provider.stream.assert_called_once()
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
+        app._show_result.assert_called_once_with(
+            False, "protocol changed", 1, record=False)
+
+    def test_codex_stream_retry_failure_after_submission_never_falls_back(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = lambda _delay, callback: callback()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.side_effect = [
+            ProviderResult(
+                False,
+                error_code="unknown_appserver_event",
+                metrics=(("turn_submitted", False),),
+            ),
+            ProviderResult(
+                False,
+                error_code="unknown_appserver_event",
+                metrics=(("turn_submitted", True),),
+            ),
+        ]
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        ss = tr.StreamSession()
+        app._ss = ss
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertTrue(handled)
+        self.assertEqual(provider.stream.call_count, 2)
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
+        app._show_result.assert_called_once_with(
+            False, "protocol changed", 1, record=False)
+
+    def test_submitted_stream_failure_never_calls_stable_provider(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = lambda _delay, callback: callback()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            False,
+            error_code="unknown_appserver_event",
+            metrics=(("turn_submitted", True),),
+        )
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+        app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._call_model = unittest.mock.Mock(return_value=(True, "duplicate"))
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        app._job_id = 1
+        app._last_provider_route = {}
+        app._ss = tr.StreamSession()
+        text = "long text"
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto-fast",
+            "input": text,
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "system_prompt": "Translate.",
+        }
+
+        app._do_provider_translate(text, 1, meta)
+
+        provider.stream.assert_called_once()
+        app._call_model.assert_not_called()
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
+
+    def test_codex_stream_unsafe_failure_is_never_retried(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            False, error_code="unsafe_tool_event")
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock()
+        ss = tr.StreamSession()
+        meta = {
+            "input": "long text",
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+        }
+
+        handled = app._stream_codex(
+            "long text", 1, ss, meta,
+            tr.ProviderSelection("codex_cli", "auto"))
+
+        self.assertFalse(handled)
+        provider.stream.assert_called_once()
+        self.assertEqual(app._last_provider_route["mode"], "stable_fallback")
+
+    def test_cancelled_pre_submission_failure_never_calls_stable_provider(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        app.root = unittest.mock.Mock()
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+        provider.stream.return_value = ProviderResult(
+            False,
+            error_code="appserver_exited",
+            metrics=(("turn_submitted", False),),
+        )
+        cancel_event = threading.Event()
+        cancel_event.set()
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._call_model = unittest.mock.Mock(return_value=(True, "duplicate"))
+        app._job_id = 1
+        app._last_provider_route = {}
+        app._ss = tr.StreamSession()
+        text = "long text"
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto-fast",
+            "input": text,
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "system_prompt": "Translate.",
+            "cancel_event": cancel_event,
+        }
+
+        app._do_provider_translate(text, 1, meta)
+
+        provider.stream.assert_called_once()
+        app._call_model.assert_not_called()
+        self.assertEqual(app._last_provider_route["mode"], "stream_cancelled")
 
     def test_codex_stream_failure_after_delta_does_not_retry(self):
         from cc_providers.base import ProviderResult
@@ -2079,7 +2328,7 @@ class TestProviderRouting(unittest.TestCase):
         self.assertEqual(app._last_provider_route["mode"], "stream_failed")
         app._provider_error_text.assert_called_once()
 
-    def test_codex_unrendered_delta_can_fall_back_without_late_render(self):
+    def test_codex_unrendered_delta_never_falls_back_or_renders_late(self):
         from cc_providers.base import ProviderResult
 
         app = object.__new__(tr.TranslatorApp)
@@ -2098,8 +2347,11 @@ class TestProviderRouting(unittest.TestCase):
         provider.stream.side_effect = stream
         app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
         app._record_history = unittest.mock.Mock()
-        app._provider_error_text = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
         app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
         app._job_is_current = unittest.mock.Mock(return_value=True)
         ss = tr.StreamSession()
         app._ss = ss
@@ -2112,9 +2364,67 @@ class TestProviderRouting(unittest.TestCase):
         for callback in callbacks:
             callback()
 
-        self.assertFalse(handled)
+        self.assertTrue(handled)
         app._stream_update.assert_not_called()
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
+        app._show_result.assert_called_once_with(
+            False, "protocol changed", 1, record=False)
         self.assertLessEqual(tr.CODEX_FIRST_FRAME_WAIT_SECONDS, 0.05)
+
+    def test_unrendered_delta_failure_never_calls_stable_provider(self):
+        from cc_providers.base import ProviderResult
+
+        app = object.__new__(tr.TranslatorApp)
+        app.cfg = tr.Config({
+            tr.CFG.CODEX_STREAMING_EXPERIMENTAL: True,
+        })
+        callbacks = []
+        app.root = unittest.mock.Mock()
+        app.root.after.side_effect = (
+            lambda _delay, callback: callbacks.append(callback))
+        app._provider_registry = unittest.mock.Mock()
+        provider = app._provider_registry.get.return_value
+
+        def stream(_request, on_delta, _cancel_event):
+            on_delta("not rendered")
+            return ProviderResult(
+                False,
+                error_code="unknown_appserver_event",
+                metrics=(("turn_submitted", True),),
+            )
+
+        provider.stream.side_effect = stream
+        app._system_prompt_for = unittest.mock.Mock(return_value="Translate.")
+        app._record_history = unittest.mock.Mock()
+        app._provider_error_text = unittest.mock.Mock(
+            return_value="protocol changed")
+        app._stream_update = unittest.mock.Mock()
+        app._cancel_stream_flush = unittest.mock.Mock()
+        app._show_result = unittest.mock.Mock()
+        app._call_model = unittest.mock.Mock(return_value=(True, "duplicate"))
+        app._job_is_current = unittest.mock.Mock(return_value=True)
+        app._job_id = 1
+        app._last_provider_route = {}
+        app._ss = tr.StreamSession()
+        text = "long text"
+        meta = {
+            "provider": "codex_cli",
+            "model": "auto-fast",
+            "input": text,
+            "origin": "text",
+            "is_code": False,
+            "kind": "text",
+            "system_prompt": "Translate.",
+        }
+
+        app._do_provider_translate(text, 1, meta)
+        for callback in callbacks:
+            callback()
+
+        provider.stream.assert_called_once()
+        app._call_model.assert_not_called()
+        app._stream_update.assert_not_called()
+        self.assertEqual(app._last_provider_route["mode"], "stream_failed")
 
     def test_codex_render_schedule_failure_is_not_logged_as_success(self):
         app = object.__new__(tr.TranslatorApp)

@@ -176,7 +176,7 @@ _PERF_SAFE_KEYS = {
     "initialize_ms", "hook_preflight_ms", "thread_start_ms", "turn_start_ms",
     "turn_first_event_ms", "turn_first_result_ms", "turn_total_ms",
     "ok", "cancelled", "killed", "is_error", "rc",
-    "has_stream_data", "error_code",
+    "has_stream_data", "error_code", "attempt", "turn_submitted",
 }
 _perf_log_lock = threading.Lock()
 

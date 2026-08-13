@@ -727,6 +727,10 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 HISTORY_PATH = _user_data_path("history.json")
 CODEX_FIRST_FRAME_WAIT_SECONDS = 0.05
+CODEX_STREAM_RETRY_ERRORS = frozenset({
+    "appserver_exited",
+    "unknown_appserver_event",
+})
 
 # Serialises the read-modify-write in add_history so concurrent translation
 # workers (each may append a result) can't interleave and lose entries.
@@ -2094,9 +2098,10 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
     def _stream_codex(self, text, job_id, ss, meta, selection):
         """Stream an eligible Codex request through experimental app-server.
 
-        A failure before any visible delta falls back to stable ``codex exec``.
-        Once output is visible, a failure is surfaced rather than issuing a
-        duplicate model request.
+        A transient protocol/process failure before the model turn is submitted
+        rebuilds the app-server and retries once, then falls back to stable
+        ``codex exec``. Once a turn is submitted or any output arrives, a failure
+        is surfaced rather than issuing a duplicate model request.
         """
         system_prompt = (
             meta.get("system_prompt") or self._system_prompt_for(text))
@@ -2168,18 +2173,48 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             except tk.TclError:
                 schedule_failed.set()
 
-        result = self._provider_registry.get(CODEX_PROVIDER).stream(
-            request, on_delta, cancel_event)
-        log_perf("provider_stream_complete", {
-            "provider": selection.provider_id,
-            "model": selection.model or "auto",
-            "task": request.task,
-            "chars": len(text),
-            "ok": result.ok,
-            "cancelled": result.error_code == "cancelled",
-            "error_code": result.error_code or None,
-            **dict(result.metrics),
-        })
+        provider = self._provider_registry.get(CODEX_PROVIDER)
+        stream_sequence_started_at = time.perf_counter()
+
+        def run_provider_stream(attempt):
+            attempt_offset_ms = int(
+                (time.perf_counter() - stream_sequence_started_at) * 1000)
+            stream_result = provider.stream(request, on_delta, cancel_event)
+            logged_metrics = dict(stream_result.metrics)
+            if attempt > 1:
+                # Keep user-observed first-result/total latency end-to-end across
+                # attempts; per-turn metrics remain scoped to the successful turn.
+                for key in ("first_event_ms", "first_result_ms", "total_ms"):
+                    if key in logged_metrics:
+                        logged_metrics[key] += attempt_offset_ms
+            log_perf("provider_stream_complete", {
+                "provider": selection.provider_id,
+                "model": selection.model or "auto",
+                "task": request.task,
+                "chars": len(text),
+                "attempt": attempt,
+                "ok": stream_result.ok,
+                "cancelled": stream_result.error_code == "cancelled",
+                "error_code": stream_result.error_code or None,
+                **logged_metrics,
+            })
+            return stream_result
+
+        result = run_provider_stream(1)
+        result_metrics = dict(result.metrics)
+        can_retry = (
+            not result.ok
+            and not received_delta.is_set()
+            and result.error_code in CODEX_STREAM_RETRY_ERRORS
+            and result_metrics.get("turn_submitted") is False
+            and (cancel_event is None or not cancel_event.is_set())
+        )
+        if can_retry:
+            # A protocol/process failure kills the reusable app-server. Starting
+            # it once more is much faster than immediately falling back to a
+            # cold `codex exec`, while preserving the no-retry rule after output.
+            result = run_provider_stream(2)
+            result_metrics = dict(result.metrics)
         if result.ok:
             self._set_provider_route(
                 job_id, selection, "streamed")
@@ -2194,12 +2229,43 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             except tk.TclError:
                 pass
             return True
-        if result.error_code == "cancelled":
+        if (result.error_code == "cancelled"
+                or (cancel_event is not None and cancel_event.is_set())):
             self._set_provider_route(
                 job_id, selection, "stream_cancelled")
             stream_active.clear()
             return True
+
+        def surface_stream_error(reason):
+            self._set_provider_route(
+                job_id, selection, "stream_failed", reason,
+                result.error_code)
+            stream_active.clear()
+            error_text = self._provider_error_text(result)
+
+            def show_stream_error():
+                if not self._job_is_current(job_id) or self._ss is not ss:
+                    return
+                self._cancel_stream_flush()
+                while True:
+                    try:
+                        ss.queue.get_nowait()
+                    except queue.Empty:
+                        break
+                self._show_result(
+                    False, error_text, job_id, record=False)
+
+            try:
+                self.root.after(0, show_stream_error)
+            except tk.TclError:
+                pass
+            return True
+
         if not received_delta.is_set():
+            if result_metrics.get("turn_submitted") is True:
+                # The remote turn may still execute even though no text arrived.
+                # Surface the failure instead of issuing a duplicate exec request.
+                return surface_stream_error("after_submission_failure")
             self._set_provider_route(
                 job_id, selection, "stable_fallback", "pre_output_failure",
                 result.error_code)
@@ -2222,33 +2288,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                     job_id, selection, "stream_failed",
                     "render_unavailable", result.error_code)
                 return True
-            self._set_provider_route(
-                job_id, selection, "stable_fallback", "pre_output_failure",
-                result.error_code)
-            return False
-        self._set_provider_route(
-            job_id, selection, "stream_failed", "after_output_failure",
-            result.error_code)
-        stream_active.clear()
-        error_text = self._provider_error_text(result)
-
-        def show_stream_error():
-            if not self._job_is_current(job_id) or self._ss is not ss:
-                return
-            self._cancel_stream_flush()
-            while True:
-                try:
-                    ss.queue.get_nowait()
-                except queue.Empty:
-                    break
-            self._show_result(
-                False, error_text, job_id, record=False)
-
-        try:
-            self.root.after(0, show_stream_error)
-        except tk.TclError:
-            pass
-        return True
+        return surface_stream_error("after_output_failure")
 
     def _warm_translate(self, text, job_id, ss, meta, profile="translate"):
         """Translate using a pre-warmed process for the given profile, streaming

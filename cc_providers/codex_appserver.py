@@ -444,6 +444,7 @@ class CodexAppServerTransport:
         turn_started_at = None
         turn_first_event_ms = None
         turn_first_result_ms = None
+        turn_submitted = False
         interrupt_sent = False
 
         def metrics():
@@ -451,6 +452,7 @@ class CodexAppServerTransport:
                 ("spawn_ms", spawn_ms),
                 ("total_ms", int(
                     (time.perf_counter() - started_at) * 1000)),
+                ("turn_submitted", turn_submitted),
             ]
             if first_event_ms is not None:
                 values.append(("first_event_ms", first_event_ms))
@@ -592,6 +594,7 @@ class CodexAppServerTransport:
             turn_started_at = time.perf_counter()
             turn_start_id = self._take_request_id()
             send("turn/start", turn_params, turn_start_id)
+            turn_submitted = True
 
             while parser.turn_status is None:
                 if (cancel_event is not None and cancel_event.is_set()
