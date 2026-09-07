@@ -66,6 +66,14 @@ _CODEX_FORMAT_INSTRUCTIONS = (
 _DEFAULT_APPSERVER_IDLE_SECONDS = 300
 
 
+def _custom_codex_home():
+    value = os.environ.get("CC_TRANSLATE_CODEX_HOME", "").strip()
+    if not value:
+        return None
+    home = os.path.abspath(os.path.expandvars(os.path.expanduser(value)))
+    return home if os.path.isfile(os.path.join(home, "config.toml")) else None
+
+
 def find_codex_cmd():
     """Locate only public Codex installations, never internal helper binaries."""
     for name in ("codex.exe", "codex.cmd", "codex"):
@@ -165,6 +173,10 @@ class CodexCliProvider:
     def __init__(self, command=_AUTO_COMMAND, work_dir=None):
         self.command = (
             find_codex_cmd() if command is _AUTO_COMMAND else command)
+        self.config_home = _custom_codex_home()
+        self.env = None
+        if self.config_home:
+            self.env = dict(os.environ, CODEX_HOME=self.config_home)
         self.work_dir = work_dir or os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "CC Translate",
@@ -191,6 +203,14 @@ class CodexCliProvider:
                 error_code=version.error_code,
                 error_detail=version.error_detail,
             )
+        if self.config_home:
+            return ProviderStatus(
+                installed=True,
+                authenticated=True,
+                command=self.command,
+                version=version.text,
+                auth_method="custom provider",
+            )
         login = self._probe(["login", "status"])
         return ProviderStatus(
             installed=True,
@@ -211,6 +231,7 @@ class CodexCliProvider:
                 encoding="utf-8",
                 timeout=8,
                 creationflags=_CREATE_NO_WINDOW,
+                env=self.env,
             )
         except subprocess.TimeoutExpired:
             return ProviderResult(False, error_code="probe_timeout")
@@ -236,7 +257,6 @@ class CodexCliProvider:
             "--json",
             "--strict-config",
             "--ephemeral",
-            "--ignore-user-config",
             "--ignore-rules",
             "--skip-git-repo-check",
             "--sandbox",
@@ -244,6 +264,8 @@ class CodexCliProvider:
             "-C",
             self.work_dir,
         ]
+        if not self.config_home:
+            command.append("--ignore-user-config")
         for override in _CODEX_CONFIG_OVERRIDES:
             command.extend(("-c", override))
         runtime_model = _runtime_model(request.model)
@@ -278,6 +300,7 @@ class CodexCliProvider:
                 text=True,
                 encoding="utf-8",
                 creationflags=flags,
+                env=self.env,
             )
         except OSError as exc:
             return ProviderResult(
@@ -419,7 +442,7 @@ class CodexCliProvider:
                 transport = CodexAppServerTransport(
                     self.command, self.work_dir,
                     idle_timeout_seconds=_appserver_idle_timeout(
-                        request.model))
+                        request.model), env=self.env)
                 self._appserver_transports[request.model] = transport
         return transport.stream(request, on_delta, cancel_event)
 
@@ -448,7 +471,8 @@ class CodexCliProvider:
                 if transport is None:
                     transport = CodexAppServerTransport(
                         self.command, self.work_dir,
-                        idle_timeout_seconds=_appserver_idle_timeout(model))
+                        idle_timeout_seconds=_appserver_idle_timeout(model),
+                        env=self.env)
                     self._appserver_transports[model] = transport
             if transport.ready_for(model):
                 return

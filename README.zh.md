@@ -97,6 +97,18 @@ codex login status
 CC Translate 只复用 Codex CLI 的本地 ChatGPT 登录状态，不读取或保存认证
 token。Claude 仍可在**设置**中作为备用模型服务选择。
 
+如需使用 Codex `config.toml` 中定义的自定义 provider（例如 GitHub Copilot
+Enterprise），将最小配置放在独立目录中，再执行：
+
+```powershell
+setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
+```
+
+设置后重启 CC Translate。该目录必须包含 `config.toml`，且只应包含 provider
+与认证配置。不要指向常规 `~/.codex` 目录，以免继承其中的个人 hook 或 plugin。
+未设置该变量时，原有行为不变：CC Translate 继续忽略用户 Codex 配置并使用
+ChatGPT 登录。
+
 GPT 默认使用**智能路由（极速）**并增量显示文字；如果更看重翻译质量，可切换到
 **自动选择（优质）**。具体模型是否可用取决于 ChatGPT 套餐、组织策略和 Codex CLI
 版本。

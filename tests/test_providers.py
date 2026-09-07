@@ -108,6 +108,7 @@ class TestCodexJsonl(unittest.TestCase):
             parse_codex_jsonl(output)
 
 
+@unittest.mock.patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": ""})
 class TestCodexCliProvider(unittest.TestCase):
     def _request(self, **overrides):
         values = {
@@ -228,6 +229,19 @@ class TestCodexCliProvider(unittest.TestCase):
         self.assertNotIn("-m", command)
         self.assertIn('model_reasoning_effort="none"', command)
         self.assertIn('model_verbosity="low"', command)
+
+    def test_custom_codex_home_is_used_without_ignoring_its_config(self):
+        with tempfile.TemporaryDirectory() as home:
+            with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+                f.write('model_provider = "custom"\n')
+            with unittest.mock.patch.dict(
+                    os.environ, {"CC_TRANSLATE_CODEX_HOME": home}):
+                provider = CodexCliProvider(
+                    command="codex.exe", work_dir=r"C:\empty")
+                command = provider.build_command(self._request())
+
+            self.assertNotIn("--ignore-user-config", command)
+            self.assertEqual(provider.env["CODEX_HOME"], home)
 
     def test_complete_parses_final_message(self):
         output = "\n".join((
@@ -1120,6 +1134,7 @@ class TestCodexAppServerTransport(unittest.TestCase):
         processes[0].kill.assert_called_once_with()
 
 
+@unittest.mock.patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": ""})
 class TestCodexPersistentProvider(unittest.TestCase):
     def test_profiles_use_separate_cached_transports(self):
         provider = CodexCliProvider(command="codex.exe")
@@ -1154,10 +1169,10 @@ class TestCodexPersistentProvider(unittest.TestCase):
             [
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=0),
+                    idle_timeout_seconds=0, env=None),
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=300),
+                    idle_timeout_seconds=300, env=None),
             ],
         )
         self.assertEqual(transports[0].stream.call_count, 2)
@@ -1192,7 +1207,7 @@ class TestCodexPersistentProvider(unittest.TestCase):
             "auto-fast", provider._appserver_warm_inflight)
         transport.warm_up.assert_called_once()
         transport_type.assert_called_once_with(
-            "codex.exe", provider.work_dir, idle_timeout_seconds=0)
+            "codex.exe", provider.work_dir, idle_timeout_seconds=0, env=None)
         provider.shutdown()
 
     def test_warm_up_skips_already_ready_transport(self):
@@ -1235,6 +1250,7 @@ class TestProviderRegistry(unittest.TestCase):
         healthy.shutdown.assert_called_once_with()
 
 
+@unittest.mock.patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": ""})
 class TestCodexDiscovery(unittest.TestCase):
     def test_npm_cmd_shim_resolves_to_native_binary(self):
         with tempfile.TemporaryDirectory() as root:
@@ -1279,6 +1295,23 @@ class TestCodexDiscovery(unittest.TestCase):
                          ["codex.exe", "--version"])
         self.assertEqual(run.call_args_list[1].args[0],
                          ["codex.exe", "login", "status"])
+
+    def test_diagnose_accepts_isolated_custom_provider_config(self):
+        with tempfile.TemporaryDirectory() as home:
+            with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+                f.write('model_provider = "custom"\n')
+            with unittest.mock.patch.dict(
+                    os.environ, {"CC_TRANSLATE_CODEX_HOME": home}):
+                provider = CodexCliProvider("codex.exe", r"C:\empty")
+                with unittest.mock.patch(
+                        "cc_providers.codex_cli.subprocess.run",
+                        return_value=unittest.mock.Mock(
+                            returncode=0, stdout="codex-cli 0.146.0", stderr="")) as run:
+                    status = provider.diagnose()
+
+        self.assertTrue(status.authenticated)
+        self.assertEqual(status.auth_method, "custom provider")
+        self.assertEqual(run.call_count, 1)
 
 
 if __name__ == "__main__":
