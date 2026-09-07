@@ -248,10 +248,11 @@ class CodexAppServerParser:
 class CodexAppServerTransport:
     """Reuse one app-server process while isolating every request by thread."""
 
-    def __init__(self, command, work_dir, idle_timeout_seconds=300):
+    def __init__(self, command, work_dir, idle_timeout_seconds=300, env=None):
         self.command = command
         self.work_dir = work_dir
         self.idle_timeout_seconds = idle_timeout_seconds
+        self.env = env
         self._stream_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._prewarm_cancel_event = threading.Event()
@@ -295,7 +296,7 @@ class CodexAppServerTransport:
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command):
+        if not _supported_appserver_version(self.command, self.env):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -404,7 +405,7 @@ class CodexAppServerTransport:
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command):
+        if not _supported_appserver_version(self.command, self.env):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -685,6 +686,7 @@ class CodexAppServerTransport:
                 text=True,
                 encoding="utf-8",
                 creationflags=_CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP,
+                env=self.env,
             )
             output_queue = queue.Queue()
             stderr_chunks = []
@@ -866,7 +868,7 @@ def _read_stdout(stream, output_queue):
         output_queue.put(("eof", None))
 
 
-def _supported_appserver_version(command):
+def _supported_appserver_version(command, env=None):
     cache_key = _command_fingerprint(command)
     with _version_cache_lock:
         cached = _version_cache.get(cache_key)
@@ -880,6 +882,7 @@ def _supported_appserver_version(command):
             encoding="utf-8",
             timeout=5,
             creationflags=_CREATE_NO_WINDOW,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False

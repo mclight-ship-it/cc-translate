@@ -102,6 +102,19 @@ codex login status
 CC Translate uses the CLI's cached ChatGPT sign-in but never reads or stores its
 auth tokens. Claude remains available as an alternate provider in **Settings**.
 
+To use a custom provider from Codex `config.toml` (for example, GitHub Copilot
+Enterprise), keep a minimal config in a dedicated directory and set:
+
+```powershell
+setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
+```
+
+Restart CC Translate after setting it. The directory must contain `config.toml`
+and should contain only provider and authentication settings. Do not point it at
+the regular `~/.codex` directory, which may include personal hooks or plugins.
+When the variable is unset, the existing behavior is unchanged: CC Translate
+ignores user Codex config and uses the normal ChatGPT sign-in.
+
 For GPT, **Smart routing (fast)** is the default and streams text incrementally.
 **Auto select (quality)** remains available when translation quality matters
 more than latency. Model availability depends on your ChatGPT plan,
