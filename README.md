@@ -112,8 +112,37 @@ setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
 Restart CC Translate after setting it. The directory must contain `config.toml`
 and should contain only provider and authentication settings. Do not point it at
 the regular `~/.codex` directory, which may include personal hooks or plugins.
-When the variable is unset, the existing behavior is unchanged: CC Translate
-ignores user Codex config and uses the normal ChatGPT sign-in.
+When the variable is unset, the existing behavior is unchanged: the `exec`
+fallback ignores user Codex config and uses normal ChatGPT sign-in, while
+streaming app-server reads the normal Codex configuration with CC Translate's
+safety overrides.
+
+**Managed local model catalog:** For a minimal custom-provider configuration,
+CC Translate exports the effective model metadata from each user's installed
+Codex into `%APPDATA%\CC Translate\codex-catalogs`. No shared model list,
+credentials, provider switch, model switch, or reasoning changes are installed.
+This avoids repeated incompatible `/models` discovery on custom endpoints.
+The catalog describes capabilities, not account permissions or model availability.
+
+Snapshots are checked before starting an `exec` or streaming process, including
+prewarm. They are keyed by CLI executable, Codex home, configuration and native
+model cache; snapshots older than 24 hours are refreshed at the next process
+start, not during an active translation. Codex validates each new snapshot and
+revalidates it on first use in a new app instance. Writes are atomic. Missing,
+corrupt or expired snapshots are rebuilt; export/validation failure leaves off
+the managed override and records a metadata-only `codex_catalog` warning in
+`%APPDATA%\CC Translate\error.log`. No submitted translation is resent.
+First-time generation can add startup time; prewarm normally does this work.
+
+Currently validated with Codex **0.146.0**. Unvalidated CLI versions retain
+native discovery rather than using an old snapshot. Official OpenAI configs,
+layered profile/project configs and user-specified `model_catalog_json` retain
+their native behavior; CC Translate does not repair or override user-owned
+catalogs. A requested model missing from the exported catalog also retains native
+discovery, never silently substitutes another model. Set the user environment
+variable `CC_TRANSLATE_CODEX_CATALOG=off` and restart to disable management.
+Model retirement or missing account permissions can still fail independently
+of the catalog.
 
 For GPT, **Smart routing (fast)** is the default and streams text incrementally.
 **Auto select (quality)** remains available when translation quality matters

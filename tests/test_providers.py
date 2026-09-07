@@ -1169,10 +1169,10 @@ class TestCodexPersistentProvider(unittest.TestCase):
             [
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=0, env=None),
+                    idle_timeout_seconds=0, env=None, catalog=provider._catalog),
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=300, env=None),
+                    idle_timeout_seconds=300, env=None, catalog=provider._catalog),
             ],
         )
         self.assertEqual(transports[0].stream.call_count, 2)
@@ -1207,7 +1207,8 @@ class TestCodexPersistentProvider(unittest.TestCase):
             "auto-fast", provider._appserver_warm_inflight)
         transport.warm_up.assert_called_once()
         transport_type.assert_called_once_with(
-            "codex.exe", provider.work_dir, idle_timeout_seconds=0, env=None)
+            "codex.exe", provider.work_dir, idle_timeout_seconds=0, env=None,
+            catalog=provider._catalog)
         provider.shutdown()
 
     def test_warm_up_skips_already_ready_transport(self):

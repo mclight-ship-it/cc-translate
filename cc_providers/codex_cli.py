@@ -17,6 +17,7 @@ from .base import (
     ProviderStatus,
 )
 from .codex_jsonl import CodexJsonlParser, CodexProtocolError
+from .codex_catalog import CodexModelCatalog
 
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -186,6 +187,7 @@ class CodexCliProvider:
         self._appserver_transports = {}
         self._appserver_warm_inflight = set()
         self._shutdown = False
+        self._catalog = CodexModelCatalog(self.command, self.env)
 
     def diagnose(self):
         if not self.command:
@@ -272,6 +274,9 @@ class CodexCliProvider:
         if runtime_model and runtime_model != "auto":
             command.extend(("-m", runtime_model))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
+            command.extend(("-c", override))
+        for override in self._catalog.overrides(
+                request.model, ignore_user_config=not self.config_home):
             command.extend(("-c", override))
         for image_path in request.image_paths:
             command.extend(("-i", image_path))
@@ -442,7 +447,7 @@ class CodexCliProvider:
                 transport = CodexAppServerTransport(
                     self.command, self.work_dir,
                     idle_timeout_seconds=_appserver_idle_timeout(
-                        request.model), env=self.env)
+                        request.model), env=self.env, catalog=self._catalog)
                 self._appserver_transports[request.model] = transport
         return transport.stream(request, on_delta, cancel_event)
 
@@ -472,7 +477,7 @@ class CodexCliProvider:
                     transport = CodexAppServerTransport(
                         self.command, self.work_dir,
                         idle_timeout_seconds=_appserver_idle_timeout(model),
-                        env=self.env)
+                        env=self.env, catalog=self._catalog)
                     self._appserver_transports[model] = transport
             if transport.ready_for(model):
                 return

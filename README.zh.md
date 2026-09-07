@@ -106,8 +106,31 @@ setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
 
 设置后重启 CC Translate。该目录必须包含 `config.toml`，且只应包含 provider
 与认证配置。不要指向常规 `~/.codex` 目录，以免继承其中的个人 hook 或 plugin。
-未设置该变量时，原有行为不变：CC Translate 继续忽略用户 Codex 配置并使用
-ChatGPT 登录。
+未设置该变量时，原有行为不变：`exec` 回退忽略用户 Codex 配置并使用正常的
+ChatGPT 登录；流式 app-server 则读取常规 Codex 配置，并应用 CC Translate 的
+安全覆盖设置。
+
+**自动管理本地模型目录：** 对于最小化的自定义 Provider 配置，CC Translate
+从每位用户自己安装的 Codex 导出实际生效的模型信息，存到
+`%APPDATA%\CC Translate\codex-catalogs`。不分发统一模型列表、不复制凭据，
+也不切换 Provider、模型或推理强度。这可以避免自定义端点上反复失败的
+`/models` 查询。目录描述模型能力，不代表账号权限或模型一定可用。
+
+启动 `exec` 或流式进程（包括预热）之前会检查目录。快照按 CLI 程序、
+Codex 配置目录、配置内容和原生模型缓存区分；超过 24 小时的快照在下次
+启动子进程时刷新，不在正在进行的翻译中途刷新。新快照由 Codex 自身验证，
+App 新实例首次使用已有快照时也会重新验证，写入采用原子替换。
+目录丢失、损坏或过期会重建；导出或验证失败时不添加托管覆盖设置，恢复
+Codex 原生目录加载，并在 `%APPDATA%\CC Translate\error.log` 记录仅含诊断
+信息的 `codex_catalog` 警告。不会重发已经提交的翻译。
+首次生成可能增加启动时间，通常由预热完成。
+
+目前验证支持 Codex **0.146.0**。未验证的 CLI 版本保留原生加载，不沿用旧快照。
+官方 OpenAI 配置、分层 profile/project 配置、用户自行设置的
+`model_catalog_json` 均保留原生行为；App 不修复或覆盖用户自己维护的目录。
+请求的模型不在导出目录中时，也保留原生加载，不会悄悄替换成其他模型。
+设置用户环境变量 `CC_TRANSLATE_CODEX_CATALOG=off` 并重启可关闭自动管理。
+模型下线或账号无权限仍可能独立导致失败。
 
 GPT 默认使用**智能路由（极速）**并增量显示文字；如果更看重翻译质量，可切换到
 **自动选择（优质）**。具体模型是否可用取决于 ChatGPT 套餐、组织策略和 Codex CLI

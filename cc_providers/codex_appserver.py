@@ -10,6 +10,7 @@ import threading
 import time
 
 from .base import ProviderResult
+from .codex_catalog import SUPPORTED_CODEX_VERSIONS
 from .codex_cli import (
     _CODEX_CONFIG_OVERRIDES,
     _CREATE_NEW_PROCESS_GROUP,
@@ -31,7 +32,7 @@ _SAFE_ITEM_TYPES = {
     "plan",
     "contextCompaction",
 }
-_SUPPORTED_CODEX_VERSIONS = {"0.146.0"}
+_SUPPORTED_CODEX_VERSIONS = SUPPORTED_CODEX_VERSIONS
 _VERSION_CACHE_MAX_ENTRIES = 8
 _version_cache = {}
 _version_cache_lock = threading.Lock()
@@ -248,11 +249,13 @@ class CodexAppServerParser:
 class CodexAppServerTransport:
     """Reuse one app-server process while isolating every request by thread."""
 
-    def __init__(self, command, work_dir, idle_timeout_seconds=300, env=None):
+    def __init__(self, command, work_dir, idle_timeout_seconds=300, env=None,
+                 catalog=None):
         self.command = command
         self.work_dir = work_dir
         self.idle_timeout_seconds = idle_timeout_seconds
         self.env = env
+        self.catalog = catalog
         self._stream_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._prewarm_cancel_event = threading.Event()
@@ -280,6 +283,9 @@ class CodexAppServerTransport:
             command.extend(("-c", override))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
+        if self.catalog is not None:
+            for override in self.catalog.overrides(request.model):
+                command.extend(("-c", override))
         return command
 
     def ready_for(self, profile):
