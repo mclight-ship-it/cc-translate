@@ -37,6 +37,9 @@ class TestCodexCatalog(unittest.TestCase):
         self.addCleanup(patch.stopall)
         self.log = patch("cc_core.log_error").start()
         patch("cc_providers.codex_catalog.Path.cwd", return_value=self.root).start()
+        for module in ("codex_cli", "codex_appserver"):
+            patch("cc_providers." + module + ".read_native_config",
+                  return_value={"config": {}, "layers": []}).start()
 
     def fake_run(self, args, **kwargs):
         self.calls.append(args)
@@ -172,6 +175,40 @@ class TestCodexCatalog(unittest.TestCase):
         self.config.write_text('model = [')
         self.assertEqual(self.manager.overrides(), ())
         self.assertTrue(self.log.called)
+
+    def test_ordinary_project_trust_records_preserve_catalog(self):
+        self.config.write_text(
+            'model = "sol"\nmodel_provider = "custom"\n'
+            '[projects."C:\\\\work"]\ntrust_level = "trusted"\n'
+            '[projects."C:\\\\other"]\ntrust_level = "untrusted"\n')
+        self.assertTrue(self.manager.overrides())
+        self.assertEqual(self.manager.status, "ready")
+
+    def test_unknown_project_records_and_profiles_still_use_native(self):
+        for extra in (
+                '[projects.work]\nmodel="mini"',
+                '[projects.work]\ntrust_level="trusted"\nmodel_provider="other"',
+                '[projects.work]\ntrust_level="future"',
+                '[profiles.work]\nmodel="mini"'):
+            with self.subTest(extra=extra):
+                self.config.write_text('model_provider="custom"\n' + extra)
+                self.assertEqual(self.manager.overrides(), ())
+                self.assertEqual(self.manager.status, "layered_config_not_managed")
+
+    def test_native_system_project_and_managed_routing_are_not_guessed(self):
+        for layer in ("system", "project", "mdm", "unknown"):
+            for key in ("model", "model_provider", "model_providers", "model_catalog_json"):
+                with self.subTest(layer=layer, key=key):
+                    native = {"layers": [{"name": {"type": layer},
+                                          "config": {key: "private"}}]}
+                    self.assertEqual(self.manager.overrides(native_config=native), ())
+                    self.assertEqual(self.manager.status, "layered_config_not_managed")
+        self.assertFalse(self.run.called)
+
+    def test_unrelated_native_system_policy_does_not_change_catalog(self):
+        native = {"layers": [{"name": {"type": "system"},
+                              "config": {"features": {"hooks": False}}}]}
+        self.assertTrue(self.manager.overrides(native_config=native))
 
     def test_explicit_opt_out(self):
         self.env["CC_TRANSLATE_CODEX_CATALOG"] = "off"

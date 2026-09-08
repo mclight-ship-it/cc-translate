@@ -18,34 +18,15 @@ from .base import (
 )
 from .codex_jsonl import CodexJsonlParser, CodexProtocolError
 from .codex_catalog import CodexModelCatalog
+from .codex_config import (
+    CODEX_CONFIG_OVERRIDES as _CODEX_CONFIG_OVERRIDES,
+    CodexConfigError, child_environment, integration_overrides, read_native_config,
+)
 
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-_CODEX_CONFIG_OVERRIDES = (
-    'approval_policy="never"',
-    "mcp_servers={}",
-    "features.shell_tool=false",
-    "features.unified_exec=false",
-    "features.js_repl=false",
-    "features.code_mode=false",
-    "features.apps=false",
-    "features.plugins=false",
-    "features.hooks=false",
-    "features.plugin_hooks=false",
-    "features.multi_agent=false",
-    "features.multi_agent_v2=false",
-    "agents.enabled=false",
-    "features.memories=false",
-    "features.shell_snapshot=false",
-    "features.remote_plugin=false",
-    "memories.generate_memories=false",
-    "memories.use_memories=false",
-    'web_search="disabled"',
-    "check_for_update_on_startup=false",
-    "project_root_markers=[]",
-)
 _MODEL_CONFIG_OVERRIDES = {
     "auto-fast": (
         'model_reasoning_effort="none"',
@@ -65,14 +46,6 @@ _CODEX_FORMAT_INSTRUCTIONS = (
     "- Otherwise do not invent a list."
 )
 _DEFAULT_APPSERVER_IDLE_SECONDS = 300
-
-
-def _custom_codex_home():
-    value = os.environ.get("CC_TRANSLATE_CODEX_HOME", "").strip()
-    if not value:
-        return None
-    home = os.path.abspath(os.path.expandvars(os.path.expanduser(value)))
-    return home if os.path.isfile(os.path.join(home, "config.toml")) else None
 
 
 def find_codex_cmd():
@@ -174,10 +147,7 @@ class CodexCliProvider:
     def __init__(self, command=_AUTO_COMMAND, work_dir=None):
         self.command = (
             find_codex_cmd() if command is _AUTO_COMMAND else command)
-        self.config_home = _custom_codex_home()
-        self.env = None
-        if self.config_home:
-            self.env = dict(os.environ, CODEX_HOME=self.config_home)
+        self.env = child_environment()
         self.work_dir = work_dir or os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "CC Translate",
@@ -187,7 +157,8 @@ class CodexCliProvider:
         self._appserver_transports = {}
         self._appserver_warm_inflight = set()
         self._shutdown = False
-        self._catalog = CodexModelCatalog(self.command, self.env)
+        self._catalog = CodexModelCatalog(
+            self.command, self.env, work_dir=self.work_dir)
 
     def diagnose(self):
         if not self.command:
@@ -205,13 +176,30 @@ class CodexCliProvider:
                 error_code=version.error_code,
                 error_detail=version.error_detail,
             )
-        if self.config_home:
+        try:
+            config = read_native_config(
+                self.command, self.env, self.work_dir)["config"]
+        except CodexConfigError as exc:
+            return ProviderStatus(
+                installed=True, authenticated=False, command=self.command,
+                version=version.text, error_code=str(exc))
+        backend = config.get("model_provider") or "openai"
+        definition = config.get("model_providers", {}).get(backend, {})
+        auth = definition.get("auth") or {}
+        external_auth = bool(auth or definition.get("env_key")
+                             or definition.get("experimental_bearer_token"))
+        if external_auth or (
+                backend != "openai" and not definition.get("requires_openai_auth", False)):
+            method = ("command" if auth.get("command")
+                      else "environment" if definition.get("env_key")
+                      else "provider")
             return ProviderStatus(
                 installed=True,
-                authenticated=True,
+                authenticated=None,
                 command=self.command,
                 version=version.text,
-                auth_method="custom provider",
+                auth_method=method,
+                backend=backend,
             )
         login = self._probe(["login", "status"])
         return ProviderStatus(
@@ -220,6 +208,7 @@ class CodexCliProvider:
             command=self.command,
             version=version.text,
             auth_method=_auth_method(login.text) if login.ok else "",
+            backend=backend,
             error_code=login.error_code,
             error_detail=login.error_detail,
         )
@@ -266,17 +255,16 @@ class CodexCliProvider:
             "-C",
             self.work_dir,
         ]
-        if not self.config_home:
-            command.append("--ignore-user-config")
-        for override in _CODEX_CONFIG_OVERRIDES:
+        native = read_native_config(self.command, self.env, self.work_dir)
+        config = native["config"]
+        for override in _CODEX_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
         runtime_model = _runtime_model(request.model)
         if runtime_model and runtime_model != "auto":
             command.extend(("-m", runtime_model))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
-        for override in self._catalog.overrides(
-                request.model, ignore_user_config=not self.config_home):
+        for override in self._catalog.overrides(request.model, native_config=native):
             command.extend(("-c", override))
         for image_path in request.image_paths:
             command.extend(("-i", image_path))
@@ -294,7 +282,10 @@ class CodexCliProvider:
                 False, error_code="workdir_failed",
                 error_detail=_sanitize_detail(str(exc)))
 
-        command = self.build_command(request)
+        try:
+            command = self.build_command(request)
+        except CodexConfigError as exc:
+            return ProviderResult(False, error_code=str(exc))
         flags = _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
         try:
             proc = subprocess.Popen(

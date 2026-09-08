@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：已用 ChatGPT 登录的官方 Codex CLI，或 Claude Code（订阅或兼容本地代理）。默认使用 OpenAI GPT 智能路由。
+> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：官方 Codex CLI（ChatGPT 登录、API key 或兼容的自定义 provider），或 Claude Code（订阅或兼容本地代理）。默认使用 OpenAI GPT 智能路由。
 
 这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它支持 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider，无需单独的 API key。
 
@@ -49,7 +49,7 @@
 ## 功能
 
 - **双击 Ctrl+C** 翻译剪贴板/选中文字，鼠标旁弹窗显示
-- **Claude / OpenAI GPT 切换**：可在设置里选择模型服务；Claude 保留原有预热池和流式路径，GPT 使用本机 Codex CLI 与 ChatGPT 登录
+- **Claude / OpenAI GPT 切换**：可在设置里选择模型服务；Claude 保留原有预热池和流式路径，GPT 跟随本机 Codex CLI 的配置与认证
 - **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持视觉模型或离线本地 OCR
 - **快速输入翻译**：没有选中文字时双击 Ctrl+C，弹出输入框，手动输入要翻译的内容
 - **代码解释模式**：选中的是代码时，不强行翻译，而是用中文解释代码用途；文字与代码混排时正常翻译并保留代码原样
@@ -76,7 +76,7 @@
 - Node.js（用于安装 Claude Code 与 Codex CLI）
 - 至少一个 provider：
   - Claude Code：已登录 Claude 订阅（Pro/Max），或兼容的本地代理端点（例如 Agent Maestro）
-  - OpenAI GPT：官方 Codex CLI，并已使用 ChatGPT 登录
+  - OpenAI GPT：官方 Codex CLI，已配置 ChatGPT 登录、API key 或可用的兼容自定义 provider
 - ⚠️ **务必先把 Claude Code CLI 升级到最新版本**——旧版 CLI 的参数不兼容会导致翻译报错或结果异常，这是最常见的安装踩坑，装之前一定要更新到最新
 
 ## 快速安装（推荐）
@@ -87,30 +87,39 @@
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-它会自动完成**除账号登录以外**的所有步骤——Claude 和 Codex 登录都是一次性的浏览器授权，任何脚本都无法代劳。OpenAI GPT 现在是默认模型服务，请使用官方 Codex CLI 登录 ChatGPT：
+它会自动完成安装，**不会代办账号授权**。OpenAI GPT 是默认模型服务。
+使用 ChatGPT 订阅时，请通过以下命令完成官方 Codex CLI 的浏览器登录；
+已经使用 API key 或自定义 provider 的用户，可以继续使用现有可用的 Codex 配置：
 
 ```powershell
 codex login
 codex login status
 ```
 
-CC Translate 只复用 Codex CLI 的本地 ChatGPT 登录状态，不读取或保存认证
-token。Claude 仍可在**设置**中作为备用模型服务选择。
+**原生 Codex 配置：** exec、流式、预热和诊断统一使用原生 Codex 配置与认证目录
+（`CODEX_HOME`，默认 `~/.codex`）。请在 Codex 中配置 ChatGPT 登录、API key
+或兼容的自定义 provider；CC Translate 不实现认证，也不复制凭据。
+Claude 仍可在**设置**中作为备用模型服务选择。
 
-如需使用 Codex `config.toml` 中定义的自定义 provider（例如 GitHub Copilot
-Enterprise），将最小配置放在独立目录中，再执行：
+以下兼容性覆盖变量可选，仅为 CC Translate 指定独立 Codex 目录；
+使用自定义 provider **不再需要**设置它：
 
 ```powershell
 setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
 ```
 
-设置后重启 CC Translate。该目录必须包含 `config.toml`，且只应包含 provider
-与认证配置。不要指向常规 `~/.codex` 目录，以免继承其中的个人 hook 或 plugin。
-未设置该变量时，原有行为不变：`exec` 回退忽略用户 Codex 配置并使用正常的
-ChatGPT 登录；流式 app-server 则读取常规 Codex 配置，并应用 CC Translate 的
-安全覆盖设置。
+修改环境变量或路由配置后请重启。显式覆盖目录必须包含 `config.toml`；
+无效配置会明确失败，不会悄悄切换目录或账号。移除此变量后恢复原生 `CODEX_HOME`。
 
-**自动管理本地模型目录：** 对于最小化的自定义 Provider 配置，CC Translate
+仅翻译限制**只作用于子进程**：不继承个人指令、技能提示、记忆、通知命令、
+插件或用户 hook。通过 Codex 原生配置读取接口发现合并后的 MCP 条目，并逐个明确
+禁用（仅设置空 MCP 表不能清空它们）。继续保留临时会话、只读沙箱、hook 预检和
+工具事件失败即停止的保护；绝不改写全局 Codex 文件，也不绕过强制管理策略。
+诊断显示实际选择的后端；自定义认证显示为**尚未验证**，不会误报缓存的 ChatGPT
+登录，也不代表端点或模型可用。诊断不会执行自定义凭据命令或提交模型请求。
+
+**自动管理本地模型目录：** 对于普通自定义 Provider 配置
+（包括全局配置中仅含 `trust_level` 的项目记录），CC Translate
 从每位用户自己安装的 Codex 导出实际生效的模型信息，存到
 `%APPDATA%\CC Translate\codex-catalogs`。不分发统一模型列表、不复制凭据，
 也不切换 Provider、模型或推理强度。这可以避免自定义端点上反复失败的
@@ -126,7 +135,7 @@ Codex 原生目录加载，并在 `%APPDATA%\CC Translate\error.log` 记录仅�
 首次生成可能增加启动时间，通常由预热完成。
 
 目前验证支持 Codex **0.146.0**。未验证的 CLI 版本保留原生加载，不沿用旧快照。
-官方 OpenAI 配置、分层 profile/project 配置、用户自行设置的
+官方 OpenAI 配置、分层 provider/model/catalog 设置、用户自行设置的
 `model_catalog_json` 均保留原生行为；App 不修复或覆盖用户自己维护的目录。
 请求的模型不在导出目录中时，也保留原生加载，不会悄悄替换成其他模型。
 设置用户环境变量 `CC_TRANSLATE_CODEX_CATALOG=off` 并重启可关闭自动管理。

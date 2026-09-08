@@ -11,6 +11,8 @@ import threading
 import time
 import tomllib
 
+from .codex_config import CODEX_CONFIG_OVERRIDES
+
 
 SUPPORTED_CODEX_VERSIONS = {"0.146.0"}
 _MAX_AGE_SECONDS = 24 * 60 * 60
@@ -56,9 +58,10 @@ def _atomic_write(path, content):
 
 
 class CodexModelCatalog:
-    def __init__(self, command, env=None, cache_dir=None):
+    def __init__(self, command, env=None, cache_dir=None, work_dir=None):
         self.command = command
         self.env = env
+        self.work_dir = work_dir
         self.cache_dir = Path(cache_dir or os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "CC Translate", "codex-catalogs"))
@@ -76,9 +79,13 @@ class CodexModelCatalog:
         self.status = code
 
     def _run(self, args):
+        args = list(args)
+        for override in CODEX_CONFIG_OVERRIDES:
+            args.extend(("-c", override))
         completed = subprocess.run(
             [self.command, *args], capture_output=True, timeout=8,
-            env=self.env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            env=self.env, cwd=self.work_dir,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if completed.returncode:
             # CLI errors can contain auth details or full response bodies.
             raise CatalogError("catalog_probe_failed")
@@ -86,7 +93,7 @@ class CodexModelCatalog:
             raise CatalogError("catalog_output_too_large")
         return completed.stdout
 
-    def overrides(self, model="auto", *, ignore_user_config=False):
+    def overrides(self, model="auto", *, ignore_user_config=False, native_config=None):
         """Resolve only before process startup, never retry a submitted turn."""
         environment = self.env if self.env is not None else os.environ
         if environment.get("CC_TRANSLATE_CODEX_CATALOG", "").lower() == "off":
@@ -95,6 +102,14 @@ class CodexModelCatalog:
         if ignore_user_config or not self.command:
             self.status = "native"
             return ()
+        if native_config is not None:
+            routing = {"model", "model_provider", "model_providers",
+                       "model_catalog_json", "profile", "profiles"}
+            for layer in native_config.get("layers") or ():
+                if (layer.get("name", {}).get("type") not in ("user", "sessionFlags")
+                        and routing.intersection(layer.get("config") or {})):
+                    self._warn("layered_config_not_managed")
+                    return ()
         with self._lock:
             if time.monotonic() < self._failure_until:
                 return ()
@@ -119,13 +134,19 @@ class CodexModelCatalog:
             return ()
         # Profiles/project layers can override the provider, model or catalog.
         # Leave their precedence entirely to Codex rather than guessing.
-        if any(config.get(k) for k in ("profile", "profiles", "projects")):
+        projects = config.get("projects", {})
+        trust_only = isinstance(projects, dict) and all(
+            isinstance(value, dict) and set(value) == {"trust_level"}
+            and value["trust_level"] in ("trusted", "untrusted")
+            for value in projects.values())
+        if any(config.get(k) for k in ("profile", "profiles")) or not trust_only:
             self._warn("layered_config_not_managed")
             return ()
         if config.get("model_provider", "openai") == "openai":
             self.status = "native"
             return ()
-        for directory in (Path.cwd(), *Path.cwd().parents):
+        cwd = Path(self.work_dir) if self.work_dir else Path.cwd()
+        for directory in (cwd, *cwd.parents):
             if directory == Path.home():
                 continue
             if (directory / ".codex" / "config.toml").is_file():

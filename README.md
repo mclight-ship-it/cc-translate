@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: the official Codex CLI signed in with ChatGPT, or Claude Code (subscription or compatible local proxy). OpenAI GPT smart routing is the default.
+> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: the official Codex CLI (ChatGPT sign-in, API key, or compatible custom provider), or Claude Code (subscription or compatible local proxy). OpenAI GPT smart routing is the default.
 
 An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It supports parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers and needs no separate API key.
 
@@ -49,7 +49,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 ## Features
 
 - **Double-tap Ctrl+C** to translate the clipboard/selected text, shown in a popup near the mouse
-- **Claude / OpenAI GPT switching**: choose a model service in Settings. Claude keeps its existing warm pool and streaming path; GPT uses your local Codex CLI and ChatGPT sign-in.
+- **Claude / OpenAI GPT switching**: choose a model service in Settings. Claude keeps its existing warm pool and streaming path; GPT follows your local Codex CLI configuration and authentication.
 - **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the vision model or an offline local OCR engine
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
@@ -77,7 +77,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - Node.js (used to install the Claude Code and Codex CLIs)
 - At least one provider:
   - Claude Code: a signed-in Claude subscription (Pro/Max), or a compatible local proxy endpoint (for example, Agent Maestro)
-  - OpenAI GPT: the official Codex CLI signed in with ChatGPT
+  - OpenAI GPT: the official Codex CLI with ChatGPT sign-in, API-key auth, or a working compatible custom provider
 - ⚠️ **Upgrade the Claude Code CLI to the latest version first** — an outdated CLI has incompatible arguments that cause translation errors or garbled output. This is the most common install pitfall, so always update to the latest before installing.
 
 ## Quick install (recommended)
@@ -90,34 +90,45 @@ Python dependencies, then launches the app:
 irm https://raw.githubusercontent.com/mclight-ship-it/cc-translate/master/install.ps1 | iex
 ```
 
-It automates **everything except account sign-in** — Claude and Codex each use
-a one-time browser OAuth flow that no script can complete for you. OpenAI GPT
-is the default. Sign in to the official Codex CLI with:
+It automates installation, **not account authorization**. OpenAI GPT is the
+default. For ChatGPT subscription access, sign in to the official Codex CLI with
+the browser authorization flow below. Existing API-key or custom-provider users
+can keep their working Codex configuration instead:
 
 ```powershell
 codex login
 codex login status
 ```
 
-CC Translate uses the CLI's cached ChatGPT sign-in but never reads or stores its
-auth tokens. Claude remains available as an alternate provider in **Settings**.
+**Native Codex configuration:** exec, streaming, prewarm and diagnostics all use
+the same native Codex config/auth home (`CODEX_HOME`, or `~/.codex` by default).
+Configure ChatGPT sign-in, API-key auth, or a compatible custom provider in Codex;
+CC Translate does not implement authentication or copy credentials. Claude remains
+available as an alternate provider in **Settings**.
 
-To use a custom provider from Codex `config.toml` (for example, GitHub Copilot
-Enterprise), keep a minimal config in a dedicated directory and set:
+The optional compatibility override below selects a separate Codex home for
+CC Translate only. It is **not required** for custom providers:
 
 ```powershell
 setx CC_TRANSLATE_CODEX_HOME "$env:APPDATA\CC Translate\codex-provider"
 ```
 
-Restart CC Translate after setting it. The directory must contain `config.toml`
-and should contain only provider and authentication settings. Do not point it at
-the regular `~/.codex` directory, which may include personal hooks or plugins.
-When the variable is unset, the existing behavior is unchanged: the `exec`
-fallback ignores user Codex config and uses normal ChatGPT sign-in, while
-streaming app-server reads the normal Codex configuration with CC Translate's
-safety overrides.
+Restart after changing environment or routing settings. An explicit override must
+contain `config.toml`; invalid configuration fails visibly instead of silently
+switching homes/accounts. Removing this override returns to native `CODEX_HOME`.
 
-**Managed local model catalog:** For a minimal custom-provider configuration,
+Translation-only restrictions apply **only to child processes**: no personal
+instructions, skill prompts, memory, notification commands, plugins or user hooks.
+Codex's native config reader discovers merged MCP entries, each of which is
+explicitly disabled (an empty MCP table alone does not clear them). Ephemeral
+sessions, read-only sandboxing, hook preflight and fail-closed tool-event checks
+remain in place; global Codex files are never rewritten. Required managed policy
+is not bypassed. Diagnostics name the selected backend; custom auth is shown as
+**unverified**, not as cached ChatGPT login or proof of endpoint/model access.
+Diagnostics never execute a custom credential helper or submit a model request.
+
+**Managed local model catalog:** For an ordinary custom-provider configuration
+(including global project entries containing only `trust_level`),
 CC Translate exports the effective model metadata from each user's installed
 Codex into `%APPDATA%\CC Translate\codex-catalogs`. No shared model list,
 credentials, provider switch, model switch, or reasoning changes are installed.
@@ -136,7 +147,7 @@ First-time generation can add startup time; prewarm normally does this work.
 
 Currently validated with Codex **0.146.0**. Unvalidated CLI versions retain
 native discovery rather than using an old snapshot. Official OpenAI configs,
-layered profile/project configs and user-specified `model_catalog_json` retain
+layered provider/model/catalog settings and user-specified `model_catalog_json` retain
 their native behavior; CC Translate does not repair or override user-owned
 catalogs. A requested model missing from the exported catalog also retains native
 discovery, never silently substitutes another model. Set the user environment

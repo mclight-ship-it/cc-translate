@@ -11,6 +11,9 @@ import time
 
 from .base import ProviderResult
 from .codex_catalog import SUPPORTED_CODEX_VERSIONS
+from .codex_config import (
+    CodexConfigError, child_environment, integration_overrides, read_native_config,
+)
 from .codex_cli import (
     _CODEX_CONFIG_OVERRIDES,
     _CREATE_NEW_PROCESS_GROUP,
@@ -43,19 +46,7 @@ _DEFENDER_HOOK_COMMAND = (
     "if($l){$p=Join-Path -Path:$l -ChildPath:'DefenderAgentScan.exe'; "
     "if(Test-Path -LiteralPath:$p){& $p}}; exit 0"
 )
-_APP_SERVER_CONFIG_OVERRIDES = _CODEX_CONFIG_OVERRIDES + (
-    "hooks.PermissionRequest=[]",
-    "hooks.PostCompact=[]",
-    "hooks.PostToolUse=[]",
-    "hooks.PreCompact=[]",
-    "hooks.PreToolUse=[]",
-    "hooks.SessionEnd=[]",
-    "hooks.SessionStart=[]",
-    "hooks.Stop=[]",
-    "hooks.SubagentStart=[]",
-    "hooks.SubagentStop=[]",
-    "hooks.UserPromptSubmit=[]",
-)
+_APP_SERVER_CONFIG_OVERRIDES = _CODEX_CONFIG_OVERRIDES
 _BLOCKED_ITEM_TYPES = {
     "commandExecution",
     "fileChange",
@@ -254,7 +245,7 @@ class CodexAppServerTransport:
         self.command = command
         self.work_dir = work_dir
         self.idle_timeout_seconds = idle_timeout_seconds
-        self.env = env
+        self.env = env if env is not None else child_environment()
         self.catalog = catalog
         self._stream_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -279,12 +270,14 @@ class CodexAppServerTransport:
             "stdio://",
             "--strict-config",
         ]
-        for override in _APP_SERVER_CONFIG_OVERRIDES:
+        native = read_native_config(self.command, self.env, self.work_dir)
+        config = native["config"]
+        for override in _APP_SERVER_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
         if self.catalog is not None:
-            for override in self.catalog.overrides(request.model):
+            for override in self.catalog.overrides(request.model, native_config=native):
                 command.extend(("-c", override))
         return command
 
@@ -395,6 +388,8 @@ class CodexAppServerTransport:
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
+        except CodexConfigError as exc:
+            return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
                 False, error_code="appserver_io_failed",
@@ -555,6 +550,7 @@ class CodexAppServerTransport:
                 "baseInstructions": (
                     "Act only as a translation engine. Never use tools, inspect "
                     "files, execute commands, search, or modify anything."),
+                "developerInstructions": "",
                 "config": {
                     "mcp_servers": {},
                     "web_search": "disabled",
@@ -658,6 +654,8 @@ class CodexAppServerTransport:
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
+        except CodexConfigError as exc:
+            return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
                 False, error_code="appserver_io_failed",
@@ -693,6 +691,7 @@ class CodexAppServerTransport:
                 encoding="utf-8",
                 creationflags=_CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP,
                 env=self.env,
+                cwd=self.work_dir,
             )
             output_queue = queue.Queue()
             stderr_chunks = []

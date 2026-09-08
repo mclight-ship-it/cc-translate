@@ -45,12 +45,13 @@ class ProviderSelection:
 @dataclass(frozen=True)
 class ProviderStatus:
     installed: bool
-    authenticated: bool
+    authenticated: Optional[bool]
     command: Optional[str] = None
     version: str = ""
     auth_method: str = ""
     error_code: str = ""
     error_detail: str = ""
+    backend: str = ""
 
 
 class ModelProvider(Protocol):

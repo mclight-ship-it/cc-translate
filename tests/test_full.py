@@ -2567,8 +2567,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 20)
-        self.assertTrue(tr.version_string().startswith("4.20."))
+        self.assertEqual(cc_update.VERSION_MINOR, 21)
+        self.assertTrue(tr.version_string().startswith("4.21."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3270,6 +3270,20 @@ class TestDiagnosticsHelpers(unittest.TestCase):
         self.assertNotIn("CLAUDE_CMD", report)
         self.assertNotIn("ANTHROPIC_API_KEY", report)
         self.assertNotIn("Claude routing", report)
+
+        for authenticated, code in ((None, ""), (False, "config_invalid")):
+            with self.subTest(authenticated=authenticated, code=code):
+                snapshot["selected_provider"]["status"].update(
+                    authenticated=authenticated, error_code=code,
+                    backend="copilot-enterprise", auth_method="command", installed=True)
+                report = app._format_diagnostics_report(snapshot)
+                summary = app._diagnostics_summary_text(snapshot)
+                self.assertIn("copilot-enterprise", report)
+                self.assertNotIn(tr.i18n.get("diagnostics.codex_login.required"), report)
+                self.assertIn(tr.i18n.get("diagnostics.summary.backend_unverified"), summary)
+                self.assertNotIn("ChatGPT", report)
+                if code:
+                    self.assertIn(code, report)
 
     def test_infer_backend_detects_agent_maestro(self):
         info = tr.infer_claude_backend({

@@ -227,6 +227,7 @@ class DiagnosticsMixin:
                 "command": status.command or "",
                 "version": status.version,
                 "auth_method": status.auth_method,
+                "backend": status.backend,
                 "error_code": status.error_code,
                 "error_detail": status.error_detail,
             }
@@ -254,6 +255,10 @@ class DiagnosticsMixin:
             if not provider_status["installed"]:
                 advice.append(i18n.get(
                     "diagnostics.action.install_codex"))
+            elif (provider_status["authenticated"] is None
+                  or provider_status["error_code"] not in ("", "login_required")):
+                advice.append(i18n.get(
+                    "diagnostics.action.check_codex_backend"))
             elif not provider_status["authenticated"]:
                 advice.append(i18n.get(
                     "diagnostics.action.login_codex"))
@@ -325,6 +330,9 @@ class DiagnosticsMixin:
             conn = (i18n.get("diagnostics.summary.link_ready")
                     if status.get("authenticated")
                     else i18n.get("diagnostics.summary.pending_login"))
+            if status.get("authenticated") is None or status.get("error_code") not in (
+                    None, "", "login_required"):
+                conn = i18n.get("diagnostics.summary.backend_unverified")
             stream = _codex_streaming_status_text(
                 provider.get("streaming") or {})
             return (
@@ -366,11 +374,22 @@ class DiagnosticsMixin:
                     i18n.get("diagnostics.unknown"))
                 if provider_status.get("authenticated")
                 else i18n.get("diagnostics.codex_login.required"))
+            if (provider_status.get("authenticated") is None
+                    or provider_status.get("error_code") not in (
+                        None, "", "login_required")):
+                login_text = i18n.get("diagnostics.codex_login.unverified").format(
+                    method=provider_status.get("auth_method") or
+                    i18n.get("diagnostics.unknown"))
             lines.extend([
+                f"- {i18n.get('diagnostics.backend')}: "
+                f"{provider_status.get('backend') or i18n.get('diagnostics.unknown')}",
                 f"- {i18n.get('diagnostics.codex_cli_version')}: "
                 f"{provider_status.get('version') or i18n.get('diagnostics.unknown')}",
                 f"- {i18n.get('diagnostics.login_status')}: {login_text}",
             ])
+            if provider_status.get("error_code"):
+                lines.append("- " + i18n.get("diagnostics.config.read_failed").format(
+                    error=provider_status["error_code"]))
             streaming = provider["streaming"]
             trigger_key = (
                 "diagnostics.codex_stream_trigger_fast_value"

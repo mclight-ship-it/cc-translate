@@ -52,6 +52,21 @@ class _CaptureInput(io.StringIO):
         self.was_closed = True
 
 
+class _NativeConfigMock(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        for module in ("codex_cli", "codex_appserver"):
+            patcher = unittest.mock.patch(
+                "cc_providers." + module + ".read_native_config",
+                return_value={"config": {}, "layers": []})
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = unittest.mock.patch(
+            "cc_providers.codex_catalog.CodexModelCatalog.overrides", return_value=())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
 class TestCodexJsonl(unittest.TestCase):
     def test_extracts_completed_agent_message(self):
         output = "\n".join((
@@ -109,7 +124,7 @@ class TestCodexJsonl(unittest.TestCase):
 
 
 @unittest.mock.patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": ""})
-class TestCodexCliProvider(unittest.TestCase):
+class TestCodexCliProvider(_NativeConfigMock):
     def _request(self, **overrides):
         values = {
             "task": "translate",
@@ -188,9 +203,10 @@ class TestCodexCliProvider(unittest.TestCase):
 
         self.assertEqual(command[:3], ["codex.exe", "exec", "--json"])
         for flag in (
-                "--ephemeral", "--ignore-user-config", "--ignore-rules",
+                "--ephemeral", "--ignore-rules",
                 "--skip-git-repo-check"):
             self.assertIn(flag, command)
+        self.assertNotIn("--ignore-user-config", command)
         self.assertIn("read-only", command)
         self.assertIn("features.shell_tool=false", command)
         self.assertIn("features.unified_exec=false", command)
@@ -430,7 +446,7 @@ class TestCodexAppServerParser(unittest.TestCase):
             }))
 
 
-class TestCodexAppServerTransport(unittest.TestCase):
+class TestCodexAppServerTransport(_NativeConfigMock):
     def test_zero_idle_timeout_keeps_ready_process(self):
         transport = CodexAppServerTransport(
             "codex.exe", r"C:\empty", idle_timeout_seconds=0)
@@ -1169,12 +1185,14 @@ class TestCodexPersistentProvider(unittest.TestCase):
             [
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=0, env=None, catalog=provider._catalog),
+                    idle_timeout_seconds=0, env=unittest.mock.ANY, catalog=provider._catalog),
                 unittest.mock.call(
                     "codex.exe", provider.work_dir,
-                    idle_timeout_seconds=300, env=None, catalog=provider._catalog),
+                    idle_timeout_seconds=300, env=unittest.mock.ANY, catalog=provider._catalog),
             ],
         )
+        self.assertTrue(all(call.kwargs["env"] is provider.env
+                            for call in transport_type.call_args_list))
         self.assertEqual(transports[0].stream.call_count, 2)
         self.assertEqual(transports[1].stream.call_count, 1)
         for transport in transports:
@@ -1207,8 +1225,9 @@ class TestCodexPersistentProvider(unittest.TestCase):
             "auto-fast", provider._appserver_warm_inflight)
         transport.warm_up.assert_called_once()
         transport_type.assert_called_once_with(
-            "codex.exe", provider.work_dir, idle_timeout_seconds=0, env=None,
+            "codex.exe", provider.work_dir, idle_timeout_seconds=0, env=unittest.mock.ANY,
             catalog=provider._catalog)
+        self.assertIs(transport_type.call_args.kwargs["env"], provider.env)
         provider.shutdown()
 
     def test_warm_up_skips_already_ready_transport(self):
@@ -1252,7 +1271,7 @@ class TestProviderRegistry(unittest.TestCase):
 
 
 @unittest.mock.patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": ""})
-class TestCodexDiscovery(unittest.TestCase):
+class TestCodexDiscovery(_NativeConfigMock):
     def test_npm_cmd_shim_resolves_to_native_binary(self):
         with tempfile.TemporaryDirectory() as root:
             shim = os.path.join(root, "codex.cmd")
@@ -1307,11 +1326,15 @@ class TestCodexDiscovery(unittest.TestCase):
                 with unittest.mock.patch(
                         "cc_providers.codex_cli.subprocess.run",
                         return_value=unittest.mock.Mock(
-                            returncode=0, stdout="codex-cli 0.146.0", stderr="")) as run:
+                            returncode=0, stdout="codex-cli 0.146.0", stderr="")) as run, \
+                        unittest.mock.patch(
+                            "cc_providers.codex_cli.read_native_config",
+                            return_value={"config": {"model_provider": "custom"}}):
                     status = provider.diagnose()
 
-        self.assertTrue(status.authenticated)
-        self.assertEqual(status.auth_method, "custom provider")
+        self.assertIsNone(status.authenticated)
+        self.assertEqual(status.auth_method, "provider")
+        self.assertEqual(status.backend, "custom")
         self.assertEqual(run.call_count, 1)
 
 
