@@ -17,7 +17,7 @@ import threading
 import i18n
 from cc_core import CFG, log_error, APP_NAME, APP_DIR, DATA_DIR, UPDATE_NOTICE_PATH
 from cc_update import (
-    is_git_deploy, version_string, _spawn_relauncher, _git,
+    is_git_deploy, _spawn_relauncher, _git,
     GIT_REMOTE, GIT_BRANCH, SCRIPT_PATH,
 )
 import cc_update as _cc_update
@@ -69,8 +69,9 @@ class UpdateMixin:
         """Kick off a check (and optional update) on a background thread (git +
         network must never run on the Tk main thread). ``on_status(msg, kind)``
         is marshalled back to the main thread; kind is
-        'info' | 'ok' | 'err' | 'avail'. When ``check_only`` is True the worker
-        stops after reporting availability and never modifies the checkout."""
+        'info' | 'ok' | 'err' | 'avail' | 'restart'. When ``check_only`` is
+        True the worker stops after reporting availability and never modifies
+        the checkout."""
         if self._update_in_progress:
             if on_status:
                 on_status(i18n.get("update.in_progress"), "info")
@@ -106,10 +107,12 @@ class UpdateMixin:
                 return
 
             # There is a newer commit on the remote.
+            target_version = (
+                _cc_update.remote_version_string() or remote[:7])
             if check_only:
-                ver = _cc_update.remote_version_string() or remote[:7]
-                self._available_update_version = ver
-                report(i18n.get("update.found_version").format(version=ver),
+                self._available_update_version = target_version
+                report(i18n.get("update.found_version").format(
+                           version=target_version),
                        "avail")
                 return
 
@@ -135,11 +138,11 @@ class UpdateMixin:
             # in Windows' overflow area, so a toast is the reliable signal).
             try:
                 with open(UPDATE_NOTICE_PATH, "w", encoding="utf-8") as f:
-                    f.write(version_string())
+                    f.write(target_version)
             except Exception as e:
                 log_error("update_write_notice", e)
 
-            report(i18n.get("update.done_restarting"), "ok")
+            report(i18n.get("update.done_restarting"), "restart")
             restart = True
         except Exception as e:
             log_error("update_worker", e)

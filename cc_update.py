@@ -27,6 +27,7 @@ Public API used by translator.pyw:
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -45,7 +46,7 @@ from cc_launcher import (
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 5
-VERSION_MINOR = 1
+VERSION_MINOR = 2
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),
@@ -261,7 +262,24 @@ def remote_version_string(remote_ref=None):
     count = _commit_count(remote_ref)
     if count is None:
         return None
-    return _format_numeric_version(count)
+    major, minor = _release_version_for_ref(remote_ref)
+    return f"{major}.{minor}.{count}"
+
+
+def _release_version_for_ref(remote_ref):
+    """Read release constants from a fetched ref, falling back to this process."""
+    rc, source, _ = _git(
+        ["show", f"{remote_ref}:cc_update.py"], timeout=8)
+    if rc != 0:
+        return VERSION_MAJOR, VERSION_MINOR
+    values = {}
+    for name in ("VERSION_MAJOR", "VERSION_MINOR"):
+        match = re.search(
+            rf"(?m)^\s*{name}\s*=\s*(\d+)\s*$", source)
+        if match is None:
+            return VERSION_MAJOR, VERSION_MINOR
+        values[name] = int(match.group(1))
+    return values["VERSION_MAJOR"], values["VERSION_MINOR"]
 
 
 # ---------------------------------------------------------------------------

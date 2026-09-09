@@ -74,7 +74,7 @@ class TestClassifyUpdateState(unittest.TestCase):
 
 class TestFormatVersion(unittest.TestCase):
     def test_numeric_version_uses_release_minor_and_build(self):
-        self.assertEqual(tr._cc_update._format_numeric_version(241), "5.1.241")
+        self.assertEqual(tr._cc_update._format_numeric_version(241), "5.2.241")
 
     def test_sha_and_date(self):
         self.assertEqual(
@@ -89,6 +89,25 @@ class TestFormatVersion(unittest.TestCase):
     def test_missing_sha_is_unknown(self):
         self.assertEqual(tr._format_version(None, "2026-07-13"), "未知版本")
         self.assertEqual(tr._format_version("", None), "未知版本")
+
+    def test_remote_version_uses_release_constants_from_remote_ref(self):
+        cc = tr._cc_update
+        source = "VERSION_MAJOR = 6\nVERSION_MINOR = 4\n"
+        with unittest.mock.patch.object(
+                cc, "_commit_count", return_value=321), \
+                unittest.mock.patch.object(
+                    cc, "_git", return_value=(0, source, "")):
+            self.assertEqual(
+                cc.remote_version_string("origin/master"), "6.4.321")
+
+    def test_remote_version_falls_back_when_remote_source_is_unreadable(self):
+        cc = tr._cc_update
+        with unittest.mock.patch.object(
+                cc, "_commit_count", return_value=321), \
+                unittest.mock.patch.object(
+                    cc, "_git", return_value=(1, "", "missing")):
+            self.assertEqual(
+                cc.remote_version_string("origin/master"), "5.2.321")
 
 
 class TestBrandedLauncher(unittest.TestCase):

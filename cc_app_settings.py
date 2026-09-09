@@ -24,7 +24,7 @@ import os
 import threading
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from tkinter import font as tkfont
 
 import i18n
@@ -1082,6 +1082,9 @@ class SettingsMixin:
             heading, action_text, action, bg=bg, accent=theme["accent"],
             hint=hint, font=font, size=9)
         action_button.pack(side="left", padx=(8, 0))
+        progress = tk.Label(
+            heading, text="", bg=bg, fg=theme["accent"],
+            font=(font, 9), anchor="w")
         status = tk.Label(
             info, text=status_text, bg=bg, fg=hint,
             font=(font, 8), anchor="w")
@@ -1093,7 +1096,7 @@ class SettingsMixin:
             controls, initial, bg, accessible_name=text_, command=on_toggle)
         switch.pack(side="left")
         row_state["value"] = row + 1
-        return switch, status, action_button
+        return switch, status, action_button, progress
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
                              bg, fg, font, help_text=None, help_ring=None,
@@ -1385,7 +1388,8 @@ class SettingsMixin:
             download_dictionary()
 
         (local_dictionary_sw, dictionary_status_label,
-         dictionary_action_button) = self._settings_resource_row(
+         dictionary_action_button,
+         dictionary_progress_label) = self._settings_resource_row(
             body, row_state,
             i18n.get("settings.label.local_dictionary"),
             "",
@@ -1401,6 +1405,7 @@ class SettingsMixin:
             on_toggle=on_dictionary_toggle)
         win._dictionary_status_label = dictionary_status_label
         win._dictionary_action_button = dictionary_action_button
+        win._dictionary_progress_label = dictionary_progress_label
         win._dictionary_switch = local_dictionary_sw
         dictionary_download_cancel = None
         dictionary_download_in_progress = False
@@ -1418,6 +1423,16 @@ class SettingsMixin:
                     dictionary_status_label.pack(anchor="w", pady=(3, 0))
             else:
                 dictionary_status_label.pack_forget()
+
+        def set_dictionary_progress(text_=""):
+            dictionary_progress_label.configure(text=text_)
+            if text_:
+                if not dictionary_progress_label.winfo_manager():
+                    dictionary_progress_label.pack(
+                        side="left", padx=(8, 0),
+                        before=dictionary_action_button)
+            else:
+                dictionary_progress_label.pack_forget()
 
         def dictionary_window_exists():
             try:
@@ -1448,6 +1463,7 @@ class SettingsMixin:
             dictionary_download_cancel = None
             dictionary_download_in_progress = False
             if dictionary_window_exists():
+                set_dictionary_progress()
                 local_dictionary_sw.set(False)
                 local_dictionary_sw.set_enabled(True)
             if result is not None:
@@ -1485,6 +1501,11 @@ class SettingsMixin:
             if dictionary_window_exists():
                 local_dictionary_sw.set(False)
                 local_dictionary_sw.set_enabled(False)
+                set_dictionary_status()
+                set_dictionary_progress(
+                    i18n.get(
+                        "settings.dictionary.downloading_inline").format(
+                            percent=0))
             set_dictionary_action(
                 i18n.get("settings.dictionary.cancel"),
                 cancel_event.set)
@@ -1495,9 +1516,9 @@ class SettingsMixin:
                 def apply_progress():
                     try:
                         if win.winfo_exists():
-                            set_dictionary_status(
+                            set_dictionary_progress(
                                 i18n.get(
-                                    "settings.dictionary.downloading").format(
+                                    "settings.dictionary.downloading_inline").format(
                                         percent=percent))
                     except tk.TclError:
                         pass
@@ -1523,13 +1544,8 @@ class SettingsMixin:
 
             threading.Thread(target=worker, daemon=True).start()
 
-        def delete_dictionary():
+        def perform_dictionary_delete():
             if dictionary_manager is None:
-                return
-            if not messagebox.askyesno(
-                    i18n.get("settings.dictionary.delete_title"),
-                    i18n.get("settings.dictionary.delete_confirm"),
-                    parent=win):
                 return
             current = getattr(self, "_local_dictionary", None)
             if current is not None:
@@ -1550,6 +1566,119 @@ class SettingsMixin:
             self._save_config(self.cfg)
             local_dictionary_sw.set(False)
             refresh_dictionary_resource()
+
+        def delete_dictionary():
+            existing = getattr(win, "_dictionary_delete_win", None)
+            try:
+                if existing is not None and existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except tk.TclError:
+                pass
+
+            confirm_win = tk.Toplevel(win)
+            confirm_win.withdraw()
+            confirm_win.overrideredirect(True)
+            confirm_win.attributes("-topmost", True)
+            confirm_win.transient(win)
+            confirm_win._v2 = v2on
+            confirm_win._v2_resizable = False
+            win._dictionary_delete_win = confirm_win
+            self._apply_taskbar_identity(
+                confirm_win,
+                i18n.get("settings.dictionary.delete_title"))
+
+            radius = V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS
+            card = self._rounded_shell(
+                confirm_win, radius, bg, border)
+            bar = tk.Frame(
+                card, bg=bg, bd=0, highlightthickness=0)
+            if v2on:
+                bar.pack(fill="x", padx=40, pady=(20, 14))
+                self._v2_brand_header(
+                    bar, confirm_win,
+                    title=i18n.get("settings.dictionary.delete_title"),
+                    subtitle=None, bg=bg, hint=hint, accent=accent,
+                    font=FONT, scale=scale,
+                    cache_tag="dictionary_delete_title")
+            else:
+                bar.pack(fill="x", padx=20, pady=(14, 10))
+                title = tk.Label(
+                    bar,
+                    text=i18n.get("settings.dictionary.delete_title"),
+                    bg=bg, fg=t["status_err"],
+                    font=(FONT, 11, "bold"))
+                title.pack(side="left")
+                self._make_draggable((bar, title), confirm_win)
+
+            body = tk.Frame(
+                card, bg=bg, bd=0, highlightthickness=0)
+            body.pack(
+                fill="both", expand=True,
+                padx=40 if v2on else 20,
+                pady=(16, 22) if v2on else (12, 16))
+            tk.Label(
+                body,
+                text=i18n.get("settings.dictionary.delete_confirm"),
+                bg=bg, fg=fg, font=(FONT, 10),
+                justify="left", anchor="w",
+                wraplength=int((420 if v2on else 360) * scale)
+            ).pack(fill="x", anchor="w", pady=(0, 20))
+
+            footer = tk.Frame(
+                body, bg=bg, bd=0, highlightthickness=0)
+            footer.pack(fill="x")
+
+            def confirm_delete():
+                confirm_win.destroy()
+                perform_dictionary_delete()
+
+            if v2on and ccv2 is not None:
+                confirm_button = self._v2_soft_button(
+                    footer, i18n.get("settings.dictionary.delete"),
+                    confirm_delete, danger=True)
+                cancel_button = self._v2_soft_button(
+                    footer, i18n.get("uninstall.cancel"),
+                    confirm_win.destroy)
+            else:
+                confirm_button = self._settings_action_button(
+                    footer, i18n.get("settings.dictionary.delete"),
+                    confirm_delete, theme=t, fg=fg, font=FONT,
+                    width=14, danger=True)
+                cancel_button = self._settings_action_button(
+                    footer, i18n.get("uninstall.cancel"),
+                    confirm_win.destroy, theme=t, fg=fg, font=FONT,
+                    width=14)
+            confirm_button.pack(side="right")
+            cancel_button.pack(side="right", padx=(0, 10))
+            confirm_win._dictionary_delete_confirm_btn = confirm_button
+            confirm_win._dictionary_delete_cancel_btn = cancel_button
+            confirm_win.bind(
+                "<Escape>", lambda _event: confirm_win.destroy())
+
+            confirm_win.update_idletasks()
+            inset = int(getattr(confirm_win, "_card_inset", radius))
+            width = max(
+                card.winfo_reqwidth() + 2 * inset,
+                int((500 if v2on else 420) * scale))
+            height = card.winfo_reqheight() + 2 * inset
+            rect = get_monitor_rect()
+            if rect:
+                left, top, right, bottom = rect
+                width = min(width, max(320, right - left - 40))
+                height = min(height, max(240, bottom - top - 40))
+                x = left + (right - left - width) // 2
+                y = top + (bottom - top - height) // 2
+            else:
+                screen_w = confirm_win.winfo_screenwidth()
+                screen_h = confirm_win.winfo_screenheight()
+                x = (screen_w - width) // 2
+                y = (screen_h - height) // 2
+            self._reveal_rounded_window(
+                confirm_win, width, height, x, y)
+            confirm_win.grab_set()
+            confirm_win.after_idle(cancel_button.focus_set)
 
         def open_dictionary_manager():
             existing = getattr(win, "_dictionary_manager_win", None)
@@ -1842,9 +1971,14 @@ class SettingsMixin:
         current_version = version_string()
 
         def set_update_button(
-                text_, command=None, enabled=True, highlighted=False):
-            normal_fg = t["status_ok"] if highlighted else hint
-            hover_fg = t["status_ok"] if highlighted else t["accent"]
+                text_, command=None, enabled=True, highlighted=False,
+                error=False):
+            normal_fg = (
+                t["status_err"] if error
+                else t["status_ok"] if highlighted else hint)
+            hover_fg = (
+                t["status_err"] if error
+                else t["status_ok"] if highlighted else t["accent"])
             update_button._text_action_normal_fg = normal_fg
             update_button._text_action_hover_fg = hover_fg
             update_button.configure(
@@ -1871,15 +2005,23 @@ class SettingsMixin:
             elif kind == "ok":
                 version_label.configure(
                     text=i18n.get("settings.label.current_version"))
-                version_value.configure(fg=t["accent"])
+                version_value.configure(
+                    text=current_version, fg=t["accent"])
                 set_update_button(msg, enabled=False)
+            elif kind == "restart":
+                set_update_button(
+                    i18n.get("settings.update_restarting"),
+                    enabled=False,
+                    highlighted=True)
             elif kind == "err":
                 version_label.configure(
                     text=i18n.get("settings.label.current_version"))
-                version_value.configure(fg=t["accent"])
+                version_value.configure(
+                    text=current_version, fg=t["accent"])
                 set_update_button(
-                    i18n.get("settings.label.check_update_action"),
-                    on_check_update_click)
+                    i18n.get("settings.update_retry"),
+                    on_check_update_click,
+                    error=True)
             else:
                 set_update_button(msg, enabled=False)
 

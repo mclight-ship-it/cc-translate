@@ -2571,8 +2571,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_5_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 5)
-        self.assertEqual(cc_update.VERSION_MINOR, 1)
-        self.assertTrue(tr.version_string().startswith("5.1."))
+        self.assertEqual(cc_update.VERSION_MINOR, 2)
+        self.assertTrue(tr.version_string().startswith("5.2."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3552,6 +3552,15 @@ class TestUiSmoke(unittest.TestCase):
             self.assertEqual(
                 app.settings_win._dictionary_action_button.cget("text"),
                 tr.i18n.get("settings.dictionary.cancel"))
+            self.assertEqual(
+                app.settings_win._dictionary_progress_label.cget("text"),
+                tr.i18n.get(
+                    "settings.dictionary.downloading_inline").format(
+                        percent=0))
+            self.assertTrue(
+                app.settings_win._dictionary_progress_label.winfo_manager())
+            self.assertFalse(
+                app.settings_win._dictionary_status_label.winfo_manager())
             thread.start.assert_called()
 
             thread_class.call_args.kwargs["target"]()
@@ -3560,6 +3569,8 @@ class TestUiSmoke(unittest.TestCase):
         app._dictionary_artifact.install.assert_called_once()
         self.assertTrue(switch.enabled)
         self.assertTrue(switch.get())
+        self.assertFalse(
+            app.settings_win._dictionary_progress_label.winfo_manager())
         self.assertIs(
             app.cfg[tr.CFG.LOCAL_DICTIONARY_ENABLED], True)
         app._save_config.assert_called_once_with(app.cfg)
@@ -3672,9 +3683,26 @@ class TestUiSmoke(unittest.TestCase):
         self.assertEqual(delete_button.grid_info()["column"], 1)
         self.assertEqual(repair_button.grid_info()["sticky"], "w")
         self.assertEqual(delete_button.grid_info()["sticky"], "e")
-        with unittest.mock.patch(
-                "cc_app_settings.messagebox.askyesno", return_value=True):
-            delete_button.invoke()
+        delete_button.invoke()
+        confirm_win = app.settings_win._dictionary_delete_win
+        self.assertTrue(confirm_win.winfo_exists())
+        self.assertTrue(confirm_win.overrideredirect())
+        self.assertTrue(confirm_win.bind("<Escape>"))
+        self.assertIs(confirm_win.grab_current(), confirm_win)
+        confirm_texts = self._widget_texts(confirm_win)
+        self.assertIn(
+            tr.i18n.get("settings.dictionary.delete_title"),
+            confirm_texts)
+        self.assertIn(
+            tr.i18n.get("settings.dictionary.delete_confirm"),
+            confirm_texts)
+        self.assertEqual(
+            confirm_win._dictionary_delete_confirm_btn.cget("text"),
+            tr.i18n.get("settings.dictionary.delete"))
+        self.assertEqual(
+            confirm_win._dictionary_delete_cancel_btn.cget("text"),
+            tr.i18n.get("uninstall.cancel"))
+        confirm_win._dictionary_delete_confirm_btn.invoke()
 
         app._dictionary_artifact.delete.assert_called_once_with()
         self.assertIs(
@@ -3979,6 +4007,43 @@ class TestUiSmoke(unittest.TestCase):
             app._begin_update.call_args.kwargs["check_only"])
         self.assertEqual(
             update_button.cget("text"), tr.i18n.get("update.updating"))
+        self.assertEqual(update_button.cget("state"), "disabled")
+
+        callback(tr.i18n.get("update.merge_failed"), "err")
+        self.assertIn(tr.version_string(), self._widget_texts(app.settings_win))
+        self.assertNotIn("5.1.999", self._widget_texts(app.settings_win))
+        self.assertEqual(
+            update_button.cget("text"),
+            tr.i18n.get("settings.update_retry"))
+        self.assertEqual(update_button.cget("fg"), app.theme["status_err"])
+        self.assertEqual(update_button.cget("state"), "normal")
+
+    def test_verified_update_waiting_for_restart_is_not_shown_as_current(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app._begin_update = unittest.mock.Mock()
+        app._open_settings()
+        update_button = next(
+            widget for widget in self._walk_widgets(app.settings_win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.check_update_action"))
+        update_button.invoke()
+        callback = app._begin_update.call_args.kwargs["on_status"]
+        app._available_update_version = "5.3.999"
+        callback("", "avail")
+        update_button.invoke()
+        callback(tr.i18n.get("update.done_restarting"), "restart")
+
+        texts = self._widget_texts(app.settings_win)
+        self.assertIn(
+            tr.i18n.get("settings.label.available_version"), texts)
+        self.assertIn("5.3.999", texts)
+        self.assertNotIn(
+            tr.i18n.get("settings.label.current_version"), texts)
+        self.assertEqual(
+            update_button.cget("text"),
+            tr.i18n.get("settings.update_restarting"))
         self.assertEqual(update_button.cget("state"), "disabled")
 
     def test_settings_dropdown_list_has_left_padding(self):
@@ -4970,6 +5035,45 @@ class TestUpdateStatusCopy(unittest.TestCase):
             seen,
             [(tr.i18n.get("update.found_version").format(version="remotes"),
               "avail")])
+
+    def test_verified_update_reports_restart_instead_of_current(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: TestUiSmoke._safe_destroy(app))
+        app._relaunch = unittest.mock.Mock()
+        app._verify_update = unittest.mock.Mock(return_value=True)
+        seen = []
+
+        import cc_app_update
+        notice = unittest.mock.mock_open()
+        with unittest.mock.patch.object(
+                app.root, "after", side_effect=lambda _ms, fn: fn()), \
+                unittest.mock.patch.object(
+                    cc_app_update, "is_git_deploy", return_value=True), \
+                unittest.mock.patch.object(
+                    tr._cc_update, "fetch_remote_branch",
+                    return_value=(True, "")), \
+                unittest.mock.patch.object(
+                    tr._cc_update, "classify_update_state",
+                    return_value=("behind", "localsha", "remotesha")), \
+                unittest.mock.patch.object(
+                    tr._cc_update, "remote_version_string",
+                    return_value="5.2.777"), \
+                unittest.mock.patch.object(
+                    cc_app_update, "_git", return_value=(0, "", "")), \
+                unittest.mock.patch("builtins.open", notice):
+            app._update_worker(
+                silent=False,
+                on_status=lambda msg, kind: seen.append((msg, kind)),
+                check_only=False)
+
+        self.assertEqual(
+            seen,
+            [
+                (tr.i18n.get("update.downloading"), "info"),
+                (tr.i18n.get("update.done_restarting"), "restart"),
+            ])
+        app._relaunch.assert_called_once_with()
+        notice().write.assert_called_once_with("5.2.777")
 
 
 class TestQuickInputFallback(unittest.TestCase):
