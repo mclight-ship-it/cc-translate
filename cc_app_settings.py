@@ -999,9 +999,10 @@ class SettingsMixin:
         row = row_state["value"]
         info = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         info.grid(row=row, column=0, sticky="w", pady=5)
-        tk.Label(
+        label = tk.Label(
             info, text=label_text, bg=bg, fg=fg,
-            font=(font, 10)).pack(side="left")
+            font=(font, 10))
+        label.pack(side="left")
         value = tk.Label(
             info, text=value_text, bg=bg, fg=theme["accent"],
             font=(font, 10, "bold"))
@@ -1011,7 +1012,7 @@ class SettingsMixin:
             hint=hint, font=font, size=10)
         action_button.grid(row=row, column=1, sticky="e", pady=5)
         row_state["value"] = row + 1
-        return value, action_button
+        return label, value, action_button
 
     def _settings_resource_row(
             self, body, row_state, text_, status_text, action_text, action,
@@ -1799,16 +1800,20 @@ class SettingsMixin:
             if kind == "avail":
                 available_version = getattr(
                     self, "_available_update_version", "") or ""
+                version_label.configure(
+                    text=i18n.get("settings.label.available_version"))
                 version_value.configure(
-                    text=(
-                        f"{current_version}  →  {available_version}"
-                        if available_version else current_version))
+                    text=available_version or current_version)
                 set_update_button(
                     i18n.get("settings.download_update"),
                     on_apply_update_click)
             elif kind == "ok":
+                version_label.configure(
+                    text=i18n.get("settings.label.current_version"))
                 set_update_button(msg, enabled=False)
             elif kind == "err":
+                version_label.configure(
+                    text=i18n.get("settings.label.current_version"))
                 set_update_button(
                     i18n.get("settings.label.check_update_action"),
                     on_check_update_click)
@@ -1821,11 +1826,13 @@ class SettingsMixin:
 
         def on_check_update_click():
             self._available_update_version = None
+            version_label.configure(
+                text=i18n.get("settings.label.current_version"))
             version_value.configure(text=current_version)
             set_update_button(i18n.get("update.checking"), enabled=False)
             self._begin_update(check_only=True, on_status=_upd_show)
 
-        version_value, update_button = self._settings_version_row(
+        version_label, version_value, update_button = self._settings_version_row(
             body, row_state,
             i18n.get("settings.label.current_version"), current_version,
             i18n.get("settings.label.check_update_action"),

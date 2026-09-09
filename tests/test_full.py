@@ -3843,12 +3843,18 @@ class TestUiSmoke(unittest.TestCase):
         self.addCleanup(lambda: self._safe_destroy(app))
         app._begin_update = unittest.mock.Mock()
         app._open_settings()
+        app.settings_win.update_idletasks()
         widgets = list(self._walk_widgets(app.settings_win))
         update_button = next(
             widget for widget in widgets
             if widget.winfo_class() == "Button"
             and widget.cget("text") == tr.i18n.get(
                 "settings.label.check_update_action"))
+        control_widths_before = [
+            widget._settings_host.winfo_width()
+            for widget in widgets
+            if isinstance(widget, (tr.ttk.Combobox, tr.ttk.Spinbox))
+        ]
 
         update_button.invoke()
         self.assertEqual(
@@ -3864,9 +3870,25 @@ class TestUiSmoke(unittest.TestCase):
             update_button.cget("text"),
             tr.i18n.get("settings.download_update"))
         self.assertEqual(update_button.cget("state"), "normal")
+        app.settings_win.update_idletasks()
+        self.assertIn("5.1.999", self._widget_texts(app.settings_win))
         self.assertIn(
+            tr.i18n.get("settings.label.available_version"),
+            self._widget_texts(app.settings_win))
+        self.assertNotIn(
             f"{tr.version_string()}  →  5.1.999",
             self._widget_texts(app.settings_win))
+        self.assertEqual(
+            [
+                widget._settings_host.winfo_width()
+                for widget in widgets
+                if isinstance(widget, (tr.ttk.Combobox, tr.ttk.Spinbox))
+            ],
+            control_widths_before)
+        self.assertTrue(update_button.winfo_ismapped())
+        self.assertLessEqual(
+            update_button.winfo_rootx() + update_button.winfo_width(),
+            app.settings_win.winfo_rootx() + app.settings_win.winfo_width())
 
         update_button.invoke()
         self.assertEqual(app._begin_update.call_count, 2)
