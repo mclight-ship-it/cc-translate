@@ -29,6 +29,7 @@ TRANSLATOR_PATH = APP_DIR / "translator.pyw"
 SURFACES = (
     "loading",
     "result",
+    "dictionary",
     "error",
     "quick-input",
     "history",
@@ -170,6 +171,41 @@ def synthetic_history():
     ]
 
 
+def synthetic_dictionary_result():
+    from cc_dictionary import DictionaryEntry, DictionaryResult, DictionarySense
+
+    source = {
+        "source_id": "cc-cedict",
+        "source_label": "CC-CEDICT",
+        "source_version": "2017-04-28",
+        "source_license": "CC BY-SA 3.0 Unported",
+    }
+    sense = DictionarySense(
+        definition="China",
+        provenance="capture-fixture",
+        **source,
+    )
+    entry = DictionaryEntry(
+        headword="中国",
+        language="zh",
+        pronunciation="Zhong1 guo2",
+        part_of_speech=None,
+        senses=(sense,),
+        **source,
+    )
+    return DictionaryResult(
+        query="中国",
+        normalized_query="中国",
+        headword="中国",
+        pronunciation="Zhong1 guo2",
+        senses=(sense,),
+        entries=(entry,),
+        source_ids=("cc-cedict",),
+        match_type="exact",
+        confidence=1.0,
+    )
+
+
 def synthetic_diagnostics_report(tr):
     summary = (
         "OpenAI GPT (Codex) · CLI \u6b63\u5e38 · \u5df2\u767b\u5f55 · "
@@ -308,13 +344,23 @@ def _capture_runtime_overrides(tr, settings_module):
     original_env = os.environ.get(env_name, missing)
     original_history = tr.load_history
     original_autostart = settings_module.is_autostart_enabled
+    original_version = getattr(settings_module, "version_string", missing)
+    stable_version = (
+        ".".join(original_version().split(".")[:2])
+        if callable(original_version) else "current"
+    )
     os.environ[env_name] = "1"
     tr.load_history = synthetic_history
     settings_module.is_autostart_enabled = lambda: False
+    settings_module.version_string = lambda: stable_version
     try:
         yield
     finally:
         settings_module.is_autostart_enabled = original_autostart
+        if original_version is missing:
+            del settings_module.version_string
+        else:
+            settings_module.version_string = original_version
         tr.load_history = original_history
         if original_env is missing:
             os.environ.pop(env_name, None)
@@ -338,6 +384,35 @@ def _build_surface(tr, app, surface):
         win = app._make_popup(
             message, title=tr.i18n.get("result.title"), highlight=True)
         app.popup = win
+        return win
+    if surface == "dictionary":
+        from cc_dictionary_format import format_dictionary_result
+
+        base = format_dictionary_result(synthetic_dictionary_result())
+        supplement = (
+            "**常见表达**\n"
+            "- 中国市场 — the Chinese market\n"
+            "- 中国文化 — Chinese culture"
+            if tr.i18n.get_language() == "zh_CN"
+            else
+            "**Common phrases**\n"
+            "- 中国市场 — the Chinese market\n"
+            "- 中国文化 — Chinese culture"
+        )
+        divider = tr.i18n.get("result.section_divider").format(
+            label=tr.i18n.get("result.ai_supplement"))
+        app._last_dictionary_local = True
+        app._last_input = "中国"
+        app._last_local_dictionary_result = synthetic_dictionary_result()
+        win = app._make_popup(
+            base + divider + supplement,
+            title=tr.i18n.get("result.title_dict"),
+            highlight=True,
+        )
+        app.popup = win
+        win._dictionary_base_result = base
+        win._dictionary_ai_supplement = supplement
+        app._maybe_add_ai_dictionary_button(win)
         return win
     if surface == "error":
         message = (

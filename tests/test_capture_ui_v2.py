@@ -102,6 +102,13 @@ class TestCaptureUiV2(unittest.TestCase):
         self.assertTrue(all(
             entry["ts"].startswith("2000-") for entry in entries))
 
+    def test_synthetic_dictionary_result_is_source_grounded(self):
+        result = capture.synthetic_dictionary_result()
+        self.assertEqual(result.headword, "中国")
+        self.assertEqual(result.source_ids, ("cc-cedict",))
+        self.assertEqual(result.senses[0].definition, "China")
+        self.assertEqual(result.senses[0].provenance, "capture-fixture")
+
     def test_runtime_overrides_force_v2_and_hide_host_state(self):
         env_name = "CC_UI_V2_CAPTURE_TEST"
         original_history = lambda: ["host history"]
@@ -118,7 +125,9 @@ class TestCaptureUiV2(unittest.TestCase):
                 self.assertEqual(os.environ[env_name], "1")
                 self.assertIs(tr.load_history, capture.synthetic_history)
                 self.assertFalse(settings_module.is_autostart_enabled())
+                self.assertEqual(settings_module.version_string(), "current")
             self.assertEqual(os.environ[env_name], "0")
+            self.assertFalse(hasattr(settings_module, "version_string"))
         self.assertIs(tr.load_history, original_history)
         self.assertIs(
             settings_module.is_autostart_enabled, original_autostart)
@@ -135,6 +144,9 @@ class TestCaptureUiV2(unittest.TestCase):
 
     def test_diagnostics_is_part_of_full_capture(self):
         self.assertIn("diagnostics", capture.parse_surfaces(["all"]))
+
+    def test_dictionary_is_part_of_full_capture(self):
+        self.assertIn("dictionary", capture.parse_surfaces(["all"]))
 
     def test_ocr_overlay_is_part_of_full_capture(self):
         self.assertIn("ocr-overlay", capture.parse_surfaces(["all"]))
