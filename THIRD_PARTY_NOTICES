@@ -1,0 +1,142 @@
+CC Translate - Third-Party Dictionary Data Notices
+==================================================
+
+Application code and dictionary data are separately licensed. The application
+license does not replace or narrow any data license below. The optional,
+unencrypted SQLite artifact is distributed as the pinned release asset:
+
+  https://github.com/mclight-ship-it/cc-translate/releases/download/dictionary-v1/cc_dictionary-3695295d.sqlite3
+
+After an explicit user download, the application stores it at:
+
+  %APPDATA%\CC Translate\dictionary\cc_dictionary.sqlite3
+
+The reproducible development/release-staging copy is:
+
+  data/dictionary/cc_dictionary.sqlite3
+
+It may be copied directly. CC Translate applies no EULA, encryption, DRM, or
+other technological restriction to that artifact. Recipients must follow each
+applicable upstream data license. Full license texts are in:
+
+  data/dictionary/licenses/
+
+Artifact build
+--------------
+
+Data version:
+  wikdict-2025.11.21+forms-2+cedict-2017.04.28+omw-2.0+unihan-17.0.0
+
+SQLite SHA-256:
+  3695295d07268725e555471217351c74e4f9375b8152974760fe12b926e1830e
+
+Logical input/build fingerprint:
+  dd843a0f60932951984c8167634f28a8c925e0390e93c6b93314ab6289378400
+
+Builder:
+  tools/build_dictionary.py (builder-v3; SQLite schema 1)
+
+The builder verifies every source SHA-256 before parsing. It normalizes lookup
+keys with Unicode NFKC plus case folding, creates read-only lookup indexes, and
+retains source_id and provenance on every entry and every sense. It does not
+add examples and never stems at query time. Builder v3 adds a small, reviewed
+table of high-frequency English inflected-form index aliases from WikDict
+headwords and explicit parts of speech. It deliberately does not apply generic
+plural/tense rules to the whole lexicon. Ambiguous derived aliases are removed;
+definitions remain unchanged and retain WikDict provenance. Meanings from
+differently licensed sources remain separate rows with separate provenance.
+
+1. WikDict eng-zho
+-------------------
+
+Version: TEI edition 2025.11.21, published 2025-11-21
+Upstream:
+  https://download.wikdict.com/dictionaries/tei/recommended/eng-zho.tei
+Source SHA-256:
+  9914a68a03fa5f30c627bbc94897130406ff2b71deda3094ef9d3f548d0eb879
+License: Creative Commons Attribution-ShareAlike 3.0 Unported
+License text: data/dictionary/licenses/CC-BY-SA-3.0.txt
+
+The TEI identifies Karl Bartel as maintainer/publisher and states that it was
+automatically created by WikDict from Wiktionary data via DBnary. Its embedded
+license declaration, edition, pronunciation, part-of-speech, translation, and
+explicit inflected-form fields are preserved or indexed. Reviewed derived form
+aliases are separately marked as derived in the forms index; no source
+definition is modified. Empty translations and source-language explanatory
+definitions are omitted from this English to Chinese lookup layer.
+
+2. CC-CEDICT
+-------------
+
+Version: 2017-04-28T03:05:37Z, 115,228 entries
+Immutable source commit:
+  af4a8319d460b5ba233444e73e0086e939a53acd
+Upstream:
+  https://raw.githubusercontent.com/Henry-W/CC-CEDICT/af4a8319d460b5ba233444e73e0086e939a53acd/src/cedict/cedict_ts.u8
+Source SHA-256:
+  43d1f686ce9f6b208e43b606655d3f6eb757917283bf408b460ba157f939f5e7
+License: Creative Commons Attribution-ShareAlike 3.0 Unported
+License text: data/dictionary/licenses/CC-BY-SA-3.0.txt
+
+CC-CEDICT is a community-maintained Chinese-English dictionary published by
+MDBG. Its header references CEDICT, Copyright (C) 1997, 1998 Paul Andrew
+Denisowski. The current upstream rolling release uses a newer license; this
+build intentionally uses the immutable historical artifact whose own header
+explicitly grants CC BY-SA 3.0. Traditional spellings are indexed as aliases;
+simplified headwords, numbered pinyin, and slash-delimited definitions are
+retained with original line-number provenance.
+
+3. Chinese Open Wordnet
+------------------------
+
+Version: OMW Data 2.0 (source apparently COW 0.9)
+Release commit:
+  f75be19ec590da12a7a5665e361690b5badb7a25
+Upstream:
+  https://github.com/omwn/omw-data/releases/download/v2.0/omw-cmn-2.0.tar.xz
+Source SHA-256:
+  7d07af60a6ced0cedc4ca114d0b60a796d3f138df0f3be21f6322e53d004e91c
+License: Chinese Open Wordnet License
+License text:
+  data/dictionary/licenses/Chinese-Open-Wordnet-LICENSE.txt
+
+Chinese Open Wordnet Copyright 2013, 2014 by Francis Bond and Shan Wang.
+Chinese lemmas and their explicit WordNet synset alignments are indexed. The
+Chinese Open Wordnet package contains no English definitions; those definitions
+come from the separately attributed Princeton WordNet package below.
+
+4. Princeton WordNet
+---------------------
+
+Version: WordNet 3.0 repackaged by OMW Data 2.0
+Release commit:
+  f75be19ec590da12a7a5665e361690b5badb7a25
+Upstream:
+  https://github.com/omwn/omw-data/releases/download/v2.0/omw-en-2.0.tar.xz
+Source SHA-256:
+  0e09dfb7f096bc3f10b9de68ffecf13839fa22ae46fd9b227cec890d204ca1dc
+License: Princeton WordNet 3.0 License
+License text:
+  data/dictionary/licenses/Princeton-WordNet-3.0-LICENSE.txt
+
+WordNet 3.0 Copyright 2006 by Princeton University. English definitions are
+linked to Chinese Open Wordnet lemmas only through matching explicit PWN 3.0
+synset identifiers. Each definition keeps its PWN source_id and both alignment
+identifiers as provenance. The names Princeton University and Princeton may not
+be used in advertising or publicity pertaining to distribution of WordNet.
+
+5. Unicode Unihan
+------------------
+
+Version: Unicode 17.0.0
+Upstream:
+  https://www.unicode.org/Public/17.0.0/ucd/Unihan.zip
+Source SHA-256:
+  f7a48b2b545acfaa77b2d607ae28747404ce02baefee16396c5d2d7a8ef34b5e
+License: Unicode License v3
+License text: data/dictionary/licenses/Unicode-License-v3.txt
+
+Copyright (c) 1991-2026 Unicode, Inc. Unihan kDefinition and kMandarin values
+provide the single-Han-character fallback. Explicit kSimplifiedVariant and
+kTraditionalVariant relationships are indexed as aliases. No definition,
+reading, or variant is inferred.

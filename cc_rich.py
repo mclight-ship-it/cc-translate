@@ -12,7 +12,95 @@ Public API used by translator.pyw:
   _PYGMENTS_OK                                 bool: True when Pygments is present
 """
 
+import base64
+import json
 import re
+
+INSTANT_RESULT_MARKER = "[[cc-instant]]"
+SOURCE_DETAILS_PREFIX = "[[cc-sources:"
+MORE_SENSES_PREFIX = "[[cc-more:"
+PRONUNCIATION_PREFIX = "[[cc-pron:"
+
+
+def encode_source_details(details):
+    raw = json.dumps(
+        details, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return SOURCE_DETAILS_PREFIX + payload + "]]"
+
+
+def decode_source_details(marker):
+    if not (marker.startswith(SOURCE_DETAILS_PREFIX)
+            and marker.endswith("]]")):
+        return []
+    payload = marker[len(SOURCE_DETAILS_PREFIX):-2]
+    try:
+        raw = base64.urlsafe_b64decode(
+            payload + "=" * (-len(payload) % 4))
+        details = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return []
+    if not isinstance(details, list):
+        return []
+    return [
+        item for item in details
+        if isinstance(item, dict)
+        and all(isinstance(item.get(key), str)
+                for key in ("id", "label", "version", "license"))
+    ]
+
+
+def encode_more_senses(count, expanded_text=""):
+    payload = ""
+    if expanded_text:
+        payload = ":" + base64.urlsafe_b64encode(
+            expanded_text.encode("utf-8")).decode("ascii").rstrip("=")
+    return "%s%d%s]]" % (
+        MORE_SENSES_PREFIX, max(0, int(count)), payload)
+
+
+def decode_more_senses(marker):
+    if not (marker.startswith(MORE_SENSES_PREFIX) and marker.endswith("]]")):
+        return 0
+    try:
+        count = marker[len(MORE_SENSES_PREFIX):-2].split(":", 1)[0]
+        return max(0, int(count))
+    except ValueError:
+        return 0
+
+
+def decode_more_senses_text(marker):
+    if not (marker.startswith(MORE_SENSES_PREFIX) and marker.endswith("]]")):
+        return ""
+    content = marker[len(MORE_SENSES_PREFIX):-2]
+    if ":" not in content:
+        return ""
+    payload = content.split(":", 1)[1]
+    try:
+        raw = base64.urlsafe_b64decode(
+            payload + "=" * (-len(payload) % 4))
+        return raw.decode("utf-8")
+    except (ValueError, UnicodeError):
+        return ""
+
+
+def encode_pronunciation(text):
+    payload = base64.urlsafe_b64encode(
+        (text or "").encode("utf-8")).decode("ascii").rstrip("=")
+    return PRONUNCIATION_PREFIX + payload + "]]"
+
+
+def decode_pronunciation(marker):
+    if not (marker.startswith(PRONUNCIATION_PREFIX)
+            and marker.endswith("]]")):
+        return ""
+    payload = marker[len(PRONUNCIATION_PREFIX):-2]
+    try:
+        raw = base64.urlsafe_b64decode(
+            payload + "=" * (-len(payload) % 4))
+        return raw.decode("utf-8")
+    except (ValueError, UnicodeError):
+        return ""
 
 # Pygments is optional — provides syntax-highlighting inside fenced code blocks.
 # When absent the renderer falls back to single-colour code style with no crash.
@@ -166,6 +254,28 @@ def iter_rich_segments(message, highlight=False):
     while i < n:
         line = lines[i]
         stripped = line.lstrip()
+        if (stripped.startswith(SOURCE_DETAILS_PREFIX)
+                and stripped.endswith("]]")):
+            if decode_source_details(stripped):
+                segs.append((stripped, "rich_sources_button"))
+                segs.append(("\n", None))
+            i += 1
+            continue
+        if (stripped.startswith(MORE_SENSES_PREFIX)
+                and stripped.endswith("]]")):
+            if decode_more_senses(stripped):
+                segs.append((stripped, "rich_more_senses"))
+                segs.append(("\n", None))
+            i += 1
+            continue
+        if (stripped.startswith(PRONUNCIATION_PREFIX)
+                and stripped.endswith("]]")):
+            pronunciation = decode_pronunciation(stripped)
+            if pronunciation:
+                segs.append((pronunciation, "rich_pronunciation"))
+                segs.append(("\n", None))
+            i += 1
+            continue
         if stripped.startswith("```"):
             if highlight:
                 if not in_fence:
@@ -193,7 +303,17 @@ def iter_rich_segments(message, highlight=False):
         m = _HEADING_RE.match(line)
         if m:
             level = min(len(m.group(1)), 3)
-            segs.append((m.group(2), f"rich_h{level}"))
+            heading = m.group(2)
+            if heading.startswith(INSTANT_RESULT_MARKER):
+                heading = heading[len(INSTANT_RESULT_MARKER):].lstrip()
+                segs.append(("", "rich_instant_badge"))
+                segs.append((heading, f"rich_h{level}"))
+            elif heading.endswith(INSTANT_RESULT_MARKER):
+                heading = heading[:-len(INSTANT_RESULT_MARKER)].rstrip()
+                segs.append((heading, f"rich_h{level}"))
+                segs.append(("", "rich_instant_badge"))
+            else:
+                segs.append((heading, f"rich_h{level}"))
             segs.append(("\n", None))
             i += 1
             continue

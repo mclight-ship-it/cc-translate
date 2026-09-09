@@ -188,6 +188,13 @@ class TestGradientBackgroundCrops(unittest.TestCase):
         f = gb.rounded_face(200, 120, 18)
         self.assertEqual(f.getpixel((0, 0))[3], 0)          # corner transparent
 
+    def test_rounded_face_accepts_uniform_inner_fill(self):
+        gb = v2.GradientBackground(v2.get_palette("dark"), scale=1.0)
+        fill = (51, 54, 66)
+        f = gb.rounded_face(200, 120, 18, fill=fill)
+        self.assertEqual(f.getpixel((0, 0))[3], 0)
+        self.assertEqual(f.getpixel((100, 60)), fill + (255,))
+
     def test_face_is_opaque_interior(self):
         gb = v2.GradientBackground(v2.get_palette("dark"), scale=1.0)
         f = gb.face(200, 120)
@@ -207,6 +214,16 @@ class TestWidgets(unittest.TestCase):
         img = v2.icon_tile(v2.scaled(34, 1.0), "CC", 1.0)
         self.assertEqual(img.mode, "RGBA")
         self.assertGreater(img.size[0], 0)
+
+    def test_instant_badge_is_square_rounded_and_hollow(self):
+        img = v2.instant_badge(v2.get_palette("dark"), scale=1.0)
+        self.assertEqual(img.mode, "RGBA")
+        self.assertEqual(img.width, img.height)
+        self.assertEqual(img.getpixel((0, 0))[3], 0)
+        histogram = img.getchannel("A").histogram()
+        nonempty = sum(histogram[64:])
+        self.assertLess(nonempty, img.width * img.height * 0.5)
+        self.assertGreater(nonempty, img.width * 2)
 
     def test_gradient_pill_plain_and_gradient(self):
         pal = v2.get_palette("dark")
@@ -313,6 +330,21 @@ class TestConceptPolish(unittest.TestCase):
                     fill = image.getpixel(center)[:3]
                     contrast = 1.05 / (_luminance(fill) + 0.05)
                     self.assertGreaterEqual(contrast, 4.5)
+
+    def test_ghost_soft_pill_reveals_surface_only_on_hover(self):
+        pal = self._pal()
+        font = v2.load_font("reg", 10, 1.0)
+        for danger in (False, True):
+            with self.subTest(danger=danger):
+                normal = v2.soft_pill(
+                    text="Action", font=font, palette=pal,
+                    min_w=90, danger=danger, ghost=True)
+                hover = v2.soft_pill(
+                    text="Action", font=font, palette=pal,
+                    min_w=90, danger=danger, ghost=True, hover=True)
+                edge = (1, normal.height // 2)
+                self.assertEqual(normal.getpixel(edge)[3], 0)
+                self.assertGreater(hover.getpixel(edge)[3], 0)
 
     def test_soft_pill_caret_widens_it(self):
         pal = self._pal()

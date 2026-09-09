@@ -22,7 +22,10 @@ from tkinter import font as tkfont
 import i18n
 import win32util
 from win32util import get_monitor_rect
-from cc_rich import iter_rich_segments
+from cc_rich import (
+    decode_more_senses, decode_more_senses_text, decode_source_details,
+    iter_rich_segments,
+)
 from cc_core import (
     APP_NAME, CFG, ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     POPUP_CORNER_RADIUS, V2_CORNER_RADIUS, ROUND_KEY_COLOR,
@@ -59,6 +62,19 @@ V2_HALO_PTS = 0
 # v2 top-right action pills (操作 / 复制) bake to at least this design width so
 # they're a matched pair rather than two different sizes. DPI-scaled at use.
 V2_ACTION_BTN_MIN_W_PTS = 74
+
+
+def _source_card_position(anchor_rect, card_size, monitor_rect):
+    """Place a source card beside its anchor inside that anchor's monitor."""
+    anchor_x, anchor_y, anchor_w, anchor_h = anchor_rect
+    width, height = card_size
+    left, top, right, bottom = monitor_rect
+    x = max(left + 8, min(anchor_x, right - width - 8))
+    y = anchor_y + anchor_h + 6
+    if y + height > bottom - 8:
+        y = anchor_y - height - 6
+    y = max(top + 8, min(y, bottom - height - 8))
+    return x, y
 
 
 # ---------------------------------------------------------------------------
@@ -1195,9 +1211,10 @@ class PopupMixin:
         def _ring_release(_e):
             off["active"] = False
 
-        cv.bind("<Button-1>", _ring_press)
-        cv.bind("<B1-Motion>", _ring_move)
-        cv.bind("<ButtonRelease-1>", _ring_release)
+        if getattr(win, "_v2_ring_draggable", True):
+            cv.bind("<Button-1>", _ring_press)
+            cv.bind("<B1-Motion>", _ring_move)
+            cv.bind("<ButtonRelease-1>", _ring_release)
 
         def _redraw(event=None):
             # A <Configure> event carries the ACTUAL new canvas size (the WM has
@@ -1229,7 +1246,14 @@ class PopupMixin:
             # sits inset by `radius` so its square corners hide inside the
             # rounded shape; the radius-wide reveal around it is the SAME navy, so
             # only the perimeter hairline shows.
-            face = gb.rounded_face(w, h, radius)
+            panel_bg = self._v2_tk_colors()["panel"]
+            # Elevated popup surfaces (notably the settings dropdown) paint
+            # their fill into the rounded face itself. Otherwise the inset
+            # rectangular content Frame exposes square colour blocks.
+            face_fill = (
+                ccv2.hex_to_rgb(card_bg)
+                if card_bg.lower() != panel_bg.lower() else None)
+            face = gb.rounded_face(w, h, radius, fill=face_fill)
             photo = ccv2.to_photo(face, master=cv)
             if photo is not None:
                 win._v2_face = photo
@@ -1516,7 +1540,8 @@ class PopupMixin:
         return self._v2_photo(("herologo", path, s, round(scale, 2)), _bake)
 
     def _v2_soft_button(self, parent, text, cmd, *, icon=None, caret=False,
-                        tooltip=None, min_w=0, grad=False, danger=False):
+                        tooltip=None, min_w=0, grad=False, danger=False,
+                        ghost=False, font_size=10):
         """A soft translucent pill button (concept's 复制 / 操作 style) as a
         tk.Button whose image swaps normal<->hover. Exposes _chip_set(label) to
         re-bake the label (copy-feedback / processing text). Falls back to a
@@ -1541,14 +1566,15 @@ class PopupMixin:
 
         def _bake(label, hover):
             lbl, has_caret = _clean(label)
-            font = ccv2.load_font("reg", 10, scale) if lbl else None
+            font = ccv2.load_font("reg", font_size, scale) if lbl else None
             return self._v2_photo(
                 ("soft", lbl, icon, has_caret, hover, min_w, grad, danger,
+                 ghost, font_size,
                  round(scale, 2)),
                 lambda: ccv2.soft_pill(text=lbl, icon=icon, font=font,
                                        palette=pal, scale=scale, hover=hover,
                                        caret=has_caret, min_w=min_w, grad=grad,
-                                       danger=danger))
+                                       danger=danger, ghost=ghost))
 
         normal = _bake(text, False)
         hover = _bake(text, True)
@@ -1577,6 +1603,8 @@ class PopupMixin:
             if getattr(b, "_chip_enabled", True) else None)
         b.bind("<Leave>", lambda e: b.config(image=b._chip_normal))
         b._chip_enabled = True
+        b._chip_ghost = ghost
+        b._chip_font_size = font_size
 
         def _set(label):
             n = _bake(label, False)
@@ -2007,16 +2035,18 @@ class PopupMixin:
                                      fill=fill, tags="tip")
                     cv.create_window(tw // 2, th // 2, window=lbl)
                     tt.update_idletasks()
-                    # Prefer to the right of the icon; if that would run off the
-                    # right screen edge, flip to the left side instead.
-                    sw = widget.winfo_screenwidth()
-                    x = widget.winfo_rootx() + widget.winfo_width() + 8
-                    if x + tw > sw - 8:
-                        x = widget.winfo_rootx() - tw - 8
-                    y = widget.winfo_rooty() + (widget.winfo_height() - th) // 2
-                    if y < 8:
-                        y = 8
-                    tt.wm_geometry(f"{tw}x{th}+{x}+{y}")
+                    anchor_x = (
+                        widget.winfo_rootx() + widget.winfo_width() // 2)
+                    anchor_y = (
+                        widget.winfo_rooty() + widget.winfo_height() // 2)
+                    x = anchor_x - tw // 2
+                    y = widget.winfo_rooty() + widget.winfo_height() + 8
+                    rect = get_monitor_rect((anchor_x, anchor_y))
+                    if rect and y + th > rect[3] - 8:
+                        y = widget.winfo_rooty() - th - 8
+                    x, y = self._clamp_to_monitor(
+                        x, y, tw, th, ref=(anchor_x, anchor_y))
+                    tt.wm_geometry(f"{tw}x{th}{x:+d}{y:+d}")
                     tt.lift()
                     tooltip_var["tooltip"] = tt
                 except tk.TclError:
@@ -2076,9 +2106,12 @@ class PopupMixin:
             "rich_bold", font=(ui, base, "bold"), foreground=t["rich_bold_fg"])
         text_widget.tag_configure("rich_italic", font=(ui, base, "italic"))
         text_widget.tag_configure(
+            "rich_pronunciation", font=(ui, base),
+            foreground=t["popup_hint"], spacing1=2, spacing3=2)
+        text_widget.tag_configure(
             "rich_url", foreground=t["rich_url_fg"], underline=True)
         text_widget.tag_configure(
-            "rich_bullet", foreground=t["rich_bullet_fg"], font=(ui, base, "bold"))
+            "rich_bullet", foreground=t["rich_bullet_fg"], font=(ui, base))
         text_widget.tag_configure(
             "rich_h1", font=(ui, base + 2, "bold"),
             foreground=t["rich_heading_fg"], spacing1=4, spacing3=2)
@@ -2099,11 +2132,107 @@ class PopupMixin:
 
     def _fill_text(self, text_widget, message):
         text_widget.config(state="normal")
+        for badge in getattr(text_widget, "_rich_badges", ()):
+            try:
+                badge.destroy()
+            except tk.TclError:
+                pass
+        text_widget._rich_badges = []
+        text_widget._source_copy_text = ""
+        text_widget._dictionary_expanded_text = ""
+        text_widget._raw_message = message
         text_widget.delete("1.0", "end")
         if getattr(text_widget, "_rich", False):
             hl = getattr(text_widget, "_rich_highlight", False)
             for chunk, tag in iter_rich_segments(message, highlight=hl):
-                if tag:
+                if tag == "rich_instant_badge":
+                    text_bg = text_widget.cget("background")
+                    scale = self._ui_scale()
+                    badge_photo = None
+                    if ccv2 is not None:
+                        badge_photo = self._v2_photo(
+                            ("instant_badge", round(scale, 2)),
+                            lambda: ccv2.instant_badge(
+                                self._v2_palette(), scale))
+                    holder = tk.Frame(
+                        text_widget, bg=text_bg, bd=0, highlightthickness=0)
+                    spacer_width = max(6, int(round(7 * scale)))
+                    tk.Frame(
+                        holder, width=spacer_width, height=1, bg=text_bg, bd=0,
+                        highlightthickness=0).pack(side="left")
+                    if badge_photo is not None:
+                        badge = tk.Label(
+                            holder, image=badge_photo, bg=text_bg,
+                            bd=0, highlightthickness=0, padx=0, pady=0)
+                        badge.image = badge_photo
+                    else:
+                        badge = tk.Label(
+                            holder, text="\u26a1", bg=text_bg,
+                            fg=self.theme["accent"],
+                            font=("Segoe UI Symbol", max(
+                                8, int(self.cfg[CFG.FONT_SIZE]) - 1), "bold"),
+                            bd=1, relief="solid", padx=2, pady=0)
+                    badge.pack(side="left")
+                    tk.Frame(
+                        holder, width=spacer_width,
+                        height=1, bg=text_bg, bd=0,
+                        highlightthickness=0).pack(side="left")
+                    holder._badge_icon = badge
+                    text_widget.window_create(
+                        "end", window=holder, align="center")
+                    self._make_tooltip(
+                        badge, i18n.get("result.instant_dictionary"))
+                    text_widget._rich_badges.append(holder)
+                elif tag == "rich_sources_button":
+                    details = decode_source_details(chunk)
+                    if not details:
+                        continue
+                    labels = []
+                    for source in details:
+                        label = source["label"]
+                        if source["version"]:
+                            label += " " + source["version"]
+                        if label not in labels:
+                            labels.append(label)
+                    text_widget._source_copy_text = (
+                        "Sources / 来源: " + "; ".join(labels))
+                    text_bg = text_widget.cget("background")
+                    button = tk.Button(
+                        text_widget, text=i18n.get("result.sources_and_licenses"),
+                        command=lambda: self._show_dictionary_sources_menu(
+                            button, details),
+                        bg=text_bg, fg=self.theme["popup_hint"],
+                        activebackground=text_bg,
+                        activeforeground=self.theme["accent"],
+                        relief="flat", bd=0, highlightthickness=0,
+                        font=("Microsoft YaHei UI", 9), cursor="hand2",
+                        padx=0, pady=0)
+                    text_widget.window_create(
+                        "end", window=button, align="center")
+                    text_widget._rich_badges.append(button)
+                elif tag == "rich_more_senses":
+                    hidden_count = decode_more_senses(chunk)
+                    expanded_text = decode_more_senses_text(chunk)
+                    if not hidden_count:
+                        continue
+                    text_widget._dictionary_expanded_text = expanded_text
+                    text_bg = text_widget.cget("background")
+                    button = tk.Button(
+                        text_widget,
+                        text=i18n.get("result.show_more_senses").format(
+                            count=hidden_count),
+                        command=lambda text=expanded_text:
+                            self._expand_local_dictionary_senses(text),
+                        bg=text_bg, fg=self.theme["popup_hint"],
+                        activebackground=text_bg,
+                        activeforeground=self.theme["accent"],
+                        relief="flat", bd=0, highlightthickness=0,
+                        font=("Microsoft YaHei UI", 9), cursor="hand2",
+                        padx=0, pady=0)
+                    text_widget.window_create(
+                        "end", window=button, align="center")
+                    text_widget._rich_badges.append(button)
+                elif tag:
                     text_widget.insert("end", chunk, tag)
                 else:
                     text_widget.insert("end", chunk)
@@ -2113,7 +2242,35 @@ class PopupMixin:
 
     def _copy_result(self):
         if self.popup and getattr(self.popup, "_text", None):
-            content = self.popup._text.get("1.0", "end-1c")
+            text_widget = self.popup._text
+            expanded = getattr(
+                text_widget, "_dictionary_expanded_text", "")
+            if expanded:
+                supplement = getattr(
+                    self.popup, "_dictionary_ai_supplement", "")
+                if not supplement:
+                    raw = getattr(text_widget, "_raw_message", "")
+                    divider = i18n.get("result.section_divider").format(
+                        label=i18n.get("result.ai_supplement"))
+                    if divider in raw:
+                        supplement = raw.split(divider, 1)[1].strip()
+                raw_copy = expanded
+                if supplement:
+                    raw_copy += i18n.get("result.section_divider").format(
+                        label=i18n.get("result.ai_supplement")) + supplement
+                content = "".join(
+                    chunk for chunk, tag in iter_rich_segments(raw_copy)
+                    if tag not in {
+                        "rich_instant_badge", "rich_sources_button",
+                        "rich_more_senses",
+                    }
+                ).strip()
+            else:
+                content = text_widget.get("1.0", "end-1c")
+            source_text = getattr(
+                text_widget, "_source_copy_text", "")
+            if source_text:
+                content = content.rstrip() + "\n\n" + source_text
             setter = getattr(self.popup, "_copy_set", None)
             if setter is None:
                 setter = lambda label: self.popup._copy_btn.config(text=label)
@@ -2131,6 +2288,114 @@ class PopupMixin:
                     lambda: self.popup and getattr(self.popup, "_copy_set",
                         lambda l: self.popup._copy_btn.config(text=l))(
                             i18n.get("result.copy")))
+
+    def _show_dictionary_sources_menu(self, anchor, details):
+        existing = getattr(anchor, "_sources_card", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.destroy()
+                    return
+            except tk.TclError:
+                pass
+
+        fill, border, fg, radius = self._tooltip_colors()
+        card = tk.Toplevel(anchor)
+        card.withdraw()
+        card.overrideredirect(True)
+        card.attributes("-topmost", True)
+        card.configure(bg=ROUND_KEY_COLOR)
+        try:
+            card.wm_attributes("-transparentcolor", ROUND_KEY_COLOR)
+        except tk.TclError:
+            pass
+        canvas = tk.Canvas(
+            card, bg=ROUND_KEY_COLOR, bd=0, highlightthickness=0,
+            takefocus=0)
+        canvas.pack(fill="both", expand=True)
+        body = tk.Frame(canvas, bg=fill, bd=0, highlightthickness=0)
+        tk.Label(
+            body, text=i18n.get("result.sources_title"),
+            bg=fill, fg=fg, anchor="w",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(fill="x", pady=(0, 8))
+        for index, source in enumerate(details):
+            if index:
+                tk.Frame(
+                    body, bg=border, height=1, bd=0,
+                    highlightthickness=0).pack(fill="x", pady=8)
+            label = source["label"]
+            if source["version"]:
+                label += " " + source["version"]
+            tk.Label(
+                body, text=label, bg=fill, fg=fg, anchor="w",
+                justify="left", font=("Microsoft YaHei UI", 9, "bold"),
+            ).pack(fill="x")
+            if source["license"]:
+                tk.Label(
+                    body, text=source["license"], bg=fill,
+                    fg=self.theme["popup_hint"], anchor="w", justify="left",
+                    wraplength=320, font=("Microsoft YaHei UI", 9),
+                ).pack(fill="x", pady=(2, 0))
+
+        def open_notices():
+            card.destroy()
+            self._open_third_party_notices()
+
+        notices = self._pill_button(
+            body, i18n.get("about.third_party_notices"), open_notices,
+            bg=fill, fg=self.theme["accent"],
+            hover_bg=self.theme["btn_active"], hover_fg=fg,
+            font=("Microsoft YaHei UI", 9), padx=0, pady=4)
+        notices.pack(fill="x", pady=(10, 0))
+        body.update_idletasks()
+        width = max(280, min(360, body.winfo_reqwidth() + 28))
+        height = body.winfo_reqheight() + 24
+        canvas.configure(width=width, height=height)
+        _draw_round_rect(
+            canvas, 0, 0, width, height, radius,
+            fill=border, outline=border, tags="source_card")
+        _draw_round_rect(
+            canvas, 1, 1, width - 1, height - 1, radius,
+            fill=fill, outline=fill, tags="source_card")
+        canvas.create_window(
+            14, 12, anchor="nw", window=body, width=width - 28)
+        canvas.tag_lower("source_card")
+
+        anchor_x = anchor.winfo_rootx()
+        anchor_y = anchor.winfo_rooty()
+        monitor = get_monitor_rect((anchor_x, anchor_y))
+        if monitor is None:
+            monitor = (
+                0, 0, anchor.winfo_screenwidth(), anchor.winfo_screenheight())
+        x, y = _source_card_position(
+            (anchor_x, anchor_y, anchor.winfo_width(), anchor.winfo_height()),
+            (width, height),
+            monitor,
+        )
+        card.geometry("%dx%d+%d+%d" % (width, height, x, y))
+        card.bind("<Escape>", lambda _event: card.destroy())
+
+        def close_after_focus_loss(_event):
+            def close_if_outside():
+                try:
+                    focused = card.focus_get()
+                    if focused is None or not str(focused).startswith(str(card)):
+                        card.destroy()
+                except tk.TclError:
+                    pass
+            card.after(40, close_if_outside)
+
+        card.bind("<FocusOut>", close_after_focus_loss)
+        anchor._sources_card = card
+        card._source_labels = [
+            child for child in body.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        card._notices_button = notices
+        card.deiconify()
+        card.lift()
+        card.focus_force()
 
     def _set_popup_text(self, message, resize=True, stream_grow=False,
                         stream_final=False, append=False):

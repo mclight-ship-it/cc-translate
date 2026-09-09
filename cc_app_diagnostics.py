@@ -299,6 +299,44 @@ class DiagnosticsMixin:
             "login": login,
             "claude_cli": claude_cli,
             "selected_provider": selected_provider,
+            "local_dictionary": {
+                "enabled": bool(self.cfg.get(
+                    CFG.LOCAL_DICTIONARY_ENABLED,
+                    DEFAULT_CONFIG[CFG.LOCAL_DICTIONARY_ENABLED])),
+                "available": bool(getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None) and self._local_dictionary.status.available),
+                "schema_version": getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None).schema_version if getattr(
+                        getattr(self, "_local_dictionary", None), "status",
+                        None) else "",
+                "data_version": getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None).data_version if getattr(
+                        getattr(self, "_local_dictionary", None), "status",
+                        None) else "",
+                "entries": getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None).entry_count if getattr(
+                        getattr(self, "_local_dictionary", None), "status",
+                        None) else 0,
+                "path": getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None).path if getattr(
+                        getattr(self, "_local_dictionary", None), "status",
+                        None) else "",
+                "error": getattr(
+                    getattr(self, "_local_dictionary", None), "status",
+                    None).error if getattr(
+                        getattr(self, "_local_dictionary", None), "status",
+                        None) else i18n.get("diagnostics.dictionary.not_initialized"),
+                "metrics": (
+                    self._dictionary_metrics.snapshot()
+                    if getattr(self, "_dictionary_metrics", None) is not None
+                    else {}
+                ),
+            },
             "powershell_policy": ps_policy,
             "endpoint_probe": endpoint_probe,
             "app_model": app_model,
@@ -366,6 +404,48 @@ class DiagnosticsMixin:
             f"- {i18n.get('diagnostics.custom_model')}: "
             f"{provider.get('model') or snapshot['app_model'] or i18n.get('diagnostics.model_not_set')}",
         ]
+        dictionary = snapshot.get("local_dictionary", {})
+        if dictionary.get("available"):
+            dictionary_status = i18n.get(
+                "diagnostics.dictionary.ready").format(
+                    version=dictionary.get("data_version", ""),
+                    entries=dictionary.get("entries", 0))
+        else:
+            dictionary_status = i18n.get(
+                "diagnostics.dictionary.unavailable").format(
+                    error=dictionary.get("error")
+                    or i18n.get("diagnostics.unknown"))
+        lines.extend([
+            f"- {i18n.get('diagnostics.dictionary.enabled')}: "
+            f"{i18n.get('diagnostics.yes') if dictionary.get('enabled') else i18n.get('diagnostics.no')}",
+            f"- {i18n.get('diagnostics.dictionary.status')}: "
+            f"{dictionary_status}",
+            f"- {i18n.get('diagnostics.dictionary.path')}: "
+            f"{dictionary.get('path') or i18n.get('diagnostics.unknown')}",
+        ])
+        metrics = dictionary.get("metrics") or {}
+        if metrics.get("attempts"):
+            lines.append(
+                f"- {i18n.get('diagnostics.dictionary.metrics')}: "
+                + i18n.get("diagnostics.dictionary.metrics_value").format(
+                    attempts=metrics["attempts"],
+                    hit_rate=metrics["hit_rate"],
+                    p50=metrics["p50_ms"],
+                    p95=metrics["p95_ms"],
+                ))
+        else:
+            lines.append(
+                f"- {i18n.get('diagnostics.dictionary.metrics')}: "
+                f"{i18n.get('diagnostics.dictionary.metrics_empty')}")
+        outcomes = metrics.get("outcomes") or {}
+        lines.append(
+            f"- {i18n.get('diagnostics.dictionary.fallbacks')}: "
+            + i18n.get("diagnostics.dictionary.fallbacks_value").format(
+                miss=outcomes.get("miss", 0),
+                weak=outcomes.get("weak", 0),
+                error=outcomes.get("error", 0),
+                disabled=outcomes.get("disabled", 0),
+            ))
         provider_status = provider.get("status")
         if is_codex and provider_status is not None:
             login_text = (

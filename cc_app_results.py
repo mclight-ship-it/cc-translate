@@ -16,6 +16,7 @@ Imports only leaf modules (cc_core / i18n / pyperclip / stdlib), never translato
 so there is no import cycle.
 """
 
+import html
 import threading
 import tkinter as tk
 
@@ -23,9 +24,13 @@ import pyperclip
 import i18n
 from cc_core import (
     DIRECTION_MODES, LANGUAGES,
-    SYSTEM_SUFFIX, CODE_EXPLAIN_APPEND_PROMPT, RESULT_ACTION_PROMPTS,
+    SYSTEM_SUFFIX, DICTIONARY_SUPPLEMENT_PROMPT,
+    DICTIONARY_SUPPLEMENT_REVISION, CODE_EXPLAIN_APPEND_PROMPT,
+    RESULT_ACTION_PROMPTS,
     is_single_word, log_error,
 )
+from cc_dictionary_cache import DictionaryAiCacheError
+from cc_dictionary_format import format_dictionary_result
 
 # Optional v2 renderer (needs Pillow). Guarded so a missing Pillow never breaks
 # the result actions; every v2 path also gates on getattr(win, "_v2", False).
@@ -101,6 +106,168 @@ class ResultActionsMixin:
             win._has_as_text_btn = True
         except Exception:
             pass
+
+    def _maybe_add_ai_dictionary_button(self, win):
+        if not getattr(self, "_last_dictionary_local", False):
+            return
+        if not win or getattr(win, "_has_ai_dictionary_btn", False):
+            return
+        bar = getattr(win, "_btn_bar", None)
+        mk = getattr(win, "_mk_bar_btn", None)
+        if bar is None or mk is None:
+            return
+        try:
+            btn = mk(
+                i18n.get("result.query_ai"), self._query_dictionary_with_ai)
+            btn.pack(side="right", padx=(0, 4))
+            win._ai_dictionary_btn = btn
+            win._has_ai_dictionary_btn = True
+        except Exception:
+            return
+
+    def _query_dictionary_with_ai(self):
+        src = self._last_input
+        if not src:
+            return
+        self._show_loading(
+            src, origin=self._last_origin, use_cache=False, force_ai=True)
+
+    def _start_ai_dictionary_supplement(
+            self, src, job_id, cached_result=None, base_result=None):
+        """Append AI detail asynchronously after an instant local first paint."""
+        if not src or not self._job_is_current(job_id):
+            return
+        win = self.popup
+        if not win or not getattr(win, "_text", None):
+            return
+        base = base_result or self._current_popup_text()
+        if not base:
+            return
+        win._dictionary_base_result = base
+        win._dictionary_supplement_pending = False
+        win._dictionary_ai_supplement = ""
+        if cached_result:
+            self._apply_ai_dictionary_supplement(
+                True, cached_result, job_id, win, base)
+            return
+
+        pending = base + "\n\n*" + i18n.get(
+            "result.ai_supplement_loading") + "*"
+        win._dictionary_supplement_pending = True
+        if getattr(win._text, "_rich", False):
+            win._text._rich_highlight = True
+        self._set_popup_text(pending, resize=True, append=True)
+
+        selection = self._provider_selection()
+        cache_signature = self._ai_dictionary_supplement_signature()
+        cancel_event = getattr(self, "_provider_cancel_event", None)
+        threading.Thread(
+            target=self._do_ai_dictionary_supplement,
+            args=(src, job_id, win, base, selection, cancel_event,
+                  cache_signature),
+            daemon=True,
+        ).start()
+
+    def _do_ai_dictionary_supplement(
+            self, src, job_id, expected_win, base, selection, cancel_event,
+            cache_signature):
+        payload = (
+            "<query>%s</query>\n<local_result>%s</local_result>" % (
+                html.escape(src), html.escape(base))
+        )
+        try:
+            ok, result = self._call_model(
+                payload, DICTIONARY_SUPPLEMENT_PROMPT,
+                selection, cancel_event)
+        except Exception as exc:
+            log_error("ai_dictionary_supplement", exc)
+            ok, result = False, ""
+        if cancel_event is not None and cancel_event.is_set():
+            return
+        if ok and (result or "").strip():
+            self._store_ai_dictionary_supplement(
+                src, cache_signature, result)
+        self.root.after(
+            0, lambda: self._apply_ai_dictionary_supplement(
+                ok, result, job_id, expected_win, base))
+
+    def _ai_dictionary_supplement_signature(self):
+        return "%s|%s" % (
+            self._cache_signature(route="ai"),
+            DICTIONARY_SUPPLEMENT_REVISION,
+        )
+
+    def _get_ai_dictionary_supplement(self, src):
+        try:
+            return self._dictionary_ai_cache.get(
+                src, self._ai_dictionary_supplement_signature())
+        except DictionaryAiCacheError as exc:
+            log_error("read_ai_dictionary_cache", exc)
+            return None
+
+    def _store_ai_dictionary_supplement(
+            self, src, signature, result):
+        try:
+            self._dictionary_ai_cache.put(src, signature, result)
+        except DictionaryAiCacheError as exc:
+            log_error("write_ai_dictionary_cache", exc)
+
+    def _apply_ai_dictionary_supplement(
+            self, ok, result, job_id, expected_win, base):
+        if not self._job_is_current(job_id):
+            return
+        current_base = getattr(expected_win, "_dictionary_base_result", base)
+        if isinstance(current_base, str) and current_base:
+            base = current_base
+        expected_win._dictionary_supplement_pending = False
+        if not ok or not (result or "").strip():
+            expected_win._dictionary_ai_supplement = ""
+            if self.popup is expected_win and getattr(
+                    expected_win, "_text", None):
+                self._set_popup_text(base, resize=True, append=True)
+            self._remember_result(True, self._result_title(True), base)
+            return
+        divider = i18n.get("result.section_divider").format(
+            label=i18n.get("result.ai_supplement"))
+        addition = (result or "").strip()
+        expected_win._dictionary_ai_supplement = addition
+        combined = base + divider + addition
+        if self.popup is expected_win and getattr(expected_win, "_text", None):
+            if getattr(expected_win._text, "_rich", False):
+                expected_win._text._rich_highlight = True
+            self._set_popup_text(combined, resize=True, append=True)
+        self._remember_result(True, self._result_title(True), combined)
+
+    def _expand_local_dictionary_senses(self, expanded_base=""):
+        result = getattr(self, "_last_local_dictionary_result", None)
+        win = self.popup
+        if not win or not getattr(win, "_text", None):
+            return
+        if expanded_base:
+            base = expanded_base
+        elif result is not None:
+            base = format_dictionary_result(result, expanded=True)
+        else:
+            return
+        win._dictionary_base_result = base
+        supplement = getattr(win, "_dictionary_ai_supplement", "")
+        if not supplement:
+            raw = getattr(win._text, "_raw_message", "")
+            divider = i18n.get("result.section_divider").format(
+                label=i18n.get("result.ai_supplement"))
+            if divider in raw:
+                supplement = raw.split(divider, 1)[1].strip()
+        if supplement:
+            divider = i18n.get("result.section_divider").format(
+                label=i18n.get("result.ai_supplement"))
+            combined = base + divider + supplement
+        elif getattr(win, "_dictionary_supplement_pending", False):
+            combined = base + "\n\n*" + i18n.get(
+                "result.ai_supplement_loading") + "*"
+        else:
+            combined = base
+        self._set_popup_text(combined, resize=True, append=True)
+        self._remember_result(True, self._result_title(True), combined)
 
     def _translate_as_text(self):
         """Re-translate the current input as plain text, overriding the code

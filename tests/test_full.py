@@ -30,6 +30,7 @@ import unittest.mock
 from datetime import datetime
 
 from tests._tr import tr
+import cc_app_about
 
 
 # ============================================================
@@ -110,6 +111,7 @@ class TestCFGConstants(unittest.TestCase):
         "PLAIN_TEXT_PASTE_ENABLED",
         "AUTOSTART_INITIALIZED",
         "SUMMARY_ENABLED",
+        "LOCAL_DICTIONARY_ENABLED",
         "LABS_DEFAULTS_MIGRATED",
         "TRAY_CLICK_ACTION",
         "UI_V2",
@@ -153,7 +155,7 @@ class TestCFGConstants(unittest.TestCase):
         self.assertIsInstance(dc[tr.CFG.HISTORY_ENABLED], bool)
         self.assertIsInstance(dc[tr.CFG.AUTO_UPDATE_ENABLED], bool)
 
-    def test_release_defaults_enable_beta_features_and_font_10(self):
+    def test_release_defaults_enable_beta_features_and_font_12(self):
         self.assertIs(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
         self.assertIs(
@@ -164,7 +166,9 @@ class TestCFGConstants(unittest.TestCase):
             tr.DEFAULT_CONFIG[tr.CFG.PLAIN_TEXT_PASTE_ENABLED], False)
         self.assertEqual(
             tr.DEFAULT_CONFIG[tr.CFG.CODEX_MODEL], "auto-fast")
-        self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 10)
+        self.assertEqual(tr.DEFAULT_CONFIG[tr.CFG.FONT_SIZE], 12)
+        self.assertIs(
+            tr.DEFAULT_CONFIG[tr.CFG.LOCAL_DICTIONARY_ENABLED], False)
         self.assertIs(tr.DEFAULT_CONFIG[tr.CFG.UI_V2], True)
 
 
@@ -309,7 +313,7 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cfg[tr.CFG.THEME], "dark")
         self.assertEqual(cfg[tr.CFG.MODEL], tr.DEFAULT_CONFIG[tr.CFG.MODEL])
         self.assertIs(cfg[tr.CFG.CODEX_STREAMING_EXPERIMENTAL], True)
-        self.assertEqual(cfg[tr.CFG.FONT_SIZE], 10)
+        self.assertEqual(cfg[tr.CFG.FONT_SIZE], 12)
         self.assertEqual(cfg[tr.CFG.MODEL_PROVIDER], "codex_cli")
 
     def test_removed_streaming_opt_out_migrates_on_load(self):
@@ -2567,8 +2571,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_4_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 21)
-        self.assertTrue(tr.version_string().startswith("4.21."))
+        self.assertEqual(cc_update.VERSION_MINOR, 22)
+        self.assertTrue(tr.version_string().startswith("4.22."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3236,6 +3240,24 @@ class TestDiagnosticsHelpers(unittest.TestCase):
                 },
             },
             "app_model": "gpt-5.4-mini",
+            "local_dictionary": {
+                "enabled": True,
+                "available": True,
+                "data_version": "fixture-data-1",
+                "entries": 123,
+                "path": r"C:\app\data\dictionary.sqlite3",
+                "error": "",
+                "metrics": {
+                    "attempts": 10,
+                    "hit_rate": 70.0,
+                    "p50_ms": 0.4,
+                    "p95_ms": 1.2,
+                    "outcomes": {
+                        "hit": 7, "miss": 2, "weak": 1,
+                        "error": 0, "disabled": 3,
+                    },
+                },
+            },
             "claude_cli": {
                 "version": "claude test",
                 "resolved": r"C:\claude.exe",
@@ -3267,6 +3289,12 @@ class TestDiagnosticsHelpers(unittest.TestCase):
         self.assertIn("auto: 2", report)
         self.assertIn("3/200", report)
         self.assertIn("700 ms", report)
+        self.assertIn("fixture-data-1", report)
+        self.assertIn("123", report)
+        self.assertIn(r"C:\app\data\dictionary.sqlite3", report)
+        self.assertIn("70.0%", report)
+        self.assertIn("P95 1.20 ms", report)
+        self.assertIn("2", report)
         self.assertNotIn("CLAUDE_CMD", report)
         self.assertNotIn("ANTHROPIC_API_KEY", report)
         self.assertNotIn("Claude routing", report)
@@ -3432,6 +3460,25 @@ class TestUiSmoke(unittest.TestCase):
         return app
 
     @staticmethod
+    def _widget_texts(widget):
+        texts = []
+        for child in widget.winfo_children():
+            try:
+                text = child.cget("text")
+                if text:
+                    texts.append(str(text))
+            except (tr.tk.TclError, AttributeError):
+                pass
+            texts.extend(TestUiSmoke._widget_texts(child))
+        return texts
+
+    @staticmethod
+    def _walk_widgets(widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from TestUiSmoke._walk_widgets(child)
+
+    @staticmethod
     def _safe_destroy(app):
         """Destroy the dialog windows this app built and release any images it
         cached, but leave the shared Tk root alive (it is torn down once in
@@ -3467,6 +3514,104 @@ class TestUiSmoke(unittest.TestCase):
         self.assertTrue(app.settings_win is not None
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
+
+    def test_settings_shows_optional_dictionary_download(self):
+        app = self._build("_open_settings")
+        texts = self._widget_texts(app.settings_win)
+        self.assertIn(
+            tr.i18n.get("settings.label.local_dictionary"), texts)
+        self.assertNotIn(
+            tr.i18n.get("settings.dictionary.not_installed").format(size=65),
+            texts)
+        self.assertIn(tr.i18n.get("settings.dictionary.download"), texts)
+
+    def test_labs_beta_badge_is_only_on_section_heading(self):
+        app = self._build("_open_settings")
+        texts = self._widget_texts(app.settings_win)
+        beta_texts = [text for text in texts if "Beta" in text]
+        self.assertEqual(
+            beta_texts, [tr.i18n.get("settings.label.labs_section")])
+
+    def test_offline_dictionary_is_in_translation_section(self):
+        app = self._build("_open_settings")
+        widgets = list(self._walk_widgets(app.settings_win))
+
+        def label(text):
+            return next(
+                widget for widget in widgets
+                if isinstance(widget, tr.tk.Label)
+                and widget.cget("text") == text)
+
+        translation = label(tr.i18n.get("settings.label.translate_section"))
+        screenshot = label(tr.i18n.get("settings.label.screenshot_section"))
+        max_chars = label(tr.i18n.get("settings.label.max_chars"))
+        dictionary = label(tr.i18n.get("settings.label.local_dictionary"))
+        layout_parent = translation.master.master
+        dictionary_container = dictionary.master
+        while dictionary_container.master is not layout_parent:
+            dictionary_container = dictionary_container.master
+        translation_row = int(translation.master.grid_info()["row"])
+        screenshot_row = int(screenshot.master.grid_info()["row"])
+        max_chars_row = int(max_chars.grid_info()["row"])
+        dictionary_row = int(dictionary_container.grid_info()["row"])
+        self.assertGreater(dictionary_row, translation_row)
+        self.assertGreater(dictionary_row, max_chars_row)
+        self.assertLess(dictionary_row, screenshot_row)
+
+    def test_settings_can_delete_installed_dictionary_data(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        available = types.SimpleNamespace(available=True)
+        unavailable = types.SimpleNamespace(available=False)
+        app._local_dictionary = types.SimpleNamespace(
+            status=available, close_thread=unittest.mock.Mock())
+        app._dictionary_artifact = unittest.mock.Mock(
+            path=os.path.join(tempfile.gettempdir(), "missing-dictionary"))
+        app._save_config = unittest.mock.Mock()
+
+        def reload_dictionary():
+            app._local_dictionary = types.SimpleNamespace(
+                status=unavailable, close_thread=unittest.mock.Mock())
+            return unavailable
+
+        app._reload_local_dictionary = reload_dictionary
+        app._open_settings()
+        app.settings_win._dictionary_action_button.invoke()
+        manager_win = app.settings_win._dictionary_manager_win
+        manager_texts = self._widget_texts(manager_win)
+        self.assertTrue(manager_win.overrideredirect())
+        self.assertIn(tr.i18n.get("settings.label.close"), manager_texts)
+        self.assertEqual([
+            widget.cget("text")
+            for widget in self._walk_widgets(manager_win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get("settings.label.close")
+        ], [tr.i18n.get("settings.label.close")])
+        delete_button = next(
+            widget for widget in self._walk_widgets(manager_win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get(
+                "settings.dictionary.delete"))
+        repair_button = next(
+            widget for widget in self._walk_widgets(manager_win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get(
+                "settings.dictionary.repair"))
+        manager_win.update_idletasks()
+        self.assertEqual(
+            repair_button.winfo_width(), delete_button.winfo_width())
+        self.assertEqual(repair_button.grid_info()["column"], 0)
+        self.assertEqual(delete_button.grid_info()["column"], 1)
+        self.assertEqual(repair_button.grid_info()["sticky"], "w")
+        self.assertEqual(delete_button.grid_info()["sticky"], "e")
+        with unittest.mock.patch(
+                "cc_app_settings.messagebox.askyesno", return_value=True):
+            delete_button.invoke()
+
+        app._dictionary_artifact.delete.assert_called_once_with()
+        self.assertIs(
+            app.cfg[tr.CFG.LOCAL_DICTIONARY_ENABLED], False)
+        app._save_config.assert_called_once_with(app.cfg)
 
     def test_legacy_settings_restore_defaults_restores_ui_v2(self):
         app = _make_headless_app()
@@ -3520,6 +3665,39 @@ class TestUiSmoke(unittest.TestCase):
         self.assertGreaterEqual(app.settings_win.winfo_x(), 0)
         self.assertGreaterEqual(app.settings_win.winfo_y(), 0)
 
+    def test_settings_footer_remains_visible_at_1006_by_768(self):
+        with unittest.mock.patch(
+                "cc_app_settings.get_monitor_rect",
+                return_value=(0, 0, 1006, 768)):
+            app = self._build("_open_settings")
+        win = app.settings_win
+        win.update_idletasks()
+        save = next(
+            widget for widget in self._walk_widgets(win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get("ui.save"))
+        self.assertLessEqual(
+            save.winfo_rooty() + save.winfo_height(),
+            win.winfo_rooty() + win.winfo_height() - 8)
+
+    def test_settings_section_titles_are_larger_than_field_labels(self):
+        app = self._build("_open_settings")
+        widgets = list(self._walk_widgets(app.settings_win))
+        section = next(
+            widget for widget in widgets
+            if isinstance(widget, tr.tk.Label)
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.translate_section"))
+        field = next(
+            widget for widget in widgets
+            if isinstance(widget, tr.tk.Label)
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.model_provider"))
+        section_font = tr.tkfont.Font(root=app.root, font=section.cget("font"))
+        field_font = tr.tkfont.Font(root=app.root, font=field.cget("font"))
+        self.assertGreater(
+            abs(section_font.cget("size")), abs(field_font.cget("size")))
+
     def test_settings_comboboxes_share_width_and_fit_english_labels(self):
         # Every settings dropdown must line up: they should all declare the same
         # width, while retaining enough text space for the longest locale value.
@@ -3572,6 +3750,131 @@ class TestUiSmoke(unittest.TestCase):
             self.assertLessEqual(
                 app.settings_win.winfo_x() + app.settings_win.winfo_width(),
                 right)
+
+    def test_settings_value_controls_have_one_rendered_width(self):
+        app = self._build("_open_settings")
+        app.settings_win.update_idletasks()
+        controls = [
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, (tr.ttk.Combobox, tr.ttk.Spinbox))
+        ]
+        self.assertGreater(len(controls), 5)
+        rendered_widths = {widget.winfo_width() for widget in controls}
+        self.assertEqual(len(rendered_widths), 1, rendered_widths)
+        self.assertGreaterEqual(next(iter(rendered_widths)), 236)
+
+    def test_settings_secondary_actions_match_their_intended_weight(self):
+        app = self._build("_open_settings")
+        app.settings_win.update_idletasks()
+        wanted = {
+            tr.i18n.get("settings.label.check_update_action"),
+            tr.i18n.get("settings.dictionary.download"),
+        }
+        buttons = [
+            widget for widget in self._walk_widgets(app.settings_win)
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") in wanted
+        ]
+        self.assertEqual(
+            {button.cget("text") for button in buttons}, wanted)
+        self.assertEqual({int(button.cget("width")) for button in buttons}, {0})
+        self.assertEqual({button.cget("relief") for button in buttons}, {"flat"})
+        history_label = next(
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, tr.tk.Label)
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.history_section"))
+        self.assertEqual(history_label.cget("cursor"), "")
+        save_history_label = next(
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, tr.tk.Label)
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.history_enabled"))
+        history_button = next(
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, tr.tk.Button)
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.open_history"))
+        self.assertEqual(history_button.cget("cursor"), "hand2")
+        self.assertFalse(history_button.cget("image"))
+        self.assertEqual(history_button.cget("relief"), "flat")
+        self.assertIs(history_button.master, save_history_label.master)
+
+    def test_settings_footer_actions_are_rounded_and_spaced(self):
+        app = self._build("_open_settings")
+        app.settings_win.update_idletasks()
+        labels = {
+            tr.i18n.get("settings.label.uninstall"),
+            tr.i18n.get("settings.label.restore_defaults"),
+            tr.i18n.get("settings.label.cancel"),
+            tr.i18n.get("ui.save"),
+        }
+        buttons = [
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, tr.tk.Button)
+            and widget.cget("text") in labels
+        ]
+        self.assertEqual({button.cget("text") for button in buttons}, labels)
+        self.assertTrue(all(button.cget("image") for button in buttons))
+        by_label = {button.cget("text"): button for button in buttons}
+        self.assertTrue(
+            by_label[tr.i18n.get("settings.label.uninstall")]._chip_ghost)
+        self.assertTrue(
+            by_label[
+                tr.i18n.get("settings.label.restore_defaults")]._chip_ghost)
+        self.assertFalse(
+            by_label[tr.i18n.get("settings.label.cancel")]._chip_ghost)
+        self.assertFalse(
+            by_label[tr.i18n.get("ui.save")]._chip_ghost)
+        self.assertEqual(
+            {button._chip_font_size for button in buttons}, {12})
+        spaced_labels = {
+            tr.i18n.get("settings.label.restore_defaults"),
+            tr.i18n.get("settings.label.cancel"),
+        }
+        for button in buttons:
+            if button.cget("text") in spaced_labels:
+                padx = button.pack_info()["padx"]
+                trailing = int(padx[-1] if isinstance(padx, tuple) else padx)
+                self.assertGreaterEqual(trailing, 12)
+
+    def test_update_action_changes_in_place_when_update_is_available(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        app._begin_update = unittest.mock.Mock()
+        app._open_settings()
+        widgets = list(self._walk_widgets(app.settings_win))
+        update_button = next(
+            widget for widget in widgets
+            if widget.winfo_class() == "Button"
+            and widget.cget("text") == tr.i18n.get(
+                "settings.label.check_update_action"))
+
+        update_button.invoke()
+        self.assertEqual(
+            update_button.cget("text"), tr.i18n.get("update.checking"))
+        self.assertEqual(update_button.cget("state"), "disabled")
+        callback = app._begin_update.call_args.kwargs["on_status"]
+        app._available_update_version = "4.22.999"
+        callback(
+            tr.i18n.get("update.found_version").format(version="4.22.999"),
+            "avail")
+
+        self.assertEqual(
+            update_button.cget("text"),
+            tr.i18n.get("settings.download_update"))
+        self.assertEqual(update_button.cget("state"), "normal")
+        self.assertIn(
+            f"{tr.version_string()}  →  4.22.999",
+            self._widget_texts(app.settings_win))
+
+        update_button.invoke()
+        self.assertEqual(app._begin_update.call_count, 2)
+        self.assertFalse(
+            app._begin_update.call_args.kwargs["check_only"])
+        self.assertEqual(
+            update_button.cget("text"), tr.i18n.get("update.updating"))
+        self.assertEqual(update_button.cget("state"), "disabled")
 
     def test_settings_dropdown_list_has_left_padding(self):
         # The popdown listbox needs a flat background-coloured inset so item text
@@ -3657,6 +3960,29 @@ class TestUiSmoke(unittest.TestCase):
 
     def test_about_window_builds(self):
         self._build("_open_about")
+
+    def test_about_shows_third_party_dictionary_notices(self):
+        app = self._build("_open_about")
+        texts = self._widget_texts(app.about_win)
+        self.assertIn(tr.i18n.get("about.data_licenses"), texts)
+        notices = next(
+            child
+            for child in self._walk_widgets(app.about_win)
+            if child.winfo_class() == "Button"
+            and child.cget("text") == tr.i18n.get("about.data_licenses"))
+        sibling_buttons = [
+            child for child in notices.master.winfo_children()
+            if child.winfo_class() == "Button"
+        ]
+        self.assertEqual(len(sibling_buttons), 4)
+
+    def test_about_opens_bundled_third_party_notices(self):
+        app = _make_headless_app()
+        with unittest.mock.patch.object(
+                cc_app_about.subprocess, "Popen") as popen:
+            app._open_third_party_notices()
+        popen.assert_called_once_with([
+            "notepad.exe", cc_app_about.THIRD_PARTY_NOTICES_PATH])
 
     def test_support_author_window_builds(self):
         self._build("_open_support_author")
@@ -4460,8 +4786,9 @@ class TestUiSmoke(unittest.TestCase):
             "_make_help_icon_image", "_help_badge_diameter",
             "_make_tooltip", "_make_toggle",
             "_make_draggable", "_pill_button", "_rounded_shell",
-            "_settings_field", "_settings_section",
-            "_settings_toggle_row", "_settings_toggle_row_with_action",
+            "_settings_action_button", "_settings_field",
+            "_settings_resource_row", "_settings_section",
+            "_settings_toggle_row",
             "_confirm_and_uninstall",
         ]
         for name in required:

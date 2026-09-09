@@ -4,7 +4,7 @@
 
 > ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：官方 Codex CLI（ChatGPT 登录、API key 或兼容的自定义 provider），或 Claude Code（订阅或兼容本地代理）。默认使用 OpenAI GPT 智能路由。
 
-这是一个由**大语言模型（LLM）驱动**、主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它支持 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider，无需单独的 API key。
+这是一个主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它结合离线本地词典，以及 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider，无需单独的 API key。
 
 ## 界面预览
 
@@ -17,7 +17,7 @@
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-dict.png" alt="词典模式" width="360"><br>
-  <sub><b>词典模式</b>：选中单个单词，返回音标 / 词性 / 释义 / 例句</sub>
+  <sub><b>词典模式</b>：本地精确命中立即显示，未命中自动回退 AI</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-code.png" alt="代码解释模式" width="360"><br>
@@ -53,7 +53,7 @@
 - **截图翻译**：按 `Win+Shift+C` 框选屏幕任意区域，直接翻译图中文字；支持视觉模型或离线本地 OCR
 - **快速输入翻译**：没有选中文字时双击 Ctrl+C，弹出输入框，手动输入要翻译的内容
 - **代码解释模式**：选中的是代码时，不强行翻译，而是用中文解释代码用途；文字与代码混排时正常翻译并保留代码原样
-- **词典模式**：选中单个单词时，返回中英双语词条（音标、词性、释义、例句）
+- **本地加速词典模式**：可在设置中按需一键下载。安装并启用后，中英文短词优先查询当前用户目录中的只读 SQLite。高置信精确匹配、来源明确提供或构建时审核过的英文词形、简繁别名及 Unihan 单字会立即显示，并在词头旁以紧凑的方形闪电徽标标识极速结果；未启用、未安装、弱命中或数据库故障会无缝走原有 AI 词典路径，运行时不做有风险的词干猜测。来源中的数字声调拼音会显示为标准声调符号；中文多音字按读音分组，明确标为冷门或过长的释义后置，长词条首屏显示五条并可原位**展开更多**。本地结果出现后，后台 AI 只补充缺失信息且不延迟首屏；缓存命中直接出现，查询中提示更轻，失败时安静保留完整本地结果。补充结果使用独立、限长的本地缓存，不产生可见历史记录。**重新用 AI 查询**仍保持原有的完整替换查询。本地字段和署名始终以来源为准，不虚构例句、音标或词性。
 - **长文摘要（Beta）**：默认开启；翻译较长的自然语言文本时，先给出一段要点摘要，再展示完整译文，可在「实验室」中关闭
 - **富文本排版**：结果弹窗支持轻量 Markdown，并像代码编辑器一样对代码分色显示；复制出的仍是纯文本
 - **多目标语言**：自动检测中↔英，或固定译成中/英/日/韩/法/德/西
@@ -68,6 +68,38 @@
 - **系统托盘**：左键点击可自定义（默认设置，也可选历史 / 截图翻译 / 快速翻译），右键快速翻译 / 截图翻译 / 历史 / 检查更新 / 暂停 / 退出
 - **自动更新**：app 本身即 `git clone` 部署，可从 GitHub 检查并更新，支持手动「检查更新」与夜间自动更新
 - 可设开机自启
+
+## 离线词典数据与许可证
+
+应用启动时绝不联网下载词典。用户可通过**设置 → 离线词典加速（推荐） →
+下载并启用**，明确下载固定版本、约 65 MB 的 Release 制品。应用会校验精确
+大小、SHA-256、SQLite schema 和数据版本，再原子安装到
+`%APPDATA%\CC Translate\dictionary\cc_dictionary.sqlite3`。设置中既可关闭快速
+路径而保留数据，也可确认后**删除本地数据**；两种操作都不影响 AI 词典模式。
+诊断窗口会显示数据库版本和健康状态。
+诊断窗口还会显示仅限本次运行的聚合命中率、查询 P50/P95 和 AI 回退原因；
+这些指标绝不包含查询文字。
+
+可选词典制品来自固定输入：WikDict eng-zho 2025.11.21（CC BY-SA 3.0）、
+自身文件头明确采用 CC BY-SA 3.0 的 CC-CEDICT 2017-04-28 immutable
+快照、通过 OMW 2.0 提供的 Chinese Open Wordnet / Princeton WordNet
+（分别保留其 WordNet 许可证），以及 Unihan 17.0.0（Unicode License v3）。
+应用代码许可与词典数据许可相互分离。完整署名、上游 URL、SHA-256、修改与
+索引说明、制品 hash 和原始许可证文本可从**关于 → 数据许可**、每条本地结果
+中收纳的圆角**来源与许可**卡片、[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) 与
+[`data/dictionary/licenses/`](data/dictionary/licenses/)。
+
+开发者可用仅依赖标准库的构建器复现数据库：
+
+```powershell
+python tools\build_dictionary.py --cache <source-cache> --download
+```
+
+显式 `--download` 仅供开发构建使用；用户明确执行一次下载后，正常应用查询始终
+离线。构建时会校验所有输入 hash，并为每个 entry 与 sense 分别保留 source ID
+和 provenance。可复现的发行暂存制品为
+`data/dictionary/cc_dictionary.sqlite3`；发布引用它的应用代码前，必须按
+`cc_dictionary_artifact.py` 声明的固定 Release tag 与 asset 名称上传该制品。
 
 ## 运行环境
 

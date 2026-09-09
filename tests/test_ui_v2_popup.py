@@ -16,14 +16,19 @@ import os
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 
 from tests._tr import tr
 import tests.test_full as tf  # reuse its shared-root + headless-app helpers
 import cc_app_ocr
+import cc_app_popup
 import cc_app_settings
+from cc_rich import encode_more_senses, encode_source_details
+from cc_rich import encode_pronunciation
 
 try:
     import cc_ui_v2 as ccv2
@@ -31,6 +36,24 @@ try:
 except Exception:
     ccv2 = None
     _V2_OK = False
+
+
+class TestSourceCardPosition(unittest.TestCase):
+    def test_card_stays_on_negative_coordinate_secondary_monitor(self):
+        position = cc_app_popup._source_card_position(
+            (-1500, 400, 120, 20),
+            (320, 240),
+            (-1920, 0, 0, 1040),
+        )
+        self.assertEqual(position, (-1500, 426))
+
+    def test_card_flips_above_anchor_near_monitor_bottom(self):
+        position = cc_app_popup._source_card_position(
+            (2100, 980, 120, 24),
+            (320, 240),
+            (1920, 0, 3840, 1040),
+        )
+        self.assertEqual(position, (2100, 734))
 
 
 @unittest.skipUnless(_V2_OK, "cc_ui_v2 renderer (Pillow) unavailable")
@@ -126,6 +149,107 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertGreaterEqual(
             len(image_labels), 2,
             "v2 header should show the app logo + gradient title as images")
+
+    def test_local_dictionary_word_has_inline_lightning_badge(self):
+        app = self._app(v2=True)
+        win = app._make_popup("## 本地释义 [[cc-instant]]")
+        app.popup = win
+        self._kill_later(win)
+        holders = getattr(win._text, "_rich_badges", ())
+        self.assertEqual(len(holders), 1)
+        badge = holders[0]._badge_icon
+        self.assertTrue(badge.cget("image"))
+        self.assertEqual(badge.winfo_reqwidth(), badge.winfo_reqheight())
+        self.assertGreater(holders[0].winfo_reqwidth(), badge.winfo_reqwidth())
+        self.assertEqual(win._text.get("1.0", "end-1c"), "本地释义")
+
+    def test_regular_result_has_no_inline_lightning_badge(self):
+        app = self._app(v2=True)
+        win = app._make_popup("AI 结果")
+        app.popup = win
+        self._kill_later(win)
+        self.assertEqual(getattr(win._text, "_rich_badges", ()), [])
+
+    def test_dictionary_pronunciation_is_colored_upright_text(self):
+        app = self._app(v2=True)
+        win = app._make_popup(encode_pronunciation("Zhōng guó"))
+        app.popup = win
+        self._kill_later(win)
+        font = tkfont.Font(
+            root=win,
+            font=win._text.tag_cget("rich_pronunciation", "font"))
+        self.assertEqual(font.actual("slant"), "roman")
+        self.assertEqual(
+            win._text.tag_cget("rich_pronunciation", "foreground"),
+            app.theme["popup_hint"])
+
+    def test_dictionary_bullets_are_neutral_normal_weight(self):
+        app = self._app(v2=True)
+        win = app._make_popup("- definition")
+        app.popup = win
+        self._kill_later(win)
+        font = tkfont.Font(
+            root=win, font=win._text.tag_cget("rich_bullet", "font"))
+        self.assertEqual(font.actual("weight"), "normal")
+        self.assertEqual(
+            win._text.tag_cget("rich_bullet", "foreground"),
+            app.theme["fg"])
+
+    def test_dictionary_sources_are_collapsed_but_preserved_for_copy(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        win = app._make_popup(encode_source_details(details))
+        app.popup = win
+        self._kill_later(win)
+        button = win._text._rich_badges[0]
+        self.assertIn("Fixture source 1", win._text._source_copy_text)
+        app._copy_text_content = mock.Mock(return_value=True)
+        app._copy_result()
+        copied = app._copy_text_content.call_args.args[0]
+        self.assertIn("Sources / 来源: Fixture source 1", copied)
+        app._show_dictionary_sources_menu(button, details)
+        card = button._sources_card
+        labels = [label.cget("text") for label in card._source_labels]
+        self.assertIn(tr.i18n.get("result.sources_title"), labels)
+        self.assertNotIn("result.sources_title", labels)
+        self.assertIn("Fixture source 1", labels)
+        self.assertIn("Test license", labels)
+        self.assertEqual(
+            card._notices_button.cget("text"),
+            tr.i18n.get("about.third_party_notices"))
+        card.destroy()
+
+    def test_more_senses_is_an_embedded_control(self):
+        app = self._app(v2=True)
+        app._expand_local_dictionary_senses = mock.Mock()
+        win = app._make_popup(encode_more_senses(4, "expanded result"))
+        app.popup = win
+        self._kill_later(win)
+        button = win._text._rich_badges[0]
+        self.assertIn("4", button.cget("text"))
+        button.invoke()
+        app._expand_local_dictionary_senses.assert_called_once_with(
+            "expanded result")
+
+    def test_copy_includes_senses_hidden_by_collapsed_view(self):
+        app = self._app(v2=True)
+        expanded = "## word [[cc-instant]]\n- visible\n- hidden"
+        win = app._make_popup(
+            "## word [[cc-instant]]\n- visible\n"
+            + encode_more_senses(1, expanded))
+        app.popup = win
+        self._kill_later(win)
+        app._copy_text_content = mock.Mock(return_value=True)
+
+        app._copy_result()
+
+        copied = app._copy_text_content.call_args.args[0]
+        self.assertIn("visible", copied)
+        self.assertIn("hidden", copied)
+        self.assertNotIn("[[cc-", copied)
 
     def test_error_popup_keeps_plain_title(self):
         # Error popups must stay plain text (never gradient) so a raw error
@@ -435,6 +559,28 @@ class TestV2ResultPopup(unittest.TestCase):
             len(legacy_listboxes), 1,
             "legacy history should still use a Listbox")
 
+    def test_v2_history_collapses_secondary_actions(self):
+        app = self._app(v2=True)
+        app._open_history()
+        win = app.history_win
+        self._kill_later(win)
+
+        def _walk(w):
+            for child in w.winfo_children():
+                yield child
+                yield from _walk(child)
+
+        button_texts = {
+            child.cget("text")
+            for child in _walk(win)
+            if isinstance(child, tk.Button)
+        }
+        self.assertIn(tr.i18n.get("history.copy_result"), button_texts)
+        self.assertIn(tr.i18n.get("history.more"), button_texts)
+        self.assertNotIn(tr.i18n.get("history.copy_bilingual"), button_texts)
+        self.assertNotIn(tr.i18n.get("history.rerun"), button_texts)
+        self.assertNotIn(tr.i18n.get("history.clear"), button_texts)
+
     def test_v2_settings_uses_v2_skin(self):
         app = self._app(v2=True)
         app._open_settings()
@@ -461,6 +607,77 @@ class TestV2ResultPopup(unittest.TestCase):
             c for c in image_btns
             if c.cget("text") == tr.i18n.get("settings.label.close"))
         self.assertNotEqual(close_btn.cget("text"), "result.close")
+
+    def test_v2_settings_only_title_header_is_draggable(self):
+        app = self._app(v2=True)
+        app._open_settings()
+        win = app.settings_win
+        self._kill_later(win)
+
+        def _walk(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from _walk(child)
+
+        win.update()
+        canvas = win._round_canvas
+        start = (win.winfo_x(), win.winfo_y())
+        canvas.event_generate("<Button-1>", x=3, y=win.winfo_height() // 2)
+        canvas.event_generate(
+            "<B1-Motion>", x=23, y=win.winfo_height() // 2 + 12)
+        win.update_idletasks()
+        self.assertEqual((win.winfo_x(), win.winfo_y()), start)
+
+        title = next(
+            child for child in _walk(win)
+            if isinstance(child, tk.Label)
+            and child.cget("text") == tr.i18n.get("settings.title"))
+        title.event_generate("<Button-1>", x=3, y=3)
+        title.event_generate("<B1-Motion>", x=23, y=15)
+        win.update_idletasks()
+        self.assertEqual(
+            (win.winfo_x(), win.winfo_y()),
+            (start[0] + 20, start[1] + 12))
+
+    def test_v2_settings_form_fields_use_rounded_chrome(self):
+        app = self._app(v2=True)
+        app._open_settings()
+        win = app.settings_win
+        self._kill_later(win)
+        style = ttk.Style(app.root)
+        self.assertNotIn(
+            "CC.RoundedField", str(style.layout("CC.TCombobox")))
+        self.assertNotIn(
+            "CC.RoundedField", str(style.layout("CC.TSpinbox")))
+        field_bg = app._settings_form_theme["list_bg"]
+        for style_name in ("CC.TCombobox", "CC.TSpinbox"):
+            self.assertEqual(
+                style.lookup(style_name, "lightcolor", ("focus",)),
+                field_bg)
+            self.assertEqual(
+                style.lookup(style_name, "bordercolor", ("focus",)),
+                field_bg)
+        def _walk(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from _walk(child)
+
+        combos = [child for child in _walk(win)
+                  if isinstance(child, ttk.Combobox)]
+        self.assertTrue(combos)
+        self.assertTrue(all(
+            isinstance(combo._settings_host, tk.Canvas) for combo in combos))
+        self.assertTrue(all(
+            hasattr(combo._settings_host, "_field_photo") for combo in combos))
+        self.assertTrue(all(
+            hasattr(combo, "_settings_dropdown_toggle") for combo in combos))
+        self.assertLessEqual(
+            max(combo._settings_host.winfo_reqheight() for combo in combos), 42)
+        combo = combos[0]
+        combo._settings_dropdown_toggle()
+        self.assertIsNotNone(combo._settings_dropdown_state["win"])
+        combo._settings_dropdown_toggle()
+        self.assertIsNone(combo._settings_dropdown_state["win"])
 
     def test_v2_settings_groups_labs_and_version_actions(self):
         app = self._app(v2=True)
@@ -561,12 +778,6 @@ class TestV2ResultPopup(unittest.TestCase):
             if isinstance(widget, tk.Button)
             and widget.cget("text")
             == tr.i18n.get("settings.label.check_update_action"))
-        version_labels = [
-            child for child in check_button.master.winfo_children()
-            if isinstance(child, tk.Label)
-            and child.cget("text") == tr.version_string()
-        ]
-        self.assertEqual(len(version_labels), 1)
         auto_update_label = next(
             widget for widget in widgets
             if isinstance(widget, tk.Label)
@@ -576,23 +787,25 @@ class TestV2ResultPopup(unittest.TestCase):
             if isinstance(widget, tk.Label)
             and widget.cget("text")
             == tr.i18n.get("settings.label.current_version"))
-        status_label = next(
-            widget for widget in widgets
-            if widget is not current_version_label
-            and isinstance(widget, tk.Label)
-            and widget.master is current_version_label.master
-            and widget.cget("text") == "")
+        version_labels = [
+            child for child in current_version_label.master.winfo_children()
+            if isinstance(child, tk.Label)
+            and child.cget("text") == tr.version_string()
+        ]
+        self.assertEqual(len(version_labels), 1)
         self.assertLess(
             auto_update_label.grid_info()["row"],
-            current_version_label.grid_info()["row"])
+            current_version_label.master.grid_info()["row"])
         self.assertEqual(
-            status_label.grid_info()["row"],
-            current_version_label.grid_info()["row"] + 1)
+            check_button.grid_info()["row"],
+            current_version_label.master.grid_info()["row"])
         app._begin_update = lambda *, check_only, on_status: on_status(
             tr.i18n.get("update.no_update"), "ok")
         app._settings_check()
         win.update_idletasks()
-        self.assertEqual(status_label.cget("text"), tr.i18n.get("update.no_update"))
+        self.assertEqual(
+            check_button.cget("text"), tr.i18n.get("update.no_update"))
+        self.assertEqual(check_button.cget("state"), "disabled")
 
         combo_widths = {
             int(widget.cget("width"))
@@ -636,6 +849,56 @@ class TestV2ResultPopup(unittest.TestCase):
         owner.destroy()
         app.root.update()
         self.assertEqual(set(app.root.winfo_children()) - before, set())
+
+    def test_tooltip_anchors_below_icon_and_clamps_to_its_monitor(self):
+        app = self._app(v2=True)
+        owner = tk.Toplevel(app.root)
+        owner.geometry("200x120+220+160")
+        button = tk.Button(owner, text="?")
+        button.place(x=80, y=30, width=30, height=30)
+        owner.deiconify()
+        owner.update()
+        self._kill_later(owner)
+        before = set(app.root.winfo_children())
+
+        app._make_tooltip(button, "Helpful text", delay_ms=0)
+        with unittest.mock.patch(
+                "cc_app_popup.get_monitor_rect",
+                return_value=(100, 50, 700, 500)):
+            button.event_generate("<Enter>")
+            app.root.update()
+
+        tooltip = (set(app.root.winfo_children()) - before).pop()
+        self.assertGreaterEqual(
+            tooltip.winfo_y(),
+            button.winfo_rooty() + button.winfo_height())
+        self.assertGreaterEqual(tooltip.winfo_x(), 104)
+        self.assertLessEqual(
+            tooltip.winfo_x() + tooltip.winfo_width(), 696)
+
+    def test_tooltip_flips_above_near_monitor_bottom(self):
+        app = self._app(v2=True)
+        owner = tk.Toplevel(app.root)
+        owner.geometry("200x120+220+350")
+        button = tk.Button(owner, text="?")
+        button.place(x=80, y=80, width=30, height=30)
+        owner.deiconify()
+        owner.update()
+        self._kill_later(owner)
+        before = set(app.root.winfo_children())
+
+        app._make_tooltip(button, "Helpful text", delay_ms=0)
+        with unittest.mock.patch(
+                "cc_app_popup.get_monitor_rect",
+                return_value=(100, 50, 700, 500)):
+            button.event_generate("<Enter>")
+            app.root.update()
+
+        tooltip = (set(app.root.winfo_children()) - before).pop()
+        self.assertLessEqual(
+            tooltip.winfo_y() + tooltip.winfo_height(),
+            button.winfo_rooty())
+        self.assertGreaterEqual(tooltip.winfo_y(), 54)
 
     def test_v2_settings_flag_off_is_legacy(self):
         app = self._app(v2=False)

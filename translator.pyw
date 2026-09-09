@@ -52,6 +52,11 @@ from cc_update import (
 )
 import cc_update as _cc_update
 import cc_ocr
+from cc_dictionary import LocalDictionary
+from cc_dictionary_artifact import DictionaryArtifactManager
+from cc_dictionary_cache import DictionaryAiCache
+from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
+from cc_dictionary_metrics import DictionaryMetrics
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -74,7 +79,9 @@ from cc_core import (
     DIRECTION_LABELS, _labels_by_language, get_direction_labels,
     auto_direction_prompt, direction_prompt, resolve_target_lang,
     source_is_cjk, source_has_english, CJK_SOURCE_RATIO,
-    SYSTEM_SUFFIX, SUMMARY_SUFFIX, DICTIONARY_PROMPT, CODE_EXPLAIN_PROMPT,
+    SYSTEM_SUFFIX, SUMMARY_SUFFIX, DICTIONARY_PROMPT,
+    DICTIONARY_SUPPLEMENT_PROMPT, DICTIONARY_SUPPLEMENT_REVISION,
+    CODE_EXPLAIN_PROMPT,
     CODE_EXPLAIN_APPEND_PROMPT, RESULT_CONCISE_PROMPT, RESULT_FORMAL_PROMPT,
     RESULT_SUMMARY_PROMPT, RESULT_ACTION_PROMPTS,
     OCR_STRUCTURE_HINT, OCR_VISION_PROMPT, vision_image_mention,
@@ -903,6 +910,13 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # re-enabling it for existing users who deliberately turned it off.
         self._fresh_install = not os.path.exists(CONFIG_PATH)
         self.cfg = load_config()
+        self._dictionary_artifact = DictionaryArtifactManager()
+        self._local_dictionary = LocalDictionary(self._dictionary_artifact.path)
+        self._dictionary_ai_cache = DictionaryAiCache(
+            os.path.join(DATA_DIR, "dictionary_ai_cache.json"))
+        self._dictionary_metrics = DictionaryMetrics()
+        self._last_dictionary_local = False
+        self._last_local_dictionary_result = None
         self._provider_registry = ProviderRegistry()
         self._provider_registry.register(ClaudeCliProvider(
             self._call_claude, self._call_claude_vision, CLAUDE_CMD))
@@ -1042,6 +1056,16 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # If we just came back from an auto-update restart, confirm it with a
         # tray balloon once the icon has had a moment to register.
         self.root.after(2500, self._show_update_notice_if_any)
+
+    def _reload_local_dictionary(self):
+        current = getattr(self, "_local_dictionary", None)
+        if current is not None:
+            current.close_thread()
+        manager = getattr(self, "_dictionary_artifact", None)
+        self._local_dictionary = (
+            LocalDictionary(manager.path)
+            if manager is not None else LocalDictionary())
+        return self._local_dictionary.status
 
     def _prewarm_uia(self):
         """Pre-parse the UIAutomationCore typelib so the first cross-process
@@ -1667,7 +1691,8 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 pass
             self._ss.flush_job = None
 
-    def _show_loading(self, text, origin="text", force_class=None, use_cache=True):
+    def _show_loading(self, text, origin="text", force_class=None, use_cache=True,
+                      force_ai=False):
         self._destroy_popup()
         # Capture the cursor ONCE, at the moment translation is triggered, so the
         # whole cycle (loading hint + result window) anchors to where the user was
@@ -1687,6 +1712,82 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # force_class lets a user override the heuristic — e.g. the code-explain
         # popup's "作为文字翻译" button re-runs a misclassified selection as text.
         self._last_class = force_class or classify_selection(text)
+        self._last_dictionary_local = False
+        self._last_local_dictionary_result = None
+        local_result = None
+        local_lookup_started = None
+        local_candidate = (
+            not force_ai and force_class is None and origin != "ocr"
+            and is_single_word(text)
+            and getattr(self, "_local_dictionary", None) is not None
+        )
+        local_enabled = self.cfg.get(
+            CFG.LOCAL_DICTIONARY_ENABLED,
+            DEFAULT_CONFIG[CFG.LOCAL_DICTIONARY_ENABLED])
+        if (local_candidate and not local_enabled
+                and getattr(self, "_dictionary_metrics", None) is not None):
+            self._dictionary_metrics.record("disabled")
+        if local_candidate and local_enabled:
+            local_lookup_started = time.perf_counter()
+            try:
+                local_result = self._local_dictionary.lookup(text)
+                if local_result is not None and not local_result.is_high_confidence:
+                    local_outcome = "weak"
+                    local_result = None
+                else:
+                    local_outcome = (
+                        "hit" if local_result is not None else "miss")
+            except Exception as exc:
+                log_error("local_dictionary_lookup", exc)
+                log_perf("dictionary_lookup", {
+                    "chars": len(text or ""), "outcome": "error",
+                    "route": "local",
+                    "wall_ms": int(
+                        (time.perf_counter() - local_lookup_started) * 1000),
+                })
+                if getattr(self, "_dictionary_metrics", None) is not None:
+                    self._dictionary_metrics.record(
+                        "error",
+                        (time.perf_counter() - local_lookup_started) * 1000)
+            else:
+                local_wall_ms = (
+                    time.perf_counter() - local_lookup_started) * 1000
+                log_perf("dictionary_lookup", {
+                    "chars": len(text or ""),
+                    "outcome": local_outcome,
+                    "route": "local",
+                    "wall_ms": int(local_wall_ms),
+                })
+                if getattr(self, "_dictionary_metrics", None) is not None:
+                    self._dictionary_metrics.record(
+                        local_outcome, local_wall_ms)
+        if local_result is not None:
+            self._last_dictionary_local = True
+            self._last_local_dictionary_result = local_result
+            local_signature = self._cache_signature(route="local")
+            if (use_cache and self.cfg.get(CFG.HISTORY_ENABLED, True)):
+                cached = find_cached_translation(
+                    text, self._history_kind(), local_signature)
+                if cached is not None:
+                    job_id = self._begin_job()
+                    log_perf("cache_hit", {
+                        "chars": len(text or ""), "kind": "dict",
+                        "route": "local",
+                    })
+                    self._show_result(True, cached, job_id, record=False)
+                    ai_cached = self._get_ai_dictionary_supplement(text)
+                    self._start_ai_dictionary_supplement(
+                        text, job_id, ai_cached, cached)
+                    return
+            job_id = self._begin_job()
+            rendered = format_dictionary_result(local_result)
+            self._show_result(True, rendered, job_id, record=True)
+            ai_cached = None
+            if use_cache:
+                ai_cached = self._get_ai_dictionary_supplement(text)
+            self._start_ai_dictionary_supplement(
+                text, job_id, ai_cached, rendered)
+            return
         # Instant path: if an identical earlier selection (same text, kind and
         # settings) is already in history, show that stored result immediately
         # instead of paying for another translation. Skipped for explicit
@@ -1853,13 +1954,21 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return "dict"
         return "text"
 
-    def _cache_signature(self) -> str:
+    def _cache_signature(self, route=None) -> str:
         """A compact fingerprint of the settings that change a translation's
         output -- provider prompt contract, direction, model, summary and app
         language. A cached result is only reused when this matches, so a stored
         translation is never served under settings that would produce a
         different one.
         """
+        if route == "local" or (
+                route is None and getattr(self, "_last_dictionary_local", False)):
+            dictionary = getattr(self, "_local_dictionary", None)
+            dictionary_version = (
+                dictionary.cache_version if dictionary is not None
+                else "unavailable")
+            return "|".join((
+                "local-dictionary", dictionary_version, FORMATTER_VERSION))
         selection = self._provider_selection()
         fields = [
             selection.provider_id,
@@ -2541,6 +2650,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 self._set_popup_text(final, stream_grow=True, stream_final=True)
                 self._maybe_add_explain_button(self.popup)
                 self._maybe_add_as_text_button(self.popup)
+                self._maybe_add_ai_dictionary_button(self.popup)
                 self._maybe_add_result_actions_button(self.popup)
                 self._remember_result(True, self._result_title(True), final)
                 return
@@ -2555,6 +2665,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             self._set_popup_text(final, stream_grow=True, stream_final=True)
             self._maybe_add_explain_button(self.popup)
             self._maybe_add_as_text_button(self.popup)
+            self._maybe_add_ai_dictionary_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
             self._remember_result(True, self._result_title(True), final)
             log_perf("stream_finalize_popup_created", {"chars": len(final)})
@@ -2660,6 +2771,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._maybe_add_explain_button(self.popup)
         if ok:
             self._maybe_add_as_text_button(self.popup)
+            self._maybe_add_ai_dictionary_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
         if record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
                 self._last_input or self._last_origin == "ocr"):
@@ -2699,6 +2811,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._maybe_add_explain_button(self.popup)
         if ok:
             self._maybe_add_as_text_button(self.popup)
+            self._maybe_add_ai_dictionary_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
         return True
 

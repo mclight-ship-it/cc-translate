@@ -15,6 +15,7 @@ window-building helpers (``self._rounded_shell``, ``self._reveal_rounded_window`
 """
 
 import os
+import subprocess
 import threading
 import tkinter as tk
 
@@ -25,6 +26,8 @@ from win32util import get_monitor_rect
 from cc_update import version_string, remove_shortcuts, spawn_uninstaller
 from cc_core import (APP_DIR, DATA_DIR, log_error, POPUP_CORNER_RADIUS,
                      V2_CORNER_RADIUS)
+
+THIRD_PARTY_NOTICES_PATH = os.path.join(APP_DIR, "THIRD_PARTY_NOTICES")
 
 
 class AboutMixin:
@@ -206,6 +209,12 @@ class AboutMixin:
                              font=(FONT, 10, "underline"), cursor="hand2")
         github_lbl.pack(side="left")
         github_lbl.bind("<Button-1>", lambda e: self._open_url(github_url))
+        notices_lbl = tk.Label(
+            info_group, text=i18n.get("about.third_party_notices"),
+            bg=bg, fg=accent, font=(FONT, 10), cursor="hand2")
+        notices_lbl.pack(pady=5)
+        notices_lbl.bind(
+            "<Button-1>", lambda e: self._open_third_party_notices())
 
         # Contact author + coffee link
         contact_group = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
@@ -250,9 +259,10 @@ class AboutMixin:
         """The redesigned v2 About card: a calm hero (logo · name · one-line
         description), a single translucent VERSION PILL that reads
         "版本 X · 检查更新" with a live green dot (click → the same in-Settings
-        update flow), and a roomy row of three pill buttons — GitHub · 联系作者 ·
-        请喝咖啡 — pulled apart for a modern, uncramped feel. All buttons are baked
-        v2 pills (hover-swap images) so they match the rest of the skin."""
+        update flow), and a roomy row of four pill buttons — GitHub · 数据许可 ·
+        联系作者 · 请喝咖啡 — pulled apart for a modern, consistent feel. All
+        buttons are baked v2 pills (hover-swap images) so they match the rest of
+        the skin."""
         FONT = font
         pal = self._v2_palette()
 
@@ -333,7 +343,7 @@ class AboutMixin:
             ver_btn.pack(pady=(0, 4))
             ver_btn.bind("<Button-1>", lambda e: self._about_check_update())
 
-        # ---- Footer: three spaced pill buttons ----
+        # ---- Footer: one consistent row of secondary actions ----
         github_url = "https://github.com/mclight-ship-it/cc-translate"
         email_addr = i18n.get("about.author_email")
         footer = tk.Frame(content_frame, bg=bg, bd=0, highlightthickness=0)
@@ -341,12 +351,18 @@ class AboutMixin:
 
         gh_btn = self._v2_soft_button(
             footer, "GitHub", lambda: self._open_url(github_url), icon="code")
-        gh_btn.pack(side="left", padx=(0, 20))
+        gh_btn.pack(side="left", padx=(0, 14))
+
+        notices_btn = self._v2_soft_button(
+            footer, i18n.get("about.data_licenses"),
+            self._open_third_party_notices, icon="info",
+            tooltip=i18n.get("about.third_party_notices"))
+        notices_btn.pack(side="left", padx=(0, 14))
 
         contact_btn = self._v2_soft_button(
             footer, i18n.get("about.contact_author"),
             lambda: self._open_url(f"mailto:{email_addr}"), icon="mail")
-        contact_btn.pack(side="left", padx=(0, 20))
+        contact_btn.pack(side="left", padx=(0, 14))
 
         coffee_btn = self._v2_soft_button(
             footer, i18n.get("about.support_author"),
@@ -663,6 +679,12 @@ class AboutMixin:
         except Exception:
             pass
         self.check_update_via_settings()
+
+    def _open_third_party_notices(self):
+        try:
+            subprocess.Popen(["notepad.exe", THIRD_PARTY_NOTICES_PATH])
+        except OSError as exc:
+            log_error("open_third_party_notices", exc)
 
     def _open_url(self, url):
         """Open a URL in the default browser."""

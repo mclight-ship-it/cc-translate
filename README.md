@@ -4,7 +4,7 @@
 
 > ⚠️ **Required before use:** CC Translate needs at least one working model CLI: the official Codex CLI (ChatGPT sign-in, API key, or compatible custom provider), or Claude Code (subscription or compatible local proxy). OpenAI GPT smart routing is the default.
 
-An **LLM-powered** select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It supports parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers and needs no separate API key.
+A select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It combines an offline local dictionary with parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers and needs no separate API key.
 
 ## Screenshots
 
@@ -17,7 +17,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 <tr>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-dict.png" alt="Dictionary mode" width="360"><br>
-  <sub><b>Dictionary mode</b>: a single word returns phonetics / part of speech / definitions / examples</sub>
+  <sub><b>Dictionary mode</b>: exact local matches appear instantly; misses fall back to AI</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-code.png" alt="Code-explanation mode" width="360"><br>
@@ -53,7 +53,7 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the vision model or an offline local OCR engine
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: when the selection is code, it explains what the code does (in Chinese) instead of force-translating it; mixed prose + code is translated normally while the code is kept verbatim
-- **Dictionary mode**: for a single selected word, returns a bilingual (CN/EN) entry (phonetics, part of speech, definitions, examples)
+- **Locally accelerated dictionary mode**: optional one-click download in Settings. Once installed and enabled, short English/Chinese terms first query the per-user read-only SQLite database; high-confidence exact, source-provided or reviewed build-time inflection, simplified/traditional, and Unihan character matches appear immediately with a compact lightning badge beside the headword, while disabled/missing/weak/broken-database cases seamlessly use the existing AI dictionary path. No risky runtime stemming is used. Numbered source Pinyin is rendered with standard tone marks, polyphonic Chinese senses are grouped by pronunciation, clearly specialized/verbose senses are placed later, and long entries initially show five senses with an in-place **Show more** control. After an instant local result, an AI supplement adds only missing information in the background without delaying the first paint; cached supplements appear directly, pending state stays subtle, and failures quietly retain the complete local result. Supplements use a separate bounded local cache and never create visible history entries. **Query again with AI** still performs the existing full replacement query. Local fields and attribution remain source-grounded—no examples, pronunciation, or parts of speech are invented.
 - **Long-text summary (Beta)**: on by default; longer natural-language text leads with a short summary before the full translation, and can be turned off in Labs
 - **Paste as plain text (Beta)**: optionally reserve `Ctrl+Shift+K` to remove clipboard formatting and paste the text immediately; image- and file-only clipboards are left untouched
 - **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
@@ -69,6 +69,41 @@ An **LLM-powered** select-and-translate app focused on **high-quality translatio
 - **System tray**: left-click runs a configurable action (default settings; also history / screenshot / quick translate); right-click for quick translate / screenshot translate / history / check for updates / pause / quit
 - **Self-update**: the app itself is a `git clone` deployment, so it can check GitHub and update — via a manual "Check for updates" or a nightly auto-update
 - Optional launch on startup
+
+## Offline dictionary data and licenses
+
+The app never downloads dictionary data at startup. Use **Settings → Offline
+dictionary acceleration (recommended) → Download and enable** to explicitly
+download the pinned ~65 MB release asset. It is verified by exact size, SHA-256,
+SQLite schema, and data version before an atomic install under
+`%APPDATA%\CC Translate\dictionary\cc_dictionary.sqlite3`. Settings can disable
+the fast path without deleting the data, or **Delete local data** after
+confirmation. Either action leaves AI dictionary mode available.
+Diagnostics also reports session-only aggregate hit rate, P50/P95 lookup latency,
+and AI fallback reasons; query text is never included in these metrics.
+
+The optional artifact is built from pinned inputs: WikDict eng-zho 2025.11.21
+(CC BY-SA 3.0), the immutable 2017-04-28 CC-CEDICT snapshot whose own header
+specifies CC BY-SA 3.0, Chinese Open Wordnet / Princeton WordNet via OMW 2.0
+(their respective WordNet licenses), and Unihan 17.0.0 (Unicode License v3).
+Application-code and dictionary-data licenses are separate. Full attribution,
+source URLs, SHA-256 hashes, modifications, artifact hash, and original license
+texts are available from **About → Data licenses**, each local result's themed
+**Sources & licenses** card, [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES), and
+[`data/dictionary/licenses/`](data/dictionary/licenses/).
+
+Developers can reproduce the database with the standard-library-only builder:
+
+```powershell
+python tools\build_dictionary.py --cache <source-cache> --download
+```
+
+The explicit `--download` flag is builder-only; normal app lookup is always
+offline after the user's explicit one-time download. Every input hash is verified
+and every entry/sense retains its own source ID and provenance. The reproducible
+release-staging copy is `data/dictionary/cc_dictionary.sqlite3`; publish it under
+the immutable release tag and asset name declared in
+`cc_dictionary_artifact.py` before shipping application code that references it.
 
 ## Requirements
 

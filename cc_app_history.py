@@ -905,24 +905,53 @@ class HistoryMixin:
                 active_bg=hover, active_fg=hover_fg,
                 font=(font, 9), padx=14, pady=6)
 
-        # v2: wider inter-button breathing room, and the rightmost pill's right
-        # edge flush with the detail box above it (the bottom bar shares the body's
-        # S(20) side padding, so a 0 right pad lands on that same edge). Legacy
-        # keeps its original 8/16 px gaps.
         if v2 and ccv2 is not None:
             btn_gap = ccv2.scaled(14, scale)
-            btn_edge = 0
+            more_menu = tk.Menu(
+                bottom, tearoff=0, bg=theme["list_bg"],
+                fg=theme["settings_fg"],
+                activebackground=theme["list_sel"],
+                activeforeground=theme["settings_fg"],
+                relief="flat", bd=0, activeborderwidth=0,
+                font=(font, 10))
+            more_menu.add_command(
+                label=i18n.get("history.copy_bilingual"),
+                command=copy_bilingual)
+            more_menu.add_command(
+                label=i18n.get("history.rerun"), command=rerun_entry)
+            more_menu.add_separator()
+            more_menu.add_command(
+                label=i18n.get("history.clear"), command=do_clear)
+
+            more_btn = None
+
+            def show_more():
+                bottom.update_idletasks()
+                x = more_btn.winfo_rootx()
+                y = (
+                    more_btn.winfo_rooty()
+                    - more_menu.winfo_reqheight()
+                    - ccv2.scaled(5, scale))
+                try:
+                    more_menu.tk_popup(x, y)
+                finally:
+                    more_menu.grab_release()
+
+            more_btn = hist_btn(i18n.get("history.more"), show_more)
+            more_btn.pack(side="right", pady=(4, 12))
+            hist_btn(i18n.get("history.copy_result"), copy_output).pack(
+                side="right", padx=(0, btn_gap), pady=(4, 12))
         else:
             btn_gap = 8
             btn_edge = 16
-        hist_btn(i18n.get("history.clear"), do_clear, danger=True).pack(
-            side="right", padx=(0, btn_edge), pady=(4, 12))
-        hist_btn(i18n.get("history.rerun"), rerun_entry).pack(
-            side="right", padx=(0, btn_gap), pady=(4, 12))
-        hist_btn(i18n.get("history.copy_bilingual"), copy_bilingual).pack(
-            side="right", padx=(0, btn_gap), pady=(4, 12))
-        hist_btn(i18n.get("history.copy_result"), copy_output).pack(
-            side="right", padx=(0, btn_gap), pady=(4, 12))
+            hist_btn(i18n.get("history.clear"), do_clear, danger=True).pack(
+                side="right", padx=(0, btn_edge), pady=(4, 12))
+            hist_btn(i18n.get("history.rerun"), rerun_entry).pack(
+                side="right", padx=(0, btn_gap), pady=(4, 12))
+            hist_btn(i18n.get("history.copy_bilingual"), copy_bilingual).pack(
+                side="right", padx=(0, btn_gap), pady=(4, 12))
+            hist_btn(i18n.get("history.copy_result"), copy_output).pack(
+                side="right", padx=(0, btn_gap), pady=(4, 12))
 
         hlist.bind_select(show_detail)
         win.bind("<ButtonPress-1>", on_window_click, add="+")

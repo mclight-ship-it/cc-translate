@@ -12,6 +12,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Optional dictionary release artifact (published as a GitHub Release asset)
+data/dictionary/*.sqlite3
+data/dictionary/.dictionary-download-*.tmp
+
 # Icon-generator preview scratch (tools/make_icons.py)
 _preview-*.png
 _small-*.png

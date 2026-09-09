@@ -161,7 +161,7 @@ def load_font(kind, size_pt, scale):
 # via PIL so the v2 chip buttons carry crisp modern icons, not tofu boxes.
 _MDL2_GLYPHS = {"copy": "\uE8C8", "pin": "\uE718", "close": "\uE711",
                 "retry": "\uE72C", "mail": "\uE715", "code": "\uE943",
-                "coffee": "\uEC32"}
+                "coffee": "\uEC32", "info": "\uE946"}
 
 # Per-glyph optical vertical nudge (design px, +down). MDL2 ink bounds don't
 # match a glyph's visual centre of mass, so a couple of icons read a hair high
@@ -510,7 +510,7 @@ class GradientBackground:
         self._ensure(w, h)
         return self._cache.crop((0, 0, w, h))
 
-    def rounded_face(self, w, h, radius):
+    def rounded_face(self, w, h, radius, fill=None):
         """Face with rounded corners applied plus the thin brand-gradient
         perimeter hairline composited on top.
 
@@ -520,7 +520,10 @@ class GradientBackground:
         clips any hairline/AA overshoot to the arc and guarantees every pixel is
         either full-card or full-key — so nothing blends into a dark fringe just
         outside the corner (the old "颗粒" grain)."""
-        f = self.face(w, h).copy()
+        if fill is None:
+            f = self.face(w, h).copy()
+        else:
+            f = Image.new("RGBA", (w, h), tuple(fill) + (255,))
         ring = bake_border_ring(w, h, radius, self.palette, scale=self.scale)
         if ring is not None:
             f.alpha_composite(ring)
@@ -709,8 +712,41 @@ def brand_badge(size_pt, palette, scale=1.0):
     return tile, pad
 
 
+def instant_badge(palette, scale=1.0, size_pt=18):
+    """A quiet hollow speed badge: rounded square outline + compact bolt."""
+    if not PIL_OK:
+        return None
+    size = max(14, scaled(size_pt, scale))
+    ss = 4
+    canvas = Image.new(
+        "RGBA", (size * ss, size * ss), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    outline = tuple(palette["sub"])
+    accent = tuple(palette["field_brd"])
+    outline_alpha = 135 if palette["is_dark"] else 120
+    glyph_alpha = 205 if palette["is_dark"] else 185
+    inset = ss
+    draw.rounded_rectangle(
+        (inset, inset, size * ss - inset - 1, size * ss - inset - 1),
+        radius=scaled(5, scale) * ss,
+        outline=outline + (outline_alpha,),
+        width=max(ss, scaled(1, scale) * ss),
+    )
+    points = [
+        (0.58, 0.22), (0.35, 0.52), (0.49, 0.52),
+        (0.41, 0.77), (0.68, 0.43), (0.54, 0.43),
+    ]
+    draw.polygon(
+        [(round(x * size * ss), round(y * size * ss))
+         for x, y in points],
+        fill=accent + (glyph_alpha,),
+    )
+    return canvas.resize((size, size), Image.LANCZOS)
+
+
 def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
-              hover=False, caret=False, min_w=0, grad=False, danger=False):
+              hover=False, caret=False, min_w=0, grad=False, danger=False,
+              ghost=False):
     """A soft translucent rounded pill button (RGBA) — the concept's primary
     top-right action style (e.g. 复制 / 操作). Optional MDL2 ``icon`` and a
     ``caret`` down-triangle (drawn, never a tofu box). No hard border; a full
@@ -720,7 +756,8 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
     icon, so 复制 and 操作 are the same size and sit on the same line. ``min_w``
     (device px) floors the width so sibling pills match; the content is centred
     in the extra room. ``grad`` swaps the soft wash for a filled brand-gradient
-    surface with white ink (the accented "primary" pill, e.g. 请喝咖啡)."""
+    surface with white ink (the accented "primary" pill, e.g. 请喝咖啡).
+    ``ghost`` keeps only the text visible until hover reveals a tinted pill."""
     if not PIL_OK:
         return None
     pw = scaled(12, scale)
@@ -755,6 +792,23 @@ def soft_pill(text=None, icon=None, font=None, palette=None, scale=1.0,
             img.alpha_composite(sheen)
         ink = (255, 255, 255, 255)
         d = ImageDraw.Draw(img)
+    elif ghost:
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        if danger:
+            ink_rgb = tuple(palette["err"])
+            if hover:
+                d.rounded_rectangle(
+                    (0, 0, W - 1, H - 1), radius=H // 2,
+                    fill=ink_rgb + (38 if is_dark else 26,))
+        else:
+            ink_rgb = tuple(palette["sub"])
+            if hover:
+                fill = ((255, 255, 255, 30) if is_dark
+                        else (36, 48, 92, 28))
+                d.rounded_rectangle(
+                    (0, 0, W - 1, H - 1), radius=H // 2, fill=fill)
+        ink = ink_rgb + (255,)
     elif danger:
         err = tuple(palette["err"])
         if is_dark:

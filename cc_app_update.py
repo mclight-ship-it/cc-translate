@@ -85,6 +85,7 @@ class UpdateMixin:
             if on_status:
                 self.root.after(0, lambda: on_status(msg, kind))
 
+        self._available_update_version = None
         restart = False
         try:
             if not is_git_deploy():
@@ -100,12 +101,14 @@ class UpdateMixin:
                 report(i18n.get("update.check_failed_remote"), "err")
                 return
             if state != "behind":
+                self._available_update_version = None
                 report(i18n.get("update.no_update"), "ok")
                 return
 
             # There is a newer commit on the remote.
             if check_only:
                 ver = _cc_update.remote_version_string() or remote[:7]
+                self._available_update_version = ver
                 report(i18n.get("update.found_version").format(version=ver),
                        "avail")
                 return

@@ -12,6 +12,10 @@ Key guarantees under test:
 import unittest
 
 from tests._tr import tr
+from cc_rich import (
+    decode_more_senses_text, decode_pronunciation, decode_source_details,
+    encode_more_senses, encode_pronunciation, encode_source_details,
+)
 
 
 def tags(segs):
@@ -46,6 +50,40 @@ class TestBlocks(unittest.TestCase):
     def test_heading(self):
         segs = tr.iter_rich_segments("# 标题行")
         self.assertEqual(segs[0], ("标题行", "rich_h1"))
+
+    def test_instant_marker_becomes_non_text_badge_segment(self):
+        segs = tr.iter_rich_segments("## hello [[cc-instant]]")
+        self.assertEqual(segs[0], ("hello", "rich_h2"))
+        self.assertEqual(segs[1], ("", "rich_instant_badge"))
+        self.assertEqual(reconstruct(segs), "hello")
+
+    def test_legacy_prefix_instant_marker_still_renders(self):
+        segs = tr.iter_rich_segments("## [[cc-instant]] hello")
+        self.assertEqual(segs[0], ("", "rich_instant_badge"))
+        self.assertEqual(segs[1], ("hello", "rich_h2"))
+
+    def test_source_details_marker_is_structured_and_hidden(self):
+        details = [{
+            "id": "fixture", "label": "Fixture", "version": "1",
+            "license": "Test license",
+        }]
+        marker = encode_source_details(details)
+        segs = tr.iter_rich_segments(marker)
+        self.assertEqual(segs[0][1], "rich_sources_button")
+        self.assertEqual(decode_source_details(segs[0][0]), details)
+        self.assertEqual(decode_source_details("[[cc-sources:broken]]"), [])
+
+    def test_more_senses_marker_becomes_embedded_control(self):
+        marker = encode_more_senses(4, "expanded")
+        segs = tr.iter_rich_segments("before\n%s\nafter" % marker)
+        self.assertIn((marker, "rich_more_senses"), segs)
+        self.assertEqual(decode_more_senses_text(marker), "expanded")
+
+    def test_pronunciation_marker_uses_dedicated_text_tag(self):
+        marker = encode_pronunciation("Zhōng guó")
+        segs = tr.iter_rich_segments(marker)
+        self.assertEqual(segs[0], ("Zhōng guó", "rich_pronunciation"))
+        self.assertEqual(decode_pronunciation(marker), "Zhōng guó")
 
     def test_bullet(self):
         segs = tr.iter_rich_segments("- 列表项一")

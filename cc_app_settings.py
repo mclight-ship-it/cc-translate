@@ -21,20 +21,31 @@ calls into other mixins and shared window helpers (``self._rounded_shell``,
 """
 
 import os
+import threading
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter import font as tkfont
 
 import i18n
 
+try:
+    import cc_ui_v2 as ccv2
+except Exception:
+    ccv2 = None
+
 from win32util import get_monitor_rect
+from cc_dictionary_artifact import (
+    ARTIFACT_RELEASE_TAG, ARTIFACT_SIZE, DictionaryArtifactError,
+    DictionaryDownloadCancelled,
+)
 from cc_update import version_string, is_autostart_enabled, set_autostart
 from cc_core import (
     CFG, DEFAULT_CONFIG, POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     ICON_PATH, ICON_PATH_DARK, ICON_PATH_LIGHT,
     ROUND_KEY_COLOR, SUPPORT_IMAGE_PATH, SETTINGS_MIN_W, SETTINGS_COL_MIN_W,
     fit_box_size, LANGUAGE_LABELS,
+    log_error,
     resolve_theme_name, resolve_theme,
     get_direction_labels, get_theme_labels, get_popup_layout_labels,
     get_ocr_engine_labels, get_tray_click_action_labels, get_model_labels,
@@ -47,6 +58,7 @@ _SETTINGS_COMBO_MAX_WIDTH = 24
 _SETTINGS_COMBO_CHROME_CHARS = 3
 _SETTINGS_COMBO_WIDTH_SCALE_NUMERATOR = 11
 _SETTINGS_COMBO_WIDTH_SCALE_DENOMINATOR = 10
+_SETTINGS_CONTROL_WIDTH = 236
 
 
 def _settings_combo_width(font, value_groups):
@@ -383,7 +395,58 @@ class SettingsMixin:
             return 16
         return max(14, min(22, int(round(line_px * 0.78))))
 
-    def _install_combo_chevron(self, style, hint, accent, scale):
+    def _install_rounded_field_element(
+            self, style, surface_bg, field_bg, border, accent, scale):
+        if ccv2 is None or not self._v2_popup_on():
+            return None
+        if not hasattr(self, "_rounded_field_cache"):
+            self._rounded_field_cache = {}
+            self._rounded_field_imgs = []
+        key = (surface_bg, field_bg, border, accent, round(scale, 3))
+        cached = self._rounded_field_cache.get(key)
+        if cached:
+            return cached
+
+        from PIL import Image, ImageDraw
+
+        width = max(24, int(round(24 * scale)))
+        height = max(20, int(round(20 * scale)))
+        radius = max(6, int(round(6 * scale)))
+        stroke = max(1, int(round(scale)))
+
+        def field_image(_outline):
+            image = Image.new(
+                "RGBA", (width, height),
+                tuple(ccv2.hex_to_rgb(surface_bg)) + (255,))
+            ImageDraw.Draw(image).rounded_rectangle(
+                (0, 0, width - 1, height - 1), radius=radius,
+                fill=field_bg)
+            return ccv2.to_photo(image, master=self.root)
+
+        normal = field_image(border)
+        focused = field_image(accent)
+        if normal is None or focused is None:
+            return None
+        field_count = sum(
+            str(name).startswith("CC.RoundedField")
+            for name in style.element_names())
+        element = f"CC.RoundedField{field_count}"
+        try:
+            style.element_create(
+                element, "image", normal, ("focus", focused),
+                ("active", focused),
+                border=(radius, stroke, radius, stroke),
+                sticky="nsew")
+        except Exception:
+            return None
+        self._rounded_field_imgs.extend((normal, focused))
+        self._rounded_field_slice = (radius, stroke, radius, stroke)
+        self._rounded_field_cache[key] = element
+        return element
+
+    def _install_combo_chevron(
+            self, style, hint, accent, scale,
+            field_element="Combobox.field", style_name="CC.TCombobox"):
         """Register a custom chevron image element and point the combobox layout
         at it. Elements can only be created once per name, so we cache per
         (colour, size). Returns True if the custom chevron is in use."""
@@ -399,7 +462,10 @@ class SettingsMixin:
             active = self._make_chevron_image(accent, scale)
             if normal is None or active is None:
                 return False
-            elem = f"CC.cbarrow{len(self._chev_cache)}"
+            chevron_count = sum(
+                str(name).startswith("CC.cbarrow")
+                for name in style.element_names())
+            elem = f"CC.cbarrow{chevron_count}"
             try:
                 style.element_create(elem, "image", normal,
                                      ("active", active), ("focus", active),
@@ -408,8 +474,8 @@ class SettingsMixin:
                 return False
             self._chev_imgs.extend([normal, active])
             self._chev_cache[key] = elem
-        style.layout("CC.TCombobox", [
-            ("Combobox.field", {"sticky": "nswe", "children": [
+        style.layout(style_name, [
+            (field_element, {"sticky": "nswe", "children": [
                 (elem, {"side": "right", "sticky": ""}),
                 ("Combobox.padding", {"sticky": "nswe", "children": [
                     ("Combobox.textarea", {"sticky": "nswe"})]})]})])
@@ -461,10 +527,10 @@ class SettingsMixin:
             # is unused by the field element but pinned to the background too.
             style.configure(
                 name,
-                fieldbackground=field_bg, background=field_bg,
+                fieldbackground=field_bg, background=t["settings_bg"],
                 foreground=fg,
                 bordercolor=field_bg, lightcolor=border, darkcolor=field_bg,
-                relief="flat", borderwidth=1, padding=(12, 6, 8, 6),
+                relief="flat", borderwidth=0, padding=(12, 2, 8, 2),
             )
             style.map(
                 name,
@@ -473,16 +539,34 @@ class SettingsMixin:
                 lightcolor=[("focus", accent), ("hover", accent)],
             )
 
+        # The visible rounded surface is an exact-size Canvas host. Keep the
+        # embedded ttk controls completely flat: ttk image-element nine-slicing
+        # produces detached bottom seams at fractional Windows DPI scaling.
+        for name in ("CC.TCombobox", "CC.TSpinbox"):
+            style.configure(
+                name, bordercolor=field_bg,
+                lightcolor=field_bg, darkcolor=field_bg)
+            style.map(
+                name,
+                lightcolor=[
+                    ("focus", field_bg), ("hover", field_bg),
+                    ("active", field_bg)],
+                bordercolor=[
+                    ("focus", field_bg), ("hover", field_bg),
+                    ("active", field_bg)])
+
         # Modern chevron dropdown indicator (falls back to a scaled triangle if
         # PIL is unavailable, so the form still works everywhere).
-        if not self._install_combo_chevron(style, hint, accent, scale):
+        if not self._install_combo_chevron(
+                style, hint, accent, scale):
             arrow = max(13, int(round(13 * scale)))
             style.configure("CC.TCombobox", arrowcolor=hint, arrowsize=arrow)
             style.map("CC.TCombobox", arrowcolor=[("active", accent)])
 
         # Strip the spinbox up/down arrows — leave a plain typeable field.
         style.layout("CC.TSpinbox", [
-            ("Spinbox.field", {"sticky": "nswe", "children": [
+            ("Spinbox.field", {
+                "sticky": "nswe", "children": [
                 ("Spinbox.padding", {"sticky": "nswe", "children": [
                     ("Spinbox.textarea", {"sticky": "nswe"})]})]})])
 
@@ -498,6 +582,186 @@ class SettingsMixin:
         self.root.option_add("*TCombobox*Listbox.relief", "flat")
         self.root.option_add("*TCombobox*Listbox.borderWidth", 10)
         self.root.option_add("*TCombobox*Listbox.font", "{Microsoft YaHei UI} 10")
+
+    def _settings_field_widget(self, parent, widget_class, **kwargs):
+        surface_bg = self._settings_form_theme["settings_bg"]
+        field_bg = self._settings_form_theme["list_bg"]
+        host = tk.Canvas(
+            parent, bg=surface_bg, bd=0, highlightthickness=0, takefocus=0)
+        kwargs["style"] = (
+            "CC.TCombobox" if widget_class is ttk.Combobox else "CC.TSpinbox")
+        widget = widget_class(host, **kwargs)
+        widget.update_idletasks()
+        scale = self._ui_scale()
+        inset_x = max(4, ccv2.scaled(4, scale))
+        width = widget.winfo_reqwidth() + inset_x * 2
+        height = widget.winfo_reqheight()
+        host.configure(width=width, height=height)
+        child = host.create_window(
+            inset_x, 0, anchor="nw", window=widget,
+            width=max(1, width - inset_x * 2), height=height)
+
+        def paint(event=None):
+            w = int(getattr(event, "width", 0)) or host.winfo_width()
+            h = int(getattr(event, "height", 0)) or host.winfo_height()
+            if w <= 2 or h <= 2:
+                return
+            from PIL import Image, ImageDraw
+            ss = 4
+            image = Image.new(
+                "RGBA", (w * ss, h * ss),
+                tuple(ccv2.hex_to_rgb(surface_bg)) + (255,))
+            ImageDraw.Draw(image).rounded_rectangle(
+                (0, 0, w * ss - 1, h * ss - 1),
+                radius=max(1, ccv2.scaled(7, scale)) * ss,
+                fill=tuple(ccv2.hex_to_rgb(field_bg)) + (255,))
+            image = image.resize((w, h), Image.LANCZOS)
+            photo = ccv2.to_photo(image, master=host)
+            if photo is None:
+                return
+            host._field_photo = photo
+            host.delete("field_surface")
+            host.create_image(
+                0, 0, anchor="nw", image=photo, tags="field_surface")
+            host.tag_lower("field_surface")
+            host.coords(child, inset_x, 0)
+            host.itemconfigure(
+                child, width=max(1, w - inset_x * 2), height=h)
+
+        host.bind("<Configure>", paint, add="+")
+        widget._settings_host = host
+        widget._settings_host_paint = paint
+        return widget
+
+    def _settings_combobox(self, parent, **kwargs):
+        return self._settings_field_widget(parent, ttk.Combobox, **kwargs)
+
+    def _settings_spinbox(self, parent, **kwargs):
+        return self._settings_field_widget(parent, ttk.Spinbox, **kwargs)
+
+    def _attach_settings_menu(self, combo, *, theme, font):
+        state = {"win": None}
+
+        def choose(value):
+            combo.set(value)
+            combo.event_generate("<<ComboboxSelected>>")
+
+        def close_menu():
+            menu_win = state["win"]
+            state["win"] = None
+            if getattr(self, "_settings_dropdown_win", None) is menu_win:
+                self._settings_dropdown_win = None
+            if menu_win is not None:
+                try:
+                    menu_win.destroy()
+                except tk.TclError:
+                    pass
+
+        def popup(_event=None):
+            if state["win"] is not None:
+                close_menu()
+                return "break"
+            other = getattr(self, "_settings_dropdown_win", None)
+            if other is not None:
+                try:
+                    other.destroy()
+                except tk.TclError:
+                    pass
+
+            combo.focus_set()
+            combo.update_idletasks()
+            anchor = getattr(combo, "_settings_host", combo)
+            anchor.update_idletasks()
+            values = tuple(combo.cget("values"))
+            if not values:
+                return "break"
+
+            menu_win = tk.Toplevel(combo)
+            menu_win.withdraw()
+            menu_win.overrideredirect(True)
+            menu_win.transient(combo.winfo_toplevel())
+            menu_win._v2 = True
+            menu_win._v2_resizable = False
+            menu_win._v2_ring_draggable = False
+            state["win"] = menu_win
+            self._settings_dropdown_win = menu_win
+
+            radius = ccv2.scaled(12, self._ui_scale())
+            card = self._rounded_shell(
+                menu_win, radius, theme["list_bg"], theme["popup_border"])
+            inner = tk.Frame(
+                card, bg=theme["list_bg"], bd=0, highlightthickness=0)
+            pad = ccv2.scaled(5, self._ui_scale())
+            inner.pack(fill="both", expand=True, padx=pad, pady=pad)
+            selected = combo.get()
+            for value in values:
+                item = tk.Label(
+                    inner, text=value, bg=theme["list_bg"],
+                    fg=(theme["accent"] if value == selected
+                        else theme["settings_fg"]),
+                    anchor="w", font=(font, 10), padx=12, pady=5,
+                    cursor="hand2", bd=0, highlightthickness=0)
+                item.pack(fill="x")
+                item.bind(
+                    "<Enter>",
+                    lambda _e, widget=item: widget.configure(
+                        bg=theme["list_sel"]))
+                item.bind(
+                    "<Leave>",
+                    lambda _e, widget=item: widget.configure(
+                        bg=theme["list_bg"]))
+                item.bind(
+                    "<Button-1>",
+                    lambda _e, value_=value: (
+                        close_menu(), choose(value_)))
+
+            menu_win.update_idletasks()
+            inset = int(getattr(menu_win, "_card_inset", radius))
+            width = max(
+                anchor.winfo_width(),
+                card.winfo_reqwidth() + 2 * inset)
+            height = card.winfo_reqheight() + 2 * inset
+            x = anchor.winfo_rootx()
+            y = anchor.winfo_rooty() + anchor.winfo_height() + 5
+            x, y = self._clamp_to_monitor(
+                x, y, width, height, ref=(x, y))
+            self._record_v2_size(menu_win, width, height)
+            menu_win.geometry(f"{width}x{height}+{x}+{y}")
+            menu_win.deiconify()
+            menu_win.update_idletasks()
+            try:
+                menu_win._round_redraw()
+            except Exception:
+                pass
+            menu_win.lift()
+            menu_win.focus_force()
+            menu_win._armed = False
+
+            def arm():
+                if state["win"] is menu_win:
+                    menu_win._armed = True
+
+            menu_win.after(180, arm)
+            menu_win.bind("<Escape>", lambda _e: close_menu())
+            menu_win.bind(
+                "<FocusOut>",
+                lambda _e: (
+                    close_menu()
+                    if getattr(menu_win, "_armed", False) else None))
+            menu_win.bind(
+                "<Destroy>",
+                lambda _e: (
+                    close_menu()
+                    if state["win"] is menu_win else None),
+                add="+")
+            return "break"
+
+        combo._settings_dropdown_state = state
+        combo._settings_dropdown_toggle = popup
+        combo.bind("<Button-1>", popup)
+        combo.bind("<space>", popup)
+        combo.bind("<Return>", popup)
+        combo.bind("<Alt-Down>", popup)
 
     def _make_toggle(self, parent, initial, bg, *, accessible_name=None,
                      enabled=True):
@@ -617,81 +881,238 @@ class SettingsMixin:
         c.set = _set
         return c
 
-    def _settings_section(self, body, row_state, text_, *, bg, accent, font):
+    def _settings_action_button(
+            self, parent, text_, command, *, theme, fg, font,
+            width=18, primary=False, danger=False):
+        button_bg = theme["accent"] if primary else theme["list_bg"]
+        button_fg = (
+            "#ffffff" if primary else theme["status_err"] if danger else fg)
+        button = self._pill_button(
+            parent, text_, command,
+            bg=button_bg, fg=button_fg,
+            hover_bg=(
+                theme["accent"] if primary else theme["btn_active"]),
+            hover_fg=button_fg,
+            active_bg=(
+                theme["accent"] if primary else theme["list_sel"]),
+            active_fg=button_fg,
+            font=(font, 9), padx=12, pady=4)
+        button.configure(width=width)
+        return button
+
+    def _settings_text_action(
+            self, parent, text_, command, *, bg, accent, hint, font, size=9):
+        button = tk.Button(
+            parent, text=text_, command=command,
+            bg=bg, fg=hint, activebackground=bg, activeforeground=accent,
+            disabledforeground=hint, relief="flat", bd=0,
+            highlightthickness=0, cursor="hand2", takefocus=1,
+            font=(font, size), padx=3, pady=0)
+        button.bind(
+            "<Enter>",
+            lambda _event: (
+                button.configure(fg=accent)
+                if str(button.cget("state")) != "disabled" else None))
+        button.bind(
+            "<Leave>",
+            lambda _event: button.configure(fg=hint))
+        return button
+
+    def _settings_info_card(
+            self, parent, text_, *, theme, fg, font, scale):
+        height = ccv2.scaled(44, scale)
+        canvas = tk.Canvas(
+            parent, bg=theme["settings_bg"], height=height,
+            bd=0, highlightthickness=0, takefocus=0)
+        label = tk.Label(
+            canvas, text=text_, bg=theme["list_bg"], fg=fg,
+            anchor="w", font=(font, 10), bd=0, highlightthickness=0)
+        state = {"width": 0, "label": None}
+
+        def paint(_event=None):
+            width = canvas.winfo_width()
+            if width <= 1 or width == state["width"]:
+                return
+            state["width"] = width
+            from PIL import Image, ImageDraw
+            fill = tuple(ccv2.hex_to_rgb(theme["list_bg"])) + (255,)
+            outline = tuple(ccv2.hex_to_rgb(theme["popup_border"])) + (255,)
+            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            ImageDraw.Draw(image).rounded_rectangle(
+                (0, 0, width - 1, height - 1),
+                radius=ccv2.scaled(11, scale),
+                fill=fill, outline=outline, width=max(1, ccv2.scaled(1, scale)))
+            photo = ccv2.to_photo(image, master=canvas)
+            canvas._card_image = photo
+            canvas.delete("card")
+            canvas.create_image(
+                0, 0, anchor="nw", image=photo, tags="card")
+            canvas.tag_lower("card")
+            if state["label"] is None:
+                state["label"] = canvas.create_window(
+                    ccv2.scaled(16, scale), height // 2,
+                    anchor="w", window=label,
+                    width=max(1, width - ccv2.scaled(32, scale)))
+            else:
+                canvas.itemconfigure(
+                    state["label"],
+                    width=max(1, width - ccv2.scaled(32, scale)))
+
+        canvas.bind("<Configure>", paint, add="+")
+        return canvas
+
+    def _settings_section(
+            self, body, row_state, text_, *, bg, accent, font,
+            action_text=None, action=None, theme=None, fg=None):
         row = row_state["value"]
-        lbl = tk.Label(body, text=text_, bg=bg, fg=accent,
-                       font=(font, 9, "bold"))
-        pady = (14, 6) if row else (0, 6)
-        lbl.grid(row=row, column=0, columnspan=2, sticky="w", pady=pady)
+        heading = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        lbl = tk.Label(heading, text=text_, bg=bg, fg=accent,
+                       font=(font, 11, "bold"))
+        lbl.pack(side="left")
+        if action_text:
+            self._settings_text_action(
+                heading, action_text, action, bg=bg, accent=accent,
+                hint=fg, font=font, size=10).pack(side="left", padx=(8, 0))
+        elif action:
+            lbl.configure(cursor="hand2")
+            lbl.bind("<Button-1>", lambda _event: action())
+        pady = (10, 4) if row else (0, 4)
+        heading.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=pady)
         row_state["value"] = row + 1
 
     def _settings_field(self, body, row_state, text_, widget, *, bg, fg, font):
         row = row_state["value"]
         tk.Label(body, text=text_, bg=bg, fg=fg, font=(font, 10)).grid(
-            row=row, column=0, sticky="w", pady=6)
-        widget.grid(row=row, column=1, sticky="e", pady=6)
+            row=row, column=0, sticky="w", pady=4)
+        field = getattr(widget, "_settings_host", widget)
+        field.grid(row=row, column=1, sticky="ew", pady=4)
+        if (isinstance(widget, ttk.Combobox)
+                and ccv2 is not None and self._v2_popup_on()):
+            self._attach_settings_menu(
+                widget, theme=self._settings_form_theme, font=font)
         row_state["value"] = row + 1
+
+    def _settings_version_row(
+            self, body, row_state, label_text, value_text,
+            action_text, action, *, bg, fg, hint, font, theme):
+        row = row_state["value"]
+        info = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        info.grid(row=row, column=0, sticky="w", pady=5)
+        tk.Label(
+            info, text=label_text, bg=bg, fg=fg,
+            font=(font, 10)).pack(side="left")
+        value = tk.Label(
+            info, text=value_text, bg=bg, fg=theme["accent"],
+            font=(font, 10, "bold"))
+        value.pack(side="left", padx=(10, 0))
+        action_button = self._settings_text_action(
+            body, action_text, action, bg=bg, accent=theme["accent"],
+            hint=hint, font=font, size=10)
+        action_button.grid(row=row, column=1, sticky="e", pady=5)
+        row_state["value"] = row + 1
+        return value, action_button
+
+    def _settings_resource_row(
+            self, body, row_state, text_, status_text, action_text, action,
+            initial, *, bg, hint, fg, font, theme, help_text=None):
+        row = row_state["value"]
+        info = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        info.grid(row=row, column=0, sticky="w", pady=5)
+        heading = tk.Frame(info, bg=bg, bd=0, highlightthickness=0)
+        heading.pack(anchor="w")
+        label_font = (font, 10)
+        tk.Label(
+            heading, text=text_, bg=bg, fg=fg,
+            font=label_font).pack(side="left")
+        if help_text:
+            icon = self._make_help_icon_image(
+                hint, hint, bg,
+                diameter=self._help_badge_diameter(label_font))
+            help_label = tk.Label(
+                heading, image=icon, text=help_text if icon else "(?)",
+                compound="none", bg=bg, fg=hint, bd=0, takefocus=1,
+                highlightthickness=2, highlightbackground=bg,
+                highlightcolor=hint, cursor="hand2",
+                font=(font, 10))
+            if icon is not None:
+                help_label.image = icon
+                if not hasattr(self, "_help_icon_imgs"):
+                    self._help_icon_imgs = []
+                self._help_icon_imgs.append(icon)
+            help_label.pack(side="left", padx=(6, 0))
+            self._make_tooltip(help_label, help_text)
+        action_button = self._settings_text_action(
+            heading, action_text, action, bg=bg, accent=theme["accent"],
+            hint=hint, font=font, size=9)
+        action_button.pack(side="left", padx=(8, 0))
+        status = tk.Label(
+            info, text=status_text, bg=bg, fg=hint,
+            font=(font, 8), anchor="w")
+        if status_text:
+            status.pack(anchor="w", pady=(3, 0))
+        controls = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
+        controls.grid(row=row, column=1, sticky="e", pady=5)
+        switch = self._make_toggle(
+            controls, initial, bg, accessible_name=text_)
+        switch.pack(side="left")
+        row_state["value"] = row + 1
+        return switch, status, action_button
 
     def _settings_toggle_row(self, body, row_state, text_, initial, *,
                              bg, fg, font, help_text=None, help_ring=None,
-                             help_glyph=None, enabled=True):
+                             help_glyph=None, enabled=True,
+                             action_text=None, action=None,
+                             theme=None, scale=1.0):
         row = row_state["value"]
         label_fg = fg if enabled else (help_ring or fg)
-        if help_text:
+        if help_text or action_text:
             # Label + circular "?" help badge sit together in column 0 so the
             # icon follows the feature name (not the far-right switch).
             cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-            cell.grid(row=row, column=0, sticky="w", pady=8)
+            cell.grid(row=row, column=0, sticky="w", pady=6)
             label_font = (font, 10)
             tk.Label(cell, text=text_, bg=bg, fg=label_fg, font=label_font).pack(
                 side="left")
-            icon = self._make_help_icon_image(
-                help_ring or fg, help_glyph or fg, bg,
-                diameter=self._help_badge_diameter(label_font))
-            if icon is not None:
-                if not hasattr(self, "_help_icon_imgs"):
-                    self._help_icon_imgs = []
-                self._help_icon_imgs.append(icon)   # keep ref alive
-                help_lbl = tk.Label(
-                    cell, image=icon, text=help_text, compound="none",
-                    bg=bg, bd=0, takefocus=1,
-                    highlightthickness=2, highlightbackground=bg,
-                    highlightcolor=help_ring or fg, cursor="hand2")
-                help_lbl.image = icon
-            else:
-                help_lbl = tk.Label(
-                    cell, text="(?)", bg=bg, fg=help_ring or fg,
-                    font=(font, 10), cursor="hand2", takefocus=1,
-                    highlightthickness=2, highlightbackground=bg,
-                    highlightcolor=help_ring or fg)
-            help_lbl.pack(side="left", padx=(6, 0))
-            self._make_tooltip(help_lbl, help_text)
+            if help_text:
+                icon = self._make_help_icon_image(
+                    help_ring or fg, help_glyph or fg, bg,
+                    diameter=self._help_badge_diameter(label_font))
+                if icon is not None:
+                    if not hasattr(self, "_help_icon_imgs"):
+                        self._help_icon_imgs = []
+                    self._help_icon_imgs.append(icon)   # keep ref alive
+                    help_lbl = tk.Label(
+                        cell, image=icon, text=help_text, compound="none",
+                        bg=bg, bd=0, takefocus=1,
+                        highlightthickness=2, highlightbackground=bg,
+                        highlightcolor=help_ring or fg, cursor="hand2")
+                    help_lbl.image = icon
+                else:
+                    help_lbl = tk.Label(
+                        cell, text="(?)", bg=bg, fg=help_ring or fg,
+                        font=(font, 10), cursor="hand2", takefocus=1,
+                        highlightthickness=2, highlightbackground=bg,
+                        highlightcolor=help_ring or fg)
+                help_lbl.pack(side="left", padx=(6, 0))
+                self._make_tooltip(help_lbl, help_text)
+            if action_text:
+                self._settings_text_action(
+                    cell, action_text, action, bg=bg,
+                    accent=theme["accent"], hint=theme["popup_hint"],
+                    font=font, size=9).pack(side="left", padx=(8, 0))
         else:
             tk.Label(body, text=text_, bg=bg, fg=label_fg, font=(font, 10)).grid(
-                row=row, column=0, sticky="w", pady=8)
-        sw = self._make_toggle(
-            body, initial, bg, accessible_name=text_, enabled=enabled)
-        sw.grid(row=row, column=1, sticky="e", pady=8)
-        row_state["value"] = row + 1
-        return sw
-
-    def _settings_toggle_row_with_action(self, body, row_state, text_, initial,
-                                         btn_text, btn_cmd, *, bg, fg, font,
-                                         theme):
-        """Like _settings_toggle_row, but with an inline action button."""
-        row = row_state["value"]
-        tk.Label(body, text=text_, bg=bg, fg=fg, font=(font, 10)).grid(
-            row=row, column=0, sticky="w", pady=8)
-        cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        cell.grid(row=row, column=1, sticky="e", pady=8)
-        self._pill_button(
-            cell, btn_text, btn_cmd,
-            bg=theme["list_bg"], fg=fg,
-            hover_bg=theme["btn_active"], hover_fg=fg,
-            active_bg=theme["list_sel"], active_fg=fg,
-            font=(font, 9), padx=14, pady=3).pack(side="left", padx=(0, 12))
-        sw = self._make_toggle(cell, initial, bg)
-        sw.pack(side="left")
+                row=row, column=0, sticky="w", pady=6)
+        if action_text:
+            sw = self._make_toggle(
+                body, initial, bg,
+                accessible_name=text_, enabled=enabled)
+            sw.grid(row=row, column=1, sticky="e", pady=6)
+        else:
+            sw = self._make_toggle(
+                body, initial, bg, accessible_name=text_, enabled=enabled)
+            sw.grid(row=row, column=1, sticky="e", pady=6)
         row_state["value"] = row + 1
         return sw
 
@@ -711,6 +1132,7 @@ class SettingsMixin:
         hint = t["popup_hint"]
         accent = t["accent"]
         self._setup_form_style(theme=t)
+        self._settings_form_theme = t
         direction_labels = get_direction_labels()
         theme_labels = get_theme_labels()
         layout_labels = get_popup_layout_labels()
@@ -733,6 +1155,7 @@ class SettingsMixin:
         # a fixed-size card, so its whole ring drags (never resizes).
         win._v2 = v2on
         win._v2_resizable = False
+        win._v2_ring_draggable = False
 
         FONT = "Microsoft YaHei UI"
         combo_font = tkfont.Font(root=self.root, family=FONT, size=10)
@@ -751,7 +1174,7 @@ class SettingsMixin:
             # no tagline) and no hairline divider — the generous padding does the
             # separating.
             bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-            bar.pack(fill="x", padx=44, pady=(20, 14))
+            bar.pack(fill="x", padx=44, pady=(18, 12))
             self._v2_brand_header(
                 bar, win, title=i18n.get("settings.title"),
                 subtitle=None,
@@ -786,7 +1209,7 @@ class SettingsMixin:
             tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
 
         body = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
-        body.pack(fill="both", expand=True, padx=44, pady=(14, 6))
+        body.pack(fill="both", expand=True, padx=44, pady=(8, 4))
 
         # Two columns side by side so the panel stays short instead of one long
         # vertical strip. Each column is an independent label|widget grid with
@@ -802,7 +1225,8 @@ class SettingsMixin:
         body.grid_columnconfigure(0, minsize=SETTINGS_COL_MIN_W,
                                   uniform="settings_cols")
         body.grid_columnconfigure(1, weight=1)
-        tk.Frame(body, bg=border, width=1).grid(row=0, column=2, sticky="ns")
+        divider = tk.Frame(body, bg=border, width=1)
+        divider.grid(row=0, column=2, sticky="ns")
         body.grid_columnconfigure(3, weight=1)
         body.grid_columnconfigure(4, minsize=SETTINGS_COL_MIN_W,
                                   uniform="settings_cols")
@@ -810,7 +1234,7 @@ class SettingsMixin:
         right_col.grid(row=0, column=4, sticky="nsew", padx=(30, 0))
         for _col in (left_col, right_col):
             _col.grid_columnconfigure(0, weight=1)
-            _col.grid_columnconfigure(1, minsize=140)
+            _col.grid_columnconfigure(1, minsize=_SETTINGS_CONTROL_WIDTH)
         left_state = {"value": 0}
         right_state = {"value": 0}
 
@@ -823,7 +1247,7 @@ class SettingsMixin:
             bg=bg, accent=accent, font=FONT)
         provider_var = tk.StringVar(
             value=provider_labels.get(current_provider, current_provider))
-        provider_combo = ttk.Combobox(
+        provider_combo = self._settings_combobox(
             body, textvariable=provider_var, state="readonly",
             width=combo_width,
             style="CC.TCombobox", font=(FONT, 10),
@@ -836,7 +1260,7 @@ class SettingsMixin:
             value=model_labels.get(
                 provider_model(self.cfg, current_provider),
                 provider_model(self.cfg, current_provider)))
-        model_combo = ttk.Combobox(
+        model_combo = self._settings_combobox(
             body, textvariable=model_var, state="readonly",
             width=combo_width,
             style="CC.TCombobox", font=(FONT, 10),
@@ -870,7 +1294,7 @@ class SettingsMixin:
                                        direction_labels["auto"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.translate_direction"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=dir_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
@@ -880,10 +1304,322 @@ class SettingsMixin:
         max_var = tk.IntVar(value=self.cfg[CFG.MAX_CHARS])
         self._settings_field(
             body, row_state, i18n.get("settings.label.max_chars"),
-            ttk.Spinbox(
+            self._settings_spinbox(
                 body, textvariable=max_var, from_=500, to=20000, increment=500,
                 width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
+
+        dictionary_controls = tk.Frame(
+            left_col, bg=bg, bd=0, highlightthickness=0)
+        dictionary_controls.grid_columnconfigure(0, weight=1)
+        dictionary_controls.grid_columnconfigure(
+            1, minsize=_SETTINGS_CONTROL_WIDTH)
+        dictionary_controls.grid(
+            row=left_state["value"], column=0, columnspan=2, sticky="ew")
+        left_state["value"] += 1
+        dictionary_row_state = {"value": 0}
+        body = dictionary_controls
+        row_state = dictionary_row_state
+        dictionary_manager = getattr(self, "_dictionary_artifact", None)
+        dictionary_status = getattr(
+            getattr(self, "_local_dictionary", None), "status", None)
+        dictionary_available = bool(
+            dictionary_status and dictionary_status.available)
+        dictionary_size_mb = max(
+            1, round(ARTIFACT_SIZE / (1024 * 1024)))
+
+        def dictionary_resource_text():
+            status_ = getattr(
+                getattr(self, "_local_dictionary", None), "status", None)
+            if status_ and status_.available:
+                return i18n.get("settings.dictionary.installed").format(
+                    size=dictionary_size_mb, version=ARTIFACT_RELEASE_TAG)
+            path = getattr(dictionary_manager, "path", "")
+            if path and os.path.isfile(path):
+                return i18n.get("settings.dictionary.invalid")
+            return i18n.get("settings.dictionary.not_installed").format(
+                size=dictionary_size_mb)
+
+        (local_dictionary_sw, dictionary_status_label,
+         dictionary_action_button) = self._settings_resource_row(
+            body, row_state,
+            i18n.get("settings.label.local_dictionary"),
+            "",
+            i18n.get(
+                "settings.dictionary.manage" if dictionary_available
+                else "settings.dictionary.download"),
+            lambda: None,
+            dictionary_available and self.cfg.get(
+                CFG.LOCAL_DICTIONARY_ENABLED,
+                DEFAULT_CONFIG[CFG.LOCAL_DICTIONARY_ENABLED]),
+            bg=bg, hint=hint, fg=fg, font=FONT, theme=t,
+            help_text=i18n.get("settings.label.local_dictionary_help"))
+        win._dictionary_status_label = dictionary_status_label
+        win._dictionary_action_button = dictionary_action_button
+        dictionary_download_cancel = None
+        dictionary_download_in_progress = False
+
+        def set_dictionary_action(text_, command, *, enabled=True):
+            dictionary_action_button.configure(
+                text=text_, command=command,
+                state="normal" if enabled else "disabled")
+
+        def set_dictionary_status(text_="", colour=None):
+            dictionary_status_label.configure(
+                text=text_, fg=colour or hint)
+            if text_:
+                if not dictionary_status_label.winfo_manager():
+                    dictionary_status_label.pack(anchor="w", pady=(3, 0))
+            else:
+                dictionary_status_label.pack_forget()
+
+        def dictionary_window_exists():
+            try:
+                return bool(win.winfo_exists())
+            except tk.TclError:
+                return False
+
+        def refresh_dictionary_resource():
+            if not dictionary_window_exists():
+                return
+            status_ = getattr(
+                getattr(self, "_local_dictionary", None), "status", None)
+            available = bool(status_ and status_.available)
+            set_dictionary_status()
+            path = getattr(dictionary_manager, "path", "")
+            has_local_data = available or bool(
+                path and os.path.isfile(path))
+            set_dictionary_action(
+                i18n.get(
+                    "settings.dictionary.manage" if has_local_data
+                    else "settings.dictionary.download"),
+                open_dictionary_manager
+                if has_local_data else download_dictionary)
+
+        def finish_dictionary_download(result, error):
+            nonlocal dictionary_download_cancel
+            nonlocal dictionary_download_in_progress
+            dictionary_download_cancel = None
+            dictionary_download_in_progress = False
+            if result is not None:
+                status_ = self._reload_local_dictionary()
+                self.cfg[CFG.LOCAL_DICTIONARY_ENABLED] = bool(
+                    status_.available)
+                self._save_config(self.cfg)
+                if dictionary_window_exists():
+                    local_dictionary_sw.set(status_.available)
+                    refresh_dictionary_resource()
+                return
+            if dictionary_window_exists():
+                refresh_dictionary_resource()
+            if isinstance(error, DictionaryDownloadCancelled):
+                if dictionary_window_exists():
+                    set_dictionary_status(
+                        i18n.get("settings.dictionary.cancelled"))
+            else:
+                log_error("dictionary_download", error)
+                if dictionary_window_exists():
+                    set_dictionary_status(
+                        i18n.get(
+                            "settings.dictionary.download_failed").format(
+                                error=str(error)),
+                        t["status_err"])
+
+        def download_dictionary():
+            nonlocal dictionary_download_cancel
+            nonlocal dictionary_download_in_progress
+            if dictionary_download_in_progress or dictionary_manager is None:
+                return
+            dictionary_download_in_progress = True
+            dictionary_download_cancel = threading.Event()
+            cancel_event = dictionary_download_cancel
+            set_dictionary_action(
+                i18n.get("settings.dictionary.cancel"),
+                cancel_event.set)
+
+            def report_progress(downloaded, total):
+                percent = min(100, int(downloaded * 100 / max(1, total)))
+
+                def apply_progress():
+                    try:
+                        if win.winfo_exists():
+                            set_dictionary_status(
+                                i18n.get(
+                                    "settings.dictionary.downloading").format(
+                                        percent=percent))
+                    except tk.TclError:
+                        pass
+
+                try:
+                    self.root.after(0, apply_progress)
+                except tk.TclError:
+                    pass
+
+            def worker():
+                result = None
+                error = None
+                try:
+                    result = dictionary_manager.install(
+                        report_progress, cancel_event)
+                except (DictionaryArtifactError, OSError) as exc:
+                    error = exc
+                try:
+                    self.root.after(
+                        0, lambda: finish_dictionary_download(result, error))
+                except tk.TclError:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def delete_dictionary():
+            if dictionary_manager is None:
+                return
+            if not messagebox.askyesno(
+                    i18n.get("settings.dictionary.delete_title"),
+                    i18n.get("settings.dictionary.delete_confirm"),
+                    parent=win):
+                return
+            current = getattr(self, "_local_dictionary", None)
+            if current is not None:
+                current.close_thread()
+            try:
+                dictionary_manager.delete()
+            except DictionaryArtifactError as exc:
+                log_error("dictionary_delete", exc)
+                self._reload_local_dictionary()
+                set_dictionary_status(
+                    i18n.get(
+                        "settings.dictionary.delete_failed").format(
+                            error=str(exc)),
+                    t["status_err"])
+                return
+            self._reload_local_dictionary()
+            self.cfg[CFG.LOCAL_DICTIONARY_ENABLED] = False
+            self._save_config(self.cfg)
+            local_dictionary_sw.set(False)
+            refresh_dictionary_resource()
+
+        def open_dictionary_manager():
+            existing = getattr(win, "_dictionary_manager_win", None)
+            try:
+                if existing is not None and existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except tk.TclError:
+                pass
+
+            manager_win = tk.Toplevel(win)
+            manager_win.withdraw()
+            manager_win.overrideredirect(True)
+            win._dictionary_manager_win = manager_win
+            manager_win.transient(win)
+            manager_win._v2 = v2on
+            manager_win._v2_resizable = False
+            manager_win._v2_ring_draggable = False
+            manager_radius = (
+                V2_CORNER_RADIUS if v2on else POPUP_CORNER_RADIUS)
+            manager_card = self._rounded_shell(
+                manager_win, manager_radius, bg, border)
+
+            bar = tk.Frame(
+                manager_card, bg=bg, bd=0, highlightthickness=0)
+            if v2on:
+                bar.pack(fill="x", padx=28, pady=(18, 12))
+                self._v2_brand_header(
+                    bar, manager_win,
+                    title=i18n.get("settings.dictionary.manage_title"),
+                    subtitle=None, bg=bg, hint=hint, accent=accent,
+                    font=FONT, scale=scale,
+                    cache_tag="dictionary_manager_title")
+            else:
+                bar.pack(fill="x", padx=20, pady=(14, 10))
+                title = tk.Label(
+                    bar,
+                    text=i18n.get("settings.dictionary.manage_title"),
+                    bg=bg, fg=accent, font=(FONT, 11, "bold"))
+                title.pack(side="left")
+                close = tk.Label(
+                    bar, text="✕", bg=bg, fg=hint,
+                    font=(FONT, 11), cursor="hand2", padx=6)
+                close.pack(side="right")
+                close.bind(
+                    "<Button-1>", lambda _event: manager_win.destroy())
+                self._make_draggable((bar, title), manager_win)
+
+            content = tk.Frame(
+                manager_card, bg=bg, bd=0, highlightthickness=0)
+            content.pack(fill="both", expand=True, padx=30, pady=(2, 26))
+            if v2on and ccv2 is not None:
+                info = self._settings_info_card(
+                    content, dictionary_resource_text(),
+                    theme=t, fg=fg, font=FONT, scale=scale)
+                info.pack(fill="x", pady=(0, 20))
+            else:
+                info = tk.Frame(
+                    content, bg=t["list_bg"], bd=0, highlightthickness=0)
+                info.pack(fill="x", pady=(0, 18), ipady=12)
+                tk.Label(
+                    info, text=dictionary_resource_text(),
+                    bg=t["list_bg"], fg=fg, anchor="w",
+                    font=(FONT, 10)).pack(fill="x", padx=16)
+
+            actions = tk.Frame(
+                content, bg=bg, bd=0, highlightthickness=0)
+            actions.pack(fill="x")
+            actions.grid_columnconfigure(0, weight=1)
+            actions.grid_columnconfigure(1, weight=1)
+
+            def redownload():
+                manager_win.destroy()
+                download_dictionary()
+
+            def remove_data():
+                manager_win.destroy()
+                delete_dictionary()
+
+            if v2on and ccv2 is not None:
+                action_width = ccv2.scaled(150, scale)
+                self._v2_soft_button(
+                    actions, i18n.get("settings.dictionary.repair"),
+                    redownload, min_w=action_width).grid(
+                        row=0, column=0, sticky="w")
+                self._v2_soft_button(
+                    actions, i18n.get("settings.dictionary.delete"),
+                    remove_data, min_w=action_width, danger=True).grid(
+                        row=0, column=1, sticky="e")
+            else:
+                self._settings_action_button(
+                    actions, i18n.get("settings.dictionary.repair"), redownload,
+                    theme=t, fg=fg, font=FONT, width=14).grid(
+                        row=0, column=0, sticky="w")
+                self._settings_action_button(
+                    actions, i18n.get("settings.dictionary.delete"), remove_data,
+                    theme=t, fg=fg, font=FONT, width=14, danger=True).grid(
+                        row=0, column=1, sticky="e")
+
+            manager_win.update_idletasks()
+            inset = int(getattr(
+                manager_win, "_card_inset", POPUP_CORNER_RADIUS))
+            width = max(540, manager_card.winfo_reqwidth() + 2 * inset)
+            height = manager_card.winfo_reqheight() + 2 * inset
+            x = win.winfo_rootx() + max(0, (win.winfo_width() - width) // 2)
+            y = win.winfo_rooty() + max(0, (win.winfo_height() - height) // 2)
+            self._reveal_rounded_window(
+                manager_win, width, height, x, y)
+            manager_win.grab_set()
+            manager_win.focus_force()
+
+        refresh_dictionary_resource()
+
+        def cancel_dictionary_download(event):
+            if (event.widget is win and dictionary_download_cancel is not None):
+                dictionary_download_cancel.set()
+
+        win.bind("<Destroy>", cancel_dictionary_download, add="+")
+
+        body = left_col
+        row_state = left_state
 
         # ---- Section: 截图翻译 ----
         self._settings_section(
@@ -895,7 +1631,7 @@ class SettingsMixin:
                 ocr_engine_labels["claude"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.ocr_engine"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=ocr_engine_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
@@ -916,7 +1652,7 @@ class SettingsMixin:
                                    theme_labels["system"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.theme_field"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=theme_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
@@ -929,7 +1665,7 @@ class SettingsMixin:
                 layout_labels["dynamic"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.popup_layout"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=layout_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
@@ -939,7 +1675,7 @@ class SettingsMixin:
         font_var = tk.IntVar(value=self.cfg[CFG.FONT_SIZE])
         self._settings_field(
             body, row_state, i18n.get("settings.label.font_size"),
-            ttk.Spinbox(
+            self._settings_spinbox(
                 body, textvariable=font_var, from_=9, to=24, increment=1,
                 width=10, style="CC.TSpinbox", font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
@@ -948,7 +1684,7 @@ class SettingsMixin:
             value=LANGUAGE_LABELS.get(self.cfg.get(CFG.LANGUAGE), "English"))
         self._settings_field(
             body, row_state, i18n.get("settings.label.language_field"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=lang_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
@@ -966,7 +1702,7 @@ class SettingsMixin:
         gap_var = tk.DoubleVar(value=self.cfg[CFG.DOUBLE_PRESS_WINDOW])
         self._settings_field(
             body, row_state, i18n.get("settings.label.double_press_window"),
-            ttk.Spinbox(
+            self._settings_spinbox(
                 body, textvariable=gap_var, from_=0.2, to=1.5, increment=0.1,
                 width=10, style="CC.TSpinbox", format="%.1f",
                 font=(FONT, 10)),
@@ -978,32 +1714,36 @@ class SettingsMixin:
                 tray_click_labels["settings"]))
         self._settings_field(
             body, row_state, i18n.get("settings.label.tray_click_action"),
-            ttk.Combobox(
+            self._settings_combobox(
                 body, textvariable=tray_click_var, state="readonly",
                 width=combo_width,
                 style="CC.TCombobox", font=(FONT, 10),
                 values=list(tray_click_labels.values())),
             bg=bg, fg=fg, font=FONT)
 
-        history_sw = self._settings_toggle_row_with_action(
-            body, row_state,
-            i18n.get("settings.label.history_enabled"),
-            self.cfg.get(CFG.HISTORY_ENABLED, True),
-            i18n.get("settings.label.open_history"), self._open_history,
-            bg=bg, fg=fg, font=FONT, theme=t)
-        # History count lives right under the "记录历史" toggle so both
-        # history-related settings sit together.
-        hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.history_limit"),
-            ttk.Spinbox(
-                body, textvariable=hist_limit_var, from_=20, to=500,
-                increment=20, width=10, style="CC.TSpinbox",
-                font=(FONT, 10)),
-            bg=bg, fg=fg, font=FONT)
         autostart_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_start_boot"), is_autostart_enabled(),
+            bg=bg, fg=fg, font=FONT)
+
+        # ---- Section: 历史记录 ----
+        self._settings_section(
+            body, row_state, i18n.get("settings.label.history_section"),
+            bg=bg, accent=accent, font=FONT)
+        history_sw = self._settings_toggle_row(
+            body, row_state,
+            i18n.get("settings.label.history_enabled"),
+            self.cfg.get(CFG.HISTORY_ENABLED, True),
+            bg=bg, fg=fg, font=FONT,
+            action_text=i18n.get("settings.label.open_history"),
+            action=self._open_history, theme=t, scale=scale)
+        hist_limit_var = tk.IntVar(value=self.cfg.get(CFG.HISTORY_LIMIT, 100))
+        self._settings_field(
+            body, row_state, i18n.get("settings.label.history_limit"),
+            self._settings_spinbox(
+                body, textvariable=hist_limit_var, from_=20, to=500,
+                increment=20, width=10, style="CC.TSpinbox",
+                font=(FONT, 10)),
             bg=bg, fg=fg, font=FONT)
 
         # ---- Section: 实验室 ----
@@ -1041,93 +1781,59 @@ class SettingsMixin:
         self._settings_section(
             body, row_state, i18n.get("settings.label.update_section"),
             bg=bg, accent=accent, font=FONT)
-        # Inline status line + an "更新并重启" button that only appears once a
-        # newer version has been found (checking never updates on its own).
-        upd_status = tk.Label(body, text="", bg=bg, fg=hint, font=(FONT, 9))
-        upd_apply_btn = tk.Button(
-            body, text=i18n.get("settings.update_and_restart"),
-            bg=accent, fg="#ffffff",
-            activebackground=accent, activeforeground="#ffffff",
-            relief="flat", bd=0, highlightthickness=0,
-            font=(FONT, 9), cursor="hand2", padx=14, pady=4)
-
-        def _upd_show(msg, kind):
-            colour = {"ok": t["status_ok"], "err": t["status_err"],
-                      "avail": accent}.get(kind, hint)
-            upd_status.config(text=msg, fg=colour)
-            if kind == "avail":
-                upd_apply_btn.grid()      # reveal the explicit update button
-            else:
-                upd_apply_btn.grid_remove()
-
-        def on_apply_update_click():
-            upd_apply_btn.grid_remove()
-            upd_status.config(text=i18n.get("update.updating"), fg=hint)
-            self._begin_update(check_only=False, on_status=_upd_show)
-
-        upd_apply_btn.config(command=on_apply_update_click)
-
-        def on_check_update_click():
-            upd_apply_btn.grid_remove()
-            upd_status.config(text=i18n.get("update.checking"), fg=hint)
-            # Check only — if an update exists we surface a button, not an
-            # automatic restart.
-            self._begin_update(check_only=True, on_status=_upd_show)
-
-        # Expose the check so the tray "检查更新" entry can route through here,
-        # converging both entry points on this one UI.
-        self._settings_check = on_check_update_click
-
         auto_update_sw = self._settings_toggle_row(
             body, row_state,
             i18n.get("settings.label.auto_update"),
             self.cfg.get(CFG.AUTO_UPDATE_ENABLED, True),
             bg=bg, fg=fg, font=FONT)
 
-        version_cell = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
-        tk.Label(
-            version_cell, text=version_string(), bg=bg, fg=hint,
-            font=(FONT, 10)).pack(side="left", padx=(0, 12))
-        self._pill_button(
-            version_cell, i18n.get("settings.label.check_update_action"),
-            on_check_update_click,
-            bg=t["list_bg"], fg=fg,
-            hover_bg=t["btn_active"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 9), padx=14, pady=3).pack(side="right")
-        self._settings_field(
-            body, row_state, i18n.get("settings.label.current_version"),
-            version_cell, bg=bg, fg=fg, font=FONT)
+        current_version = version_string()
 
-        upd_row = row_state["value"]
-        upd_status.grid(row=upd_row, column=0, sticky="w", pady=(0, 4))
-        upd_apply_btn.grid(row=upd_row, column=1, sticky="e", pady=(0, 4))
-        # Permanently reserve the update row's footprint so revealing any real
-        # status text or the "更新并重启" button never reflows the right column or
-        # shifts the divider. Measure the widest real status we can show here,
-        # with/without the button as appropriate, pin col 0's min width to that,
-        # then reset to the idle (empty / hidden) look.
-        status_w = 0
-        status_samples = [
-            (i18n.get("update.found_version").format(version="4.0.9999"), True),
-            (i18n.get("update.no_update"), False),
-        ]
-        for sample_text, show_btn in status_samples:
-            upd_status.config(text=sample_text)
-            if show_btn:
-                upd_apply_btn.grid()
+        def set_update_button(text_, command=None, enabled=True):
+            update_button.configure(
+                text=text_,
+                command=command or (lambda: None),
+                state="normal" if enabled else "disabled")
+
+        def _upd_show(msg, kind):
+            if kind == "avail":
+                available_version = getattr(
+                    self, "_available_update_version", "") or ""
+                version_value.configure(
+                    text=(
+                        f"{current_version}  →  {available_version}"
+                        if available_version else current_version))
+                set_update_button(
+                    i18n.get("settings.download_update"),
+                    on_apply_update_click)
+            elif kind == "ok":
+                set_update_button(msg, enabled=False)
+            elif kind == "err":
+                set_update_button(
+                    i18n.get("settings.label.check_update_action"),
+                    on_check_update_click)
             else:
-                upd_apply_btn.grid_remove()
-            right_col.update_idletasks()
-            status_w = max(status_w, upd_status.winfo_reqwidth())
-        right_col.grid_columnconfigure(0, minsize=status_w)
-        # +4 accounts for the row's pady=(0, 4) bottom padding, which the grid
-        # adds on top of the button's own height.
-        right_col.grid_rowconfigure(
-            upd_row, minsize=upd_apply_btn.winfo_reqheight() + 4)
-        upd_status.config(text="")
-        upd_apply_btn.grid_remove()       # hidden until a version is found
-        row_state["value"] += 1
+                set_update_button(msg, enabled=False)
+
+        def on_apply_update_click():
+            set_update_button(i18n.get("update.updating"), enabled=False)
+            self._begin_update(check_only=False, on_status=_upd_show)
+
+        def on_check_update_click():
+            self._available_update_version = None
+            version_value.configure(text=current_version)
+            set_update_button(i18n.get("update.checking"), enabled=False)
+            self._begin_update(check_only=True, on_status=_upd_show)
+
+        version_value, update_button = self._settings_version_row(
+            body, row_state,
+            i18n.get("settings.label.current_version"), current_version,
+            i18n.get("settings.label.check_update_action"),
+            on_check_update_click,
+            bg=bg, fg=fg, hint=hint, font=FONT, theme=t)
+
+        # Expose the check so the tray entry converges on this in-row state.
+        self._settings_check = on_check_update_click
 
         # ---- Footer: status + action buttons ----
         # v2 drops the hairline divider (the padding separates the row); legacy
@@ -1140,17 +1846,24 @@ class SettingsMixin:
 
         # Uninstall sits far left, deliberately separated from the save/close
         # actions on the right so it can't be hit by accident.
-        self._pill_button(
-            footer, i18n.get("settings.label.uninstall"),
-            lambda: self._confirm_and_uninstall(),
-            bg=bg, fg=hint,
-            hover_bg=t["list_bg"], hover_fg=t["status_err"],
-            active_bg=t["list_sel"], active_fg=t["status_err"],
-            font=(FONT, 9), padx=10, pady=6).pack(side="left")
+        if v2on and ccv2 is not None:
+            self._v2_soft_button(
+                footer, i18n.get("settings.label.uninstall"),
+                lambda: self._confirm_and_uninstall(),
+                min_w=ccv2.scaled(90, scale),
+                danger=True, ghost=True, font_size=12).pack(side="left")
+        else:
+            self._pill_button(
+                footer, i18n.get("settings.label.uninstall"),
+                lambda: self._confirm_and_uninstall(),
+                bg=bg, fg=hint,
+                hover_bg=t["list_bg"], hover_fg=t["status_err"],
+                active_bg=t["list_sel"], active_fg=t["status_err"],
+                font=(FONT, 9), padx=10, pady=6).pack(side="left")
 
         status = tk.Label(footer, text="", bg=bg, fg=t["status_ok"],
                           font=(FONT, 9))
-        status.pack(side="left", padx=(12, 0))
+        status.pack(side="left", padx=(18, 0))
         if (self.cfg.get(
                 CFG.PLAIN_TEXT_PASTE_ENABLED,
                 DEFAULT_CONFIG[CFG.PLAIN_TEXT_PASTE_ENABLED])
@@ -1203,6 +1916,11 @@ class SettingsMixin:
                 self.cfg[CFG.OCR_HOTKEY_ENABLED] = bool(ocr_hotkey_sw.get())
                 self.cfg[CFG.CLIPBOARD_PROTECTION_ENABLED] = bool(clip_protect_sw.get())
                 self.cfg[CFG.SUMMARY_ENABLED] = bool(summary_sw.get())
+                local_status = getattr(
+                    getattr(self, "_local_dictionary", None), "status", None)
+                self.cfg[CFG.LOCAL_DICTIONARY_ENABLED] = bool(
+                    local_dictionary_sw.get()
+                    and local_status and local_status.available)
                 self.cfg[CFG.PLAIN_TEXT_PASTE_ENABLED] = bool(
                     plain_paste_sw.get())
                 # Streaming is now an always-on capability with safe startup
@@ -1284,6 +2002,8 @@ class SettingsMixin:
             hist_limit_var.set(DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
             gap_var.set(DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
             summary_sw.set(DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
+            local_dictionary_sw.set(
+                DEFAULT_CONFIG[CFG.LOCAL_DICTIONARY_ENABLED])
             ocr_hotkey_sw.set(DEFAULT_CONFIG[CFG.OCR_HOTKEY_ENABLED])
             history_sw.set(DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
             clip_protect_sw.set(DEFAULT_CONFIG[CFG.CLIPBOARD_PROTECTION_ENABLED])
@@ -1297,6 +2017,11 @@ class SettingsMixin:
                 fg=t["status_ok"])
 
         def mk_btn(parent, text_, cmd, primary=False):
+            if v2on and ccv2 is not None:
+                return self._v2_soft_button(
+                    parent, text_, cmd,
+                    min_w=ccv2.scaled(96, scale), grad=primary,
+                    font_size=12)
             if primary:
                 base_bg = accent
                 base_fg = "#ffffff"
@@ -1318,18 +2043,24 @@ class SettingsMixin:
         save_btn = mk_btn(footer, i18n.get("ui.save"), apply_settings, primary=True)
         save_btn.pack(side="right")
         close2 = mk_btn(footer, i18n.get("settings.label.cancel"), win.destroy)
-        close2.pack(side="right", padx=(0, 12))
-        # Restore-defaults is a rare action, so it stays low-key via color only
-        # (hint text on a plain background). It keeps the SAME font/padding as
-        # Cancel/Save so its height matches theirs — otherwise the hover fill
-        # would reveal a shorter box and jump against the neighbors.
-        self._pill_button(
-            footer, i18n.get("settings.label.restore_defaults"),
-            restore_defaults,
-            bg=bg, fg=hint,
-            hover_bg=t["list_bg"], hover_fg=fg,
-            active_bg=t["list_sel"], active_fg=fg,
-            font=(FONT, 10), padx=20, pady=7).pack(side="right", padx=(0, 12))
+        button_gap = ccv2.scaled(16, scale) if v2on and ccv2 is not None else 12
+        close2.pack(side="right", padx=(0, button_gap))
+        if v2on and ccv2 is not None:
+            self._v2_soft_button(
+                footer, i18n.get("settings.label.restore_defaults"),
+                restore_defaults,
+                min_w=ccv2.scaled(110, scale), ghost=True,
+                font_size=12).pack(
+                    side="right", padx=(0, button_gap))
+        else:
+            self._pill_button(
+                footer, i18n.get("settings.label.restore_defaults"),
+                restore_defaults,
+                bg=bg, fg=hint,
+                hover_bg=t["list_bg"], hover_fg=fg,
+                active_bg=t["list_sel"], active_fg=fg,
+                font=(FONT, 10), padx=20, pady=7).pack(
+                    side="right", padx=(0, button_gap))
 
         win.bind("<Escape>", lambda e: win.destroy())
 
