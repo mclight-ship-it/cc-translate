@@ -2571,8 +2571,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_5_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 5)
-        self.assertEqual(cc_update.VERSION_MINOR, 3)
-        self.assertTrue(tr.version_string().startswith("5.3."))
+        self.assertEqual(cc_update.VERSION_MINOR, 4)
+        self.assertTrue(tr.version_string().startswith("5.4."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -4092,6 +4092,58 @@ class TestUiSmoke(unittest.TestCase):
         listbox = f"{popdown}.f.l"
         self.assertGreaterEqual(int(combo.tk.call(listbox, "cget", "-borderwidth")), 4)
         self.assertEqual(str(combo.tk.call(listbox, "cget", "-relief")), "flat")
+
+    def test_settings_drag_start_closes_open_custom_dropdown(self):
+        app = self._build("_open_settings")
+        win = app.settings_win
+        combo = next(
+            widget for widget in self._walk_widgets(win)
+            if isinstance(widget, tr.ttk.Combobox))
+        drag_targets = [
+            widget for widget in self._walk_widgets(win)
+            if widget.bind("<Button-1>") and widget.bind("<B1-Motion>")
+        ]
+        self.assertGreater(len(drag_targets), 1)
+
+        for drag_target in drag_targets:
+            combo._settings_dropdown_toggle()
+            menu = app._settings_dropdown_win
+            self.assertIsNotNone(menu)
+            self.assertTrue(menu.winfo_exists())
+
+            drag_target.event_generate("<Button-1>", x=8, y=8)
+            win.update()
+
+            self.assertIsNone(app._settings_dropdown_win)
+            self.assertIsNone(combo._settings_dropdown_state["win"])
+            self.assertFalse(menu.winfo_exists())
+            drag_target.event_generate("<ButtonRelease-1>", x=8, y=8)
+            win.update()
+            self.assertIsNone(app._settings_dropdown_win)
+
+    def test_settings_dropdown_existing_dismissal_paths_still_work(self):
+        app = self._build("_open_settings")
+        win = app.settings_win
+        combo = next(
+            widget for widget in self._walk_widgets(win)
+            if isinstance(widget, tr.ttk.Combobox))
+
+        combo._settings_dropdown_toggle()
+        self.assertIsNotNone(app._settings_dropdown_win)
+        combo._settings_dropdown_toggle()
+        self.assertIsNone(app._settings_dropdown_win)
+
+        combo.focus_force()
+        win.update()
+        combo.event_generate("<space>", when="now")
+        win.update()
+        menu = app._settings_dropdown_win
+        self.assertIsNotNone(menu)
+        menu._armed = True
+        menu.event_generate("<FocusOut>")
+        win.update()
+        self.assertIsNone(app._settings_dropdown_win)
+        self.assertIsNone(combo._settings_dropdown_state["win"])
 
     def test_settings_restore_defaults_repopulates(self):
         app = _make_headless_app()

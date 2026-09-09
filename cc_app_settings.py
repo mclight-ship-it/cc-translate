@@ -639,6 +639,22 @@ class SettingsMixin:
     def _settings_spinbox(self, parent, **kwargs):
         return self._settings_field_widget(parent, ttk.Spinbox, **kwargs)
 
+    def _close_settings_dropdown(self):
+        """Close the active custom settings dropdown and clear its owner state."""
+        menu_win = getattr(self, "_settings_dropdown_win", None)
+        if menu_win is None:
+            return False
+        close_menu = getattr(menu_win, "_settings_dropdown_close", None)
+        if callable(close_menu):
+            close_menu()
+        else:
+            self._settings_dropdown_win = None
+            try:
+                menu_win.destroy()
+            except tk.TclError:
+                pass
+        return True
+
     def _attach_settings_menu(self, combo, *, theme, font):
         state = {"win": None}
 
@@ -663,10 +679,7 @@ class SettingsMixin:
                 return "break"
             other = getattr(self, "_settings_dropdown_win", None)
             if other is not None:
-                try:
-                    other.destroy()
-                except tk.TclError:
-                    pass
+                self._close_settings_dropdown()
 
             combo.focus_set()
             combo.update_idletasks()
@@ -685,6 +698,7 @@ class SettingsMixin:
             menu_win._v2_ring_draggable = False
             state["win"] = menu_win
             self._settings_dropdown_win = menu_win
+            menu_win._settings_dropdown_close = close_menu
 
             radius = ccv2.scaled(12, self._ui_scale())
             card = self._rounded_shell(
@@ -1218,7 +1232,8 @@ class SettingsMixin:
                 bar, win, title=i18n.get("settings.title"),
                 subtitle=None,
                 bg=bg, hint=hint, accent=accent, font=FONT, scale=scale,
-                cache_tag="settings_title")
+                cache_tag="settings_title",
+                on_drag_start=self._close_settings_dropdown)
         else:
             bar = tk.Frame(outer, bg=bg, bd=0, highlightthickness=0)
             bar.pack(fill="x", padx=16, pady=(12, 8))
@@ -1243,7 +1258,9 @@ class SettingsMixin:
             close_btn.bind("<Leave>", lambda e: close_btn.config(fg=hint))
 
             # Drag the bar (but not the close button) to move the window.
-            self._make_draggable(tuple(drag_targets), win)
+            self._make_draggable(
+                tuple(drag_targets), win,
+                on_start=self._close_settings_dropdown)
 
             tk.Frame(outer, bg=border, height=1).pack(fill="x", padx=16)
 

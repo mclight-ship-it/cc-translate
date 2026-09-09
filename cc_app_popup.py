@@ -1396,7 +1396,7 @@ class PopupMixin:
         return t
 
     def _v2_brand_header(self, bar, win, *, title, subtitle, bg, hint, accent,
-                         font, scale, cache_tag):
+                         font, scale, cache_tag, on_drag_start=None):
         """Fill an already-packed header ``bar`` with the shared v2 window
         chrome: a brand tile, the tri-colour gradient title with a calm subtitle
         stacked beneath it, and a ghost close button — then wire dragging. Used
@@ -1436,7 +1436,8 @@ class PopupMixin:
             bar, lambda: win.destroy(), icon="close", danger=True,
             tooltip=i18n.get("settings.label.close"))
         close_btn.pack(side="right", anchor="n")
-        self._make_draggable(tuple(drag_targets), win)
+        self._make_draggable(
+            tuple(drag_targets), win, on_start=on_drag_start)
         return close_btn
 
     def _v2_photo(self, key, factory):
@@ -1901,12 +1902,14 @@ class PopupMixin:
         self._resize_mode = None
         self._resize_start = None
 
-    def _make_draggable(self, widgets, win_getter, guard=None):
+    def _make_draggable(
+            self, widgets, win_getter, guard=None, on_start=None):
         """Bind `widgets` so dragging them moves a borderless window.
 
         `win_getter` is the target window or a callable returning it (deferred so
         the popup can be resolved at drag time). `guard`, if given, is a callable
-        that aborts the drag while truthy (e.g. during a resize).
+        that aborts the drag while truthy (e.g. during a resize). `on_start` runs
+        once on a valid press before movement begins.
         """
         off = {"x": 0, "y": 0}
 
@@ -1916,6 +1919,8 @@ class PopupMixin:
         def start(e):
             if guard and guard():
                 return
+            if on_start:
+                on_start()
             off["x"], off["y"] = e.x, e.y
 
         def move(e):
