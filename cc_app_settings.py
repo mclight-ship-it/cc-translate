@@ -1403,6 +1403,11 @@ class SettingsMixin:
             bg=bg, hint=hint, fg=fg, font=FONT, theme=t,
             help_text=i18n.get("settings.label.local_dictionary_help"),
             on_toggle=on_dictionary_toggle)
+        dictionary_progress_label.configure(
+            width=len(
+                i18n.get(
+                    "settings.dictionary.downloading_inline").format(
+                        percent=100)))
         win._dictionary_status_label = dictionary_status_label
         win._dictionary_action_button = dictionary_action_button
         win._dictionary_progress_label = dictionary_progress_label

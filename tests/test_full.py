@@ -2571,8 +2571,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_5_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 5)
-        self.assertEqual(cc_update.VERSION_MINOR, 2)
-        self.assertTrue(tr.version_string().startswith("5.2."))
+        self.assertEqual(cc_update.VERSION_MINOR, 3)
+        self.assertTrue(tr.version_string().startswith("5.3."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3574,6 +3574,35 @@ class TestUiSmoke(unittest.TestCase):
         self.assertIs(
             app.cfg[tr.CFG.LOCAL_DICTIONARY_ENABLED], True)
         app._save_config.assert_called_once_with(app.cfg)
+
+    def test_dictionary_progress_digits_do_not_shift_settings_layout(self):
+        app = self._build("_open_settings")
+        win = app.settings_win
+        progress = win._dictionary_progress_label
+        action = win._dictionary_action_button
+        progress.pack(
+            side="left", padx=(8, 0), before=action)
+        action.configure(text=tr.i18n.get("settings.dictionary.cancel"))
+
+        positions = []
+        requested_widths = []
+        left_combo = min(
+            (
+                widget for widget in self._walk_widgets(win)
+                if isinstance(widget, tr.ttk.Combobox)
+            ),
+            key=lambda widget: widget.winfo_rootx())
+        for percent in (0, 9, 10, 99, 100):
+            progress.configure(
+                text=tr.i18n.get(
+                    "settings.dictionary.downloading_inline").format(
+                        percent=percent))
+            win.update_idletasks()
+            positions.append((win.winfo_width(), left_combo.winfo_rootx()))
+            requested_widths.append(progress.winfo_reqwidth())
+
+        self.assertEqual(len(set(positions)), 1, positions)
+        self.assertEqual(len(set(requested_widths)), 1, requested_widths)
 
     def test_failed_toggle_started_dictionary_download_stays_off(self):
         app = _make_headless_app()
@@ -5074,6 +5103,55 @@ class TestUpdateStatusCopy(unittest.TestCase):
             ])
         app._relaunch.assert_called_once_with()
         notice().write.assert_called_once_with("5.2.777")
+
+
+class TestUpdateTrayNotice(unittest.TestCase):
+    def _app(self):
+        app = object.__new__(tr.TranslatorApp)
+        app.root = unittest.mock.Mock()
+        app.tray = unittest.mock.Mock()
+        return app
+
+    def test_normal_startup_stays_silent(self):
+        app = self._app()
+        with tempfile.TemporaryDirectory() as tmp:
+            notice_path = os.path.join(tmp, "missing-update-notice")
+            with unittest.mock.patch(
+                    "cc_app_update.UPDATE_NOTICE_PATH", notice_path):
+                app._show_update_notice_if_any()
+
+        app.tray.notify.assert_not_called()
+
+    def test_update_notice_uses_system_notification_and_is_consumed(self):
+        app = self._app()
+        with tempfile.TemporaryDirectory() as tmp:
+            notice_path = os.path.join(tmp, "update-notice")
+            with open(notice_path, "w", encoding="utf-8") as f:
+                f.write("5.3.999")
+            with unittest.mock.patch(
+                    "cc_app_update.UPDATE_NOTICE_PATH", notice_path):
+                app._show_update_notice_if_any()
+            self.assertFalse(os.path.exists(notice_path))
+
+        app.tray.notify.assert_called_once_with(
+            tr.i18n.get("update.notice_with_version").format(
+                version="5.3.999"),
+            tr.APP_NAME)
+
+    def test_notice_retries_until_tray_is_ready(self):
+        app = self._app()
+        app.tray = None
+        with tempfile.TemporaryDirectory() as tmp:
+            notice_path = os.path.join(tmp, "update-notice")
+            with open(notice_path, "w", encoding="utf-8") as f:
+                f.write("5.3.999")
+            with unittest.mock.patch(
+                    "cc_app_update.UPDATE_NOTICE_PATH", notice_path):
+                app._show_update_notice_if_any()
+
+        self.assertEqual(app._notice_retries, 1)
+        app.root.after.assert_called_once_with(
+            1000, app._show_update_notice_if_any)
 
 
 class TestQuickInputFallback(unittest.TestCase):
