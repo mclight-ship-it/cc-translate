@@ -2568,11 +2568,11 @@ class TestCCUpdatePaths(unittest.TestCase):
         self.assertIsInstance(vs, str)
         self.assertGreater(len(vs), 0)
 
-    def test_release_uses_version_4_major(self):
+    def test_release_uses_version_5_major(self):
         import cc_update
-        self.assertEqual(cc_update.VERSION_MAJOR, 4)
-        self.assertEqual(cc_update.VERSION_MINOR, 22)
-        self.assertTrue(tr.version_string().startswith("4.22."))
+        self.assertEqual(cc_update.VERSION_MAJOR, 5)
+        self.assertEqual(cc_update.VERSION_MINOR, 0)
+        self.assertTrue(tr.version_string().startswith("5.0."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3855,9 +3855,9 @@ class TestUiSmoke(unittest.TestCase):
             update_button.cget("text"), tr.i18n.get("update.checking"))
         self.assertEqual(update_button.cget("state"), "disabled")
         callback = app._begin_update.call_args.kwargs["on_status"]
-        app._available_update_version = "4.22.999"
+        app._available_update_version = "5.1.999"
         callback(
-            tr.i18n.get("update.found_version").format(version="4.22.999"),
+            tr.i18n.get("update.found_version").format(version="5.1.999"),
             "avail")
 
         self.assertEqual(
@@ -3865,7 +3865,7 @@ class TestUiSmoke(unittest.TestCase):
             tr.i18n.get("settings.download_update"))
         self.assertEqual(update_button.cget("state"), "normal")
         self.assertIn(
-            f"{tr.version_string()}  →  4.22.999",
+            f"{tr.version_string()}  →  5.1.999",
             self._widget_texts(app.settings_win))
 
         update_button.invoke()

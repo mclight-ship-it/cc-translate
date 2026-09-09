@@ -2300,6 +2300,13 @@ class PopupMixin:
                 pass
 
         fill, border, fg, radius = self._tooltip_colors()
+        anchor.update_idletasks()
+        anchor_x = anchor.winfo_rootx()
+        anchor_y = anchor.winfo_rooty()
+        monitor = get_monitor_rect((anchor_x, anchor_y))
+        if monitor is None:
+            monitor = (
+                0, 0, anchor.winfo_screenwidth(), anchor.winfo_screenheight())
         card = tk.Toplevel(anchor)
         card.withdraw()
         card.overrideredirect(True)
@@ -2314,11 +2321,15 @@ class PopupMixin:
             takefocus=0)
         canvas.pack(fill="both", expand=True)
         body = tk.Frame(canvas, bg=fill, bd=0, highlightthickness=0)
-        tk.Label(
+        wrap_labels = []
+        heading = tk.Label(
             body, text=i18n.get("result.sources_title"),
             bg=fill, fg=fg, anchor="w",
+            justify="left",
             font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(fill="x", pady=(0, 8))
+        )
+        heading.pack(fill="x", pady=(0, 8))
+        wrap_labels.append(heading)
         for index, source in enumerate(details):
             if index:
                 tk.Frame(
@@ -2327,16 +2338,20 @@ class PopupMixin:
             label = source["label"]
             if source["version"]:
                 label += " " + source["version"]
-            tk.Label(
+            source_label = tk.Label(
                 body, text=label, bg=fill, fg=fg, anchor="w",
                 justify="left", font=("Microsoft YaHei UI", 9, "bold"),
-            ).pack(fill="x")
+            )
+            source_label.pack(fill="x")
+            wrap_labels.append(source_label)
             if source["license"]:
-                tk.Label(
+                license_label = tk.Label(
                     body, text=source["license"], bg=fill,
                     fg=self.theme["popup_hint"], anchor="w", justify="left",
-                    wraplength=320, font=("Microsoft YaHei UI", 9),
-                ).pack(fill="x", pady=(2, 0))
+                    font=("Microsoft YaHei UI", 9),
+                )
+                license_label.pack(fill="x", pady=(2, 0))
+                wrap_labels.append(license_label)
 
         def open_notices():
             card.destroy()
@@ -2349,7 +2364,13 @@ class PopupMixin:
             font=("Microsoft YaHei UI", 9), padx=0, pady=4)
         notices.pack(fill="x", pady=(10, 0))
         body.update_idletasks()
-        width = max(280, min(360, body.winfo_reqwidth() + 28))
+        monitor_width = monitor[2] - monitor[0]
+        max_width = max(280, monitor_width - 16)
+        width = min(max_width, max(440, min(520, body.winfo_reqwidth() + 32)))
+        content_width = max(1, width - 32)
+        for label in wrap_labels:
+            label.configure(wraplength=content_width)
+        body.update_idletasks()
         height = body.winfo_reqheight() + 24
         canvas.configure(width=width, height=height)
         _draw_round_rect(
@@ -2359,21 +2380,15 @@ class PopupMixin:
             canvas, 1, 1, width - 1, height - 1, radius,
             fill=fill, outline=fill, tags="source_card")
         canvas.create_window(
-            14, 12, anchor="nw", window=body, width=width - 28)
+            16, 12, anchor="nw", window=body, width=content_width)
         canvas.tag_lower("source_card")
 
-        anchor_x = anchor.winfo_rootx()
-        anchor_y = anchor.winfo_rooty()
-        monitor = get_monitor_rect((anchor_x, anchor_y))
-        if monitor is None:
-            monitor = (
-                0, 0, anchor.winfo_screenwidth(), anchor.winfo_screenheight())
         x, y = _source_card_position(
             (anchor_x, anchor_y, anchor.winfo_width(), anchor.winfo_height()),
             (width, height),
             monitor,
         )
-        card.geometry("%dx%d+%d+%d" % (width, height, x, y))
+        card.geometry(f"{width}x{height}{x:+d}{y:+d}")
         card.bind("<Escape>", lambda _event: card.destroy())
 
         def close_after_focus_loss(_event):
@@ -2392,6 +2407,7 @@ class PopupMixin:
             child for child in body.winfo_children()
             if isinstance(child, tk.Label)
         ]
+        card._source_content_width = content_width
         card._notices_button = notices
         card.deiconify()
         card.lift()

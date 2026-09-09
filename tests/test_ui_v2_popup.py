@@ -220,6 +220,45 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertEqual(
             card._notices_button.cget("text"),
             tr.i18n.get("about.third_party_notices"))
+        self.assertGreaterEqual(card.winfo_width(), 440)
+        self.assertTrue(all(
+            int(label.cget("wraplength")) == card._source_content_width
+            for label in card._source_labels))
+        card.destroy()
+
+    def test_dictionary_source_names_and_licenses_wrap_inside_card(self):
+        app = self._app(v2=True)
+        owner = tk.Toplevel(app.root)
+        button = tk.Button(owner, text="Sources")
+        button.pack()
+        owner.update_idletasks()
+        self._kill_later(owner)
+        details = [{
+            "id": "fixture",
+            "label": (
+                "Chinese Open Wordnet / Open Multilingual Wordnet "
+                "alignment supplement"),
+            "version": "2.0",
+            "license": (
+                "A deliberately long license description that must wrap "
+                "inside the source card instead of being clipped."),
+        }]
+
+        app._show_dictionary_sources_menu(button, details)
+        card = button._sources_card
+        card.update_idletasks()
+        content_width = card._source_content_width
+        detail_labels = [
+            label for label in card._source_labels
+            if label.cget("text") != tr.i18n.get("result.sources_title")
+        ]
+        self.assertTrue(detail_labels)
+        self.assertTrue(all(
+            int(label.cget("wraplength")) == content_width
+            for label in detail_labels))
+        self.assertTrue(all(
+            label.winfo_reqwidth() <= content_width
+            for label in detail_labels))
         card.destroy()
 
     def test_more_senses_is_an_embedded_control(self):
