@@ -3871,6 +3871,21 @@ class TestUiSmoke(unittest.TestCase):
             tr.i18n.get("settings.download_update"))
         self.assertEqual(update_button.cget("state"), "normal")
         app.settings_win.update_idletasks()
+        available_version = next(
+            widget for widget in self._walk_widgets(app.settings_win)
+            if isinstance(widget, tr.tk.Label)
+            and widget.cget("text") == "5.1.999")
+        self.assertEqual(
+            available_version.cget("fg"), app.theme["status_ok"])
+        self.assertEqual(
+            update_button.cget("fg"), app.theme["status_ok"])
+        self.assertIn("bold", str(update_button.cget("font")))
+        update_button.event_generate("<Enter>")
+        self.assertEqual(
+            update_button.cget("fg"), app.theme["status_ok"])
+        update_button.event_generate("<Leave>")
+        self.assertEqual(
+            update_button.cget("fg"), app.theme["status_ok"])
         self.assertIn("5.1.999", self._widget_texts(app.settings_win))
         self.assertIn(
             tr.i18n.get("settings.label.available_version"),

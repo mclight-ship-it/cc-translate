@@ -908,14 +908,17 @@ class SettingsMixin:
             disabledforeground=hint, relief="flat", bd=0,
             highlightthickness=0, cursor="hand2", takefocus=1,
             font=(font, size), padx=3, pady=0)
+        button._text_action_normal_fg = hint
+        button._text_action_hover_fg = accent
         button.bind(
             "<Enter>",
             lambda _event: (
-                button.configure(fg=accent)
+                button.configure(fg=button._text_action_hover_fg)
                 if str(button.cget("state")) != "disabled" else None))
         button.bind(
             "<Leave>",
-            lambda _event: button.configure(fg=hint))
+            lambda _event: button.configure(
+                fg=button._text_action_normal_fg))
         return button
 
     def _settings_info_card(
@@ -1790,11 +1793,19 @@ class SettingsMixin:
 
         current_version = version_string()
 
-        def set_update_button(text_, command=None, enabled=True):
+        def set_update_button(
+                text_, command=None, enabled=True, highlighted=False):
+            normal_fg = t["status_ok"] if highlighted else hint
+            hover_fg = t["status_ok"] if highlighted else t["accent"]
+            update_button._text_action_normal_fg = normal_fg
+            update_button._text_action_hover_fg = hover_fg
             update_button.configure(
                 text=text_,
                 command=command or (lambda: None),
-                state="normal" if enabled else "disabled")
+                state="normal" if enabled else "disabled",
+                fg=normal_fg,
+                activeforeground=hover_fg,
+                font=(FONT, 10, "bold") if highlighted else (FONT, 10))
 
         def _upd_show(msg, kind):
             if kind == "avail":
@@ -1803,17 +1814,21 @@ class SettingsMixin:
                 version_label.configure(
                     text=i18n.get("settings.label.available_version"))
                 version_value.configure(
-                    text=available_version or current_version)
+                    text=available_version or current_version,
+                    fg=t["status_ok"])
                 set_update_button(
                     i18n.get("settings.download_update"),
-                    on_apply_update_click)
+                    on_apply_update_click,
+                    highlighted=True)
             elif kind == "ok":
                 version_label.configure(
                     text=i18n.get("settings.label.current_version"))
+                version_value.configure(fg=t["accent"])
                 set_update_button(msg, enabled=False)
             elif kind == "err":
                 version_label.configure(
                     text=i18n.get("settings.label.current_version"))
+                version_value.configure(fg=t["accent"])
                 set_update_button(
                     i18n.get("settings.label.check_update_action"),
                     on_check_update_click)
@@ -1828,7 +1843,7 @@ class SettingsMixin:
             self._available_update_version = None
             version_label.configure(
                 text=i18n.get("settings.label.current_version"))
-            version_value.configure(text=current_version)
+            version_value.configure(text=current_version, fg=t["accent"])
             set_update_button(i18n.get("update.checking"), enabled=False)
             self._begin_update(check_only=True, on_status=_upd_show)
 
