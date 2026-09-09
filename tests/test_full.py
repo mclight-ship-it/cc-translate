@@ -3525,6 +3525,74 @@ class TestUiSmoke(unittest.TestCase):
             texts)
         self.assertIn(tr.i18n.get("settings.dictionary.download"), texts)
 
+    def test_enabling_missing_dictionary_starts_download_and_enables_on_success(
+            self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        unavailable = types.SimpleNamespace(available=False)
+        available = types.SimpleNamespace(available=True)
+        app._local_dictionary = types.SimpleNamespace(status=unavailable)
+        app._dictionary_artifact = unittest.mock.Mock(
+            path=os.path.join(tempfile.gettempdir(), "missing-dictionary"))
+        app._dictionary_artifact.install.return_value = object()
+        app._reload_local_dictionary = unittest.mock.Mock(
+            return_value=available)
+        app._save_config = unittest.mock.Mock()
+        thread = unittest.mock.Mock()
+
+        with unittest.mock.patch(
+                "cc_app_settings.threading.Thread",
+                return_value=thread) as thread_class:
+            app._open_settings()
+            switch = app.settings_win._dictionary_switch
+            switch.toggle()
+
+            self.assertFalse(switch.get())
+            self.assertFalse(switch.enabled)
+            self.assertEqual(
+                app.settings_win._dictionary_action_button.cget("text"),
+                tr.i18n.get("settings.dictionary.cancel"))
+            thread.start.assert_called()
+
+            thread_class.call_args.kwargs["target"]()
+            app.root.update()
+
+        app._dictionary_artifact.install.assert_called_once()
+        self.assertTrue(switch.enabled)
+        self.assertTrue(switch.get())
+        self.assertIs(
+            app.cfg[tr.CFG.LOCAL_DICTIONARY_ENABLED], True)
+        app._save_config.assert_called_once_with(app.cfg)
+
+    def test_failed_toggle_started_dictionary_download_stays_off(self):
+        app = _make_headless_app()
+        self.addCleanup(lambda: self._safe_destroy(app))
+        unavailable = types.SimpleNamespace(available=False)
+        app._local_dictionary = types.SimpleNamespace(status=unavailable)
+        app._dictionary_artifact = unittest.mock.Mock(
+            path=os.path.join(tempfile.gettempdir(), "missing-dictionary"))
+        app._dictionary_artifact.install.side_effect = OSError("network down")
+        app._save_config = unittest.mock.Mock()
+        thread = unittest.mock.Mock()
+
+        with unittest.mock.patch(
+                "cc_app_settings.threading.Thread",
+                return_value=thread) as thread_class:
+            app._open_settings()
+            switch = app.settings_win._dictionary_switch
+            switch.toggle()
+            thread_class.call_args.kwargs["target"]()
+            app.root.update()
+
+        self.assertTrue(switch.enabled)
+        self.assertFalse(switch.get())
+        self.assertIs(
+            app.cfg[tr.CFG.LOCAL_DICTIONARY_ENABLED], False)
+        app._save_config.assert_not_called()
+        self.assertIn(
+            "network down",
+            app.settings_win._dictionary_status_label.cget("text"))
+
     def test_labs_beta_badge_is_only_on_section_heading(self):
         app = self._build("_open_settings")
         texts = self._widget_texts(app.settings_win)

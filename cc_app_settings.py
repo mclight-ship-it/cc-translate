@@ -764,7 +764,7 @@ class SettingsMixin:
         combo.bind("<Alt-Down>", popup)
 
     def _make_toggle(self, parent, initial, bg, *, accessible_name=None,
-                     enabled=True):
+                     enabled=True, command=None):
         """A modern pill toggle switch with .get() and .set(bool)."""
         t = self.theme
         accent = t["accent"]
@@ -789,8 +789,10 @@ class SettingsMixin:
                         fill=knob, outline=knob)
                     return ImageTk.PhotoImage(img, master=self.root)
 
-                off_img = _toggle_image(False, enabled)
-                on_img = _toggle_image(True, enabled)
+                off_img = _toggle_image(False)
+                on_img = _toggle_image(True)
+                disabled_off_img = _toggle_image(False, False)
+                disabled_on_img = _toggle_image(True, False)
                 value = tk.BooleanVar(master=parent, value=bool(initial))
                 if not enabled:
                     wrapper = tk.Frame(
@@ -809,7 +811,8 @@ class SettingsMixin:
                         wrapper, image=on_img if value.get() else off_img,
                         bg=bg, bd=0, highlightthickness=0, takefocus=0)
                     visual.place(x=0, y=0, width=W, height=H)
-                    wrapper._toggle_images = (off_img, on_img)
+                    wrapper._toggle_images = (
+                        off_img, on_img, disabled_off_img, disabled_on_img)
                     wrapper._accessible_control = check
                     wrapper.get = lambda: bool(value.get())
 
@@ -829,15 +832,30 @@ class SettingsMixin:
                     highlightthickness=2, highlightbackground=bg,
                     highlightcolor=accent, takefocus=1 if enabled else 0,
                     cursor="hand2" if enabled else "arrow",
-                    state="normal")
-                check._toggle_images = (off_img, on_img)
+                    state="normal",
+                    command=(
+                        (lambda: command(bool(value.get())))
+                        if command is not None else None))
+                check._toggle_images = (
+                    off_img, on_img, disabled_off_img, disabled_on_img)
                 check.get = lambda: bool(value.get())
                 check.set = lambda val: value.set(bool(val))
                 check.toggle = lambda _event=None: (
-                    check.invoke() if enabled else None, "break")[1]
+                    check.invoke() if check.enabled else None, "break")[1]
                 check.bind("<space>", check.toggle)
                 check.bind("<Return>", check.toggle)
                 check.enabled = bool(enabled)
+
+                def _set_enabled(is_enabled):
+                    check.enabled = bool(is_enabled)
+                    check.configure(
+                        image=off_img if is_enabled else disabled_off_img,
+                        selectimage=on_img if is_enabled else disabled_on_img,
+                        state="normal" if is_enabled else "disabled",
+                        cursor="hand2" if is_enabled else "arrow",
+                        takefocus=1 if is_enabled else 0)
+
+                check.set_enabled = _set_enabled
                 return check
             except Exception:
                 pass
@@ -846,12 +864,13 @@ class SettingsMixin:
             parent, width=W, height=H, bg=bg, highlightthickness=0, bd=0,
             cursor="hand2" if enabled else "arrow",
             takefocus=1 if enabled else 0)
-        st = {"on": bool(initial)}
+        st = {"on": bool(initial), "enabled": bool(enabled)}
 
         def draw():
             c.delete("all")
             track = (
-                accent if st["on"] else off) if enabled else disabled_track
+                (accent if st["on"] else off)
+                if st["enabled"] else disabled_track)
             # Pill = rectangle capped with two circles.
             c.create_oval(2, 2, 20, H - 2, fill=track, outline=track)
             c.create_oval(W - 20, 2, W - 2, H - 2, fill=track, outline=track)
@@ -860,9 +879,11 @@ class SettingsMixin:
             c.create_oval(kx - 8, 3, kx + 8, H - 3, fill=knob, outline=knob)
 
         def toggle(_e=None):
-            if enabled:
+            if st["enabled"]:
                 st["on"] = not st["on"]
                 draw()
+                if command is not None:
+                    command(st["on"])
             return "break"
 
         if enabled:
@@ -879,6 +900,16 @@ class SettingsMixin:
             draw()
 
         c.set = _set
+
+        def _set_enabled(is_enabled):
+            st["enabled"] = bool(is_enabled)
+            c.enabled = st["enabled"]
+            c.configure(
+                cursor="hand2" if st["enabled"] else "arrow",
+                takefocus=1 if st["enabled"] else 0)
+            draw()
+
+        c.set_enabled = _set_enabled
         return c
 
     def _settings_action_button(
@@ -1019,7 +1050,8 @@ class SettingsMixin:
 
     def _settings_resource_row(
             self, body, row_state, text_, status_text, action_text, action,
-            initial, *, bg, hint, fg, font, theme, help_text=None):
+            initial, *, bg, hint, fg, font, theme, help_text=None,
+            on_toggle=None):
         row = row_state["value"]
         info = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         info.grid(row=row, column=0, sticky="w", pady=5)
@@ -1058,7 +1090,7 @@ class SettingsMixin:
         controls = tk.Frame(body, bg=bg, bd=0, highlightthickness=0)
         controls.grid(row=row, column=1, sticky="e", pady=5)
         switch = self._make_toggle(
-            controls, initial, bg, accessible_name=text_)
+            controls, initial, bg, accessible_name=text_, command=on_toggle)
         switch.pack(side="left")
         row_state["value"] = row + 1
         return switch, status, action_button
@@ -1344,6 +1376,14 @@ class SettingsMixin:
             return i18n.get("settings.dictionary.not_installed").format(
                 size=dictionary_size_mb)
 
+        def on_dictionary_toggle(enabled):
+            status_ = getattr(
+                getattr(self, "_local_dictionary", None), "status", None)
+            if not enabled or (status_ and status_.available):
+                return
+            local_dictionary_sw.set(False)
+            download_dictionary()
+
         (local_dictionary_sw, dictionary_status_label,
          dictionary_action_button) = self._settings_resource_row(
             body, row_state,
@@ -1357,9 +1397,11 @@ class SettingsMixin:
                 CFG.LOCAL_DICTIONARY_ENABLED,
                 DEFAULT_CONFIG[CFG.LOCAL_DICTIONARY_ENABLED]),
             bg=bg, hint=hint, fg=fg, font=FONT, theme=t,
-            help_text=i18n.get("settings.label.local_dictionary_help"))
+            help_text=i18n.get("settings.label.local_dictionary_help"),
+            on_toggle=on_dictionary_toggle)
         win._dictionary_status_label = dictionary_status_label
         win._dictionary_action_button = dictionary_action_button
+        win._dictionary_switch = local_dictionary_sw
         dictionary_download_cancel = None
         dictionary_download_in_progress = False
 
@@ -1405,6 +1447,9 @@ class SettingsMixin:
             nonlocal dictionary_download_in_progress
             dictionary_download_cancel = None
             dictionary_download_in_progress = False
+            if dictionary_window_exists():
+                local_dictionary_sw.set(False)
+                local_dictionary_sw.set_enabled(True)
             if result is not None:
                 status_ = self._reload_local_dictionary()
                 self.cfg[CFG.LOCAL_DICTIONARY_ENABLED] = bool(
@@ -1437,6 +1482,9 @@ class SettingsMixin:
             dictionary_download_in_progress = True
             dictionary_download_cancel = threading.Event()
             cancel_event = dictionary_download_cancel
+            if dictionary_window_exists():
+                local_dictionary_sw.set(False)
+                local_dictionary_sw.set_enabled(False)
             set_dictionary_action(
                 i18n.get("settings.dictionary.cancel"),
                 cancel_event.set)
