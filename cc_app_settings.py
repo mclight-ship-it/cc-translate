@@ -1853,7 +1853,7 @@ class SettingsMixin:
                 state="normal" if enabled else "disabled",
                 fg=normal_fg,
                 activeforeground=hover_fg,
-                font=(FONT, 10, "bold") if highlighted else (FONT, 10))
+                font=(FONT, 10))
 
         def _upd_show(msg, kind):
             if kind == "avail":

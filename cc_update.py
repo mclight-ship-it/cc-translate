@@ -45,7 +45,7 @@ from cc_launcher import (
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "CC Translate"
 VERSION_MAJOR = 5
-VERSION_MINOR = 0
+VERSION_MINOR = 1
 
 PROGRAMS_DIR = os.path.join(
     os.environ.get("APPDATA", ""),

@@ -2571,8 +2571,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_5_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 5)
-        self.assertEqual(cc_update.VERSION_MINOR, 0)
-        self.assertTrue(tr.version_string().startswith("5.0."))
+        self.assertEqual(cc_update.VERSION_MINOR, 1)
+        self.assertTrue(tr.version_string().startswith("5.1."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3947,7 +3947,7 @@ class TestUiSmoke(unittest.TestCase):
             available_version.cget("fg"), app.theme["status_ok"])
         self.assertEqual(
             update_button.cget("fg"), app.theme["status_ok"])
-        self.assertIn("bold", str(update_button.cget("font")))
+        self.assertNotIn("bold", str(update_button.cget("font")))
         update_button.event_generate("<Enter>")
         self.assertEqual(
             update_button.cget("fg"), app.theme["status_ok"])
