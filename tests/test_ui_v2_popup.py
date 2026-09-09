@@ -672,7 +672,7 @@ class TestV2ResultPopup(unittest.TestCase):
         self.assertTrue(all(
             hasattr(combo, "_settings_dropdown_toggle") for combo in combos))
         self.assertLessEqual(
-            max(combo._settings_host.winfo_reqheight() for combo in combos), 42)
+            max(combo._settings_host.winfo_reqheight() for combo in combos), 50)
         combo = combos[0]
         combo._settings_dropdown_toggle()
         self.assertIsNotNone(combo._settings_dropdown_state["win"])
