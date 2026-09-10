@@ -29,6 +29,8 @@ TRANSLATOR_PATH = APP_DIR / "translator.pyw"
 SURFACES = (
     "loading",
     "result",
+    "code",
+    "summary",
     "dictionary",
     "error",
     "quick-input",
@@ -384,6 +386,50 @@ def _build_surface(tr, app, surface):
         win = app._make_popup(
             message, title=tr.i18n.get("result.title"), highlight=True)
         app.popup = win
+        return win
+    if surface == "code":
+        app._last_input = (
+            "def quicksort(items):\n"
+            "    if len(items) <= 1:\n"
+            "        return items")
+        app._last_class = "code"
+        message = (
+            "这段代码实现了**快速排序（quicksort）**：\n\n"
+            "- 取中间元素作为基准值 `pivot`\n"
+            "- 把较小和较大的元素分到两侧\n"
+            "- 递归排序后合并结果\n\n"
+            "```python\n"
+            "def quicksort(items):\n"
+            "    if len(items) <= 1:\n"
+            "        return items\n"
+            "    pivot = items[len(items) // 2]\n"
+            "    less = [x for x in items if x < pivot]\n"
+            "    more = [x for x in items if x > pivot]\n"
+            "    return quicksort(less) + [pivot] + quicksort(more)\n"
+            "```\n\n"
+            "平均时间复杂度为 **O(n log n)**。"
+        )
+        win = app._make_popup(
+            message, title=app._result_title(True), highlight=True)
+        app.popup = win
+        app._maybe_add_as_text_button(win)
+        return win
+    if surface == "summary":
+        app._last_input = (
+            "Large language models have rapidly moved from research "
+            "demonstrations into everyday tools.")
+        app._last_class = "text"
+        message = (
+            "**摘要**\n"
+            "- 大语言模型正快速从研究演示走向日常工具\n"
+            "- 它们正在改变写作、编程与学习方式\n\n"
+            "**完整译文**\n"
+            "大语言模型正走进日常工具，改变写作、编程和学习。"
+        )
+        win = app._make_popup(
+            message, title=app._result_title(True), highlight=True)
+        app.popup = win
+        app._maybe_add_result_actions_button(win)
         return win
     if surface == "dictionary":
         from cc_dictionary_format import format_dictionary_result

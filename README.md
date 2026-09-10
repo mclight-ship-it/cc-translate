@@ -9,25 +9,25 @@ A select-and-translate app focused on **high-quality translation**: **double-tap
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/popup-dict.png" alt="Instant local dictionary result with AI supplement" width="520"><br>
-  <sub><b>Instant local dictionary + AI supplement</b> — source-grounded results appear first; AI fills in missing context without blocking them</sub>
+  <img src="docs/screenshots/popup-translate.png" alt="Translation popup" width="520"><br>
+  <sub><b>Double-tap Ctrl+C</b> — select text and the translation pops up next to your cursor</sub>
 </p>
 
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/popup-translate.png" alt="Translation popup" width="360"><br>
-  <sub><b>Double-tap Ctrl+C</b>: select text and the translation pops up next to your cursor</sub>
-</td>
-<td width="50%" valign="top" align="center">
   <img src="docs/screenshots/popup-code.png" alt="Code-explanation mode" width="360"><br>
   <sub><b>Code-explanation mode</b>: code isn't force-translated — it's explained in plain language</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <img src="docs/screenshots/popup-summary.png" alt="Long-text summary" width="420"><br>
+  <sub><b>Long-text summary (Beta)</b>: long text leads with a key-point summary, then the full translation</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top" align="center">
-  <img src="docs/screenshots/popup-summary.png" alt="Long-text summary" width="420"><br>
-  <sub><b>Long-text summary (Beta)</b>: long text leads with a key-point summary, then the full translation</sub>
+  <img src="docs/screenshots/popup-dict.png" alt="Instant local dictionary result with AI supplement" width="420"><br>
+  <sub><b>Dictionary mode</b>: source-grounded local results appear instantly, followed by an optional AI supplement</sub>
 </td>
 <td width="50%" valign="top" align="center">
   <img src="docs/screenshots/quick-input.png" alt="Quick input translation" width="420"><br>
@@ -53,8 +53,8 @@ A select-and-translate app focused on **high-quality translation**: **double-tap
 - **Screenshot translation**: press `Win+Shift+C` to drag-select any screen region and translate the text in it; choose between the vision model or an offline local OCR engine
 - **Quick input translation**: with nothing selected, double-tap Ctrl+C to open an input box and type the text you want translated
 - **Code-explanation mode**: local classification distinguishes code, mixed content, and prose before any model call—covering Python, JSON, YAML, and common config structures without an extra AI request. Code is explained instead of force-translated; mixed prose + code is translated while code stays verbatim, and ordinary forms, dates, paths, or sentences containing `foo()` remain text.
-- **Locally accelerated dictionary mode**: optional one-click download in Settings. Once installed and enabled, short English/Chinese terms first query the per-user read-only SQLite database; high-confidence exact, source-provided or reviewed build-time inflection, simplified/traditional, and Unihan character matches appear immediately with a compact lightning badge beside the headword, while disabled/missing/weak/broken-database cases seamlessly use the existing AI dictionary path. No risky runtime stemming is used. Numbered source Pinyin is rendered with standard tone marks, polyphonic Chinese senses are grouped by pronunciation, clearly specialized/verbose senses are placed later, and long entries initially show five senses with an in-place **Show more** control. After an instant local result, an AI supplement adds only missing information in the background without delaying the first paint; cached supplements appear directly, pending state stays subtle, and failures quietly retain the complete local result. Supplements use a separate bounded local cache and never create visible history entries. **Query again with AI** still performs the existing full replacement query. Every local result exposes its source and license details. Local fields and attribution remain source-grounded—no examples, pronunciation, or parts of speech are invented.
 - **Long-text summary (Beta)**: on by default; longer natural-language text leads with a short summary before the full translation, and can be turned off in Labs
+- **Locally accelerated dictionary mode**: optional one-click download in Settings. Once installed and enabled, short English/Chinese terms first query the per-user read-only SQLite database; high-confidence exact, source-provided or reviewed build-time inflection, simplified/traditional, and Unihan character matches appear immediately with a compact lightning badge beside the headword, while disabled/missing/weak/broken-database cases seamlessly use the existing AI dictionary path. No risky runtime stemming is used. Numbered source Pinyin is rendered with standard tone marks, polyphonic Chinese senses are grouped by pronunciation, clearly specialized/verbose senses are placed later, and long entries initially show five senses with an in-place **Show more** control. After an instant local result, an AI supplement adds only missing information in the background without delaying the first paint; cached supplements appear directly, pending state stays subtle, and failures quietly retain the complete local result. Supplements use a separate bounded local cache and never create visible history entries. **Query again with AI** still performs the existing full replacement query. Every local result exposes its source and license details. Local fields and attribution remain source-grounded—no examples, pronunciation, or parts of speech are invented.
 - **Paste as plain text (Beta)**: optionally reserve `Ctrl+Shift+K` to remove clipboard formatting and paste the text immediately; image- and file-only clipboards are left untouched
 - **Rich-text rendering**: the result popup supports lightweight Markdown and colorizes code like a code editor; copied text stays plain
 - **Multiple target languages**: auto-detect CN↔EN, or fix the target to Chinese/English/Japanese/Korean/French/German/Spanish

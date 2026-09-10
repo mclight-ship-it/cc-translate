@@ -148,6 +148,11 @@ class TestCaptureUiV2(unittest.TestCase):
     def test_dictionary_is_part_of_full_capture(self):
         self.assertIn("dictionary", capture.parse_surfaces(["all"]))
 
+    def test_code_and_summary_are_part_of_full_capture(self):
+        surfaces = capture.parse_surfaces(["all"])
+        self.assertIn("code", surfaces)
+        self.assertIn("summary", surfaces)
+
     def test_ocr_overlay_is_part_of_full_capture(self):
         self.assertIn("ocr-overlay", capture.parse_surfaces(["all"]))
 
