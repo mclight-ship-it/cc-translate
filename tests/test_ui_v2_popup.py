@@ -93,6 +93,30 @@ class TestV2ResultPopup(unittest.TestCase):
         except Exception:
             pass
 
+    @staticmethod
+    def _source_button(win):
+        return next(
+            badge for badge in win._text._rich_badges
+            if isinstance(badge, tk.Button)
+            and badge.cget("text")
+            == tr.i18n.get("result.sources_and_licenses")
+        )
+
+    @staticmethod
+    def _press_button(button):
+        button.update_idletasks()
+        x = max(1, button.winfo_width() // 2)
+        y = max(1, button.winfo_height() // 2)
+        button.event_generate("<Enter>", x=x, y=y)
+        button.event_generate("<ButtonPress-1>", x=x, y=y)
+        button.update()
+        return x, y
+
+    @staticmethod
+    def _release_button(button, x, y):
+        button.event_generate("<ButtonRelease-1>", x=x, y=y)
+        button.update()
+
     # -- gating -------------------------------------------------------------
     def test_flag_off_is_legacy(self):
         app = self._app(v2=False)
@@ -225,6 +249,185 @@ class TestV2ResultPopup(unittest.TestCase):
             int(label.cget("wraplength")) == card._source_content_width
             for label in card._source_labels))
         card.destroy()
+
+    def test_dictionary_sources_open_from_first_interactive_frame(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        win = app._make_popup(
+            "## word [[cc-instant]]\n- meaning\n\n"
+            + encode_source_details(details))
+        app.popup = win
+        self._kill_later(win)
+        button = self._source_button(win)
+
+        x, y = self._press_button(button)
+        self._release_button(button, x, y)
+
+        card = getattr(button, "_sources_card", None)
+        self.assertIsNotNone(card)
+        self.assertTrue(card.winfo_exists())
+        self.assertIn(
+            "Fixture source 1",
+            [label.cget("text") for label in card._source_labels],
+        )
+        card.destroy()
+
+    def test_dictionary_source_click_survives_async_rebuild(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        base = (
+            "## word [[cc-instant]]\n- meaning\n\n"
+            + encode_source_details(details)
+        )
+        win = app._make_popup(base)
+        app.popup = win
+        self._kill_later(win)
+        button = self._source_button(win)
+        x, y = self._press_button(button)
+
+        app._set_popup_text(
+            base + "\n\n*"
+            + tr.i18n.get("result.ai_supplement_loading") + "*",
+            resize=True,
+            append=True,
+        )
+
+        self.assertIs(self._source_button(win), button)
+        self._release_button(button, x, y)
+        card = getattr(button, "_sources_card", None)
+        self.assertIsNotNone(card)
+        self.assertTrue(card.winfo_exists())
+        card.destroy()
+
+    def test_open_dictionary_sources_stay_open_during_async_rebuild(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        base = (
+            "## word [[cc-instant]]\n- meaning\n\n"
+            + encode_source_details(details)
+        )
+        win = app._make_popup(base)
+        app.popup = win
+        self._kill_later(win)
+        button = self._source_button(win)
+        x, y = self._press_button(button)
+        self._release_button(button, x, y)
+        card = button._sources_card
+
+        app._set_popup_text(
+            base + "\n\n*"
+            + tr.i18n.get("result.ai_supplement_loading") + "*",
+            resize=True,
+            append=True,
+        )
+
+        self.assertIs(self._source_button(win), button)
+        self.assertTrue(card.winfo_exists())
+        card.destroy()
+
+    def test_dictionary_source_control_survives_result_lifecycle(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        sources = encode_source_details(details)
+        expanded = "## word [[cc-instant]]\n- first\n- second\n\n" + sources
+        states = (
+            ("initial", "## word [[cc-instant]]\n- first\n\n" + sources, True),
+            (
+                "pending",
+                "## word [[cc-instant]]\n- first\n\n" + sources
+                + "\n\n*"
+                + tr.i18n.get("result.ai_supplement_loading") + "*",
+                True,
+            ),
+            (
+                "streaming redraw",
+                "## word [[cc-instant]]\n- first\n\n" + sources
+                + "\n\n*"
+                + tr.i18n.get("result.ai_supplement_loading") + " 1*",
+                False,
+            ),
+            (
+                "completed",
+                "## word [[cc-instant]]\n- first\n\n" + sources
+                + tr.i18n.get("result.section_divider").format(
+                    label=tr.i18n.get("result.ai_supplement"))
+                + "Extra detail",
+                True,
+            ),
+            (
+                "collapsed",
+                "## word [[cc-instant]]\n- first\n\n"
+                + encode_more_senses(1, expanded) + "\n\n" + sources,
+                True,
+            ),
+            ("expanded", expanded, True),
+        )
+        win = app._make_popup(states[0][1])
+        app.popup = win
+        self._kill_later(win)
+        original = self._source_button(win)
+
+        for name, state, resize in states[1:]:
+            with self.subTest(state=name):
+                app._set_popup_text(state, resize=resize, append=True)
+                self.assertIs(self._source_button(win), original)
+
+        win.geometry(
+            f"{win.winfo_width()}x{win.winfo_height()}"
+            f"+{win.winfo_x() + 20}+{win.winfo_y() + 20}")
+        win.focus_force()
+        win._round_redraw()
+        win.update()
+        x, y = self._press_button(original)
+        self._release_button(original, x, y)
+        card = getattr(original, "_sources_card", None)
+        self.assertIsNotNone(card)
+        self.assertTrue(card.winfo_exists())
+        card.destroy()
+
+    def test_result_without_source_marker_has_no_source_control(self):
+        app = self._app(v2=True)
+        win = app._make_popup("AI dictionary result")
+        app.popup = win
+        self._kill_later(win)
+        self.assertFalse(any(
+            isinstance(badge, tk.Button)
+            and badge.cget("text")
+            == tr.i18n.get("result.sources_and_licenses")
+            for badge in win._text._rich_badges
+        ))
+
+    def test_removing_sources_removes_control_and_open_card(self):
+        app = self._app(v2=True)
+        details = [{
+            "id": "fixture", "label": "Fixture source", "version": "1",
+            "license": "Test license",
+        }]
+        win = app._make_popup(encode_source_details(details))
+        app.popup = win
+        self._kill_later(win)
+        button = self._source_button(win)
+        x, y = self._press_button(button)
+        self._release_button(button, x, y)
+        card = button._sources_card
+
+        app._set_popup_text("AI dictionary result", resize=True, append=True)
+
+        self.assertFalse(button.winfo_exists())
+        self.assertFalse(card.winfo_exists())
+        self.assertEqual(win._text._rich_badges, [])
 
     def test_dictionary_source_names_and_licenses_wrap_inside_card(self):
         app = self._app(v2=True)

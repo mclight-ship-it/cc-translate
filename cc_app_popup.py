@@ -2137,7 +2137,33 @@ class PopupMixin:
 
     def _fill_text(self, text_widget, message):
         text_widget.config(state="normal")
+        segments = None
+        source_details = None
+        if getattr(text_widget, "_rich", False):
+            hl = getattr(text_widget, "_rich_highlight", False)
+            segments = list(iter_rich_segments(message, highlight=hl))
+            source_details = next((
+                details
+                for chunk, tag in segments
+                if tag == "rich_sources_button"
+                for details in (decode_source_details(chunk),)
+                if details
+            ), None)
+        reusable_source_button = None
         for badge in getattr(text_widget, "_rich_badges", ()):
+            if (reusable_source_button is None
+                    and source_details is not None
+                    and getattr(badge, "_rich_control_kind", None) == "sources"
+                    and getattr(badge, "_source_details", None)
+                    == source_details):
+                reusable_source_button = badge
+                continue
+            card = getattr(badge, "_sources_card", None)
+            try:
+                if card is not None and card.winfo_exists():
+                    card.destroy()
+            except tk.TclError:
+                pass
             try:
                 badge.destroy()
             except tk.TclError:
@@ -2146,10 +2172,29 @@ class PopupMixin:
         text_widget._source_copy_text = ""
         text_widget._dictionary_expanded_text = ""
         text_widget._raw_message = message
+        if reusable_source_button is not None:
+            # Text.delete destroys embedded windows, so detach this control
+            # while preserving an in-progress mouse press and any open card.
+            detached = False
+            try:
+                for kind, value, index in text_widget.dump(
+                        "1.0", "end", window=True):
+                    if kind == "window" and value == str(
+                            reusable_source_button):
+                        text_widget.window_configure(index, window="")
+                        detached = True
+                        break
+            except tk.TclError:
+                pass
+            if not detached:
+                try:
+                    reusable_source_button.destroy()
+                except tk.TclError:
+                    pass
+                reusable_source_button = None
         text_widget.delete("1.0", "end")
         if getattr(text_widget, "_rich", False):
-            hl = getattr(text_widget, "_rich_highlight", False)
-            for chunk, tag in iter_rich_segments(message, highlight=hl):
+            for chunk, tag in segments:
                 if tag == "rich_instant_badge":
                     text_bg = text_widget.cget("background")
                     scale = self._ui_scale()
@@ -2202,16 +2247,23 @@ class PopupMixin:
                     text_widget._source_copy_text = (
                         "Sources / 来源: " + "; ".join(labels))
                     text_bg = text_widget.cget("background")
-                    button = tk.Button(
-                        text_widget, text=i18n.get("result.sources_and_licenses"),
-                        command=lambda: self._show_dictionary_sources_menu(
-                            button, details),
+                    if reusable_source_button is not None:
+                        button = reusable_source_button
+                        reusable_source_button = None
+                    else:
+                        button = tk.Button(text_widget)
+                    button.configure(
+                        text=i18n.get("result.sources_and_licenses"),
                         bg=text_bg, fg=self.theme["popup_hint"],
                         activebackground=text_bg,
                         activeforeground=self.theme["accent"],
                         relief="flat", bd=0, highlightthickness=0,
                         font=("Microsoft YaHei UI", 9), cursor="hand2",
-                        padx=0, pady=0)
+                        padx=0, pady=0,
+                        command=lambda anchor=button, payload=details:
+                            self._show_dictionary_sources_menu(anchor, payload))
+                    button._rich_control_kind = "sources"
+                    button._source_details = details
                     text_widget.window_create(
                         "end", window=button, align="center")
                     text_widget._rich_badges.append(button)
@@ -2243,6 +2295,11 @@ class PopupMixin:
                     text_widget.insert("end", chunk)
         else:
             text_widget.insert("1.0", message)
+        if reusable_source_button is not None:
+            try:
+                reusable_source_button.destroy()
+            except tk.TclError:
+                pass
         text_widget.config(state="disabled")
 
     def _copy_result(self):
