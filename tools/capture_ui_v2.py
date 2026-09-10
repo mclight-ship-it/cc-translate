@@ -177,32 +177,32 @@ def synthetic_dictionary_result():
     from cc_dictionary import DictionaryEntry, DictionaryResult, DictionarySense
 
     source = {
-        "source_id": "cc-cedict",
-        "source_label": "CC-CEDICT",
-        "source_version": "2017-04-28",
+        "source_id": "wikdict-eng-zho",
+        "source_label": "WikDict eng-zho",
+        "source_version": "2025.11.21",
         "source_license": "CC BY-SA 3.0 Unported",
     }
     sense = DictionarySense(
-        definition="China",
+        definition="好运",
         provenance="capture-fixture",
         **source,
     )
     entry = DictionaryEntry(
-        headword="中国",
-        language="zh",
-        pronunciation="Zhong1 guo2",
-        part_of_speech=None,
+        headword="serendipity",
+        language="en",
+        pronunciation="/ˌsɛɹ.ənˈdɪp.ɪ.ti/",
+        part_of_speech="n",
         senses=(sense,),
         **source,
     )
     return DictionaryResult(
-        query="中国",
-        normalized_query="中国",
-        headword="中国",
-        pronunciation="Zhong1 guo2",
+        query="serendipity",
+        normalized_query="serendipity",
+        headword="serendipity",
+        pronunciation="/ˌsɛɹ.ənˈdɪp.ɪ.ti/",
         senses=(sense,),
         entries=(entry,),
-        source_ids=("cc-cedict",),
+        source_ids=("wikdict-eng-zho",),
         match_type="exact",
         confidence=1.0,
     )
@@ -376,13 +376,7 @@ def _build_surface(tr, app, surface):
         app.popup = win
         return win
     if surface == "result":
-        message = (
-            "\u4e00\u4e2a\u5c0f\u6539\u52a8\u5c31\u80fd\u8ba9\u6574\u4e2a\u5de5\u4f5c"
-            "\u6d41\u611f\u89c9\u66f4\u5feb\u3002\n\n"
-            "- \u5148\u5904\u7406\u6700\u5e38\u7528\u7684\u8def\u5f84\n"
-            "- \u4fdd\u7559\u6e05\u6670\u7684\u52a0\u8f7d\u548c\u9519\u8bef\u72b6\u6001\n"
-            "- \u7528\u771f\u5b9e\u7a97\u53e3\u9a8c\u8bc1\u6697\u8272\u4e0e\u4eae\u8272\u4e3b\u9898"
-        )
+        message = "一个小改动就能让整个工作流感觉更快。"
         win = app._make_popup(
             message, title=tr.i18n.get("result.title"), highlight=True)
         app.popup = win
@@ -436,19 +430,19 @@ def _build_surface(tr, app, surface):
 
         base = format_dictionary_result(synthetic_dictionary_result())
         supplement = (
-            "**常见表达**\n"
-            "- 中国市场 — the Chinese market\n"
-            "- 中国文化 — Chinese culture"
+            "**常见含义**\n"
+            "- 意外发现美好事物的幸运\n"
+            "- a moment of serendipity — 一次美好的偶然发现"
             if tr.i18n.get_language() == "zh_CN"
             else
-            "**Common phrases**\n"
-            "- 中国市场 — the Chinese market\n"
-            "- 中国文化 — Chinese culture"
+            "**Common meaning**\n"
+            "- A fortunate, unexpected discovery\n"
+            "- a moment of serendipity"
         )
         divider = tr.i18n.get("result.section_divider").format(
             label=tr.i18n.get("result.ai_supplement"))
         app._last_dictionary_local = True
-        app._last_input = "中国"
+        app._last_input = "serendipity"
         app._last_local_dictionary_result = synthetic_dictionary_result()
         win = app._make_popup(
             base + divider + supplement,

@@ -104,9 +104,11 @@ class TestCaptureUiV2(unittest.TestCase):
 
     def test_synthetic_dictionary_result_is_source_grounded(self):
         result = capture.synthetic_dictionary_result()
-        self.assertEqual(result.headword, "中国")
-        self.assertEqual(result.source_ids, ("cc-cedict",))
-        self.assertEqual(result.senses[0].definition, "China")
+        self.assertEqual(result.headword, "serendipity")
+        self.assertEqual(result.source_ids, ("wikdict-eng-zho",))
+        self.assertEqual(result.pronunciation, "/ˌsɛɹ.ənˈdɪp.ɪ.ti/")
+        self.assertEqual(result.entries[0].part_of_speech, "n")
+        self.assertEqual(result.senses[0].definition, "好运")
         self.assertEqual(result.senses[0].provenance, "capture-fixture")
 
     def test_runtime_overrides_force_v2_and_hide_host_state(self):
