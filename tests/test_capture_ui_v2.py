@@ -104,12 +104,18 @@ class TestCaptureUiV2(unittest.TestCase):
 
     def test_synthetic_dictionary_result_is_source_grounded(self):
         result = capture.synthetic_dictionary_result()
-        self.assertEqual(result.headword, "serendipity")
+        self.assertEqual(result.headword, "spring")
         self.assertEqual(result.source_ids, ("wikdict-eng-zho",))
-        self.assertEqual(result.pronunciation, "/ˌsɛɹ.ənˈdɪp.ɪ.ti/")
+        self.assertEqual(result.pronunciation, "/spɹɪŋ/")
         self.assertEqual(result.entries[0].part_of_speech, "n")
-        self.assertEqual(result.senses[0].definition, "好运")
-        self.assertEqual(result.senses[0].provenance, "capture-fixture")
+        self.assertEqual(
+            [sense.definition for sense in result.senses],
+            ["春天", "泉", "弹簧"],
+        )
+        self.assertTrue(all(
+            sense.provenance == "TEI translation:spring"
+            for sense in result.senses
+        ))
 
     def test_runtime_overrides_force_v2_and_hide_host_state(self):
         env_name = "CC_UI_V2_CAPTURE_TEST"

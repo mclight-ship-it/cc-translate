@@ -182,25 +182,28 @@ def synthetic_dictionary_result():
         "source_version": "2025.11.21",
         "source_license": "CC BY-SA 3.0 Unported",
     }
-    sense = DictionarySense(
-        definition="好运",
-        provenance="capture-fixture",
-        **source,
+    senses = tuple(
+        DictionarySense(
+            definition=definition,
+            provenance="TEI translation:spring",
+            **source,
+        )
+        for definition in ("春天", "泉", "弹簧")
     )
     entry = DictionaryEntry(
-        headword="serendipity",
+        headword="spring",
         language="en",
-        pronunciation="/ˌsɛɹ.ənˈdɪp.ɪ.ti/",
+        pronunciation="/spɹɪŋ/",
         part_of_speech="n",
-        senses=(sense,),
+        senses=senses,
         **source,
     )
     return DictionaryResult(
-        query="serendipity",
-        normalized_query="serendipity",
-        headword="serendipity",
-        pronunciation="/ˌsɛɹ.ənˈdɪp.ɪ.ti/",
-        senses=(sense,),
+        query="spring",
+        normalized_query="spring",
+        headword="spring",
+        pronunciation="/spɹɪŋ/",
+        senses=senses,
         entries=(entry,),
         source_ids=("wikdict-eng-zho",),
         match_type="exact",
@@ -430,19 +433,19 @@ def _build_surface(tr, app, surface):
 
         base = format_dictionary_result(synthetic_dictionary_result())
         supplement = (
-            "**常见含义**\n"
-            "- 意外发现美好事物的幸运\n"
-            "- a moment of serendipity — 一次美好的偶然发现"
+            "**常见搭配**\n"
+            "- spring breeze — 春风\n"
+            "- hot spring — 温泉"
             if tr.i18n.get_language() == "zh_CN"
             else
-            "**Common meaning**\n"
-            "- A fortunate, unexpected discovery\n"
-            "- a moment of serendipity"
+            "**Common collocations**\n"
+            "- spring breeze\n"
+            "- hot spring"
         )
         divider = tr.i18n.get("result.section_divider").format(
             label=tr.i18n.get("result.ai_supplement"))
         app._last_dictionary_local = True
-        app._last_input = "serendipity"
+        app._last_input = "spring"
         app._last_local_dictionary_result = synthetic_dictionary_result()
         win = app._make_popup(
             base + divider + supplement,
