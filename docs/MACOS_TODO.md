@@ -153,7 +153,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
-  - [ ] 原生显式版本探针先接入自有组监督；fake CLI 正常/取消/超时/输出超限/后代回归。
+  - [x] 原生显式版本探针先接入自有组监督；fake CLI 正常/取消/超时/输出超限/后代回归。
 - [ ] 新核心直接 import 测试及 Windows 集成回归，Mac 差分测试。
 
 ### P1 分类切片已验证（2026-09-12）
@@ -306,7 +306,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   配置/历史单一写入者、完整请求快照、POSIX 自有进程组监督和 native 后端仍未完成，
   这些与正式 P0 实机/发行门槛分别追踪，不能将本小块通过标作全部 P1 完成。
 
-### 原生 CLI 版本探针自有组监督（验证中）
+### 原生 CLI 版本探针自有组监督（2026-09-12 已验证）
 
 - 从实际已有的 `CLIVersionRun` 调用链切入，不增加未调用的 ProviderRuntime 抽象。
   C/Swift 私有边界原子 spawn 新组，显式空 stdin/有界丢弃输出/固定 HOME 与 PATH；
@@ -327,6 +327,15 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   成功/输出超限状态。修正为只有 leader 已退出、且对该固定自有组的内核快照确认全部成员
   都是 zombie/空组时才视为清理完成；真实权限错误仍失败。保留原断言与 leader 防复用措施，
   不改用全系统扫描或忽略所有 EPERM；等待修正提交的实际 Mac 复验。
+- 修正 [run 34700626688](https://github.com/mclight-ship-it/cc-translate/actions/runs/34700626688)，
+  SHA `014ab9ff478f0afed533ade2b3ca05d7492ab4e5`，**success**，job 1m18s。
+  正常 pre-push **921 Windows tests，OK，49.755s**（仅既有 Tk teardown 警告）；
+  Mac 便携 **135 tests，4.949s**，普通 XCTest **30 通过 + 唯一初次集成 skip**，
+  新增五项真实进程回归 **6.982s**，旧 echo/yes 原断言恢复通过；
+  构建后包内集成 **1 test，0 skip，0.402s**，包内核心 **64 tests，0 skip，0.118s**。
+  release bundle、Mach-O/完整许可、HTTPS/SQLite/cancel/EOF/不可变审计均通过。
+- 开发 artifact `10299638691`，2026-09-19 14:55 UTC 到期。实机交接固定到该 run/SHA，
+  文档-only 收尾不改任何执行源码，不额外重复相同 CI。正式首次权限/签名门槛仍未过。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
