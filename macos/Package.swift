@@ -9,7 +9,8 @@ let package = Package(
         .library(name: "CCTranslateSupport", targets: ["CCTranslateSupport"])
     ],
     targets: [
-        .target(name: "CCTranslateSupport"),
+        .target(name: "CCProcessSupport"),
+        .target(name: "CCTranslateSupport", dependencies: ["CCProcessSupport"]),
         .executableTarget(name: "CCTranslateMac", dependencies: ["CCTranslateSupport"]),
         .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"])
     ],

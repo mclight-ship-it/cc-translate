@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import CCProcessSupport
 
 public struct CLICandidate: Identifiable {
     public var id: String { url.path }
@@ -94,11 +95,12 @@ private final class CLIPipeReader {
 }
 
 // Explicit --version only. No shell, login check, model call, or credential inspection.
-// P0 supervises the direct child only; wrappers leaving descendants are unsupported.
-// Owned CLI process-group supervision is a separate P1 requirement.
+// Owns an atomically created process group, not any pre-existing user CLI process.
 public final class CLIVersionRun {
     private let queue = DispatchQueue(label: "dev.cc-translate.cli.version")
-    private let process = Process()
+    private var processID: pid_t?
+    private var terminationBegan: DispatchTime?
+    private var killSent = false
     private let output = Pipe()
     private let errors = Pipe()
     private let completion: (Result<Void, ProbeError>) -> Void
@@ -120,25 +122,14 @@ public final class CLIVersionRun {
         queue.async {
             guard !self.started, !self.finished else { return }
             self.started = true
-            self.process.executableURL = executable
-            self.process.arguments = ["--version"]
-            self.process.environment = [
-                "PATH": CLILocator.searchPath, "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"
-            ]
-            self.process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            self.process.standardInput = FileHandle.nullDevice
-            self.process.standardOutput = self.output.fileHandleForWriting
-            self.process.standardError = self.errors.fileHandleForWriting
-            self.process.terminationHandler = { [weak self] process in
-                guard let self = self else { return }
-                self.queue.async {
-                    self.exitCode = process.terminationStatus
-                    self.finish()
-                }
-            }
-            do {
-                try self.process.run()
-            } catch {
+            var pid: pid_t = 0
+            let validPath = executable.isFileURL && !executable.path.utf8.contains(0)
+            let error = validPath ? cc_spawn_cli_version(
+                executable.path, NSHomeDirectory(), CLILocator.searchPath,
+                self.output.fileHandleForWriting.fileDescriptor,
+                self.errors.fileHandleForWriting.fileDescriptor, &pid
+            ) : EINVAL
+            guard error == 0 else {
                 self.failure = .cliFailed
                 self.readEnds = 2
                 self.exitCode = -1
@@ -146,6 +137,7 @@ public final class CLIVersionRun {
                 self.finish()
                 return
             }
+            self.processID = pid
             do {
                 try self.output.fileHandleForWriting.close()
                 try self.errors.fileHandleForWriting.close()
@@ -157,6 +149,7 @@ public final class CLIVersionRun {
             let timeout = DispatchWorkItem { [weak self] in self?.abort(.cliTimeout) }
             self.timeout = timeout
             self.queue.asyncAfter(deadline: .now() + 5, execute: timeout)
+            self.pollProcess()
         }
     }
 
@@ -204,18 +197,63 @@ public final class CLIVersionRun {
     private func abort(_ error: ProbeError) {
         guard !finished, failure == nil else { return }
         failure = error
-        if process.isRunning { process.terminate() }
-        queue.asyncAfter(deadline: .now() + 1) {
-            if self.process.isRunning {
-                if Darwin.kill(self.process.processIdentifier, SIGKILL) != 0, errno != ESRCH {
-                    self.failure = .cliFailed
+        beginTermination()
+        finish()
+    }
+
+    private func signalGroup(_ signal: Int32) {
+        guard let pid = processID else { return }
+        if Darwin.kill(-pid, signal) != 0, errno != ESRCH { failure = .cliFailed }
+    }
+
+    private func beginTermination() {
+        guard processID != nil, terminationBegan == nil else { return }
+        terminationBegan = .now()
+        signalGroup(SIGTERM)
+    }
+
+    private func pollProcess() {
+        guard let pid = processID else { return }
+        var exited: Int32 = 0
+        guard cc_cli_has_exited(pid, &exited) == 0 else {
+            // Lost child ownership: never signal or wait on a possibly recycled PID.
+            processID = nil
+            failure = .cliFailed
+            exitCode = -1
+            readers.forEach { $0.stop() }
+            finish()
+            return
+        }
+        if exited != 0 { beginTermination() }
+        if let began = terminationBegan, DispatchTime.now() >= began + .milliseconds(200) {
+            if !killSent {
+                signalGroup(SIGKILL)
+                killSent = true
+                queue.asyncAfter(deadline: .now() + .milliseconds(200)) {
+                    if self.readEnds != 2 {
+                        // A descendant that deliberately left our group is unsupported.
+                        self.failure = self.failure ?? .cliFailed
+                        self.readers.forEach { $0.stop() }
+                    }
                 }
             }
-            // Also release pipes inherited by an unsupported wrapper's background children.
-            // Never search for or kill unrelated user CLI processes.
-            self.readers.forEach { $0.stop() }
+            if exited != 0 {
+                var code: Int32 = -1
+                if cc_cli_reap(pid, &code) != 0 { failure = .cliFailed }
+                processID = nil
+                exitCode = code
+                finish()
+                return
+            }
+            if DispatchTime.now() >= began + .seconds(2), !finished {
+                // Surface OS cleanup failure without dropping ownership of a live child.
+                failure = .cliFailed
+                exitCode = -1
+                readers.forEach { $0.stop() }
+                finish()
+            }
         }
-        finish()
+        queue.asyncAfter(deadline: .now() + .milliseconds(20)) { self.pollProcess() }
     }
 
     private func finish() {

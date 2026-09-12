@@ -153,6 +153,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
+  - [ ] 原生显式版本探针先接入自有组监督；fake CLI 正常/取消/超时/输出超限/后代回归。
 - [ ] 新核心直接 import 测试及 Windows 集成回归，Mac 差分测试。
 
 ### P1 分类切片已验证（2026-09-12）
@@ -304,6 +305,20 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 用户 OS/CPU、账号、TCC、签名状态均未获确认；当前仍是 fixture/诊断包。
   配置/历史单一写入者、完整请求快照、POSIX 自有进程组监督和 native 后端仍未完成，
   这些与正式 P0 实机/发行门槛分别追踪，不能将本小块通过标作全部 P1 完成。
+
+### 原生 CLI 版本探针自有组监督（验证中）
+
+- 从实际已有的 `CLIVersionRun` 调用链切入，不增加未调用的 ProviderRuntime 抽象。
+  C/Swift 私有边界原子 spawn 新组，显式空 stdin/有界丢弃输出/固定 HOME 与 PATH；
+  不 source profile、不登录、不读取认证、不发送模型文本。
+- 保留未回收 leader 的 PID/PGID，正常退出也清理同组后代，取消/5 秒超时/输出超限均
+  TERM→KILL→reap；不按名称/全系统 PID 搜索，不处理自行逃离组的 wrapper。
+- 五项新增 XCTest：正常 leader 先退出、TERM-resistant 后代的取消/超时、输出超限、
+  启动失败/重复取消。合成 sibling 必须存活；所有脚本/数据仅临时 synthetic fixture。
+- Windows 针对性 **137 tests，OK，16.143s**，覆盖便携协议、bundle 和原 provider 契约/
+  实现回归。Windows 生产实现没有变化；Mac C/Swift 编译及真实进程断言尚待本轮 CI。
+- 用户无需为所选云构建路线安装 Xcode；签名资格/OS/CPU 未确认，普通下载首开/TCC 仍 blocked。
+  此项通过也不表示真实 Codex/Claude 兼容或完整 P1 生命周期完成。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。

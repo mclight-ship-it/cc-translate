@@ -116,7 +116,13 @@ P0 没有业务配置/历史写操作，不能将无配置版本的探针当作�
 前端保留每 ID 序号验证，切换当前请求后忽略旧请求的 UI 结果；未知 ID/乱序为协议错误。
 握手超时、异常退出或协议错误要可见，禁止 success-shaped fallback。原生持续排空两个输出管道，
 有界读取，避免 pipe 堵塞；退出关闭 stdin，超时仅终止本 App 的 helper。
-P0 不创建 CLI 子进程；P1 才增加 POSIX 自有进程组监督，绝不按进程名杀用户 CLI。
+P0 helper 不创建 CLI 子进程。原生显式 `--version` 探针的 P1 监督切片用
+`posix_spawn` 原子创建独立进程组，在正常退出、取消、超时和输出超限后清理同组后代；
+TERM 宽限后升级 KILL。先用 `waitid(WNOWAIT)` 保留 leader，再发最后一个组信号、reap，
+避免 PID/PGID 复用误伤。只对自己创建且尚未回收的组发信号，不按名称搜索/结束用户 CLI。
+这不是完整 ProviderRuntime；主动 `setsid`/改进程组逃逸的 wrapper 不支持，也不跨组追杀。
+无法确认子进程所有权时显式失败且不再发信号；系统无法完成清理时显示失败并保留回收责任，
+不报告成功。Windows provider 未改；实际 native 配置/认证和模型请求仍待单独实现与验证。
 
 协议结构性错误为连接级失败（保留 ID `protocol`），取消所有本连接任务并退出非零。
 完整帧后的正常 stdin EOF 取消工作并退出；残缺帧 EOF 为错误。原生不得自动重发已提交的付费请求。
@@ -260,7 +266,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 4. `Permissions / AX` 分别请求权限；回到目标 App 选择文本，通过菜单 AX 入口读取，
    或显式启动被动双击 Cmd+C。AX-only 探针不读/写剪贴板；全局监听要求 AX 与输入监控。
 5. `CLI locator` 只发现路径；用户选择后才能运行 `--version`。输出丢弃，仅报告退出状态，
-   认证始终 unknown。只监督直属进程，遗留后台后代的 wrapper 暂不支持，不宣称真实 provider 兼容。
+   认证始终 unknown。当前源码增加自有组清理；不要测试主动脱离进程组的 wrapper，
+   不宣称真实 provider 兼容。测试包能力以对应固定 SHA 的验收记录为准。
 6. `Screen / local OCR` → `Grant + capture main display once` → 检查预览 →
    `Confirm preview: local OCR`。只处理这一个保留帧，最长边最多 4096 像素；
    Cancel/关闭清空图像，没有磁盘保存或模型上传。
