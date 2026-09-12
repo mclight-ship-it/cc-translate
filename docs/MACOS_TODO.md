@@ -152,11 +152,11 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
   - [x] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
-  - [ ] 第一步：只接既有 `read_native_config` 的 Darwin 分支；共享已验证 C 组信号/
+  - [x] 第一步：只接既有 `read_native_config` 的 Darwin 分支；共享已验证 C 组信号/
     zombie-only 判断原语，随包装载失败必须明确失败，不回退裸 PID kill。
-  - [ ] 第二步（依赖第一步）：在同一调用链以非阻塞有界管道驱动 initialize/config/read，
+  - [x] 第二步（依赖第一步）：在同一调用链以非阻塞有界管道驱动 initialize/config/read，
     成功/错误/8 秒期限均先清自有组再回收；保持 Windows 路径及完整 native env/cwd/安全覆盖。
-  - [ ] 第三步（依赖第二步）：真实 Mac fake app-server 验证协议、洪泛/阻塞/后代/兄弟存活，
+  - [x] 第三步（依赖第二步）：真实 Mac fake app-server 验证协议、洪泛/阻塞/后代/兄弟存活，
     并从现有显式合成诊断入口验证包内接入；不运行真实账号/模型，不宣称完整 provider 可用。
   - [ ] 后续独立前置：catalog/cache 路径及 logger 显式传入实际 provider 构造链；
     当前默认缓存仍可能落 HOME/APPDATA，警告会延迟导入 cc_core，不能直接把整个 exec 当便携。
@@ -388,7 +388,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   临时 app zip 已清理，仅会话目录留脱敏 JSON。实机交接更新到该固定制品，
   仍不代表首次 TCC/签名/真实账号完成。
 
-### Codex 只读配置探针监督（验证中）
+### Codex 只读配置探针监督（2026-09-12 UTC 已验证）
 
 - 已按依赖先拆步骤，再接实际 `read_native_config` Darwin 调用链；未同时移植 exec、
   常驻 app-server、Claude 或 catalog。Windows 原默认路径保持，新增可选取消参数不会被其他
@@ -411,6 +411,24 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 补齐 setup 失败脱敏、helper 取消接线和最终装配后再次针对性 **148 tests，20.655s，OK**。
 - 尚未解决：catalog 路径/logger 的 cc_core 耦合、完整 exec/app-server/Claude 生命周期及
   paid-turn 快照/取消接线；真实用户账号、签名/首次权限仍单独待验。没有新增付费请求或大 UI。
+- 正常 pre-push 完整 **941 Windows tests，55.497s，OK**，无失败/skip（仅既有 Tk teardown
+  stderr 警告），隐私扫描与 Python 编译通过。
+- [run 34703866435](https://github.com/mclight-ship-it/cc-translate/actions/runs/34703866435)，
+  SHA `951f4f7a2a8b7e03953a6ec61c7d34a86ae40e78`，**success**，job 1m42s。
+  Mac 便携 **145 tests，6.876s**；普通 XCTest **32 通过 + 唯一初次包内集成 skip**；
+  新增包内真实配置进程 **9 tests，12.128s，0 skip**（含取消、洪泛、helper EOF 及兄弟存活）。
+  构建后 Foundation.Process 包内集成 **1 test，0 skip，0.894s**；
+  包内同源核心 **73 tests，0 skip，0.275s**。旧原生五项自有组回归持续通过；
+  release app/共享库、完整许可/Mach-O、词典/配置 fixture/HTTPS/SQLite、取消/EOF/不可变均通过。
+- 已下载核验 artifact `10301102393`：clean manifest 对应上述 SHA，12 份共享模块/
+  provider 白名单/probe 资源与 Git blobs 逐字及哈希一致；**6 arm64 Mach-O / 657 库存项**。
+  项目自有 dylib 最低目标 **14.0**，仅依赖系统 libSystem，安装名可在包内解析；
+  实际 dylib SHA-256 与审计库存一致：
+  `a9320393f7421ac122398bb0d02b2ff14ba20798077b463f39cf71701d6bb21e`。
+- 包内 Python **3.12.14** 的 `codex_config_fixture` 四字段、清理/不可变全部通过；
+  provider 包只含三份纯契约 + 两份 config reader + 原 instructions，不含 exec/app-server/
+  Claude/catalog。临时 zip 已清理，脱敏 JSON 留会话目录，未执行任何用户真实 CLI/账号。
+  文档-only 收尾固定该已通过代码，不额外反复运行相同 CI。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
