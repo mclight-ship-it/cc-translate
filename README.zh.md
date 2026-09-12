@@ -248,8 +248,7 @@ python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_brand
 
 ## 开发 / 测试
 
-改动流程与约定见 [AGENTS.md](AGENTS.md)。要点：
-
 - 跑测试：`python -m unittest discover -s tests`（标准库，无需额外依赖）。
-- 仓库自带 pre-push 钩子，推送前会自动跑测试、失败即阻止推送。
+- 仓库自带 pre-push 钩子：先检查新增内容中的本机用户路径、凭据和敏感本地数据文件，
+  再按改动范围运行测试；任一步失败都会阻止推送。
 - **新 clone 后启用一次**：`git config core.hooksPath .githooks`。

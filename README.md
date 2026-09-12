@@ -274,8 +274,8 @@ See [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md): hand that file's contents to 
 
 ## Development / testing
 
-Change workflow and conventions are in [AGENTS.md](AGENTS.md). Key points:
-
 - Run the tests: `python -m unittest discover -s tests` (standard library, no extra dependencies).
-- The repo ships a pre-push hook that runs the tests before pushing and blocks the push on failure.
+- The repo ships a pre-push hook that checks newly added content for local user paths,
+  credentials, and sensitive local-data files, then runs change-scoped tests. Any failure
+  blocks the push.
 - **Enable it once after a fresh clone**: `git config core.hooksPath .githooks`.
