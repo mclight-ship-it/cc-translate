@@ -3,6 +3,8 @@
 import unittest
 
 import cc_classify
+import cc_core
+import cc_app_results
 from tests._tr import tr
 from tests.test_classify import CLASSIFICATION_MATRIX
 
@@ -20,3 +22,8 @@ class TestClassificationExports(unittest.TestCase):
         for name, sample, expected in CLASSIFICATION_MATRIX:
             with self.subTest(name=name):
                 self.assertEqual(tr.classify_selection(sample), expected)
+
+    def test_dictionary_and_result_actions_use_the_shared_rule(self):
+        for entry in (cc_core, tr, cc_app_results):
+            with self.subTest(entry=entry.__name__):
+                self.assertIs(entry.is_single_word, cc_classify.is_single_word)

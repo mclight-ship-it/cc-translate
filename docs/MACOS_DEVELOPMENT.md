@@ -35,7 +35,7 @@ cc_macos/
   protocol.py               有界、版本化 NDJSON 校验
   server.py                 握手、请求、事件序号、取消和 EOF
   probes.py                 SQLite / SSL 等显式运行时自检，不获取 TCC
-cc_classify.py               P1 共用本地分类；仅依赖 re，无平台/数据路径副作用
+cc_classify.py               P1 共用本地分类/词典触发判断；仅依赖 re，无平台/数据路径副作用
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
@@ -63,6 +63,9 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 `translator.pyw` 的同一对象兼容导出；依赖 i18n 的界面标签 wrapper 留在 Windows 层。
 函数、阈值、提示词以及未知 mode 的既有回退保持不变，不增加模型请求，不改缓存签名。
 两个纯模块一起随包、进行资源哈希审计，并在包内 isolated Python 中运行同一组回归。
+`is_single_word` 也复用该分类模块，不另建抽象；`cc_core`、Windows 主入口和结果操作继续
+导出/调用同一函数。本地词典候选、AI 词典模式、摘要排除和历史标记的现有语义不变。
+这次只解耦，不重新设计旧启发式对特殊符号/空白的判断；边界行为用回归用例固定。
 
 ## 3. IPC v1 合同
 
@@ -261,6 +264,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 **先由协调者确认测试路径，不让用户猜安装问题：**
 
+- 用户测试 Mac 的 OS/芯片尚未确认；以下是条件要求，不是已知用户配置。等待用户在场后
+  由协调者统一确认，不因此阻断能独立验证的纯核心开发。
 - [已通过的 run 34698580547](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547)；
   固定源码 SHA `f526459add6d287ac3402be93cf925cce0c506c9`。
 - [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547/artifacts/10299377201)

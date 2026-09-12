@@ -141,6 +141,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 方向路由/方向 prompt 抽到 `cc_direction.py`，9 个函数/常量及 mode 生成 AST 与原
     `cc_core` 完全一致；显式传入 UI 语言，i18n 标签 wrapper 留原层，兼容导出同一对象。
   - [x] 方向切片的完整 Windows hook 与最新 Mac/包内 Python 回归通过并记录。
+  - [x] 词典触发 `is_single_word` 抽到现有 `cc_classify`，不新增抽象；AST 与旧实现完全一致，
+    Windows 主入口/`cc_core`/结果操作为同一函数，本地词典候选和 AI/历史/摘要路由未改。
+  - [ ] 词典触发切片的完整 Windows hook、最新 Mac 和包内 Python 回归通过并记录。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
@@ -227,6 +230,16 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 收尾仅更新两份文档，正常 privacy hook，提交注明 `[skip ci]`；执行源码/测试/workflow
   与已绿色的 `f526459` 完全相同。下一独立纯核心候选是请求快照/提示词剩余部分与平台路径；
   不把本轮结果误标为全部 P1 或正式 P0 已完成。
+
+### 词典触发纯核心（本轮验证中）
+
+- 新共享入口复用 `cc_classify.is_single_word`，无新增模块；三处 Windows 兼容导出有 identity
+  断言。保留原 1–2 token / 30 字符、短 CJK、末尾标点、换行和特殊符号语义。
+- 针对性 Windows 联合测试 **130 tests，OK，5.075s**：分类/方向/词典触发、无副作用、
+  打包、18 项现有本地词典路由集成及原有词典/摘要边界；没有调用真实 provider。
+- 8 个新增边界用例固定现有行为，不把解耦伪装成语言识别算法修复。AST（含 docstring 和
+  Unicode 句末标点常量）与原 `cc_core.is_single_word` 完全相同。
+- 用户 Mac 芯片/OS 仍未确认，首次实机/签名门槛仍保留。下一步正常 hook 和真实 Mac CI。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。

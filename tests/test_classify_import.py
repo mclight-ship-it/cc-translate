@@ -50,6 +50,10 @@ import cc_classify
 assert cc_classify.classify_selection("def foo():\n    pass") == "code"
 assert cc_classify.classify_selection("ordinary prose") == "text"
 assert cc_classify.classify_selection("This is prose\ncode();\nmore prose") == "mixed"
+assert cc_classify.is_single_word("machine learning")
+assert cc_classify.is_single_word("\u4e2d\u6587")
+assert not cc_classify.is_single_word("A complete sentence.")
+assert not cc_classify.is_single_word(None)
 import cc_direction
 assert cc_direction.resolve_target_lang("auto", "en_US", "English prose") == "zh"
 assert cc_direction.resolve_target_lang("auto", "zh_CN", "\u4e2d\u6587") == "en"

@@ -13,7 +13,7 @@
 | `test_classify_windows.py` | Windows 入口兼容导出为同一组函数/阈值，复跑分类矩阵 |
 | `test_direction.py` | 共享方向目录、路由矩阵、混合文本/日文/韩文、原有阈值和精确 prompt 内容 |
 | `test_direction_windows.py` | `cc_core` / Windows 入口导出同一函数/常量，界面语言标签仍用原 wrapper |
-| `test_is_single_word.py` | `is_single_word`（词典模式触发判定） |
+| `test_is_single_word.py` | 直接导入共享 `is_single_word`；词典触发的长度/标点/混合文本/空白及既有边界行为 |
 | `test_rich_segments.py` | `iter_rich_segments` / 行内解析 / 流式安全 / 代码块高亮分流 |
 | `test_highlight.py` | `highlight_code` / token→tag 映射 / Pygments 缺失时的优雅降级 |
 
@@ -55,7 +55,7 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 ## P1 共享分类与方向
 
 ```bash
-python -B -m unittest tests.test_classify tests.test_direction tests.test_classify_import
+python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
 ```
 
 Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_windows`。Mac CI 还会用 `.app` 内的 Python

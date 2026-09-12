@@ -259,3 +259,28 @@ def classify_selection(text):
     if effective_ratio >= CODE_RATIO_MIXED:
         return "mixed"
     return "text"
+
+
+def is_single_word(text):
+    """True if the selection is a word or short term worth a dictionary entry
+    rather than a sentence translation. Allows short multi-word terms (e.g.
+    "machine learning", "New York") but rejects anything that looks like a
+    sentence (line breaks, trailing sentence punctuation, or too long/too many
+    tokens)."""
+    if not text:
+        return False
+    t = text.strip()
+    if not t or "\n" in t:
+        return False
+    # A trailing sentence terminator means it's a sentence, not a lookup term.
+    if t[-1] in ".!?\u2026\u3002\uff01\uff1f\uff0c,;\uff1b:\uff1a":
+        return False
+    has_cjk = any(ord(c) > 0x2E7F for c in t)
+    if has_cjk:
+        # Preserve the existing short, unspaced CJK term rule.
+        return " " not in t and len(t) <= 4
+    # Latin terms have at most two tokens and 30 characters, including whitespace.
+    parts = t.split()
+    if not (1 <= len(parts) <= 2) or len(t) > 30:
+        return False
+    return all(p and all(c.isalpha() or c in "-'" for c in p) for p in parts)
