@@ -451,6 +451,12 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   真存储/fingerprint/TTL/失效/失败退避/原子替换失败/隔离审计共 9 项。
   isolated 子进程阻止 cc_core/Tk/Win32 导入、进程/网络及 fixture 外写入；报告不含路径。
 - 正常完整 Windows hook、真实 Mac/包内结果待实际运行；不能提前标通过。
+- 首轮代码 `6473de470dc5ccd798a24f2c026ef081dc9e6229` 正常 pre-push **950 tests，OK，54.864s**，
+  无 failure/skip，只有既有 Tk teardown stderr 警告。
+  [34704980796](https://github.com/mclight-ship-it/cc-translate/actions/runs/34704980796) 全 steps success：
+  Mac 154 / 包内 native config 9 / 包内核心 82；构建后集成 1 真通过，0 skip。
+  但逐项核验发现新增 catalog XCTest 错误嵌套，未被 XCTest 发现；普通测试仍为旧 32 通过
+  + 1 初次集成 skip。不能把这一轮当成新增负例的验收；已修正为类成员，等待新 run 明确执行。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
