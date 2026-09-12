@@ -176,6 +176,19 @@ bundle 未写入均为 passed/true。发行门槛仍明确 `NOT PASSED`。
 无副作用抽取；配置路径、词典、缓存/历史和 provider 初始化边界仍独立验收。
 POSIX 自有进程组监督、native 配置/认证/工具/hook、零付费预热及不重试契约未因本次抽取改变。
 
+### 证据文档收尾复验
+
+文档提交 `9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3` 与 `81db765` 的可执行源码、
+测试和工作流完全相同；仍正常触发并等待了第三轮
+[34698003528](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698003528)，
+**success**，job 1m26s。Mac 便携 91 tests（6.178s）、普通 XCTest 25 通过 + 1 初次 skip、
+构建后包内集成 1 test 真正通过且 0 skip（0.426s）、包内分类 22 tests（0.055s）；
+完整 bundle/许可/Mach-O/HTTPS/SQLite/cancel/EOF/不可变审计再次通过。
+
+记录本段的最后提交只改本清单，使用文档专用 `[skip ci]` 避免“记录 run 又生成新 run”的循环；
+保留正常隐私 hook，不改/跳过任何源码测试断言或真实集成步骤。
+最后已验证的执行源码 SHA 为上述 `9bb8fc2`，不把纯文档提交冒称另一轮 Mac 测试。
+
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
 - [ ] 原生结果/输入、IME、流式合并刷新、选择滚动、取消、迟到事件隔离。
