@@ -36,6 +36,7 @@ cc_macos/
   server.py                 握手、请求、事件序号、取消和 EOF
   probes.py                 SQLite / SSL 等显式运行时自检，不获取 TCC
 cc_classify.py               P1 共用本地分类；仅依赖 re，无平台/数据路径副作用
+cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
 .github/workflows/         仅 macOS 开发工作流，与 Windows 发布隔离
@@ -58,6 +59,10 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 不复制第二套规则。该模块随包放入 `Resources/Core` 并纳入资源哈希和必需文件审计。
 便携回归直接导入模块；Windows 另验证函数 identity；Mac CI 用包内 isolated Python
 执行同一分类矩阵/无副作用测试。此切片尚未增加业务 IPC、真实翻译或 provider 调用。
+第二个切片将方向目录、路由和方向提示词移入 `cc_direction.py`，保留 `cc_core` /
+`translator.pyw` 的同一对象兼容导出；依赖 i18n 的界面标签 wrapper 留在 Windows 层。
+函数、阈值、提示词以及未知 mode 的既有回退保持不变，不增加模型请求，不改缓存签名。
+两个纯模块一起随包、进行资源哈希审计，并在包内 isolated Python 中运行同一组回归。
 
 ## 3. IPC v1 合同
 
@@ -170,6 +175,8 @@ git diff --check
 升级到完整 Windows 回归。测试不应依赖用户配置、网络、真实 CLI 或 Tk。
 不得把 Windows 测试通过写成 Mac 通过。
 分类切片的针对性命令为 `python -B -m unittest tests.test_classify tests.test_classify_import tests.test_classify_windows tests.test_macos_bundle tests.test_macos_protocol`。
+方向切片追加 `tests.test_direction tests.test_direction_windows tests.test_full.TestDirectionModes tests.test_full.TestSummaryHelpers`；
+Mac 只运行不依赖 Windows 入口的分类/方向/隔离用例。
 
 ### macOS 开发/云环境
 
@@ -249,6 +256,114 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 公证/stapling 后，从干净用户 Finder 启动，执行包内 HTTPS 证书验证、SQLite 读写、
 资源定位和 CLI 调用；没有身份/凭据时继续未通过。不要添加未经证明必要的宽泛 entitlement。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
+
+### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
+
+**先由协调者确认测试路径，不让用户猜安装问题：**
+
+- [已通过的 run 34698003528](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698003528)；
+  固定源码 SHA `9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3`。
+- [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698003528/artifacts/10298943960)
+  （GitHub 登录后下载，名称 `macos-arm64-p0-development-NOT-A-RELEASE`，
+  2026-09-19 14:01 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
+  `bundle-audit.json`、`helper-smoke.json`；不是 Release/安装器。
+- 首轮优先 **Apple Silicon / arm64 + macOS 15**；CI 实际为 15.7.9、Xcode 16.4。
+  macOS 14 只是 deployment target 候选，Intel 未验，不让 Intel 用户试装 arm64 包。
+- **仅 fixture/诊断，不是完整翻译产品。** 不登录账号、不发送模型请求，不测试真实翻译能力。
+- 构建脚本未对 `.app` 执行开发证书/Developer ID 签名，也未开启并验证 Hardened Runtime、
+  公证或 stapling；单个 Mach-O 可能有工具链产生的 ad-hoc 签名，不等于 `.app` 已签名。
+  **当前下载包没有通过干净用户的 Gatekeeper/Finder 首开验收，不能交给普通用户当作双击即用包。**
+  CI 的 XCTest/helper 成功不证明 Finder 能打开，也不证明首次权限可用。
+
+| 用户条件 | 本轮可执行路径 |
+|---|---|
+| 没有开发环境，只愿意下载运行 | **先阻断安装测试**：还缺协调者提供的 Developer ID 签名、Hardened Runtime、公证/stapling 包及其首开证据；不要让用户自行签名、修改安全设置或猜绕过方法 |
+| 已有受支持的 Mac 开发环境 | 可选择下面的**本机源码开发构建**路径；不是把下载包去隔离属性后运行，不代替发行 Gatekeeper 验收 |
+
+开发者路径要求本机已有完整 Xcode 16.4（许可/首次组件已正常完成）、Git、Python 3.9+，
+并同意下载锁定的构建输入。普通最终用户不需要这些工具。若没有这些条件，交回协调者，
+不要求为了本轮临时全局安装工具。以下在 Mac Terminal 中新建专用测试目录；已有同名目录或
+测试 App 时停止，不覆盖/删除。不要在 Windows 仓库或正式应用目录执行。
+
+```sh
+(
+  set -eu
+  test "$(uname -m)" = arm64
+  export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+  export MACOSX_DEPLOYMENT_TARGET=14.0
+  test -d "$DEVELOPER_DIR"
+  test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
+  python3 -c 'import sys; assert sys.version_info >= (3, 9)'
+  test ! -e CCTranslate-P0-test
+  git clone --single-branch --branch agents/cc-translate-macos-native \
+    https://github.com/mclight-ship-it/cc-translate.git CCTranslate-P0-test
+  cd CCTranslate-P0-test
+  git checkout --detach 9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3
+  python3 -B tools/macos/bundle.py build --development
+  python3 -B tools/macos/smoke.py --allow-https
+  target="$HOME/Applications/CCTranslateMac-P0.app"
+  test ! -e "$target"
+  mkdir -p "$HOME/Applications"
+  ditto tools/macos/.build/CCTranslateMac-P0.app "$target"
+  open "$target"
+)
+```
+
+这是本机开发来源的常规 `open`，不是已验证的用户安装流程。若 `open` 被系统/组织策略阻止，
+或出现无法验证开发者、损坏、恶意内容等提示，**停止并回报提示类别**，不要运行去隔离属性、
+关闭 Gatekeeper/SIP、`tccutil reset`、重签下载包或直接执行包内二进制来绕过首开检查。
+安全背景见 [Apple：安全地打开 Mac App](https://support.apple.com/en-us/102445)。
+
+**正常打开后只做以下五组检查；全部使用新建 TextEdit 中的合成文字，不使用工作文档/真实截图：**
+
+1. **静默与核心**：启动只出现 `CC P0`，不自动弹窗或请求权限。菜单
+   `Open P0 input / probes...` → `Bundled core` → `Start bundled helper` →
+   `Run synthetic fixture`；默认合成文字应有 SYNTHETIC 标记。依次执行 SQLite/SSL 与显式 HTTPS
+   探针。关闭面板仍保留菜单，重新打开不能显示上次残留结果。
+2. **权限拒绝与 AX 焦点**：首次不要先授予全部权限；在 TextEdit 选中 `P0 synthetic selection`，
+   用菜单 `Read current AX selection (local only)`；缺 AX 权限应 UNKNOWN、不能取旧剪贴板。
+   然后 `Permissions / AX` → `Request Accessibility`，按系统设置只批准本测试 App；
+   必要时正常退出重开并 `Refresh states`。重新选择并调用菜单，结果应 PRESENT 且仍可在
+   TextEdit 输入；无选区为 ABSENT 或有明确原因的 UNKNOWN，不能伪装旧文本。
+3. **主动复制不被吞**：单独 `Request Input Monitoring`，按系统要求批准/重启；
+   `Start passive double Cmd+C` 后回 TextEdit，半秒内按两次 Cmd+C，再在新行主动 Cmd+V。
+   粘贴必须仍是合成选中文字，结果面板不能抢走输入焦点。`Stop monitor` 后复制仍正常，
+   不应再触发探针。输入监控拒绝时应明确未启动。可在同一显示器 TextEdit/Safari 间各试一次；
+   IME/多屏有条件时只记录焦点是否异常，不宣称覆盖完整矩阵。
+4. **同帧截图**：先隐藏真实窗口/通知，让主屏仅有 TextEdit 合成内容 `P0 FRAME A 12345`。
+   `Screen / local OCR` → `Grant + capture main display once`（屏幕内容权限独立批准；拒绝应停止）。
+   预览出现后把 TextEdit 改成 `P0 FRAME B 67890`，再点 `Confirm preview: local OCR`；
+   结果应来自保留的 A 帧而不是 B。`Cancel / clear` 或关面板后预览与 OCR 都清空。
+   不上传预览、不保存屏幕；这里仅主显示器，不承诺跨屏框选。
+5. **CLI 与退出**：仅当用户已有官方 Codex/Claude 可执行文件，才在 `CLI locator` 选择名称、
+   `Locate known paths`/`Choose executable...`，再 `Run selected --version (5s limit)`。
+   只报告成功/固定失败码，版本输出丢弃、authentication 仍 unknown；不要为了此探针登录或复制认证。
+   不测试会遗留后代进程的自定义 wrapper。菜单 `Quit CC Translate P0` 后，在活动监视器确认
+   本次 App/helper 退出，不按名称结束用户原有 CLI；无 CLI 时记 NOT RUN，不影响其他四组。
+
+**失败信息怎么导出（当前没有自动诊断导出按钮）：**
+
+在 TextEdit 用“格式 → 制作纯文本”，填写以下白名单模板并存为 `CCTranslate-P0-report.txt`，
+只把这个文件交给协调者。OS/CPU 可用 `sw_vers -productVersion` 和 `uname -m` 获取；
+显示器只填数量/缩放档，不填序列号。实际状态只填固定错误码/状态或简短的合成步骤结果。
+
+```text
+Build: 9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3 / run 34698003528
+Route: local-source-development / blocked-before-open
+macOS: <version>   CPU: arm64   Displays: <count, scaling>
+Open: PASS / BLOCKED / FAIL; system alert category: <category only>
+Core: PASS / FAIL / NOT RUN; fixed error code: <code only>
+AX: granted / not granted; Selection: PRESENT / ABSENT / UNKNOWN(<reason>)
+Input monitoring: granted / not granted; Copy preserved: YES / NO / NOT RUN
+Focus: PASS / FAIL / NOT RUN; IME: <language, no typed text>
+Screen permission: granted / not granted; Retained A frame: YES / NO / NOT RUN
+CLI: codex / claude / none; Version probe: PASS / <fixed error code> / NOT RUN
+Quit: PASS / FAIL / NOT RUN
+```
+
+不附整个 Console/系统日志、`ps` 命令行、CLI stdout/stderr、路径下拉框、用户目录、邮箱、
+认证文件、真实选区、剪贴板或屏幕。只在上述合成步骤重现；需要更多信息时由协调者提出最小
+定向采集，而不是让用户打包全部日志。本轮报告中 NOT RUN/拒绝/阻断必须保留，不能填 PASS。
 
 ## 7. 功能对齐矩阵
 

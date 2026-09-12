@@ -1,4 +1,4 @@
-"""The shared classifier must also work in an isolated, GUI-free interpreter."""
+"""Shared classification and direction must work in an isolated interpreter."""
 
 from pathlib import Path
 import subprocess
@@ -9,8 +9,8 @@ import unittest
 import cc_classify
 
 
-class TestClassificationIsolation(unittest.TestCase):
-    def test_import_and_classification_have_no_platform_or_io_side_effects(self):
+class TestSharedCoreIsolation(unittest.TestCase):
+    def test_import_and_execution_have_no_platform_or_io_side_effects(self):
         source = Path(cc_classify.__file__).resolve().parent
         script = r"""
 import builtins
@@ -30,18 +30,18 @@ original_import = builtins.__import__
 
 def guarded_import(name, *args, **kwargs):
     if name.split(".")[0] in blocked:
-        raise AssertionError("classifier imported platform/provider dependency")
+        raise AssertionError("shared core imported platform/provider dependency")
     return original_import(name, *args, **kwargs)
 
 def audit(event, args):
     if event == "import" and args[0].split(".")[0] in blocked:
-        raise AssertionError("classifier imported platform/provider dependency")
+        raise AssertionError("shared core imported platform/provider dependency")
     if event == "open":
         if args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
-            raise AssertionError("classifier attempted to write a file")
+            raise AssertionError("shared core attempted to write a file")
     if event in {"os.mkdir", "os.rename", "os.remove", "os.rmdir",
                  "os.system", "subprocess.Popen"} or event.startswith("socket."):
-        raise AssertionError("classifier performed external IO")
+        raise AssertionError("shared core performed external IO")
 
 before = set(sys.modules)
 builtins.__import__ = guarded_import
@@ -50,8 +50,12 @@ import cc_classify
 assert cc_classify.classify_selection("def foo():\n    pass") == "code"
 assert cc_classify.classify_selection("ordinary prose") == "text"
 assert cc_classify.classify_selection("This is prose\ncode();\nmore prose") == "mixed"
+import cc_direction
+assert cc_direction.resolve_target_lang("auto", "en_US", "English prose") == "zh"
+assert cc_direction.resolve_target_lang("auto", "zh_CN", "\u4e2d\u6587") == "en"
+assert cc_direction.direction_prompt("to_en", "zh_CN") == "Translate the user's text into natural English."
 assert not blocked.intersection(set(sys.modules) - before)
-print("isolated classifier passed")
+print("isolated shared core passed")
 """
         with tempfile.TemporaryDirectory() as directory:
             user_data = Path(directory) / "absent-user-data"
@@ -60,7 +64,7 @@ print("isolated classifier passed")
                 cwd=directory, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "isolated classifier passed")
+            self.assertEqual(result.stdout.strip(), "isolated shared core passed")
             self.assertEqual(result.stderr, "")
             self.assertFalse(user_data.exists())
             self.assertEqual(list(Path(directory).iterdir()), [])

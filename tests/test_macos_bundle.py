@@ -241,7 +241,7 @@ class MachORulesTests(ProjectDirectory):
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
-                     "Resources/Core/cc_classify.py",
+                     "Resources/Core/cc_classify.py", "Resources/Core/cc_direction.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -313,17 +313,25 @@ class MachORulesTests(ProjectDirectory):
         with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
             bundle.audit_bundle(app, bundle.load_lock())
 
-    def test_audit_requires_shared_classifier(self):
+    def test_audit_requires_each_shared_core_module(self):
         app = self.synthetic_app()
-        (app / "Contents/Resources/Core/cc_classify.py").unlink()
-        with self.assertRaisesRegex(bundle.BundleError, "missing bundle resources"):
-            bundle.audit_bundle(app, bundle.load_lock())
+        for name in ("cc_classify.py", "cc_direction.py"):
+            with self.subTest(name=name):
+                path = app / "Contents/Resources/Core" / name
+                path.unlink()
+                with self.assertRaisesRegex(bundle.BundleError, "missing bundle resources"):
+                    bundle.audit_bundle(app, bundle.load_lock())
+                path.write_bytes(b"synthetic fixture")
 
-    def test_audit_rejects_modified_shared_classifier(self):
+    def test_audit_rejects_modified_shared_core_modules(self):
         app = self.synthetic_app()
-        (app / "Contents/Resources/Core/cc_classify.py").write_bytes(b"modified synthetic classifier")
-        with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
-            bundle.audit_bundle(app, bundle.load_lock())
+        for name in ("cc_classify.py", "cc_direction.py"):
+            with self.subTest(name=name):
+                path = app / "Contents/Resources/Core" / name
+                path.write_bytes(b"modified synthetic module")
+                with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
+                    bundle.audit_bundle(app, bundle.load_lock())
+                path.write_bytes(b"synthetic fixture")
 
     def test_load_commands_macos_build_and_rpath(self):
         output = """file:
@@ -527,23 +535,29 @@ class SmokeContractTests(unittest.TestCase):
 
 
 class HelperBundleIntegrationTests(ProjectDirectory):
-    def test_shared_classifier_is_packaged_without_windows_entry(self):
+    def test_shared_core_is_packaged_without_windows_entry(self):
         core = self.root / "Core"
         bundle.copy_core_sources(core)
-        self.assertEqual(
-            (core / "cc_classify.py").read_bytes(),
-            (bundle.ROOT / "cc_classify.py").read_bytes())
+        for name in ("cc_classify.py", "cc_direction.py"):
+            with self.subTest(name=name):
+                self.assertEqual((core / name).read_bytes(), (bundle.ROOT / name).read_bytes())
         self.assertEqual(
             {path.name for path in core.iterdir()},
-            {"launch.py", "cc_macos", "cc_classify.py"})
+            {"launch.py", "cc_macos", "cc_classify.py", "cc_direction.py"})
         self.assertFalse(list(core.rglob("__pycache__")))
 
-    def test_missing_shared_classifier_blocks_packaging(self):
-        core = self.root / "Core"
-        with patch.object(bundle, "ROOT", self.root):
-            with self.assertRaisesRegex(bundle.BundleError, "shared classifier"):
-                bundle.copy_core_sources(core)
-        self.assertFalse(core.exists())
+    def test_missing_shared_core_module_blocks_packaging(self):
+        for index, missing in enumerate(("cc_classify.py", "cc_direction.py")):
+            source = self.root / f"source{index}"
+            source.mkdir()
+            for name in ("cc_classify.py", "cc_direction.py"):
+                if name != missing:
+                    (source / name).write_bytes(b"synthetic fixture")
+            core = self.root / f"Core{index}"
+            with self.subTest(missing=missing), patch.object(bundle, "ROOT", source):
+                with self.assertRaisesRegex(bundle.BundleError, "shared core"):
+                    bundle.copy_core_sources(core)
+            self.assertFalse(core.exists())
 
     def test_packaged_sources_and_smoke_consumer_with_real_host_helper(self):
         core = self.root / "Core"

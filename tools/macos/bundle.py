@@ -29,6 +29,7 @@ STAGING = HERE / ".staging"
 BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
+SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py")
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
 MAX_MEMBERS = 30000
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
@@ -491,11 +492,12 @@ def audit_bundle(app, lock, environment=None):
     required = [
         "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
-        "Resources/Core/cc_classify.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
         "Resources/Licenses/Python/PYTHON.json",
-    ] + ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
+    ]
+    required += ["Resources/Core/" + name for name in SHARED_CORE_MODULES]
+    required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
          os.access(contents / "Helpers/python/bin/python3", os.X_OK), "non-executable bundle entry")
@@ -594,11 +596,13 @@ def write_json(path, value):
 
 
 def copy_core_sources(core):
-    classifier = ROOT / "cc_classify.py"
-    need(classifier.is_file() and not classifier.is_symlink(), "shared classifier missing or linked")
+    modules = [ROOT / name for name in SHARED_CORE_MODULES]
+    need(all(path.is_file() and not path.is_symlink() for path in modules),
+         "shared core module missing or linked")
     copy_sources(ROOT / "cc_macos", core / "cc_macos")
     shutil.copy2(ROOT / "cc_macos/launch.py", core / "launch.py")
-    shutil.copy2(classifier, core / "cc_classify.py")
+    for path in modules:
+        shutil.copy2(path, core / path.name)
 
 
 def build(lock, offline=False):
