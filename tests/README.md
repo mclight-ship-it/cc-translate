@@ -60,7 +60,7 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 ## P1 共享分类与方向
 
 ```bash
-python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_provider_contracts tests.test_classify_import
+python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable tests.test_classify_import
 ```
 
 Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_windows tests.test_prompts_windows`。Mac CI 还会用 `.app` 内的 Python

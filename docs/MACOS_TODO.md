@@ -150,7 +150,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] provider 包初始化只导入纯 base/registry；显式后端导出仍使用原对象并传播失败。
     包内只携带三个契约文件，不携带 CLI 后端/用户认证，不宣称 native Mac provider 已实现。
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
-  - [ ] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
+  - [x] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
@@ -338,7 +338,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 开发 artifact `10299638691`，2026-09-19 14:55 UTC 到期。实机交接固定到该 run/SHA，
   文档-only 收尾不改任何执行源码，不额外重复相同 CI。正式首次权限/签名门槛仍未过。
 
-### 只读词典存储与线程生命周期（验证中）
+### 只读词典存储与线程生命周期（2026-09-12 已验证）
 
 - 顺序在原生进程组完整 Mac 通过后开始。复用原 `DictionaryStore`，不另造未调用的存储层：
   现有 Windows `LocalDictionary` 继续使用它，Mac 显式 runtime probe 实际打开合成 SQLite，
@@ -364,6 +364,19 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 修正原生校验和固定 `dictionary_probe_failed` 显示码，新增缺失字段、假布尔、私有路径、
   终态序号保持与有效报告的回归；smoke 同步严格四字段白名单。
   不放宽未知字段、不跳过失败集成；同包 native/helper 必须匹配，旧诊断报告不会伪装成功。
+- 修正后针对性 **81 tests，16.889s，OK**；正常 pre-push 完整
+  **931 Windows tests，51.633s，OK**（无失败/skip，仅既有 Tk teardown stderr 警告）。
+- [run 34701509226](https://github.com/mclight-ship-it/cc-translate/actions/runs/34701509226)，
+  SHA `826ba99571d572ca059ba02134797c79e1e9584a`，**success**，job 1m37s。
+  Mac 便携 **145 tests，6.693s**；普通 XCTest **31 通过 + 唯一初次包内集成 skip**，
+  构建后 Foundation.Process 集成 **1 test，0 skip，0.474s**；
+  随包 Python 同源测试 **73 tests，0 skip，0.316s**。原生进程组五项回归持续通过；
+  release build、完整许可/Mach-O、词典/HTTPS/SQLite、取消/EOF/不可变审计全部通过。
+- 已下载核验 artifact `10299469909`：clean manifest 对应正确 SHA，八份共享模块/契约/probe
+  与 Git blobs 逐字、哈希一致；**5 arm64 Mach-O / 652 库存项**，没有捆绑真实词库数据库。
+  `helper-smoke.json` 的 dictionary 四字段、清理/不可变均通过；Python **3.12.14**。
+  临时 app zip 已清理，仅会话目录留脱敏 JSON。实机交接更新到该固定制品，
+  仍不代表首次 TCC/签名/真实账号完成。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
