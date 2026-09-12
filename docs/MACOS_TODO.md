@@ -517,20 +517,26 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 不更改 App/delegate 生命周期、退出回调或进程算法，不扩大 UI。该源码文案修正另跑正常 CI。
 
 - Codex 只读配置监督已于 `951f4f7` / run `34703866435` 完整通过；不是尚未实施的工作。
-  最新源码 `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe` / run `34705266928` 再次运行了全部
+  最新源码 `397380a7c8fc6a05e9e96e2d6a16bd6b911a4925` / run `34705975202` 再次运行了全部
   9 项 Mac 真进程测试（含 helper EOF）并通过，配置监督源码/C ABI/该测试文件相对前轮无变化。
   “只读”指 initialize/config/read RPC；不承诺未测官方 CLI 初始化零磁盘或认证副作用。
 - 本轮同时已完成分类、方向、词典触发/提示词、provider 纯契约、只读词典生命周期、
   原生版本探针自有组监督，以及 catalog 显式 cache/logger 与合成存储回归。
   它们均有上文真实 Windows/Mac 证据；P0 界面仍仅 fixture/诊断，非完整翻译。
-- 最新 Windows 正常 hook **950 tests，OK，56.416s**；Mac **154**，普通 XCTest **33 通过 +
+- 最新 Windows 正常 hook **950 tests，OK，60.820s**；Mac **154**，普通 XCTest **33 通过 +
   1 初次集成 skip**；后置包内集成 **1 真通过、0 skip**，包内配置 **9** / 同源核心 **82**，
   无未修复失败。资源/许可/Mach-O/HTTPS/SQLite/清理和不可变审计均通过。
   源码/code SHA 与文档-only 收尾 HEAD 分开；本次仅更新交接，不重复触发相同源码 CI。
-- 最新 [run](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928) /
-  [artifact 10301448938](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928/artifacts/10301448938)
-  已核验；artifact 于 **2026-09-19 16:28 UTC** 到期。下载 zip 均已清理，仅会话目录保留脱敏 JSON。
+- 最新 [run](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705975202) /
+  [artifact 10300699234](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705975202/artifacts/10300699234)
+  已核验；artifact 于 **2026-09-19 16:42 UTC** 到期。下载 zip 均已清理，仅会话目录保留脱敏 JSON。
   开发分支保持正常提交/非 force 推送，不动 master、Windows 正式应用或 Release。
+- 文案收尾实际结果：上述 run **success，job 1m32s**；Mac 便携 **154 / 5.814s**，
+  普通 XCTest **34 总数，1 初次 skip，0 failure**，后置集成 **1 / 0.799s，0 skip**；
+  包内 native config **9 / 12.448s**，同源核心 **82 / 0.379s**，均通过。
+  核验 **14 Git blobs / 49 资源 hash / 6 arm64 Mach-O / 659 库存项**；
+  实际编译 App 中两条新文案存在，两条旧的 direct-child/P1 文案均不存在。
+  同组后代受监督、主动逃离组的 wrapper 不支持；本次没有扩大保证或改变生命周期逻辑。
 
 ### 尚可独立推进，但本轮主动暂停
 
