@@ -77,6 +77,7 @@ def _git(*args: str) -> str:
         check=False,
         capture_output=True,
         text=True,
+        input="",
         encoding="utf-8",
         errors="replace",
     )
@@ -84,6 +85,20 @@ def _git(*args: str) -> str:
         detail = (proc.stderr or proc.stdout).strip()
         raise RuntimeError(detail or f"git {' '.join(args)} failed")
     return proc.stdout
+
+
+def published_base(remote: str, head: str) -> str:
+    """A new branch adds changes after an ancestor already published on this remote."""
+    advertised = _git("ls-remote", "--", remote, "HEAD").splitlines()
+    if not advertised:
+        return _git("hash-object", "-t", "tree", "--stdin").strip()
+    fields = advertised[0].split()
+    if (len(advertised) != 1 or len(fields) != 2 or fields[1] != "HEAD"
+            or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", fields[0])):
+        raise RuntimeError("Cannot establish the remote's published HEAD")
+    # Missing objects or unrelated histories fail closed. Fetch the remote before
+    # retrying; never trust an arbitrary local tracking ref as proof of publication.
+    return _git("merge-base", head, fields[0]).strip()
 
 
 def _sensitive_path_reason(path: str) -> str | None:
@@ -168,6 +183,13 @@ def scan_range(base: str, head: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 4 and argv[1] == "--new-branch-base":
+        try:
+            print(published_base(argv[2], argv[3]))
+        except (OSError, RuntimeError) as exc:
+            print(f"pre-push published baseline failed: {exc}", file=sys.stderr)
+            return 2
+        return 0
     if len(argv) != 3:
         print("usage: privacy_scan.py <base-sha> <head-sha>", file=sys.stderr)
         return 2
