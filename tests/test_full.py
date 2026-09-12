@@ -736,8 +736,15 @@ class TestDirectionModes(unittest.TestCase):
         self.assertEqual(zh, en,
                          "tray-click action labels must match across languages")
         self.assertEqual(
-            zh, {"settings", "history", "screenshot", "quick_input"},
-            "tray-click action keys should be the four window actions")
+            zh, {
+                "settings", "recall_result", "history", "screenshot",
+                "quick_input",
+            },
+            "tray-click action keys should expose all result/window actions")
+        self.assertEqual(
+            list(tr.TRAY_CLICK_ACTION_LABELS_ZH)[-1], "recall_result")
+        self.assertEqual(
+            list(tr.TRAY_CLICK_ACTION_LABELS_EN)[-1], "recall_result")
         self.assertIn(default_action, zh)
 
 
@@ -2571,8 +2578,8 @@ class TestCCUpdatePaths(unittest.TestCase):
     def test_release_uses_version_5_major(self):
         import cc_update
         self.assertEqual(cc_update.VERSION_MAJOR, 5)
-        self.assertEqual(cc_update.VERSION_MINOR, 6)
-        self.assertTrue(tr.version_string().startswith("5.6."))
+        self.assertEqual(cc_update.VERSION_MINOR, 7)
+        self.assertTrue(tr.version_string().startswith("5.7."))
 
     def test_is_git_deploy_returns_bool(self):
         result = tr.is_git_deploy()
@@ -3514,6 +3521,18 @@ class TestUiSmoke(unittest.TestCase):
         self.assertTrue(app.settings_win is not None
                         and tr.tk.Toplevel.winfo_exists(app.settings_win),
                         "settings window should exist after _open_settings()")
+
+    def test_settings_tray_click_actions_include_last_result(self):
+        app = self._build("_open_settings")
+        expected = tr.get_tray_click_action_labels()["recall_result"]
+        combo_values = []
+        for widget in self._walk_widgets(app.settings_win):
+            try:
+                if widget.winfo_class() == "TCombobox":
+                    combo_values.extend(widget.cget("values"))
+            except (tr.tk.TclError, AttributeError):
+                pass
+        self.assertIn(expected, combo_values)
 
     def test_settings_shows_optional_dictionary_download(self):
         app = self._build("_open_settings")
@@ -4481,6 +4500,7 @@ class TestUiSmoke(unittest.TestCase):
 
         cases = {
             "settings": "open_settings",
+            "recall_result": "_reshow_last_result",
             "history": "open_history",
             "quick_input": "open_quick_input",
             "screenshot": "_ocr_from_menu",   # dispatched via root.after
@@ -4492,6 +4512,8 @@ class TestUiSmoke(unittest.TestCase):
                     unittest.mock.patch.object(app, "open_history") as m_history, \
                     unittest.mock.patch.object(app, "open_quick_input") as m_quick, \
                     unittest.mock.patch.object(app, "_ocr_from_menu") as m_ocr, \
+                    unittest.mock.patch.object(
+                        app, "_reshow_last_result") as m_recall, \
                     unittest.mock.patch.object(app.root, "after",
                                                side_effect=lambda ms, fn: fn()):
                 app._run_tray_click_action()
@@ -4500,6 +4522,7 @@ class TestUiSmoke(unittest.TestCase):
                 "open_history": m_history.called,
                 "open_quick_input": m_quick.called,
                 "_ocr_from_menu": m_ocr.called,
+                "_reshow_last_result": m_recall.called,
             }
             self.assertTrue(called[expected_method],
                             f"action {action!r} should call {expected_method}")

@@ -757,8 +757,8 @@ CODEX_MODEL_LABELS_EN = {
     "auto-fast": "Smart routing (fast)",
     "auto": "Auto select (quality)",
 }
-# What a single left-click on the tray icon does. Keys map to the four
-# window-opening actions the tray already exposes; the label is resolved by
+# What a single left-click on the tray icon does. Keys map to the result/window
+# actions the tray already exposes; the label is resolved by
 # app language. Non-window actions (pause / quit / update) are deliberately not
 # offered here — a single click should summon something, not toggle state.
 TRAY_CLICK_ACTION_LABELS_ZH = {
@@ -766,12 +766,14 @@ TRAY_CLICK_ACTION_LABELS_ZH = {
     "history": "历史记录",
     "screenshot": "截图翻译",
     "quick_input": "快速翻译",
+    "recall_result": "重新显示上次结果",
 }
 TRAY_CLICK_ACTION_LABELS_EN = {
     "settings": "Settings",
     "history": "History",
     "screenshot": "Screenshot translation",
     "quick_input": "Quick translation",
+    "recall_result": "Show last result",
 }
 LANGUAGE_LABELS = {"zh_CN": "中文", "en_US": "English"}
 
