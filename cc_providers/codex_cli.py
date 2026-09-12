@@ -144,7 +144,8 @@ class CodexCliProvider:
         warm_sessions=False,
     )
 
-    def __init__(self, command=_AUTO_COMMAND, work_dir=None):
+    def __init__(self, command=_AUTO_COMMAND, work_dir=None, *,
+                 catalog_cache_dir=None, catalog_log_error=None):
         self.command = (
             find_codex_cmd() if command is _AUTO_COMMAND else command)
         self.env = child_environment()
@@ -158,7 +159,8 @@ class CodexCliProvider:
         self._appserver_warm_inflight = set()
         self._shutdown = False
         self._catalog = CodexModelCatalog(
-            self.command, self.env, work_dir=self.work_dir)
+            self.command, self.env, cache_dir=catalog_cache_dir,
+            work_dir=self.work_dir, log_error=catalog_log_error)
 
     def diagnose(self):
         if not self.command:

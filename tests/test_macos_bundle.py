@@ -23,7 +23,8 @@ from tools.macos import bundle, smoke
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "codex_instructions.txt")
-PROVIDER_FILES = CONTRACT_FILES + CONFIG_FILES
+CATALOG_FILES = ("codex_catalog.py",)
+PROVIDER_FILES = CONTRACT_FILES + CONFIG_FILES + CATALOG_FILES
 
 
 def member(name, kind=tarfile.REGTYPE, target="", data=b"x"):
@@ -250,6 +251,7 @@ class MachORulesTests(ProjectDirectory):
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cc_macos/config_fixture.py",
+                     "Resources/Core/cc_macos/catalog_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -523,6 +525,8 @@ class SmokeContractTests(unittest.TestCase):
             "dictionary": {"status": "passed", "read_only": True, "sources_preserved": True, "reopened": True},
             "codex_config_fixture": {"status": "passed", "fixture": True,
                                      "methods_verified": True, "routing_preserved": True},
+            "catalog_storage_fixture": {"status": "passed", "cli_simulated": True,
+                                        "cache_verified": True, "reopen_verified": True},
             "ssl": {"status": "passed", "certificate_validation": True, "ca_source": "bundle"},
             "https": {"status": "passed", "certificate_verified": True, "host": "www.python.org"},
         }
@@ -554,6 +558,11 @@ class SmokeContractTests(unittest.TestCase):
                                     ("codex_config_fixture", "methods_verified", False),
                                     ("codex_config_fixture", "routing_preserved", False),
                                     ("codex_config_fixture", "path", "synthetic forbidden path"),
+                                    ("catalog_storage_fixture", "status", "not_run"),
+                                    ("catalog_storage_fixture", "cli_simulated", 1),
+                                    ("catalog_storage_fixture", "cache_verified", False),
+                                    ("catalog_storage_fixture", "reopen_verified", False),
+                                    ("catalog_storage_fixture", "path", "synthetic forbidden path"),
                                     ("ssl", "ca_source", "system"),
                                     ("ssl", "certificate_validation", False),
                                     ("https", "status", "not_run"),
@@ -599,6 +608,7 @@ class HelperBundleIntegrationTests(ProjectDirectory):
             {"launch.py", "cc_macos", "cc_providers", *SHARED_CORE_FILES})
         self.assertEqual(bundle.PROVIDER_CONTRACT_FILES, CONTRACT_FILES)
         self.assertEqual(bundle.PROVIDER_CONFIG_FILES, CONFIG_FILES)
+        self.assertEqual(bundle.PROVIDER_CATALOG_FILES, CATALOG_FILES)
         self.assertEqual({path.name for path in (core / "cc_providers").iterdir()}, set(PROVIDER_FILES))
         for name in PROVIDER_FILES:
             self.assertEqual(

@@ -26,7 +26,8 @@ class TestCodexCatalog(unittest.TestCase):
             'model = "sol"\nmodel_provider = "custom"\n', encoding="utf-8")
         self.env = {"CODEX_HOME": str(self.home)}
         self.cache = self.root / "cache"
-        self.manager = CodexModelCatalog(str(self.binary), self.env, self.cache)
+        self.log = Mock()
+        self.manager = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
         self.payload = {"models": [
             {"slug": "sol", "priority": 2, "base_instructions": "keep exactly"},
             {"slug": "mini", "priority": 9, "visibility": "hide"},
@@ -35,7 +36,6 @@ class TestCodexCatalog(unittest.TestCase):
         self.run = patch("cc_providers.codex_catalog.subprocess.run",
                          side_effect=self.fake_run).start()
         self.addCleanup(patch.stopall)
-        self.log = patch("cc_core.log_error").start()
         patch("cc_providers.codex_catalog.Path.cwd", return_value=self.root).start()
         for module in ("codex_cli", "codex_appserver"):
             patch("cc_providers." + module + ".read_native_config",
@@ -68,7 +68,7 @@ class TestCodexCatalog(unittest.TestCase):
 
     def test_new_manager_validates_cached_catalog_with_local_cli(self):
         first = self.manager.overrides()
-        other = CodexModelCatalog(str(self.binary), self.env, self.cache)
+        other = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
         self.assertEqual(other.overrides(), first)
         self.assertEqual(len(self.calls), 4)
         self.assertIn("-c", self.calls[-1])
@@ -233,9 +233,13 @@ class TestCodexCatalog(unittest.TestCase):
                 self.assertEqual(self.manager.overrides(), ())
 
     def test_exec_and_stream_startup_preserve_route_and_safety(self):
-        with patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": str(self.home)}):
-            provider = CodexCliProvider(str(self.binary), str(self.root))
-        provider._catalog = self.manager
+        with patch.dict(os.environ, self.env, clear=True):
+            provider = CodexCliProvider(
+                str(self.binary), str(self.root),
+                catalog_cache_dir=self.cache, catalog_log_error=self.log)
+        manager = provider._catalog
+        self.assertEqual(manager.cache_dir, self.cache)
+        self.assertEqual(manager.work_dir, str(self.root))
         request = ProviderRequest(task="text", model="auto-fast",
                                   system_prompt="Translate.", user_text="hello")
         command = provider.build_command(request)
@@ -243,10 +247,10 @@ class TestCodexCatalog(unittest.TestCase):
         self.assertNotIn("--ignore-user-config", command)
         self.assertIn("--ephemeral", command)
         self.assertIn('model_reasoning_effort="none"', command)
-        override = self.manager.overrides()[0]
+        override = manager.overrides()[0]
         self.assertIn(override, command)
         transport = CodexAppServerTransport(
-            str(self.binary), str(self.root), catalog=self.manager)
+            str(self.binary), str(self.root), catalog=manager)
         stream_command = transport.build_command(request)
         self.assertIn(override, stream_command)
         self.assertIn("features.shell_tool=false", stream_command)

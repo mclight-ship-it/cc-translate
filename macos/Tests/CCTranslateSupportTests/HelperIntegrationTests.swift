@@ -40,6 +40,10 @@ final class HelperIntegrationTests: XCTestCase {
                         XCTAssertEqual(event.payload["dictionary"]?.object?["read_only"], .bool(true))
                         XCTAssertEqual(event.payload["dictionary"]?.object?["sources_preserved"], .bool(true))
                         XCTAssertEqual(event.payload["dictionary"]?.object?["reopened"], .bool(true))
+                        XCTAssertEqual(event.payload["catalog_storage_fixture"], .object([
+                            "status": .string("passed"), "cli_simulated": .bool(true),
+                            "cache_verified": .bool(true), "reopen_verified": .bool(true)
+                        ]))
                         XCTAssertEqual(event.payload["codex_config_fixture"], .object([
                             "status": .string("passed"), "fixture": .bool(true),
                             "methods_verified": .bool(true), "routing_preserved": .bool(true)

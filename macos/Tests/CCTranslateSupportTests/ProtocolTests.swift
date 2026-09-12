@@ -45,6 +45,10 @@ final class ProtocolTests: XCTestCase {
                 "status": .string("passed"), "fixture": .bool(true),
                 "methods_verified": .bool(true), "routing_preserved": .bool(true)
             ]),
+            "catalog_storage_fixture": .object([
+                "status": .string("passed"), "cli_simulated": .bool(true),
+                "cache_verified": .bool(true), "reopen_verified": .bool(true)
+            ]),
             "ssl": .object([
                 "status": .string("passed"), "version": .string("OpenSSL synthetic"),
                 "certificate_validation": .bool(true), "ca_source": .string("bundle")
@@ -296,6 +300,44 @@ final class ProtocolTests: XCTestCase {
             incomplete.removeValue(forKey: key)
             report["dictionary"] = .object(incomplete)
             XCTAssertThrowsError(try state.receive(event("runtime", 1, "completed", report)))
+        }
+
+        func testCatalogFixtureCannotOmitSimulationOrForgeStorageEvidence() throws {
+            var state = try connected()
+            try state.register(ClientMessage(id: "catalog", type: "request", payload: [
+                "operation": .string("runtime_probe")
+            ]))
+            _ = try state.receive(event("catalog", 0, "accepted", ["operation": .string("runtime_probe")]))
+            let fixture = try XCTUnwrap(runtimeReport()["catalog_storage_fixture"]?.object)
+            var report = runtimeReport()
+            report.removeValue(forKey: "catalog_storage_fixture")
+            XCTAssertThrowsError(try state.receive(event("catalog", 1, "completed", report)))
+            for key in fixture.keys {
+                var incomplete = fixture
+                incomplete.removeValue(forKey: key)
+                report["catalog_storage_fixture"] = .object(incomplete)
+                XCTAssertThrowsError(try state.receive(event("catalog", 1, "completed", report)))
+            }
+            for key in ["cli_simulated", "cache_verified", "reopen_verified"] {
+                for value in [JSONValue.bool(false), .integer(1), .string("true")] {
+                    var invalid = fixture
+                    invalid[key] = value
+                    report["catalog_storage_fixture"] = .object(invalid)
+                    XCTAssertThrowsError(try state.receive(event("catalog", 1, "completed", report)))
+                }
+            }
+            var extra = fixture
+            extra["path"] = .string("synthetic forbidden path")
+            report["catalog_storage_fixture"] = .object(extra)
+            XCTAssertThrowsError(try state.receive(event("catalog", 1, "completed", report)))
+            _ = try state.receive(event("catalog", 1, "completed", runtimeReport()))
+            try state.register(ClientMessage(id: "catalog_failed", type: "request", payload: [
+                "operation": .string("runtime_probe")
+            ]))
+            let failure = try state.receive(event("catalog_failed", 0, "failed", [
+                "code": .string("catalog_fixture_failed")
+            ]))
+            XCTAssertEqual(failure.safeFailureCode, "catalog_fixture_failed")
         }
         for key in ["read_only", "sources_preserved", "reopened"] {
             for value in [JSONValue.bool(false), .integer(1), .string("true")] {

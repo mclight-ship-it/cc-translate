@@ -68,6 +68,11 @@ def validate_runtime(report, lock):
          "status", "fixture", "methods_verified", "routing_preserved"} and config["status"] == "passed"
          and all(config[key] is True for key in ("fixture", "methods_verified", "routing_preserved")),
          "synthetic native config process not confirmed")
+    catalog = report.get("catalog_storage_fixture")
+    need(isinstance(catalog, dict) and set(catalog) == {
+         "status", "cli_simulated", "cache_verified", "reopen_verified"} and catalog["status"] == "passed"
+         and all(catalog[key] is True for key in ("cli_simulated", "cache_verified", "reopen_verified")),
+         "synthetic catalog storage not confirmed")
     ssl = report.get("ssl", {})
     need(ssl.get("status") == "passed" and ssl.get("certificate_validation") is True
          and ssl.get("ca_source") == "bundle", "bundled CA SSL verification not confirmed")
@@ -92,6 +97,10 @@ class Session:
             "HOME": str(directory / "home"), "TMPDIR": str(directory),
             "LANG": "en_US.UTF-8",
         }
+        if os.name == "nt":
+            # Path.home ignores HOME on Windows; retain the boundary that catalog
+            # skips when checking parent project layers. CODEX_HOME stays synthetic.
+            environment["USERPROFILE"] = str(Path.home())
         (directory / "home").mkdir()
         self.process = subprocess.Popen(
             [str(arg) for arg in command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

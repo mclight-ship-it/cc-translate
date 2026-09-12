@@ -58,7 +58,9 @@ def _atomic_write(path, content):
 
 
 class CodexModelCatalog:
-    def __init__(self, command, env=None, cache_dir=None, work_dir=None):
+    def __init__(self, command, env=None, cache_dir=None, work_dir=None, *, log_error=None):
+        if log_error is not None and not callable(log_error):
+            raise TypeError("log_error must be callable")
         self.command = command
         self.env = env
         self.work_dir = work_dir
@@ -69,9 +71,12 @@ class CodexModelCatalog:
         self._failure_until = 0
         self._validated = None
         self.status = "not_checked"
+        self._log_error = log_error
 
     def _warn(self, code):
-        from cc_core import log_error
+        log_error = self._log_error
+        if log_error is None:
+            from cc_core import log_error
 
         if self.status != code:
             log_error("codex_catalog", CatalogError(

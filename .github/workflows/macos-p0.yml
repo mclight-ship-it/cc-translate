@@ -39,6 +39,7 @@ jobs:
           python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle
           tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
+          tests.test_catalog_storage_portable
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
@@ -82,14 +83,17 @@ jobs:
           import cc_prompts
           import cc_providers
           import cc_dictionary_store
+          import cc_providers.codex_catalog
           assert Path(cc_classify.__file__).resolve() == core / "cc_classify.py"
           assert Path(cc_direction.__file__).resolve() == core / "cc_direction.py"
           assert Path(cc_prompts.__file__).resolve() == core / "cc_prompts.py"
           assert Path(cc_providers.__file__).resolve() == core / "cc_providers/__init__.py"
           assert Path(cc_dictionary_store.__file__).resolve() == core / "cc_dictionary_store.py"
+          assert Path(cc_providers.codex_catalog.__file__).resolve() == core / "cc_providers/codex_catalog.py"
           suite = unittest.defaultTestLoader.loadTestsFromNames(
               ["test_classify", "test_is_single_word", "test_direction", "test_classify_import",
-               "test_prompts", "test_provider_contracts", "test_dictionary_store_portable"])
+               "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
+               "test_catalog_storage_portable"])
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           if not result.wasSuccessful() or result.skipped:
               raise SystemExit(1)

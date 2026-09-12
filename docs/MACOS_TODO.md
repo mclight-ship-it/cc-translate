@@ -158,8 +158,12 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     成功/错误/8 秒期限均先清自有组再回收；保持 Windows 路径及完整 native env/cwd/安全覆盖。
   - [x] 第三步（依赖第二步）：真实 Mac fake app-server 验证协议、洪泛/阻塞/后代/兄弟存活，
     并从现有显式合成诊断入口验证包内接入；不运行真实账号/模型，不宣称完整 provider 可用。
-  - [ ] 后续独立前置：catalog/cache 路径及 logger 显式传入实际 provider 构造链；
-    当前默认缓存仍可能落 HOME/APPDATA，警告会延迟导入 cc_core，不能直接把整个 exec 当便携。
+  - [ ] catalog/cache 显式路径与日志切片：实现已接入，完整 hook / 真 Mac 验收待本轮回写；
+    旧默认路径/日志仍保留给 Windows，不能直接把整个 exec 当便携。
+    - [x] 保留 Windows 默认表达式，复用 catalog 的 cache_dir/work_dir，仅补 logger 与 provider 转交。
+    - [x] 合成 fixture 替代 CLI 输出边界，但实际运行 fingerprint、写入、roundtrip、state 激活和重开；
+      显式路径之外不写入、不导入 cc_core，也不调用未监督 CLI。
+    - [ ] Windows 构造链/原行为及 Mac 包内同源验收通过后，再单独推进 version/debug-models 监督。
   - [ ] 前置完成后再分别处理 exec、常驻 app-server、预热/取消与提交快照；
     现有 poll/wait 会提前 reap，不能仅在旧 `_kill_process` 里补一行 killpg。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
@@ -429,6 +433,24 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   provider 包只含三份纯契约 + 两份 config reader + 原 instructions，不含 exec/app-server/
   Claude/catalog。临时 zip 已清理，脱敏 JSON 留会话目录，未执行任何用户真实 CLI/账号。
   文档-only 收尾固定该已通过代码，不额外反复运行相同 CI。
+
+### Catalog 显式存储与日志切片（实现完成，跨平台验收进行中）
+
+- `CodexCliProvider` 构造直接转交既有 manager，实际 build_command 回归不再覆盖私有 manager。
+  stream/warm 继续共享；默认 APPDATA/展开 HOME 路径和延迟 logger 不变。
+- 原 `_models/_read/_atomic_write/_run/overrides/_resolve/_validate` 七个函数 AST 完全一致；
+  未改 fingerprint、TTL、配置层保护、缓存命中/重开校验，也不放行真实 catalog CLI。
+- 显式 runtime_probe 接入合成 catalog：CLI 输出模拟，缓存实际写入/重开/roundtrip；
+  错误不激活 state，日志只接收固定错误码，不触碰用户配置、真实模型或真实认证。
+- 首轮 Windows 120 项有 1 error：隔离 smoke 未提供 Windows `Path.home` 所需 USERPROFILE。
+  补为合成 home 后，121 项仍有 1 error：正确触发了实际祖先配置保护。
+  最终 Windows smoke 保留原平台用户主目录边界（只用于跳过该祖先的 project 检查），
+  catalog 的 CODEX_HOME、cwd/cache 仍全部显式为临时 fixture；没有绕过配置保护。
+  缺少平台 home 现明确转为固定 `catalog_fixture_failed`，不再漏出线程 traceback。
+- 修正后针对性联合回归 **122 tests，OK，21.783s**；新增项目配置拒绝、原日志/路径、
+  真存储/fingerprint/TTL/失效/失败退避/原子替换失败/隔离审计共 9 项。
+  isolated 子进程阻止 cc_core/Tk/Win32 导入、进程/网络及 fixture 外写入；报告不含路径。
+- 正常完整 Windows hook、真实 Mac/包内结果待实际运行；不能提前标通过。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。

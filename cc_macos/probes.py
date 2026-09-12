@@ -59,6 +59,12 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
             except (OSError, sqlite3.Error, DictionaryStoreError) as exc:
                 raise ProbeError("dictionary_probe_failed") from exc
             _check_cancel(cancel)
+            from .catalog_fixture import probe_catalog
+            try:
+                catalog_fixture = probe_catalog(Path(directory) / "catalog")
+            except (OSError, ValueError) as exc:
+                raise ProbeError("catalog_fixture_failed") from exc
+            _check_cancel(cancel)
             if sys.platform == "darwin" and bundle_runtime:
                 try:
                     config_fixture = probe_config(Path(directory) / "config", cancel)
@@ -88,6 +94,7 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
         "sqlite": {"status": "passed", "read_write": True, "version": sqlite3.sqlite_version},
         "dictionary": dictionary,
         "codex_config_fixture": config_fixture,
+        "catalog_storage_fixture": catalog_fixture,
         "ssl": {"status": "passed", "version": ssl.OPENSSL_VERSION,
                 "certificate_validation": True, "ca_source": "bundle" if bundled else "system"},
         "https": {"status": "not_run"},

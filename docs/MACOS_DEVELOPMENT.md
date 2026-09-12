@@ -57,7 +57,8 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
   不能创建/迁移 AppData。`cc_providers` 现在只直接导入纯 base/registry；
   CLI 后端导出在显式访问时才加载，Windows 仍获得原类/函数对象，导入失败原样传播。
   Mac 开发包保留 `__init__.py` / `base.py` / `registry.py` 及 native config reader、
-  Darwin 监督适配和原 instructions 资源，不携带旧 exec/app-server/Claude 后端或 catalog。
+  Darwin 监督适配、原 instructions 资源及 catalog 存储实现，不携带旧 exec/app-server/Claude 后端。
+  catalog 只由合成诊断替代 CLI 输出边界，实际写入/重开临时缓存；未放行真实 version/debug-models。
   不能据此宣称原 Windows Codex/Claude 后端已适配 Mac；其 POSIX 监督及真实 native 配置/
   账号验证仍在 P1。每次抽取保留兼容导出并跑 Windows 回归。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
@@ -82,6 +83,13 @@ OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路�
 导入；类字段、冻结语义、未知认证状态和 registry 退出错误传播均保持原样。
 这只完成纯契约的初始化边界，不是完整请求快照/配置版本协议或可运行的 Mac provider。
 包内 `__all__` 保留兼容 API 名称，但未提供的 CLI 后端访问会显式导入失败，不降级到其他后端。
+既有 `CodexCliProvider` 构造可显式接收 `catalog_cache_dir` / `catalog_log_error`，直接传给
+已有 manager，stream/warm 共用同一对象。未传时保留 Windows APPDATA/展开 HOME 的默认路径
+及延迟 `cc_core.log_error`；显式传入不导入该模块。cache root/logger 不加入 fingerprint，
+TTL、配置/二进制/native-cache 签名、冷缓存三次探针及重开后的 roundtrip 规则不变。
+当前合成诊断仅在临时目录创建合成 binary identity、配置、model metadata 和缓存，
+严格报告 `cli_simulated=true`；不启动真实 CLI，不读账号，不激活任何付费 turn。
+这不是完整平台配置/历史单写边界，也不代表尚未监督的 catalog 子进程已可供原生翻译使用。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。

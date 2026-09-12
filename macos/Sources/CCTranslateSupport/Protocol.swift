@@ -289,6 +289,7 @@ private enum HelperFailureCode: String {
     case sqliteProbeFailed = "sqlite_probe_failed"
     case dictionaryProbeFailed = "dictionary_probe_failed"
     case configFixtureFailed = "config_fixture_failed"
+    case catalogFixtureFailed = "catalog_fixture_failed"
     case bundleCAMissing = "bundle_ca_missing"
     case sslContextFailed = "ssl_context_failed"
     case sslValidationDisabled = "ssl_validation_disabled"
@@ -442,7 +443,8 @@ public struct ProtocolState {
     }
 
     private func runtimePayload(_ payload: [String: JSONValue], https: Bool) -> Bool {
-        guard Set(payload.keys) == ["python", "sqlite", "dictionary", "codex_config_fixture", "ssl", "https"],
+        guard Set(payload.keys) == ["python", "sqlite", "dictionary", "codex_config_fixture",
+                                   "catalog_storage_fixture", "ssl", "https"],
               let python = payload["python"]?.object,
               Set(python.keys) == ["version", "platform", "machine", "isolated", "bytecode_disabled", "bundle_runtime"],
               let pythonVersion = python["version"]?.string, !pythonVersion.isEmpty,
@@ -458,6 +460,10 @@ public struct ProtocolState {
               payload["dictionary"] == .object([
                   "status": .string("passed"), "read_only": .bool(true),
                   "sources_preserved": .bool(true), "reopened": .bool(true)
+              ]),
+              payload["catalog_storage_fixture"] == .object([
+                  "status": .string("passed"), "cli_simulated": .bool(true),
+                  "cache_verified": .bool(true), "reopen_verified": .bool(true)
               ]),
               Set(ssl.keys) == ["status", "version", "certificate_validation", "ca_source"],
               ssl["status"] == .string("passed"), ssl["certificate_validation"] == .bool(true),
