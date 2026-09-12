@@ -38,6 +38,8 @@ cc_macos/
 cc_classify.py               P1 共用本地分类/词典触发判断；仅依赖 re，无平台/数据路径副作用
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
+cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
+cc_providers/registry.py     显式注册/获取/退出的纯 registry
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
 .github/workflows/         仅 macOS 开发工作流，与 Windows 发布隔离
@@ -50,9 +52,11 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
 - Python：逐步复用分类、方向、提示词、词典、缓存、历史、provider 生命周期与请求快照。
   P0 只提供明确标注的合成 fixture 和诊断，绝不把 fixture 当真实翻译。
 - `translator.pyw`、`cc_core.py` 和 UI mixin 不是服务入口。导入便携核心不能导入 Tk/Win32，
-  不能创建/迁移 AppData。现有 `cc_providers/base.py` 的契约本身可复用，但其包
-  `__init__.py` 会导入 CLI/registry；P0 不通过该路径引入耦合，也不复制 Windows 业务逻辑。
-  P1 先处理包初始化边界；每次抽取保留兼容导出并跑 Windows 回归。
+  不能创建/迁移 AppData。`cc_providers` 现在只直接导入纯 base/registry；
+  CLI 后端导出在显式访问时才加载，Windows 仍获得原类/函数对象，导入失败原样传播。
+  Mac 开发包只保留该包的 `__init__.py` / `base.py` / `registry.py`，不携带旧 CLI 后端。
+  不能据此宣称原 Windows Codex/Claude 后端已适配 Mac；其 POSIX 监督及真实 native 配置/
+  账号验证仍在 P1。每次抽取保留兼容导出并跑 Windows 回归。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
   后续需要 XCUITest 时可增加 Xcode 测试宿主，不以未经编译的大量 UI 替代平台探针。
 
@@ -71,6 +75,10 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 与旧实现 AST 和规范 UTF-8 快照完全一致。`cc_core` / Windows 主入口 / warm / 结果操作
 继续使用相同对象，不增加 API、预热 turn、重试或账号访问。三份纯模块一起随包验证。
 OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路径仍是另外的边界，不宣称全部 P1 完成。
+已有 `ProviderRequest` / `ProviderResult` 等数据类和 `ProviderRegistry` 也能在隔离环境直接
+导入；类字段、冻结语义、未知认证状态和 registry 退出错误传播均保持原样。
+这只完成纯契约的初始化边界，不是完整请求快照/配置版本协议或可运行的 Mac provider。
+包内 `__all__` 保留兼容 API 名称，但未提供的 CLI 后端访问会显式导入失败，不降级到其他后端。
 
 ## 3. IPC v1 合同
 

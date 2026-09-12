@@ -30,6 +30,7 @@ BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py")
+PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
 MAX_MEMBERS = 30000
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
@@ -497,6 +498,7 @@ def audit_bundle(app, lock, environment=None):
         "Resources/Licenses/Python/PYTHON.json",
     ]
     required += ["Resources/Core/" + name for name in SHARED_CORE_MODULES]
+    required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CONTRACT_FILES]
     required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
@@ -597,12 +599,17 @@ def write_json(path, value):
 
 def copy_core_sources(core):
     modules = [ROOT / name for name in SHARED_CORE_MODULES]
-    need(all(path.is_file() and not path.is_symlink() for path in modules),
-         "shared core module missing or linked")
+    contracts = [ROOT / "cc_providers" / name for name in PROVIDER_CONTRACT_FILES]
+    need(all(path.is_file() and not path.is_symlink() for path in modules + contracts),
+         "shared core or provider contract missing or linked")
+    need(not (ROOT / "cc_providers").is_symlink(), "linked provider source directory")
     copy_sources(ROOT / "cc_macos", core / "cc_macos")
     shutil.copy2(ROOT / "cc_macos/launch.py", core / "launch.py")
     for path in modules:
         shutil.copy2(path, core / path.name)
+    (core / "cc_providers").mkdir()
+    for path in contracts:
+        shutil.copy2(path, core / "cc_providers" / path.name)
 
 
 def build(lock, offline=False):

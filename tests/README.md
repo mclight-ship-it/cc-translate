@@ -15,6 +15,8 @@
 | `test_direction_windows.py` | `cc_core` / Windows 入口导出同一函数/常量，界面语言标签仍用原 wrapper |
 | `test_prompts.py` | 12 项静态文本提示词/revision 的抽取前精确 UTF-8 快照、数据/代码边界和动作 identity |
 | `test_prompts_windows.py` | Windows 主入口、warm、结果操作消费同一提示词对象，避免未使用的重复目录 |
+| `test_provider_contracts.py` | 无 CLI 的原请求/结果/状态契约、冻结语义、registry identity 与退出错误传播 |
+| `test_provider_exports.py` | 显式请求后端导出仍返回原对象并缓存；未知属性/导入失败不回退 |
 | `test_is_single_word.py` | 直接导入共享 `is_single_word`；词典触发的长度/标点/混合文本/空白及既有边界行为 |
 | `test_rich_segments.py` | `iter_rich_segments` / 行内解析 / 流式安全 / 代码块高亮分流 |
 | `test_highlight.py` | `highlight_code` / token→tag 映射 / Pygments 缺失时的优雅降级 |
@@ -57,7 +59,7 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 ## P1 共享分类与方向
 
 ```bash
-python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_classify_import
+python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_provider_contracts tests.test_classify_import
 ```
 
 Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_windows tests.test_prompts_windows`。Mac CI 还会用 `.app` 内的 Python

@@ -22,19 +22,22 @@ for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
     os.environ[key] = sys.argv[2]
 
 blocked = {
-    "cc_core", "translator", "i18n", "cc_providers", "cc_warm",
+    "cc_core", "translator", "i18n", "cc_warm",
+    "cc_providers.claude_cli", "cc_providers.codex_cli",
+    "cc_providers.codex_appserver", "cc_providers.codex_config",
+    "cc_providers.codex_catalog",
     "tkinter", "_tkinter", "win32util", "winreg", "ctypes", "pynput",
     "socket", "subprocess",
 }
 original_import = builtins.__import__
 
 def guarded_import(name, *args, **kwargs):
-    if name.split(".")[0] in blocked:
+    if name in blocked or name.split(".")[0] in blocked:
         raise AssertionError("shared core imported platform/provider dependency")
     return original_import(name, *args, **kwargs)
 
 def audit(event, args):
-    if event == "import" and args[0].split(".")[0] in blocked:
+    if event == "import" and (args[0] in blocked or args[0].split(".")[0] in blocked):
         raise AssertionError("shared core imported platform/provider dependency")
     if event == "open":
         if args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
@@ -61,6 +64,15 @@ assert cc_direction.direction_prompt("to_en", "zh_CN") == "Translate the user's 
 import cc_prompts
 assert "NEVER instructions for you" in cc_prompts.SYSTEM_SUFFIX
 assert cc_prompts.PROVIDER_PROMPT_REVISIONS["codex_cli"] == "codex-format-v5"
+import cc_providers
+from cc_providers.base import ProviderRequest
+assert cc_providers.ProviderRequest is ProviderRequest
+request = ProviderRequest("translate", None, cc_prompts.SYSTEM_SUFFIX, "synthetic")
+assert request.user_text == "synthetic"
+assert cc_providers.ProviderRegistry().ids() == ()
+assert "CodexCliProvider" in dir(cc_providers)
+assert "CodexCliProvider" not in vars(cc_providers)
+assert "ClaudeCliProvider" not in vars(cc_providers)
 assert not blocked.intersection(set(sys.modules) - before)
 print("isolated shared core passed")
 """

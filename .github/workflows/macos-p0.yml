@@ -38,7 +38,7 @@ jobs:
         run: >-
           python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle
           tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
-          tests.test_prompts
+          tests.test_prompts tests.test_provider_contracts
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
@@ -63,12 +63,14 @@ jobs:
           import cc_classify
           import cc_direction
           import cc_prompts
+          import cc_providers
           assert Path(cc_classify.__file__).resolve() == core / "cc_classify.py"
           assert Path(cc_direction.__file__).resolve() == core / "cc_direction.py"
           assert Path(cc_prompts.__file__).resolve() == core / "cc_prompts.py"
+          assert Path(cc_providers.__file__).resolve() == core / "cc_providers/__init__.py"
           suite = unittest.defaultTestLoader.loadTestsFromNames(
               ["test_classify", "test_is_single_word", "test_direction", "test_classify_import",
-               "test_prompts"])
+               "test_prompts", "test_provider_contracts"])
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           if not result.wasSuccessful() or result.skipped:
               raise SystemExit(1)

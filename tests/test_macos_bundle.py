@@ -21,6 +21,7 @@ from tools.macos import bundle, smoke
 
 
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py")
+CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 
 
 def member(name, kind=tarfile.REGTYPE, target="", data=b"x"):
@@ -249,6 +250,7 @@ class MachORulesTests(ProjectDirectory):
         resources += ["Resources/Licenses/Python/licenses/" + name
                       for name in lock["required_runtime_licenses"]]
         resources += ["Resources/Core/" + name for name in SHARED_CORE_FILES]
+        resources += ["Resources/Core/cc_providers/" + name for name in CONTRACT_FILES]
         for name in binaries + resources:
             path = contents / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -332,6 +334,19 @@ class MachORulesTests(ProjectDirectory):
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core" / name
                 path.write_bytes(b"modified synthetic module")
+                with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
+                    bundle.audit_bundle(app, bundle.load_lock())
+                path.write_bytes(b"synthetic fixture")
+
+    def test_audit_requires_unchanged_provider_contracts(self):
+        app = self.synthetic_app()
+        for name in CONTRACT_FILES:
+            with self.subTest(name=name):
+                path = app / "Contents/Resources/Core/cc_providers" / name
+                path.unlink()
+                with self.assertRaisesRegex(bundle.BundleError, "missing bundle resources"):
+                    bundle.audit_bundle(app, bundle.load_lock())
+                path.write_bytes(b"modified synthetic contract")
                 with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
                     bundle.audit_bundle(app, bundle.load_lock())
                 path.write_bytes(b"synthetic fixture")
@@ -547,7 +562,13 @@ class HelperBundleIntegrationTests(ProjectDirectory):
                 self.assertEqual((core / name).read_bytes(), (bundle.ROOT / name).read_bytes())
         self.assertEqual(
             {path.name for path in core.iterdir()},
-            {"launch.py", "cc_macos", *SHARED_CORE_FILES})
+            {"launch.py", "cc_macos", "cc_providers", *SHARED_CORE_FILES})
+        self.assertEqual(bundle.PROVIDER_CONTRACT_FILES, CONTRACT_FILES)
+        self.assertEqual({path.name for path in (core / "cc_providers").iterdir()}, set(CONTRACT_FILES))
+        for name in CONTRACT_FILES:
+            self.assertEqual(
+                (core / "cc_providers" / name).read_bytes(),
+                (bundle.ROOT / "cc_providers" / name).read_bytes())
         self.assertFalse(list(core.rglob("__pycache__")))
 
     def test_missing_shared_core_module_blocks_packaging(self):
@@ -557,9 +578,27 @@ class HelperBundleIntegrationTests(ProjectDirectory):
             for name in SHARED_CORE_FILES:
                 if name != missing:
                     (source / name).write_bytes(b"synthetic fixture")
+            (source / "cc_providers").mkdir()
+            for name in CONTRACT_FILES:
+                (source / "cc_providers" / name).write_bytes(b"synthetic fixture")
             core = self.root / f"Core{index}"
             with self.subTest(missing=missing), patch.object(bundle, "ROOT", source):
                 with self.assertRaisesRegex(bundle.BundleError, "shared core"):
+                    bundle.copy_core_sources(core)
+            self.assertFalse(core.exists())
+
+    def test_missing_provider_contract_blocks_packaging(self):
+        for index, missing in enumerate(CONTRACT_FILES):
+            source = self.root / f"source{index}"
+            (source / "cc_providers").mkdir(parents=True)
+            for name in SHARED_CORE_FILES:
+                (source / name).write_bytes(b"synthetic fixture")
+            for name in CONTRACT_FILES:
+                if name != missing:
+                    (source / "cc_providers" / name).write_bytes(b"synthetic fixture")
+            core = self.root / f"Core{index}"
+            with self.subTest(missing=missing), patch.object(bundle, "ROOT", source):
+                with self.assertRaisesRegex(bundle.BundleError, "provider contract"):
                     bundle.copy_core_sources(core)
             self.assertFalse(core.exists())
 
