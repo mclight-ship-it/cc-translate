@@ -158,12 +158,17 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     成功/错误/8 秒期限均先清自有组再回收；保持 Windows 路径及完整 native env/cwd/安全覆盖。
   - [x] 第三步（依赖第二步）：真实 Mac fake app-server 验证协议、洪泛/阻塞/后代/兄弟存活，
     并从现有显式合成诊断入口验证包内接入；不运行真实账号/模型，不宣称完整 provider 可用。
-  - [ ] catalog/cache 显式路径与日志切片：实现已接入，完整 hook / 真 Mac 验收待本轮回写；
+  - [x] catalog/cache 显式路径与日志切片：真实构造链、完整 hook / 真 Mac 验收已通过；
     旧默认路径/日志仍保留给 Windows，不能直接把整个 exec 当便携。
     - [x] 保留 Windows 默认表达式，复用 catalog 的 cache_dir/work_dir，仅补 logger 与 provider 转交。
     - [x] 合成 fixture 替代 CLI 输出边界，但实际运行 fingerprint、写入、roundtrip、state 激活和重开；
       显式路径之外不写入、不导入 cc_core，也不调用未监督 CLI。
-    - [ ] Windows 构造链/原行为及 Mac 包内同源验收通过后，再单独推进 version/debug-models 监督。
+    - [x] Windows 构造链/原行为及 Mac 包内同源验收通过。
+  - [ ] 下一依赖：真实 catalog version/debug-models 的自有组监督，不改已提交 turn 或调用真实账号。
+    - [ ] 复用已有 C ABI/所有权规则，接入既有 catalog `_run` 的 Darwin 分支；
+      stdout/stderr 在读取期间限额，deadline 后清组再 reap，不按进程名追杀。
+    - [ ] 真 Mac fake CLI 覆盖冷缓存三调用、缓存重开 roundtrip、超时/洪泛/退出后后代/兄弟存活；
+      原 argv/env/cwd/安全覆盖与缓存回归保持，确认调用链后才扩到 exec/app-server。
   - [ ] 前置完成后再分别处理 exec、常驻 app-server、预热/取消与提交快照；
     现有 poll/wait 会提前 reap，不能仅在旧 `_kill_process` 里补一行 killpg。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
@@ -434,7 +439,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   Claude/catalog。临时 zip 已清理，脱敏 JSON 留会话目录，未执行任何用户真实 CLI/账号。
   文档-only 收尾固定该已通过代码，不额外反复运行相同 CI。
 
-### Catalog 显式存储与日志切片（实现完成，跨平台验收进行中）
+### Catalog 显式存储与日志切片（2026-09-12 已验证）
 
 - `CodexCliProvider` 构造直接转交既有 manager，实际 build_command 回归不再覆盖私有 manager。
   stream/warm 继续共享；默认 APPDATA/展开 HOME 路径和延迟 logger 不变。
@@ -450,13 +455,27 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 修正后针对性联合回归 **122 tests，OK，21.783s**；新增项目配置拒绝、原日志/路径、
   真存储/fingerprint/TTL/失效/失败退避/原子替换失败/隔离审计共 9 项。
   isolated 子进程阻止 cc_core/Tk/Win32 导入、进程/网络及 fixture 外写入；报告不含路径。
-- 正常完整 Windows hook、真实 Mac/包内结果待实际运行；不能提前标通过。
 - 首轮代码 `6473de470dc5ccd798a24f2c026ef081dc9e6229` 正常 pre-push **950 tests，OK，54.864s**，
   无 failure/skip，只有既有 Tk teardown stderr 警告。
   [34704980796](https://github.com/mclight-ship-it/cc-translate/actions/runs/34704980796) 全 steps success：
   Mac 154 / 包内 native config 9 / 包内核心 82；构建后集成 1 真通过，0 skip。
   但逐项核验发现新增 catalog XCTest 错误嵌套，未被 XCTest 发现；普通测试仍为旧 32 通过
   + 1 初次集成 skip。不能把这一轮当成新增负例的验收；已修正为类成员，等待新 run 明确执行。
+- 修正源码 `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe` 的正常 pre-push 再次
+  **950 tests，OK，56.416s**，只有既有 Tk teardown stderr 警告。
+  [34705266928](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928)
+  **success**，job 1m42s。实际日志明确记录新增 catalog XCTest started / passed（0.005s）。
+- 最新 Mac 宿主便携 **154 tests，6.519s**；普通 XCTest **34 总数 = 33 通过 + 1 初次包内集成 skip**，
+  0 failure；构建后 Foundation.Process 包内集成 **1 真通过，0 skip，0.747s**。
+  包内 native config **9 tests，12.180s**，包内同源核心/存储 **82 tests，0.423s**，均 0 skip。
+  app/C 库构建、许可/Mach-O、HTTPS/SQLite/词典/config/catalog、取消/EOF/不可变审计全部通过。
+- 已下载核验 [artifact 10301448938](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928/artifacts/10301448938)：
+  clean manifest 对应上述 SHA，**14 份 Git blobs / 49 份资源 hash / 6 arm64 Mach-O / 659 库存项**。
+  provider 白名单只新增 catalog 文件，不含 exec/app-server/Claude 或真实词库/账号数据。
+  包内 Python 3.12.14 的 `catalog_storage_fixture` 四字段及清理/不可变均通过；
+  明确 `cli_simulated=true`，没有运行真实 catalog CLI。两轮临时 zip 已清理，脱敏 JSON 留会话目录。
+- 此为可重复的 P1 存储依赖检查点，不是全部 P1 完成；继续下一独立进程监督依赖。
+  用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因本轮绿色改为通过。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
