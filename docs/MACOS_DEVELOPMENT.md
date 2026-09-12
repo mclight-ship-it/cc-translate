@@ -261,11 +261,11 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 **先由协调者确认测试路径，不让用户猜安装问题：**
 
-- [已通过的 run 34698003528](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698003528)；
-  固定源码 SHA `9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3`。
-- [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698003528/artifacts/10298943960)
+- [已通过的 run 34698580547](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547)；
+  固定源码 SHA `f526459add6d287ac3402be93cf925cce0c506c9`。
+- [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547/artifacts/10299377201)
   （GitHub 登录后下载，名称 `macos-arm64-p0-development-NOT-A-RELEASE`，
-  2026-09-19 14:01 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
+  2026-09-19 14:13 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
   `bundle-audit.json`、`helper-smoke.json`；不是 Release/安装器。
 - 首轮优先 **Apple Silicon / arm64 + macOS 15**；CI 实际为 15.7.9、Xcode 16.4。
   macOS 14 只是 deployment target 候选，Intel 未验，不让 Intel 用户试装 arm64 包。
@@ -298,7 +298,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
   git clone --single-branch --branch agents/cc-translate-macos-native \
     https://github.com/mclight-ship-it/cc-translate.git CCTranslate-P0-test
   cd CCTranslate-P0-test
-  git checkout --detach 9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3
+  git checkout --detach f526459add6d287ac3402be93cf925cce0c506c9
   python3 -B tools/macos/bundle.py build --development
   python3 -B tools/macos/smoke.py --allow-https
   target="$HOME/Applications/CCTranslateMac-P0.app"
@@ -348,7 +348,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 显示器只填数量/缩放档，不填序列号。实际状态只填固定错误码/状态或简短的合成步骤结果。
 
 ```text
-Build: 9bb8fc26dd48dd8cd5792bc9d6c8124d4c500da3 / run 34698003528
+Build: f526459add6d287ac3402be93cf925cce0c506c9 / run 34698580547
 Route: local-source-development / blocked-before-open
 macOS: <version>   CPU: arm64   Displays: <count, scaling>
 Open: PASS / BLOCKED / FAIL; system alert category: <category only>

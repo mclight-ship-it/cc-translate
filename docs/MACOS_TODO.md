@@ -128,7 +128,7 @@ Python HTTPS smoke 是另一步，不替代原生客户端链路。
 已运行 macOS 编译和 CI；尚未运行真实用户 GUI/TCC、Developer ID 签名、公证或发布。
 上述证据只解锁依赖安全、可独立回归的 P1 纯核心。
 
-## P1 — 分类切片通过，方向纯核心增量验证中
+## P1 — 分类/方向纯核心切片通过，其他依赖继续待办
 
 Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独立纯核心抽取。
 这不代表正式 P0 的真实 TCC、Finder、签名公证已通过，也不解锁完整 P2–P6 UI。
@@ -140,7 +140,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 新共享分类、isolated 无副作用、Windows 兼容以及包内 Python 差分回归通过并记录。
   - [x] 方向路由/方向 prompt 抽到 `cc_direction.py`，9 个函数/常量及 mode 生成 AST 与原
     `cc_core` 完全一致；显式传入 UI 语言，i18n 标签 wrapper 留原层，兼容导出同一对象。
-  - [ ] 方向切片的完整 Windows hook 与最新 Mac/包内 Python 回归通过并记录。
+  - [x] 方向切片的完整 Windows hook 与最新 Mac/包内 Python 回归通过并记录。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
@@ -192,18 +192,41 @@ POSIX 自有进程组监督、native 配置/认证/工具/hook、零付费预热
 保留正常隐私 hook，不改/跳过任何源码测试断言或真实集成步骤。
 最后已验证的执行源码 SHA 为上述 `9bb8fc2`，不把纯文档提交冒称另一轮 Mac 测试。
 
-### 方向纯核心与首轮用户 Mac 交接（验证中）
+### 方向纯核心与首轮用户 Mac 交接（2026-09-12 已验证）
 
 - Windows 方向/分类/隔离/打包/协议及原有方向/摘要针对性联合测试：
   **134 tests，OK，16.466s**。方向新测试覆盖固定目标、自动路由、混合文本、日文/韩文、
   ASCII-Latin 计数、0.34 阈值、精确 prompt 和既有未知 mode 回退。
 - 两个共享模块均随包且纳入必需资源/哈希；缺失或篡改任一个均失败关闭。
-  最新完整 Windows hook 和真实 Mac CI 随提交执行后记录，不以针对性测试代替。
+  不以针对性测试代替完整 Windows hook 和真实 Mac CI。
+- 正常 pre-push：隐私扫描、Python 编译和完整 Windows **893 tests，OK，51.136s**；
+  无失败/skip，只有既有 Tk teardown stderr 警告。
+- 最新真实 [run 34698580547](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547)，
+  源码 SHA `f526459add6d287ac3402be93cf925cce0c506c9`，**success**，job 1m33s。
+  实际 macOS 15.7.9 arm64、image `20260907.0337.1`、Xcode 16.4 / 16F6、Swift 6.1.2。
+
+| 方向切片 Mac 阶段 | 实际结果 |
+|---|---|
+| 便携分类/方向/隔离/协议/打包 unittest | **103 tests，OK，6.716s** |
+| 普通 XCTest | 25 通过 + 唯一包内集成初次 skip；合成 Vision OCR 实际通过，1.973s |
+| 构建后强制包内 Foundation.Process 集成 | **1 test，0 failures，0 skip，0.433s** |
+| 包内 CPython 同一分类/方向/隔离回归 | **34 tests，OK，0.063s，0 skip**；两模块均断言来自 bundle |
+| 固定运行时/完整许可/资源/Mach-O、HTTPS/SQLite/cancel/EOF、最终不可变审计 | 全部通过 |
+
+已下载核对审计报告与 source manifest：646 个库存项、5 个 arm64 Mach-O、19 份完整
+runtime 许可证；源提交为上述 `f526459` 且 clean，两纯模块哈希与已提交 Git LF blob 一致。
+包内 Python 3.12.14 / SQLite 3.53.1 / OpenSSL 3.5.8；smoke 的 bundle_unchanged、
+probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；发行门槛仍 `NOT PASSED`。
+开发 app zip 已从本地临时下载中清理，只留会话内脱敏 JSON；远端 artifact 到期自动清理。
+
 - [首轮用户 Mac 交接（开发指南对应小节）](MACOS_DEVELOPMENT.md)
   已写明具体 run/artifact/SHA、普通下载包尚不能承诺首开、签名缺失条件、本机源码开发路径、
   五组显式探针及手动白名单 TXT 脱敏回报。用户配置和签名条件由协调者统一询问。
 - 当前不让普通用户自行去隔离属性、关闭 Gatekeeper/SIP、重签下载包、直跑二进制或脚本重置 TCC；
   无开发环境且无签名分发条件时安装测试明确阻断。纯核心工作不因该人工门槛停摆。
+- 收尾仅更新两份文档，正常 privacy hook，提交注明 `[skip ci]`；执行源码/测试/workflow
+  与已绿色的 `f526459` 完全相同。下一独立纯核心候选是请求快照/提示词剩余部分与平台路径；
+  不把本轮结果误标为全部 P1 或正式 P0 已完成。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
