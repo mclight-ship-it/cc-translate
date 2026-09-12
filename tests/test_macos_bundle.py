@@ -20,7 +20,7 @@ import zipfile
 from tools.macos import bundle, smoke
 
 
-SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py")
+SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 
 
@@ -245,6 +245,7 @@ class MachORulesTests(ProjectDirectory):
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+                     "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -350,6 +351,16 @@ class MachORulesTests(ProjectDirectory):
                 with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
                     bundle.audit_bundle(app, bundle.load_lock())
                 path.write_bytes(b"synthetic fixture")
+
+    def test_audit_requires_unchanged_dictionary_probe(self):
+        app = self.synthetic_app()
+        path = app / "Contents/Resources/Core/cc_macos/dictionary_probe.py"
+        path.unlink()
+        with self.assertRaisesRegex(bundle.BundleError, "missing bundle resources"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        path.write_bytes(b"modified synthetic probe")
+        with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
+            bundle.audit_bundle(app, bundle.load_lock())
 
     def test_load_commands_macos_build_and_rpath(self):
         output = """file:
@@ -505,10 +516,16 @@ class SmokeContractTests(unittest.TestCase):
             "python": {"version": lock["python_version"], "platform": "darwin", "machine": "arm64",
                        "isolated": True, "bytecode_disabled": True, "bundle_runtime": True},
             "sqlite": {"status": "passed", "read_write": True},
+            "dictionary": {"status": "passed", "read_only": True, "sources_preserved": True, "reopened": True},
             "ssl": {"status": "passed", "certificate_validation": True, "ca_source": "bundle"},
             "https": {"status": "passed", "certificate_verified": True, "host": "www.python.org"},
         }
         smoke.validate_runtime(report, lock)
+        for value in (None, {}, [], "passed"):
+            invalid = deepcopy(report)
+            invalid["dictionary"] = value
+            with self.subTest(dictionary=value), self.assertRaises(smoke.BundleError):
+                smoke.validate_runtime(invalid, lock)
         for section, key, value in (("python", "version", "3.12.10"),
                                     ("python", "platform", "win32"),
                                     ("python", "platform", "linux"),
@@ -520,6 +537,11 @@ class SmokeContractTests(unittest.TestCase):
                                     ("python", "bundle_runtime", False),
                                     ("python", "bundle_runtime", 1),
                                     ("sqlite", "read_write", False),
+                                    ("dictionary", "status", "not_run"),
+                                    ("dictionary", "read_only", False),
+                                    ("dictionary", "read_only", 1),
+                                    ("dictionary", "sources_preserved", False),
+                                    ("dictionary", "reopened", False),
                                     ("ssl", "ca_source", "system"),
                                     ("ssl", "certificate_validation", False),
                                     ("https", "status", "not_run"),
@@ -622,6 +644,8 @@ class HelperBundleIntegrationTests(ProjectDirectory):
             self.assertTrue(report["python"]["isolated"])
             self.assertTrue(report["python"]["bytecode_disabled"])
             self.assertTrue(report["sqlite"]["read_write"])
+            self.assertTrue(report["dictionary"]["read_only"])
+            self.assertTrue(report["dictionary"]["reopened"])
             self.assertEqual(report["https"]["status"], "not_run")
             with self.assertRaises(bundle.BundleError):
                 smoke.validate_runtime(report, bundle.load_lock())

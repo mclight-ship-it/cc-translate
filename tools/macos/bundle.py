@@ -29,7 +29,7 @@ STAGING = HERE / ".staging"
 BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
-SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py")
+SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
 MAX_MEMBERS = 30000
@@ -493,6 +493,7 @@ def audit_bundle(app, lock, environment=None):
     required = [
         "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+        "Resources/Core/cc_macos/dictionary_probe.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
         "Resources/Licenses/Python/PYTHON.json",

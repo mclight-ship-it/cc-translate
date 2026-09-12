@@ -57,6 +57,10 @@ def validate_runtime(report, lock):
     sqlite = report.get("sqlite", {})
     need(sqlite.get("status") == "passed" and sqlite.get("read_write") is True,
          "actual SQLite read/write not confirmed")
+    dictionary = report.get("dictionary")
+    need(isinstance(dictionary, dict) and dictionary.get("status") == "passed" and
+         all(dictionary.get(key) is True for key in ("read_only", "sources_preserved", "reopened")),
+         "synthetic dictionary storage and lifecycle not confirmed")
     ssl = report.get("ssl", {})
     need(ssl.get("status") == "passed" and ssl.get("certificate_validation") is True
          and ssl.get("ca_source") == "bundle", "bundled CA SSL verification not confirmed")

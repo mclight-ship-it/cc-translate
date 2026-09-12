@@ -7,11 +7,64 @@ import hashlib
 import sqlite3
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import quote
 
 
 SCHEMA_VERSION = "1"
+SCHEMA = """
+PRAGMA foreign_keys = ON;
+CREATE TABLE metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE sources (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    version TEXT NOT NULL,
+    license TEXT NOT NULL,
+    url TEXT NOT NULL,
+    sha256 TEXT NOT NULL
+);
+CREATE TABLE entries (
+    id INTEGER PRIMARY KEY,
+    headword TEXT NOT NULL,
+    headword_norm TEXT NOT NULL,
+    language TEXT NOT NULL,
+    pronunciation TEXT,
+    part_of_speech TEXT,
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    provenance TEXT NOT NULL,
+    priority INTEGER NOT NULL
+);
+CREATE TABLE senses (
+    id INTEGER PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES entries(id),
+    ordinal INTEGER NOT NULL,
+    definition TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    provenance TEXT NOT NULL
+);
+CREATE TABLE forms (
+    form_norm TEXT NOT NULL,
+    entry_id INTEGER NOT NULL REFERENCES entries(id),
+    form TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    PRIMARY KEY (form_norm, entry_id, form)
+);
+CREATE TABLE aliases (
+    alias_norm TEXT NOT NULL,
+    entry_id INTEGER NOT NULL REFERENCES entries(id),
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    PRIMARY KEY (alias_norm, entry_id, alias, alias_type)
+);
+CREATE INDEX entries_headword_norm ON entries(headword_norm, priority);
+CREATE INDEX senses_entry_id ON senses(entry_id, ordinal);
+CREATE INDEX forms_form_norm ON forms(form_norm);
+CREATE INDEX aliases_alias_norm ON aliases(alias_norm);
+"""
 REQUIRED_METADATA = ("schema_version", "data_version", "content_sha256")
 REQUIRED_TABLES = {
     "metadata", "sources", "entries", "senses", "forms", "aliases",
@@ -89,7 +142,7 @@ class DictionaryStore:
         return self._status
 
     def _connect(self) -> sqlite3.Connection:
-        uri = "file:%s?mode=ro" % quote(self.path.replace("\\", "/"), safe="/:")
+        uri = Path(self.path).as_uri() + "?mode=ro"
         try:
             conn = sqlite3.connect(uri, uri=True, timeout=1.0)
             conn.row_factory = sqlite3.Row

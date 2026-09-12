@@ -41,6 +41,7 @@ cc_direction.py              P1 共用方向路由/方向提示词；UI 语言�
 cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
+cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
 .github/workflows/         仅 macOS 开发工作流，与 Windows 发布隔离
@@ -80,6 +81,12 @@ OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路�
 导入；类字段、冻结语义、未知认证状态和 registry 退出错误传播均保持原样。
 这只完成纯契约的初始化边界，不是完整请求快照/配置版本协议或可运行的 Mac provider。
 包内 `__all__` 保留兼容 API 名称，但未提供的 CLI 后端访问会显式导入失败，不降级到其他后端。
+`DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
+保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
+builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。
+显式 `runtime_probe` 现在还在自己的临时目录创建合成词典，验证 exact/form/alias、只读约束、
+来源保留、关闭重开及文件不变；跨线程独立关闭由同源测试覆盖。报告只含固定状态/布尔值，
+不返回路径、词条或用户资料；没有捆绑真实词库或提供词典 UI，也不是动态换库/全局 writer 协议。
 
 ## 3. IPC v1 合同
 

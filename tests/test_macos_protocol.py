@@ -2,7 +2,6 @@ import io
 import os
 from pathlib import Path
 import queue
-import shutil
 import ssl
 import subprocess
 import sys
@@ -17,6 +16,7 @@ from cc_macos.protocol import (
     read_frame, validate_client,
 )
 from cc_macos.server import Server
+from tools.macos.bundle import copy_core_sources
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -273,10 +273,7 @@ class TestMacHelperProcess(unittest.TestCase):
     def test_bundle_launcher_ignores_pythonpath_and_current_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             core = Path(directory) / "Core"
-            core.mkdir()
-            shutil.copytree(ROOT / "cc_macos", core / "cc_macos",
-                            ignore=shutil.ignore_patterns("__pycache__"))
-            shutil.copy2(ROOT / "cc_macos" / "launch.py", core / "launch.py")
+            copy_core_sources(core)
             env = {**os.environ, "PYTHONPATH": str(Path(directory) / "untrusted")}
             helper = PipeHelper(self, command=[sys.executable, "-I", "-B", str(core / "launch.py")],
                                 cwd=directory, env=env)
@@ -292,6 +289,9 @@ class TestMacHelperProcess(unittest.TestCase):
         result = helper.until_terminal("r")
         self.assertEqual(result["type"], "completed")
         self.assertTrue(result["payload"]["sqlite"]["read_write"])
+        self.assertEqual(result["payload"]["dictionary"], {
+            "status": "passed", "read_only": True, "sources_preserved": True, "reopened": True,
+        })
         self.assertTrue(result["payload"]["ssl"]["certificate_validation"])
         self.assertEqual(result["payload"]["https"], {"status": "not_run"})
         self.assertEqual(result["payload"]["python"]["platform"], sys.platform)

@@ -43,7 +43,7 @@ def audit(event, args):
         if args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
             raise AssertionError("shared core attempted to write a file")
     if event in {"os.mkdir", "os.rename", "os.remove", "os.rmdir",
-                 "os.system", "subprocess.Popen"} or event.startswith("socket."):
+                 "os.system", "subprocess.Popen"} or event.startswith(("socket.", "sqlite3.connect")):
         raise AssertionError("shared core performed external IO")
 
 before = set(sys.modules)
@@ -73,6 +73,8 @@ assert cc_providers.ProviderRegistry().ids() == ()
 assert "CodexCliProvider" in dir(cc_providers)
 assert "CodexCliProvider" not in vars(cc_providers)
 assert "ClaudeCliProvider" not in vars(cc_providers)
+import cc_dictionary_store
+assert cc_dictionary_store.SCHEMA_VERSION == "1"
 assert not blocked.intersection(set(sys.modules) - before)
 print("isolated shared core passed")
 """

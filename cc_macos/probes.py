@@ -10,6 +10,8 @@ import ssl
 import sys
 import tempfile
 from threading import Event
+from cc_dictionary_store import DictionaryStoreError
+from .dictionary_probe import probe_dictionary
 
 
 HTTPS_HOST = "www.python.org"
@@ -47,6 +49,11 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
                     raise ProbeError("sqlite_readback_failed")
             finally:
                 connection.close()
+            _check_cancel(cancel)
+            try:
+                dictionary = probe_dictionary(Path(directory) / "synthetic # %.sqlite3")
+            except (OSError, sqlite3.Error, DictionaryStoreError) as exc:
+                raise ProbeError("dictionary_probe_failed") from exc
     except (OSError, sqlite3.Error) as exc:
         raise ProbeError("sqlite_probe_failed") from exc
     _check_cancel(cancel)
@@ -68,6 +75,7 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
             "bundle_runtime": Path(sys.executable).resolve().is_relative_to(runtime_root.resolve()),
         },
         "sqlite": {"status": "passed", "read_write": True, "version": sqlite3.sqlite_version},
+        "dictionary": dictionary,
         "ssl": {"status": "passed", "version": ssl.OPENSSL_VERSION,
                 "certificate_validation": True, "ca_source": "bundle" if bundled else "system"},
         "https": {"status": "not_run"},

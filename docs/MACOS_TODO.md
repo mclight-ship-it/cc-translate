@@ -150,6 +150,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] provider 包初始化只导入纯 base/registry；显式后端导出仍使用原对象并传播失败。
     包内只携带三个契约文件，不携带 CLI 后端/用户认证，不宣称 native Mac provider 已实现。
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
+  - [ ] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
@@ -336,6 +337,25 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   release bundle、Mach-O/完整许可、HTTPS/SQLite/cancel/EOF/不可变审计均通过。
 - 开发 artifact `10299638691`，2026-09-19 14:55 UTC 到期。实机交接固定到该 run/SHA，
   文档-only 收尾不改任何执行源码，不额外重复相同 CI。正式首次权限/签名门槛仍未过。
+
+### 只读词典存储与线程生命周期（验证中）
+
+- 顺序在原生进程组完整 Mac 通过后开始。复用原 `DictionaryStore`，不另造未调用的存储层：
+  现有 Windows `LocalDictionary` 继续使用它，Mac 显式 runtime probe 实际打开合成 SQLite，
+  不访问用户词库、不新增业务 IPC/GUI、不改变配置/历史的持久化规则。
+- 发现旧 `.replace("\\", "/")` 会破坏 POSIX 文件名的字面反斜杠；改用 `Path.as_uri`，
+  Windows 常规路径不变，Mac 特有合法反斜杠/问号与两平台 Unicode/空格/`#`/`%` 均纳入测试。
+- 原 builder-v3 DDL 逐字移动至 store 并兼容导出，AST 字符串/对象 identity 已核对；
+  UTF-8 SHA-256 `2946f5367ba1cb1f2e3da591f683826785cb5aa59e62c6c7a59fe7dfa15dea66`，
+  schema/data 版本、来源/许可字段及词典构建算法不变，未重新下载/构建真实词库。
+- 九项便携测试覆盖只读 URI（关闭 query_only 后仍不可写）、三类匹配/来源、线程连接独立、
+  close 幂等/重新打开、缺失/哈希错误不回退、SQL 参数和固定脱敏错误。新增模块纳入必需资源/
+  哈希审计；Foundation.Process 与 HTTPS smoke 必须确认词典状态，不接受缺失或 false。
+- 首次针对性 131 tests 有一项失败：旧隔离 launcher 的合成装配只复制 helper，不含新增
+  共享依赖。已改复用正式 `copy_core_sources`，保留隔离断言；随后 **133 tests，OK，19.944s**。
+  完整 Windows hook、真实 Mac/包内生命周期仍待本轮 CI，不以本地结果代替。
+- 仅证明受控合成文件的只读/线程局部生命周期；真实词库安装/更新、全局 store 替换、
+  ProviderRuntime、用户配置/历史单写边界仍是后续 P1，不把此次切片标作全部完成。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
