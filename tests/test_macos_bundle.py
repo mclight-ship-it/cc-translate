@@ -542,6 +542,7 @@ class SmokeContractTests(unittest.TestCase):
                                     ("dictionary", "read_only", 1),
                                     ("dictionary", "sources_preserved", False),
                                     ("dictionary", "reopened", False),
+                                    ("dictionary", "path", "synthetic forbidden path"),
                                     ("ssl", "ca_source", "system"),
                                     ("ssl", "certificate_validation", False),
                                     ("https", "status", "not_run"),

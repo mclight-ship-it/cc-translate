@@ -287,6 +287,7 @@ private enum HelperFailureCode: String {
     case workerStartFailed = "worker_start_failed"
     case sqliteReadbackFailed = "sqlite_readback_failed"
     case sqliteProbeFailed = "sqlite_probe_failed"
+    case dictionaryProbeFailed = "dictionary_probe_failed"
     case bundleCAMissing = "bundle_ca_missing"
     case sslContextFailed = "ssl_context_failed"
     case sslValidationDisabled = "ssl_validation_disabled"
@@ -440,7 +441,7 @@ public struct ProtocolState {
     }
 
     private func runtimePayload(_ payload: [String: JSONValue], https: Bool) -> Bool {
-        guard Set(payload.keys) == ["python", "sqlite", "ssl", "https"],
+        guard Set(payload.keys) == ["python", "sqlite", "dictionary", "ssl", "https"],
               let python = payload["python"]?.object,
               Set(python.keys) == ["version", "platform", "machine", "isolated", "bytecode_disabled", "bundle_runtime"],
               let pythonVersion = python["version"]?.string, !pythonVersion.isEmpty,
@@ -453,6 +454,10 @@ public struct ProtocolState {
               Set(sqlite.keys) == ["status", "read_write", "version"],
               sqlite["status"] == .string("passed"), sqlite["read_write"] == .bool(true),
               let sqliteVersion = sqlite["version"]?.string, !sqliteVersion.isEmpty,
+              payload["dictionary"] == .object([
+                  "status": .string("passed"), "read_only": .bool(true),
+                  "sources_preserved": .bool(true), "reopened": .bool(true)
+              ]),
               Set(ssl.keys) == ["status", "version", "certificate_validation", "ca_source"],
               ssl["status"] == .string("passed"), ssl["certificate_validation"] == .bool(true),
               let sslVersion = ssl["version"]?.string, !sslVersion.isEmpty,

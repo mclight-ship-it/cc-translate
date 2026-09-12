@@ -37,6 +37,10 @@ final class ProtocolTests: XCTestCase {
             "sqlite": .object([
                 "status": .string("passed"), "read_write": .bool(true), "version": .string("3.0")
             ]),
+            "dictionary": .object([
+                "status": .string("passed"), "read_only": .bool(true),
+                "sources_preserved": .bool(true), "reopened": .bool(true)
+            ]),
             "ssl": .object([
                 "status": .string("passed"), "version": .string("OpenSSL synthetic"),
                 "certificate_validation": .bool(true), "ca_source": .string("bundle")
@@ -244,6 +248,47 @@ final class ProtocolTests: XCTestCase {
         let result = try state.receive(event("runtime", 1, "completed", report))
         XCTAssertEqual(result.payload["python"]?.object?["bundle_runtime"], .bool(false))
         XCTAssertEqual(result.payload["https"]?.object?["status"], .string("not_run"))
+    }
+
+    func testDictionaryEvidenceAndFailureCodeAreStrict() throws {
+        var state = try connected()
+        let message = ClientMessage(id: "runtime", type: "request", payload: [
+            "operation": .string("runtime_probe")
+        ])
+        try state.register(message)
+        _ = try state.receive(event("runtime", 0, "accepted", ["operation": .string("runtime_probe")]))
+        let dictionary = try XCTUnwrap(runtimeReport()["dictionary"]?.object)
+        for key in dictionary.keys {
+            var report = runtimeReport()
+            var incomplete = dictionary
+            incomplete.removeValue(forKey: key)
+            report["dictionary"] = .object(incomplete)
+            XCTAssertThrowsError(try state.receive(event("runtime", 1, "completed", report)))
+        }
+        for key in ["read_only", "sources_preserved", "reopened"] {
+            for value in [JSONValue.bool(false), .integer(1), .string("true")] {
+                var report = runtimeReport()
+                var invalid = dictionary
+                invalid[key] = value
+                report["dictionary"] = .object(invalid)
+                XCTAssertThrowsError(try state.receive(event("runtime", 1, "completed", report)))
+            }
+        }
+        var extra = runtimeReport()
+        var privateField = dictionary
+        privateField["path"] = .string("synthetic forbidden path")
+        extra["dictionary"] = .object(privateField)
+        XCTAssertThrowsError(try state.receive(event("runtime", 1, "completed", extra)))
+        extra.removeValue(forKey: "dictionary")
+        XCTAssertThrowsError(try state.receive(event("runtime", 1, "completed", extra)))
+        _ = try state.receive(event("runtime", 1, "completed", runtimeReport()))
+        try state.register(ClientMessage(id: "dictionary_failed", type: "request", payload: [
+            "operation": .string("runtime_probe")
+        ]))
+        let failure = try state.receive(event("dictionary_failed", 0, "failed", [
+            "code": .string("dictionary_probe_failed")
+        ]))
+        XCTAssertEqual(failure.safeFailureCode, "dictionary_probe_failed")
     }
 
     func testHTTPSRequiresBundledCAAndFixedHost() throws {

@@ -356,6 +356,14 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   完整 Windows hook、真实 Mac/包内生命周期仍待本轮 CI，不以本地结果代替。
 - 仅证明受控合成文件的只读/线程局部生命周期；真实词库安装/更新、全局 store 替换、
   ProviderRuntime、用户配置/历史单写边界仍是后续 P1，不把此次切片标作全部完成。
+- 首轮 [run 34701230439](https://github.com/mclight-ship-it/cc-translate/actions/runs/34701230439)，
+  SHA `f2355258a4537a3effdd9654c44420515ec6d1a1`，**failure**：Windows 正常完整 hook
+  **931 tests，54.929s，OK**；Mac 便携/普通 Swift/bundle 构建通过，但真正 Foundation.Process
+  包内集成返回 `invalidPayload`，后续 smoke/包内核心未运行。
+  原因是漏接 Swift runtimePayload 的严格顶层字段清单，不是词典查询失败。
+- 修正原生校验和固定 `dictionary_probe_failed` 显示码，新增缺失字段、假布尔、私有路径、
+  终态序号保持与有效报告的回归；smoke 同步严格四字段白名单。
+  不放宽未知字段、不跳过失败集成；同包 native/helper 必须匹配，旧诊断报告不会伪装成功。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
