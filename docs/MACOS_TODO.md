@@ -3,11 +3,29 @@
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
 基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-12。
 当前已获准提交/正常推送 `agents/cc-translate-macos-native` 并使用公有仓库的标准免费 Mac CI；
-正在准备首次云验证，尚无通过记录。不推送 master、不发布、不新增付费资源。
-首次提交 `4102190` 的推送被旧 hook 的空树比较阻止，远端尚未接收该分支。
+首次云验证被 GitHub OAuth `workflow` scope 阻断：远端尚未接收分支，因此没有 Actions run
+或云端通过记录。不推送 master、不发布、不新增付费资源。
+首次提交 `4102190` 的推送被旧 hook 的空树比较阻止。
 已修正新分支基线为目标远端实际公布的 HEAD 与本分支的共同祖先；网络/缺对象等错误仍阻断，
 空远端仍全树扫描。不豁免新增私密内容、不修改旧产品作者信息、不 bypass hooks。
-相关隐私测试由 9 项增至 14 项，全部通过；将通过正常 pre-push 重试。
+相关隐私测试由 9 项增至 14 项，全部通过；修复提交为 `c655206`。
+
+### 首次远端验证准备（2026-09-12）
+
+| 检查/命令 | 实际结果 |
+|---|---|
+| `gh repo view --json nameWithOwner,visibility,defaultBranchRef,url` | 目标为项目自己的 `mclight-ship-it/cc-translate`，PUBLIC；默认分支 master 未修改 |
+| Actions permissions / 官方 runner 清单 | Actions enabled；`macos-15` 是公有仓库标准免费 arm64 runner，固定 Xcode 16.4，不启用收费机器 |
+| `python -B -m unittest tests.test_privacy_scan` | 14 tests，OK；新分支只排除已发布共同祖先，远端查找失败仍阻断 |
+| 首次完整 pre-push | 缺少新工作树的开发词典导致 3 failures / 1 error；未删断言、未绕过 hook |
+| 恢复固定词典后 `python -B -m unittest tests.test_dictionary_integration` | 18 tests，OK；从已有固定 release 恢复 67,948,544 字节文件，SHA-256 与仓库声明一致，仅放本工作树 ignored 开发数据目录 |
+| 正常 push 对 `c655206` 的 pre-push | 隐私扫描、Python 编译及 `python -m unittest discover -s tests` 全部通过：871 tests，OK，48.836s；有既有 Tk teardown stderr 警告，无失败或 skip |
+| GitHub 接收结果 | 拒绝 OAuth App 创建 `.github/workflows/macos-p0.yml`：缺少 `workflow` scope；没有远端 branch、run URL 或 Mac 执行结果 |
+
+现有 gh 认证仅返回 `gist, read:org, repo` scopes；未读取/输出 token，未创建新凭据或绕过限制。
+需要用户在自己的终端运行 `gh auth refresh -h github.com -s workflow` 并完成浏览器授权。
+授权后先复核 scope，再以该现有 gh 认证正常推送唯一开发分支，保留全部 hooks。
+此授权不包含 master、Release、签名私钥或付费额度。P1 纯核心仍等待 Mac 自动化门槛。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
 ## P0 — 开发中；Mac/签名门槛未通过
@@ -132,6 +150,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 ## 下一外部动作
 
 已确认仓库为 PUBLIC、Actions 已启用，授权限于专用开发分支和标准免费 runner。
-提交推送后持续跟踪真实构建并修复；自动化门槛通过后推进独立 P1 纯核心。
+当前必须先完成 GitHub `workflow` scope 授权，之后推送并持续跟踪真实构建及修复；
+自动化门槛通过后推进独立 P1 纯核心。
 真实权限/签名包探针仍待安排。Developer ID、验收 Mac 和 CLI/账号
 尚未确认；不要为等待资源而扩张未经编译的 P1–P6 界面。
