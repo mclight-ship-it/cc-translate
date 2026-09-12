@@ -149,7 +149,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 提示词目录的完整 Windows hook、真实 Mac/包内回归通过并记录。
   - [x] provider 包初始化只导入纯 base/registry；显式后端导出仍使用原对象并传播失败。
     包内只携带三个契约文件，不携带 CLI 后端/用户认证，不宣称 native Mac provider 已实现。
-  - [ ] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
+  - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
@@ -276,7 +276,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   包内纯核心 **57 tests，0.078s，0 skip**。bundle/完整许可/Mach-O/HTTPS/SQLite/
   cancel/EOF/不可变审计全部通过。开发 artifact `10300220807`，7 天过期，未发布。
 
-### provider 纯契约初始化边界（验证中）
+### provider 纯契约初始化边界（2026-09-12 已验证）
 
 - 在前两块完整 Mac 通过后顺序推进此项：旧 `cc_providers.__init__` 的 eager CLI 导入
   改为按需后端导出；纯契约与 registry 导入不再连带加载 CLI/config/catalog，
@@ -286,8 +286,24 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   缺失/篡改失败关闭回归。Mac CLI 后端仍不存在，不能因纯导入通过而假称 native 兼容。
 - 针对性 **142 tests，OK，5.275s**：纯契约冻结/未知认证/registry、导出/导入失败、
   fresh isolated 进程、打包以及原有 provider/native config/catalog/事件协议测试。
-- 下一步完整 Windows hook 和真实 Mac/包内验证。用户 OS/CPU、账号、TCC、签名状态均未获确认；
-  配置/历史单一写入者、完整请求快照和 POSIX 自有进程组监督仍未完成。
+- 正常 pre-push：**921 Windows tests，OK，54.212s**，无失败/skip；
+  仅既有 Tk teardown stderr 警告。隐私扫描、编译通过，未绕过 hooks。
+- [run 34699791572](https://github.com/mclight-ship-it/cc-translate/actions/runs/34699791572)，
+  SHA `7def21bd84a44e164345097c8726861e43cbeb30`，**success**，job 1m10s。
+  Mac 便携 **135 tests，4.629s**；普通 XCTest **25 通过 + 唯一包内集成初次 skip**，
+  构建后原生包内集成 **1 test 真正通过、0 skip、0.309s**；
+  包内纯核心/契约 **64 tests，0.112s，0 skip**。完整 build/Mach-O/许可及
+  HTTPS/SQLite/显式取消/EOF/不可变审计均通过，未执行 GUI/TCC/签名测试。
+- 已实际下载核对 artifact `10300306104`：干净源码 manifest 对应上述 SHA，
+  六份共享模块/契约文件与 Git blobs 逐字一致、哈希一致；provider 目录仅三个白名单文件，
+  无旧 CLI 后端。审计含 **5 个 arm64 Mach-O、650 个库存项**；随包 Python
+  **3.12.14 / darwin arm64 / isolated**，SQLite **3.53.1**，真实 HTTPS 证书验证通过。
+  下载的临时 app zip 已清理，脱敏 JSON 留会话制品目录；不执行 Mac 二进制。
+- 首轮实机交接已更新到上述 run/artifact/SHA。文档证据收尾采用 `[skip ci]`，
+  源码/测试/工作流保持该绿色提交不变，不把文档提交另算为 Mac 验证。
+- 用户 OS/CPU、账号、TCC、签名状态均未获确认；当前仍是 fixture/诊断包。
+  配置/历史单一写入者、完整请求快照、POSIX 自有进程组监督和 native 后端仍未完成，
+  这些与正式 P0 实机/发行门槛分别追踪，不能将本小块通过标作全部 P1 完成。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。

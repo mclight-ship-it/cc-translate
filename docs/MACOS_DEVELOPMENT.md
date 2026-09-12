@@ -12,7 +12,8 @@ Windows 原入口继续工作；不将 macOS 半成品接入 Windows 安装、�
 
 开发者可在 Windows 编码和测试便携核心。原生编译、链接、资源、GUI、TCC 和签名必须在真实
 macOS 环境验证。推荐经授权后使用云端 macOS CI，用户 Mac 只承担 CLI 登录、授权和两轮集中验收。
-用户安装运行不需要 Xcode、Python 或 Git；开发机器/CI 则需要 Xcode 和构建用 Python。
+最终发行目标是用户安装运行不需要 Xcode、Python 或 Git；开发机器/CI 则需要 Xcode 和构建用
+Python。当前未签名开发包不满足普通用户双击即用条件，首轮测试路径见下方实机交接。
 Codex/Claude CLI 与用户账号仍是外部前提；不是所有安装方式都需要 Node 或 Homebrew。
 
 当前已获准提交并正常推送唯一开发分支 `agents/cc-translate-macos-native`，
@@ -279,11 +280,11 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 - 用户测试 Mac 的 OS/芯片尚未确认；以下是条件要求，不是已知用户配置。等待用户在场后
   由协调者统一确认，不因此阻断能独立验证的纯核心开发。
-- [已通过的 run 34698580547](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547)；
-  固定源码 SHA `f526459add6d287ac3402be93cf925cce0c506c9`。
-- [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34698580547/artifacts/10299377201)
+- [已通过的 run 34699791572](https://github.com/mclight-ship-it/cc-translate/actions/runs/34699791572)；
+  固定源码 SHA `7def21bd84a44e164345097c8726861e43cbeb30`。
+- [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34699791572/artifacts/10300306104)
   （GitHub 登录后下载，名称 `macos-arm64-p0-development-NOT-A-RELEASE`，
-  2026-09-19 14:13 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
+  2026-09-19 14:37 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
   `bundle-audit.json`、`helper-smoke.json`；不是 Release/安装器。
 - 首轮优先 **Apple Silicon / arm64 + macOS 15**；CI 实际为 15.7.9、Xcode 16.4。
   macOS 14 只是 deployment target 候选，Intel 未验，不让 Intel 用户试装 arm64 包。
@@ -316,7 +317,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
   git clone --single-branch --branch agents/cc-translate-macos-native \
     https://github.com/mclight-ship-it/cc-translate.git CCTranslate-P0-test
   cd CCTranslate-P0-test
-  git checkout --detach f526459add6d287ac3402be93cf925cce0c506c9
+  git checkout --detach 7def21bd84a44e164345097c8726861e43cbeb30
   python3 -B tools/macos/bundle.py build --development
   python3 -B tools/macos/smoke.py --allow-https
   target="$HOME/Applications/CCTranslateMac-P0.app"
@@ -366,7 +367,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 显示器只填数量/缩放档，不填序列号。实际状态只填固定错误码/状态或简短的合成步骤结果。
 
 ```text
-Build: f526459add6d287ac3402be93cf925cce0c506c9 / run 34698580547
+Build: 7def21bd84a44e164345097c8726861e43cbeb30 / run 34699791572
 Route: local-source-development / blocked-before-open
 macOS: <version>   CPU: arm64   Displays: <count, scaling>
 Open: PASS / BLOCKED / FAIL; system alert category: <category only>
