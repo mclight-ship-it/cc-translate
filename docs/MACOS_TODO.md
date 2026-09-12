@@ -128,7 +128,7 @@ Python HTTPS smoke 是另一步，不替代原生客户端链路。
 已运行 macOS 编译和 CI；尚未运行真实用户 GUI/TCC、Developer ID 签名、公证或发布。
 上述证据只解锁依赖安全、可独立回归的 P1 纯核心。
 
-## P1 — 并行推进纯核心，分类切片开发中
+## P1 — 分类纯核心切片通过，其余依赖继续待办
 
 Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独立纯核心抽取。
 这不代表正式 P0 的真实 TCC、Finder、签名公证已通过，也不解锁完整 P2–P6 UI。
@@ -137,18 +137,44 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
   - [x] 抽取前后 29 个函数/常量 AST 一致（忽略 docstring），没有更改规则。
-  - [ ] 新共享分类、isolated 无副作用、Windows 兼容以及包内 Python 差分回归通过并记录。
+  - [x] 新共享分类、isolated 无副作用、Windows 兼容以及包内 Python 差分回归通过并记录。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
 - [ ] 新核心直接 import 测试及 Windows 集成回归，Mac 差分测试。
 
-### P1 分类切片验证中
+### P1 分类切片已验证（2026-09-12）
 
 - 首次针对性执行 91 项：3 failures / 1 error，原因是合成 bundle fixture 未同步新必需文件，
   以及 Windows isolated Python 自身已预加载 `winreg`。已补齐 fixture、增加缺失/篡改分类模块
   的失败关闭测试；隔离测试比较新增模块并拦截 import（含缓存模块）/写入/网络，不删除保护断言。
-- 修复后 Windows 针对性联合回归：93 tests，OK，15.237s；完整 hook 与新版 Mac CI 随提交执行后另记。
+- 修复后 Windows 针对性联合回归：93 tests，OK，15.237s。
+- 正常 pre-push：隐私扫描、编译和完整 Windows unittest **878 tests，OK，57.120s**；
+  包含加强后的缓存模块 import 拦截，仍只有既有 Tk teardown stderr 警告，无失败/skip。
+- Run：[34697828518](https://github.com/mclight-ship-it/cc-translate/actions/runs/34697828518)，
+  源码 SHA `81db76583cb6ef6589f3b9b79605f310c977d3a2`，**success**，job 1m53s。
+  实际 macOS 15.7.9 arm64，runner image `20260907.0337.1`，Xcode 16.4；
+  宿主 Python 3.14.7 不作为随包 Python 证据。
+
+| 第二轮 Mac 阶段 | 实际结果 |
+|---|---|
+| 便携协议/打包/分类/隔离 unittest | 91 tests，OK，7.681s；不含 Windows 专属兼容入口测试 |
+| 普通 XCTest | 25 通过，唯一包内集成先 skip；合成 Vision 实际通过，1.901s |
+| 构建后强制 Foundation.Process 包内集成 | 1 test 通过，0 skip，0.434s |
+| 包内 Python 的同一分类矩阵 + 隔离测试 | **22 tests，OK，0.060s，0 skip**；断言模块来自 `Resources/Core`，不回退源码或宿主 |
+| bundle 构建、运行时/许可审计、HTTPS/SQLite/cancel/EOF、最终不可变检查 | 全部通过 |
+
+已下载并核对本轮合成审计报告：5 个 Mach-O 全为 arm64，645 个制品库存项，19 份
+Python 上游完整许可证；`source_tree_dirty=false`，source manifest 的 SHA 与上述源码提交一致。
+包内 CPython **3.12.14** / SQLite **3.53.1** / OpenSSL **3.5.8**，isolated/禁写字节码/
+bundle_runtime 均为 true；HTTPS 证书验证、SQLite 读写、显式取消、EOF 取消、临时探针清理、
+bundle 未写入均为 passed/true。发行门槛仍明确 `NOT PASSED`。
+分类模块哈希与该提交的 Git LF blob 一致；Windows 工作副本 CRLF 不作为制品哈希基准。
+本地已清理下载的开发 app zip，仅保留会话内脱敏 JSON 证据；远端开发制品按 7 天过期。
+
+本轮到达可重复的 P1 分类检查点，不是完整 P1 完成。下一可自动推进切片为方向/提示词的
+无副作用抽取；配置路径、词典、缓存/历史和 provider 初始化边界仍独立验收。
+POSIX 自有进程组监督、native 配置/认证/工具/hook、零付费预热及不重试契约未因本次抽取改变。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
@@ -186,3 +212,6 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 GitHub `workflow` scope 授权和首次真实 Mac 工程门槛已通过；继续提交/推送并验证独立 P1 纯核心。
 真实权限/签名包探针仍待安排。Developer ID、验收 Mac 和 CLI/账号
 尚未确认；不要为等待资源而扩张未经编译的 P1–P6 界面。
+目前纯核心后续工作不需要用户操作。正式 P0 人工验收时由协调会话统一收集 Mac 的 OS/CPU、
+安排本机 CLI 登录和签名身份（凭据不进入聊天），再按开发指南的显式入口集中验证首次权限/
+复制/焦点/IME/多屏。没有签名条件时不得把开发制品当发行包，也不得要求绕过 Gatekeeper/TCC。
