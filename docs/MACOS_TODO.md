@@ -164,7 +164,8 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     - [x] 合成 fixture 替代 CLI 输出边界，但实际运行 fingerprint、写入、roundtrip、state 激活和重开；
       显式路径之外不写入、不导入 cc_core，也不调用未监督 CLI。
     - [x] Windows 构造链/原行为及 Mac 包内同源验收通过。
-  - [ ] 下一依赖：真实 catalog version/debug-models 的自有组监督，不改已提交 turn 或调用真实账号。
+  - [ ] 后续候选（本轮主动暂停，尚未实施）：真实 catalog version/debug-models 的自有组监督；
+    不改已提交 turn 或调用真实账号。它可独立自动验证，不是被签名技术性阻断。
     - [ ] 复用已有 C ABI/所有权规则，接入既有 catalog `_run` 的 Darwin 分支；
       stdout/stderr 在读取期间限额，deadline 后清组再 reap，不按进程名追杀。
     - [ ] 真 Mac fake CLI 覆盖冷缓存三调用、缓存重开 roundtrip、超时/洪泛/退出后后代/兄弟存活；
@@ -460,7 +461,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   [34704980796](https://github.com/mclight-ship-it/cc-translate/actions/runs/34704980796) 全 steps success：
   Mac 154 / 包内 native config 9 / 包内核心 82；构建后集成 1 真通过，0 skip。
   但逐项核验发现新增 catalog XCTest 错误嵌套，未被 XCTest 发现；普通测试仍为旧 32 通过
-  + 1 初次集成 skip。不能把这一轮当成新增负例的验收；已修正为类成员，等待新 run 明确执行。
+  + 1 初次集成 skip。不能把这一轮当成新增负例的验收；已修正为类成员，由下述新 run 明确执行。
 - 修正源码 `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe` 的正常 pre-push 再次
   **950 tests，OK，56.416s**，只有既有 Tk teardown stderr 警告。
   [34705266928](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928)
@@ -474,7 +475,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   provider 白名单只新增 catalog 文件，不含 exec/app-server/Claude 或真实词库/账号数据。
   包内 Python 3.12.14 的 `catalog_storage_fixture` 四字段及清理/不可变均通过；
   明确 `cli_simulated=true`，没有运行真实 catalog CLI。两轮临时 zip 已清理，脱敏 JSON 留会话目录。
-- 此为可重复的 P1 存储依赖检查点，不是全部 P1 完成；继续下一独立进程监督依赖。
+- 此为可重复的 P1 存储依赖检查点，不是全部 P1 完成；按随后收尾指令暂停下一进程监督依赖。
   用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因本轮绿色改为通过。
 
 ## P2 — 等待 P1
@@ -507,12 +508,46 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] Mac 安装说明、截图、已验 CLI/OS/CPU 范围、已知局限与诊断。
 - [ ] 用户确认后才推送发布渠道/Release；不影响 Windows 产品。
 
-## 下一外部动作
+## 本轮冻结交接（2026-09-12 UTC）
 
-已确认仓库为 PUBLIC、Actions 已启用，授权限于专用开发分支和标准免费 runner。
-GitHub `workflow` scope 授权和首次真实 Mac 工程门槛已通过；继续提交/推送并验证独立 P1 纯核心。
-真实权限/签名包探针仍待安排。Developer ID、验收 Mac 和 CLI/账号
-尚未确认；不要为等待资源而扩张未经编译的 P1–P6 界面。
-目前纯核心后续工作不需要用户操作。正式 P0 人工验收时由协调会话统一收集 Mac 的 OS/CPU、
-安排本机 CLI 登录和签名身份（凭据不进入聊天），再按开发指南的显式入口集中验证首次权限/
-复制/焦点/IME/多屏。没有签名条件时不得把开发制品当发行包，也不得要求绕过 Gatekeeper/TCC。
+**最新指令：完成现有切片后暂停新增代码，下一阶段先由协调者落实正常下载包签名/首次实机入口。**
+这取代前面历史记录中的“立即继续下一切片”，不把暂停伪称所有剩余工作都被签名阻断。
+
+- Codex 只读配置监督已于 `951f4f7` / run `34703866435` 完整通过；不是尚未实施的工作。
+  最新源码 `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe` / run `34705266928` 再次运行了全部
+  9 项 Mac 真进程测试（含 helper EOF）并通过，配置监督源码/C ABI/该测试文件相对前轮无变化。
+  “只读”指 initialize/config/read RPC；不承诺未测官方 CLI 初始化零磁盘或认证副作用。
+- 本轮同时已完成分类、方向、词典触发/提示词、provider 纯契约、只读词典生命周期、
+  原生版本探针自有组监督，以及 catalog 显式 cache/logger 与合成存储回归。
+  它们均有上文真实 Windows/Mac 证据；P0 界面仍仅 fixture/诊断，非完整翻译。
+- 最新 Windows 正常 hook **950 tests，OK，56.416s**；Mac **154**，普通 XCTest **33 通过 +
+  1 初次集成 skip**；后置包内集成 **1 真通过、0 skip**，包内配置 **9** / 同源核心 **82**，
+  无未修复失败。资源/许可/Mach-O/HTTPS/SQLite/清理和不可变审计均通过。
+  源码/code SHA 与文档-only 收尾 HEAD 分开；本次仅更新交接，不重复触发相同源码 CI。
+- 最新 [run](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928) /
+  [artifact 10301448938](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928/artifacts/10301448938)
+  已核验；artifact 于 **2026-09-19 16:28 UTC** 到期。下载 zip 均已清理，仅会话目录保留脱敏 JSON。
+  开发分支保持正常提交/非 force 推送，不动 master、Windows 正式应用或 Release。
+
+### 尚可独立推进，但本轮主动暂停
+
+- 真实 catalog version/debug-models 的实时输出限额、期限/取消与自有进程组监督；
+  可用 fake CLI 做 Mac CI，不需要签名或真实账号。当前只有存储隔离完成，尚无该进程实现。
+- 现有纯核心的额外边界/错误矩阵、协议资源契约与离线故障回归；仍可自动验证。
+- 配置/历史路径与唯一写入者、完整 ProviderRuntime 技术上也有可拆分自动化部分，
+  但属于本轮明确不再开启的大链路，不是已完成项，也不因缺签名自动变成技术阻断。
+
+### 下一阶段必须由协调者落实的条件
+
+1. 用户 Mac 的实际 **OS 版本/CPU**；Apple Silicon/macOS 15 优先，macOS 14 仅候选、Intel 未验。
+2. **Apple Developer Program/团队资格和可用 Developer ID 身份**，不视为已有或批准购买；
+   证书/私钥/账号秘密不进入聊天。协调正常签名、Hardened Runtime、公证/stapling 与下载首开验证。
+   当前 artifact 没有该证据，不让普通用户猜安装办法或为云构建路线安装 Xcode。
+3. **首次 TCC、AX/主动 Cmd+C、焦点/IME/多屏、同帧截图**须在真实 Mac 按开发指南集中验收。
+4. **官方 Codex/Claude 的实际版本/native 配置及账号兼容**须另行协调；只读合成测试和
+   `--version` 不能证明认证/真实模型可用。P0 五组探针不要求登录；真实账号测试时用户自行登录，
+   不上传认证、屏幕或工作内容，不自动提交付费 turn。
+
+完整 P1 尚缺平台配置/历史单写、请求快照、真实 catalog/exec/常驻 app-server/Claude 生命周期、
+预热/取消/付费不重试接线和真实词库安装切换等。P2–P6 的完整交互、业务闭环、多屏下载、
+发行签名更新、系统矩阵/性能长稳及发布均未完成。**不得把整个移植标完成。**

@@ -314,10 +314,13 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
+本轮现有切片已完成并冻结新增代码；下一阶段先协调正常下载包签名和首次实机入口。
+其余可独立自动化的 P1 工作只是主动暂停，不是全部被签名阻断；完整剩余范围见验收清单末尾。
+
 **先由协调者确认测试路径，不让用户猜安装问题：**
 
 - 用户测试 Mac 的 OS/芯片尚未确认；以下是条件要求，不是已知用户配置。等待用户在场后
-  由协调者统一确认，不因此阻断能独立验证的纯核心开发。
+  由协调者统一确认；本轮按最新范围指令暂停纯核心扩展，等待下一阶段协调。
 - [已通过的 run 34705266928](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928)；
   固定源码 SHA `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe`。
 - [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34705266928/artifacts/10301448938)
@@ -376,7 +379,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 1. **静默与核心**：启动只出现 `CC P0`，不自动弹窗或请求权限。菜单
    `Open P0 input / probes...` → `Bundled core` → `Start bundled helper` →
    `Run synthetic fixture`；默认合成文字应有 SYNTHETIC 标记。依次执行 SQLite/SSL 与显式 HTTPS
-   探针（同时验证包内纯合成 config 子进程，不调用用户真实 CLI/账号）。
+   探针（同时验证包内纯合成 config 子进程及 catalog 临时存储，不调用用户真实 CLI/账号）。
    关闭面板仍保留菜单，重新打开不能显示上次残留结果。
 2. **权限拒绝与 AX 焦点**：首次不要先授予全部权限；在 TextEdit 选中 `P0 synthetic selection`，
    用菜单 `Read current AX selection (local only)`；缺 AX 权限应 UNKNOWN、不能取旧剪贴板。
