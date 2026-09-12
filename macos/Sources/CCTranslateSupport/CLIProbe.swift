@@ -203,7 +203,7 @@ public final class CLIVersionRun {
 
     private func signalGroup(_ signal: Int32) {
         guard let pid = processID else { return }
-        if Darwin.kill(-pid, signal) != 0, errno != ESRCH { failure = .cliFailed }
+        if cc_cli_signal_group(pid, signal) != 0 { failure = .cliFailed }
     }
 
     private func beginTermination() {

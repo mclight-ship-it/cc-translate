@@ -5,6 +5,8 @@
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/proc.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -83,4 +85,40 @@ int cc_cli_reap(pid_t pid, int *exit_code) {
     if (result == 0) return EAGAIN;
     *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
     return 0;
+}
+
+int cc_cli_signal_group(pid_t pid, int signal) {
+    if (pid <= 1 || (signal != SIGTERM && signal != SIGKILL)) return EINVAL;
+    if (kill(-pid, signal) == 0 || errno == ESRCH) return 0;
+    int error = errno;
+    if (error != EPERM) return error;
+
+    // Darwin returns EPERM even for a group containing only zombies. Do not
+    // swallow a real permission failure: inspect only this pinned group.
+    int exited = 0;
+    error = cc_cli_has_exited(pid, &exited);
+    if (error) return error;
+    if (!exited) return EPERM;
+    int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, pid};
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        size_t size = 0;
+        if (sysctl(mib, 4, NULL, &size, NULL, 0) == -1) return errno;
+        if (size == 0) return 0;
+        if (size > 1024 * 1024) return EOVERFLOW;
+        struct kinfo_proc *members = malloc(size);
+        if (!members) return ENOMEM;
+        if (sysctl(mib, 4, members, &size, NULL, 0) == -1) {
+            error = errno;
+            free(members);
+            if (error == ENOMEM) continue;
+            return error;
+        }
+        error = size % sizeof(*members) == 0 ? 0 : EINVAL;
+        for (size_t i = 0; !error && i < size / sizeof(*members); ++i) {
+            if (members[i].kp_proc.p_stat != SZOMB) error = EPERM;
+        }
+        free(members);
+        return error;
+    }
+    return EAGAIN;
 }
