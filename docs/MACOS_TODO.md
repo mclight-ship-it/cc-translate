@@ -43,7 +43,8 @@
 - [x] helper 无 Tk/Win32、无 AppData import 副作用；默认无网络/用户配置访问。
 - [x] 显式 SQLite 实际读写、SSL/HTTPS 证书验证探针；开发包真实联网通过，签名发行形态未验收。
 - [x] AX 三态、Secure Input、按需权限和 Cmd+C 双击/焦点探针代码；真实事件/TCC 未验收。
-- [x] Finder CLI 候选路径发现及显式 `--version` 探针代码；直属 PID 监督，遗留后代的 wrapper 不支持。
+- [x] Finder CLI 候选路径发现及显式 `--version` 探针代码；监督自有进程组及留在同组的后代，
+  主动逃离组的 wrapper 不支持，不跨组追杀。
 - [x] ScreenCaptureKit 单帧预览确认与本地 Vision OCR 代码；真实 Vision 合成图像 XCTest 通过，真实截图/TCC 未验。
 - [x] 随包 runtime 锁定/校验、架构/deployment target/dylib/资源/完整许可检查；Mac 开发包审计通过。
 - [x] Mac 编译/自动测试工作流落地；已获准开始真实开发分支 CI，结果另记。
@@ -512,6 +513,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 
 **最新指令：完成现有切片后暂停新增代码，下一阶段先由协调者落实正常下载包签名/首次实机入口。**
 这取代前面历史记录中的“立即继续下一切片”，不把暂停伪称所有剩余工作都被签名阻断。
+随后获准的收尾仅同步既有监督范围的旧文案：取消状态、CLI 提示及对应注释/指南；
+不更改 App/delegate 生命周期、退出回调或进程算法，不扩大 UI。该源码文案修正另跑正常 CI。
 
 - Codex 只读配置监督已于 `951f4f7` / run `34703866435` 完整通过；不是尚未实施的工作。
   最新源码 `96dbaa9350975a647533eaecba5bcb8d2d1cd1fe` / run `34705266928` 再次运行了全部

@@ -277,7 +277,7 @@ public final class HelperConnection {
             self.process.terminate()
             self.queue.asyncAfter(deadline: .now() + 1) {
                 guard self.process.isRunning else { return }
-                // Only the still-owned helper PID; P0 helper never creates CLI children.
+                // Only the still-owned helper PID; its CLI groups have separate core supervision.
                 if Darwin.kill(self.process.processIdentifier, SIGKILL) != 0, errno != ESRCH {
                     self.emit(.failure(.helperExited))
                 }

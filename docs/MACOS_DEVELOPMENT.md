@@ -399,7 +399,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 5. **CLI 与退出**：仅当用户已有官方 Codex/Claude 可执行文件，才在 `CLI locator` 选择名称、
    `Locate known paths`/`Choose executable...`，再 `Run selected --version (5s limit)`。
    只报告成功/固定失败码，版本输出丢弃、authentication 仍 unknown；不要为了此探针登录或复制认证。
-   不测试会遗留后代进程的自定义 wrapper。菜单 `Quit CC Translate P0` 后，在活动监视器确认
+   仅监督本次版本探针及仍在同组内的后代；不测试主动脱离进程组的自定义 wrapper。
+   菜单 `Quit CC Translate P0` 后，在活动监视器确认
    本次 App/helper 退出，不按名称结束用户原有 CLI；无 CLI 时记 NOT RUN，不影响其他四组。
 
 **失败信息怎么导出（当前没有自动诊断导出按钮）：**

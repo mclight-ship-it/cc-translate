@@ -246,7 +246,7 @@ final class ProbeModel: ObservableObject {
 
     func cancelCLI() {
         guard let run = cliRun else { return }
-        cliStatus = "Cancelling the selected CLI process (direct child only)..."
+        cliStatus = "Cancelling this version probe and descendants in its process group..."
         run.cancel()
     }
 

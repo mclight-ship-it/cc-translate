@@ -89,7 +89,7 @@ struct ProbeView: View {
                     }
                 }
             }
-            Text("P0 supervises only the directly launched process. Wrappers that leave background children are unsupported; process-group supervision is P1.")
+            Text("This version probe supervises only its own process group, including descendants that stay in it. Wrappers that leave the group are unsupported.")
                 .font(.callout).foregroundStyle(.orange)
             HStack {
                 Button("Run selected --version (5s limit)") { model.versionCLI() }
