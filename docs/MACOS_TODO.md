@@ -3,8 +3,8 @@
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
 基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-12。
 当前已获准提交/正常推送 `agents/cc-translate-macos-native` 并使用公有仓库的标准免费 Mac CI；
-首次云验证被 GitHub OAuth `workflow` scope 阻断：远端尚未接收分支，因此没有 Actions run
-或云端通过记录。不推送 master、不发布、不新增付费资源。
+首次云验证曾被 GitHub OAuth `workflow` scope 阻断；用户已完成授权，本轮只读响应头复核
+包含该 scope，正准备首次正常推送。尚无 Actions run 或云端通过记录。不推送 master、不发布、不新增付费资源。
 首次提交 `4102190` 的推送被旧 hook 的空树比较阻止。
 已修正新分支基线为目标远端实际公布的 HEAD 与本分支的共同祖先；网络/缺对象等错误仍阻断，
 空远端仍全树扫描。不豁免新增私密内容、不修改旧产品作者信息、不 bypass hooks。
@@ -22,9 +22,9 @@
 | 正常 push 对 `c655206` 的 pre-push | 隐私扫描、Python 编译及 `python -m unittest discover -s tests` 全部通过：871 tests，OK，48.836s；有既有 Tk teardown stderr 警告，无失败或 skip |
 | GitHub 接收结果 | 拒绝 OAuth App 创建 `.github/workflows/macos-p0.yml`：缺少 `workflow` scope；没有远端 branch、run URL 或 Mac 执行结果 |
 
-现有 gh 认证仅返回 `gist, read:org, repo` scopes；未读取/输出 token，未创建新凭据或绕过限制。
-需要用户在自己的终端运行 `gh auth refresh -h github.com -s workflow` 并完成浏览器授权。
-授权后先复核 scope，再以该现有 gh 认证正常推送唯一开发分支，保留全部 hooks。
+用户已完成浏览器授权；2026-09-12 本轮 `gh api --include rate_limit` 只筛选响应头，
+确认现有 gh scopes 为 `gist, read:org, repo, workflow`，未读取/输出 token、换账号或绕过限制。
+接下来以该现有认证正常推送唯一开发分支，保留全部 hooks；授权成功不代表 Mac 验证成功。
 此授权不包含 master、Release、签名私钥或付费额度。P1 纯核心仍等待 Mac 自动化门槛。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
@@ -49,7 +49,7 @@
 
 ### 验证证据（执行后填命令、环境、结果）
 - [x] Windows 便携协议/进程/打包规则 unittest。
-- [x] 改动涉及的现有 Windows 隐私扫描回归及 diff 检查；未更改 Windows 业务入口，因此未运行全套 GUI 回归。
+- [x] Windows 隐私扫描回归及 diff 检查；恢复固定开发词典后正常 pre-push 已执行完整 871 项 unittest（含现有 GUI 单测），不代表 Mac GUI/实机验收。
 - [ ] macOS Swift 编译/XCTest（目前无 Xcode 环境）。
 - [ ] macOS .app 内真实 helper、SQLite、HTTPS、资源定位。
 - [ ] 原生触发→核心→展示，真实 EOF/取消/退出无残留。
@@ -150,7 +150,7 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 ## 下一外部动作
 
 已确认仓库为 PUBLIC、Actions 已启用，授权限于专用开发分支和标准免费 runner。
-当前必须先完成 GitHub `workflow` scope 授权，之后推送并持续跟踪真实构建及修复；
+GitHub `workflow` scope 授权已完成并核实；现在正常推送并持续跟踪真实构建及修复；
 自动化门槛通过后推进独立 P1 纯核心。
 真实权限/签名包探针仍待安排。Developer ID、验收 Mac 和 CLI/账号
 尚未确认；不要为等待资源而扩张未经编译的 P1–P6 界面。
