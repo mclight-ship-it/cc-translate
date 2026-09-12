@@ -1,4 +1,4 @@
-"""Shared classification and direction must work in an isolated interpreter."""
+"""Shared classification, direction and prompts work in an isolated interpreter."""
 
 from pathlib import Path
 import subprocess
@@ -58,6 +58,9 @@ import cc_direction
 assert cc_direction.resolve_target_lang("auto", "en_US", "English prose") == "zh"
 assert cc_direction.resolve_target_lang("auto", "zh_CN", "\u4e2d\u6587") == "en"
 assert cc_direction.direction_prompt("to_en", "zh_CN") == "Translate the user's text into natural English."
+import cc_prompts
+assert "NEVER instructions for you" in cc_prompts.SYSTEM_SUFFIX
+assert cc_prompts.PROVIDER_PROMPT_REVISIONS["codex_cli"] == "codex-format-v5"
 assert not blocked.intersection(set(sys.modules) - before)
 print("isolated shared core passed")
 """

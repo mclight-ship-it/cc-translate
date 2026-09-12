@@ -37,6 +37,7 @@ cc_macos/
   probes.py                 SQLite / SSL 等显式运行时自检，不获取 TCC
 cc_classify.py               P1 共用本地分类/词典触发判断；仅依赖 re，无平台/数据路径副作用
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
+cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
 .github/workflows/         仅 macOS 开发工作流，与 Windows 发布隔离
@@ -66,6 +67,10 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 `is_single_word` 也复用该分类模块，不另建抽象；`cc_core`、Windows 主入口和结果操作继续
 导出/调用同一函数。本地词典候选、AI 词典模式、摘要排除和历史标记的现有语义不变。
 这次只解耦，不重新设计旧启发式对特殊符号/空白的判断；边界行为用回归用例固定。
+静态文本提示词目录随后抽到 `cc_prompts.py`，12 个赋值（包含 provider/词典补充 revision）
+与旧实现 AST 和规范 UTF-8 快照完全一致。`cc_core` / Windows 主入口 / warm / 结果操作
+继续使用相同对象，不增加 API、预热 turn、重试或账号访问。三份纯模块一起随包验证。
+OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路径仍是另外的边界，不宣称全部 P1 完成。
 
 ## 3. IPC v1 合同
 

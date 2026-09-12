@@ -20,6 +20,9 @@ import zipfile
 from tools.macos import bundle, smoke
 
 
+SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py")
+
+
 def member(name, kind=tarfile.REGTYPE, target="", data=b"x"):
     result = tarfile.TarInfo(name)
     result.type = kind
@@ -241,11 +244,11 @@ class MachORulesTests(ProjectDirectory):
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
-                     "Resources/Core/cc_classify.py", "Resources/Core/cc_direction.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
                       for name in lock["required_runtime_licenses"]]
+        resources += ["Resources/Core/" + name for name in SHARED_CORE_FILES]
         for name in binaries + resources:
             path = contents / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +318,7 @@ class MachORulesTests(ProjectDirectory):
 
     def test_audit_requires_each_shared_core_module(self):
         app = self.synthetic_app()
-        for name in ("cc_classify.py", "cc_direction.py"):
+        for name in SHARED_CORE_FILES:
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core" / name
                 path.unlink()
@@ -325,7 +328,7 @@ class MachORulesTests(ProjectDirectory):
 
     def test_audit_rejects_modified_shared_core_modules(self):
         app = self.synthetic_app()
-        for name in ("cc_classify.py", "cc_direction.py"):
+        for name in SHARED_CORE_FILES:
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core" / name
                 path.write_bytes(b"modified synthetic module")
@@ -538,19 +541,20 @@ class HelperBundleIntegrationTests(ProjectDirectory):
     def test_shared_core_is_packaged_without_windows_entry(self):
         core = self.root / "Core"
         bundle.copy_core_sources(core)
-        for name in ("cc_classify.py", "cc_direction.py"):
+        self.assertEqual(bundle.SHARED_CORE_MODULES, SHARED_CORE_FILES)
+        for name in SHARED_CORE_FILES:
             with self.subTest(name=name):
                 self.assertEqual((core / name).read_bytes(), (bundle.ROOT / name).read_bytes())
         self.assertEqual(
             {path.name for path in core.iterdir()},
-            {"launch.py", "cc_macos", "cc_classify.py", "cc_direction.py"})
+            {"launch.py", "cc_macos", *SHARED_CORE_FILES})
         self.assertFalse(list(core.rglob("__pycache__")))
 
     def test_missing_shared_core_module_blocks_packaging(self):
-        for index, missing in enumerate(("cc_classify.py", "cc_direction.py")):
+        for index, missing in enumerate(SHARED_CORE_FILES):
             source = self.root / f"source{index}"
             source.mkdir()
-            for name in ("cc_classify.py", "cc_direction.py"):
+            for name in SHARED_CORE_FILES:
                 if name != missing:
                     (source / name).write_bytes(b"synthetic fixture")
             core = self.root / f"Core{index}"
