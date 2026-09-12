@@ -296,6 +296,7 @@ class TestMacHelperProcess(unittest.TestCase):
         self.assertEqual(result["payload"]["https"], {"status": "not_run"})
         self.assertEqual(result["payload"]["python"]["platform"], sys.platform)
         self.assertFalse(result["payload"]["python"]["bundle_runtime"])
+        self.assertEqual(result["payload"]["codex_config_fixture"], {"status": "not_run"})
         self.assertTrue(result["payload"]["python"]["bytecode_disabled"])
         self.assertEqual(helper.finish(), (0, b""))
 

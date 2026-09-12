@@ -3,6 +3,7 @@
 
 #include <sys/types.h>
 
+int cc_process_support_abi(void);
 int cc_spawn_cli_version(const char *executable, const char *home, const char *path,
                          int output, int errors, pid_t *pid);
 int cc_cli_has_exited(pid_t pid, int *exited);

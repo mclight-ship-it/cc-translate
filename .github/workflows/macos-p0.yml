@@ -43,6 +43,23 @@ jobs:
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
+      - name: Native config process lifecycle with bundled Python (synthetic only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B - <<'PY'
+          from pathlib import Path
+          import sys
+          import unittest
+          core = Path("tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/Core").resolve()
+          sys.path[:0] = [str(core), str(Path("macos/PythonTests").resolve())]
+          import cc_providers.codex_config
+          assert Path(cc_providers.codex_config.__file__).resolve() == core / "cc_providers/codex_config.py"
+          suite = unittest.defaultTestLoader.loadTestsFromName("test_codex_config_process")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful() or result.skipped:
+              raise SystemExit(1)
+          PY
       - name: Native Foundation.Process to bundled helper integration (not optional here)
         env:
           CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app

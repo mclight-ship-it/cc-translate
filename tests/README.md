@@ -66,3 +66,10 @@ python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_d
 Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_windows tests.test_prompts_windows`。Mac CI 还会用 `.app` 内的 Python
 以 `-I -B` 执行相同便携用例，并断言导入的是包内模块，而非源码或宿主 Python。
 分类/方向抽取不改变 P0 协议能力；helper/UI 仍只有合成 fixture 和诊断，没有真实翻译。
+
+## P1 native config 进程监督
+
+`tests.test_codex_config_darwin_contract` 在 Windows 检查 dispatch、库边界和清理顺序，
+不执行 Darwin 二进制。`macos/PythonTests/test_codex_config_process.py` 只在 Mac CI
+使用真正包内 Python/C 库执行，覆盖合成 app-server、后代与 EOF；非 Mac 直接失败而非 skip。
+其 fake CLI 不代表真实账号、官方 CLI 版本或完整 native provider 已通过。

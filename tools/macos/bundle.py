@@ -31,6 +31,8 @@ APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
+PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "codex_instructions.txt")
+PROVIDER_CORE_FILES = PROVIDER_CONTRACT_FILES + PROVIDER_CONFIG_FILES
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
 MAX_MEMBERS = 30000
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
@@ -492,14 +494,16 @@ def audit_bundle(app, lock, environment=None):
     validate_plist(plistlib.loads((contents / "Info.plist").read_bytes()), lock)
     required = [
         "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
+        "Helpers/python/lib/libCCProcessSupport.dylib",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
         "Resources/Core/cc_macos/dictionary_probe.py",
+        "Resources/Core/cc_macos/config_fixture.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
         "Resources/Licenses/Python/PYTHON.json",
     ]
     required += ["Resources/Core/" + name for name in SHARED_CORE_MODULES]
-    required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CONTRACT_FILES]
+    required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CORE_FILES]
     required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
@@ -539,7 +543,8 @@ def audit_bundle(app, lock, environment=None):
     native = contents / "MacOS/CCTranslateMac"
     python = (contents / "Helpers/python/bin/python3").resolve()
     libpython = contents / "Helpers/python/lib/libpython3.12.dylib"
-    need(all(path in files for path in (native, python, libpython)), "bundle runtime is not Mach-O")
+    bridge = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
+    need(all(path in files for path in (native, python, libpython, bridge)), "bundle runtime is not Mach-O")
     parsed, report = {}, []
     for binary in files:
         description = run(["/usr/bin/file", "-b", binary], environment)
@@ -549,7 +554,7 @@ def audit_bundle(app, lock, environment=None):
         parsed[binary] = parse_load_commands(run(["/usr/bin/otool", "-l", binary], environment))
         need(all(version(v) <= version(lock["deployment_target"])
                  for v in parsed[binary]["minimums"]), "Mach-O requires newer macOS: " + binary.name)
-        if binary == native:
+        if binary in (native, bridge):
             need(all(version(v) == version(lock["deployment_target"])
                      for v in parsed[binary]["minimums"]), "native deployment target drift")
         parsed[binary]["dependencies"] = parse_dependencies(run(["/usr/bin/otool", "-L", binary], environment))
@@ -600,7 +605,7 @@ def write_json(path, value):
 
 def copy_core_sources(core):
     modules = [ROOT / name for name in SHARED_CORE_MODULES]
-    contracts = [ROOT / "cc_providers" / name for name in PROVIDER_CONTRACT_FILES]
+    contracts = [ROOT / "cc_providers" / name for name in PROVIDER_CORE_FILES]
     need(all(path.is_file() and not path.is_symlink() for path in modules + contracts),
          "shared core or provider contract missing or linked")
     need(not (ROOT / "cc_providers").is_symlink(), "linked provider source directory")
@@ -624,7 +629,9 @@ def build(lock, offline=False):
             "--configuration", "release", "--triple", "arm64-apple-macosx14.0",
             "--product", "CCTranslateMac"]
     subprocess.run([str(a) for a in args], env=environment, check=True)
-    binary = Path(run([*args, "--show-bin-path"], environment)) / "CCTranslateMac"
+    binary_directory = Path(run([*args, "--show-bin-path"], environment))
+    binary = binary_directory / "CCTranslateMac"
+    subprocess.run([str(a) for a in [*args[:-1], "CCProcessSupport"]], env=environment, check=True)
     info = (ROOT / "macos/Resources/Info.plist").read_bytes()
     validate_plist(plistlib.loads(info), lock)
     contents = APP / "Contents"
@@ -632,6 +639,8 @@ def build(lock, offline=False):
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(info)
     excluded = extract_runtime(assets["runtime"], contents / "Helpers/python", lock)
+    shutil.copy2(binary_directory / "libCCProcessSupport.dylib",
+                 contents / "Helpers/python/lib/libCCProcessSupport.dylib")
     core = contents / "Resources/Core"
     copy_core_sources(core)
     (core / "cacert.pem").write_bytes(ca)

@@ -288,6 +288,7 @@ private enum HelperFailureCode: String {
     case sqliteReadbackFailed = "sqlite_readback_failed"
     case sqliteProbeFailed = "sqlite_probe_failed"
     case dictionaryProbeFailed = "dictionary_probe_failed"
+    case configFixtureFailed = "config_fixture_failed"
     case bundleCAMissing = "bundle_ca_missing"
     case sslContextFailed = "ssl_context_failed"
     case sslValidationDisabled = "ssl_validation_disabled"
@@ -441,7 +442,7 @@ public struct ProtocolState {
     }
 
     private func runtimePayload(_ payload: [String: JSONValue], https: Bool) -> Bool {
-        guard Set(payload.keys) == ["python", "sqlite", "dictionary", "ssl", "https"],
+        guard Set(payload.keys) == ["python", "sqlite", "dictionary", "codex_config_fixture", "ssl", "https"],
               let python = payload["python"]?.object,
               Set(python.keys) == ["version", "platform", "machine", "isolated", "bytecode_disabled", "bundle_runtime"],
               let pythonVersion = python["version"]?.string, !pythonVersion.isEmpty,
@@ -464,6 +465,11 @@ public struct ProtocolState {
               ssl["ca_source"] == .string("bundle") || ssl["ca_source"] == .string("system") else {
             return false
         }
+        let fixtureExpected: JSONValue = platform == "darwin" && python["bundle_runtime"] == .bool(true) ?
+            .object(["status": .string("passed"), "fixture": .bool(true),
+                     "methods_verified": .bool(true), "routing_preserved": .bool(true)]) :
+            .object(["status": .string("not_run")])
+        guard payload["codex_config_fixture"] == fixtureExpected else { return false }
         if https {
             return ssl["ca_source"] == .string("bundle") &&
                 Set(network.keys) == ["status", "host", "certificate_verified"] &&

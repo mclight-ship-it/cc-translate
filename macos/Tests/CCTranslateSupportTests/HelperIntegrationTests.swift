@@ -40,6 +40,10 @@ final class HelperIntegrationTests: XCTestCase {
                         XCTAssertEqual(event.payload["dictionary"]?.object?["read_only"], .bool(true))
                         XCTAssertEqual(event.payload["dictionary"]?.object?["sources_preserved"], .bool(true))
                         XCTAssertEqual(event.payload["dictionary"]?.object?["reopened"], .bool(true))
+                        XCTAssertEqual(event.payload["codex_config_fixture"], .object([
+                            "status": .string("passed"), "fixture": .bool(true),
+                            "methods_verified": .bool(true), "routing_preserved": .bool(true)
+                        ]))
                         XCTAssertEqual(event.payload["https"]?.object?["status"], .string("not_run"))
                         runtimeProbe.fulfill()
                         connection?.stop()

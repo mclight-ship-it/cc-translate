@@ -63,6 +63,11 @@ def validate_runtime(report, lock):
          dictionary.get("status") == "passed" and
          all(dictionary.get(key) is True for key in ("read_only", "sources_preserved", "reopened")),
          "synthetic dictionary storage and lifecycle not confirmed")
+    config = report.get("codex_config_fixture")
+    need(isinstance(config, dict) and set(config) == {
+         "status", "fixture", "methods_verified", "routing_preserved"} and config["status"] == "passed"
+         and all(config[key] is True for key in ("fixture", "methods_verified", "routing_preserved")),
+         "synthetic native config process not confirmed")
     ssl = report.get("ssl", {})
     need(ssl.get("status") == "passed" and ssl.get("certificate_validation") is True
          and ssl.get("ca_source") == "bundle", "bundled CA SSL verification not confirmed")

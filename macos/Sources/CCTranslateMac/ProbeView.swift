@@ -34,8 +34,10 @@ struct ProbeView: View {
                 Button("Cancel latest") { model.cancel() }.disabled(!model.active || !model.ready)
             }
             HStack {
-                Button("SQLite / SSL probe (no network)") { model.runtimeProbe(https: false) }
+                Button("SQLite / SSL / config (offline)") { model.runtimeProbe(https: false) }
+                    .help("Uses a bundled synthetic CLI only, never your real CLI, account, or model.")
                 Button("HTTPS probe (explicit network)") { model.runtimeProbe(https: true) }
+                    .help("Includes the same synthetic config probe; HTTPS contacts only the fixed public host.")
             }.disabled(!model.ready)
             Text(model.status).font(.callout).fixedSize(horizontal: false, vertical: true)
             ScrollView {

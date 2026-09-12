@@ -41,6 +41,10 @@ final class ProtocolTests: XCTestCase {
                 "status": .string("passed"), "read_only": .bool(true),
                 "sources_preserved": .bool(true), "reopened": .bool(true)
             ]),
+            "codex_config_fixture": .object([
+                "status": .string("passed"), "fixture": .bool(true),
+                "methods_verified": .bool(true), "routing_preserved": .bool(true)
+            ]),
             "ssl": .object([
                 "status": .string("passed"), "version": .string("OpenSSL synthetic"),
                 "certificate_validation": .bool(true), "ca_source": .string("bundle")
@@ -245,9 +249,37 @@ final class ProtocolTests: XCTestCase {
             "version": .string("3.13.3"), "platform": .string("darwin"), "machine": .string("arm64"),
             "isolated": .bool(false), "bytecode_disabled": .bool(false), "bundle_runtime": .bool(false)
         ])
+        report["codex_config_fixture"] = .object(["status": .string("not_run")])
         let result = try state.receive(event("runtime", 1, "completed", report))
         XCTAssertEqual(result.payload["python"]?.object?["bundle_runtime"], .bool(false))
         XCTAssertEqual(result.payload["https"]?.object?["status"], .string("not_run"))
+    }
+
+    func testBundledConfigFixtureCannotBeSkippedOrForged() throws {
+        var state = try connected()
+        try state.register(ClientMessage(id: "config", type: "request", payload: [
+            "operation": .string("runtime_probe")
+        ]))
+        _ = try state.receive(event("config", 0, "accepted", ["operation": .string("runtime_probe")]))
+        let fixture = try XCTUnwrap(runtimeReport()["codex_config_fixture"]?.object)
+        var report = runtimeReport()
+        report.removeValue(forKey: "codex_config_fixture")
+        XCTAssertThrowsError(try state.receive(event("config", 1, "completed", report)))
+        report["codex_config_fixture"] = .object(["status": .string("not_run")])
+        XCTAssertThrowsError(try state.receive(event("config", 1, "completed", report)))
+        for key in ["fixture", "methods_verified", "routing_preserved"] {
+            for value in [JSONValue.bool(false), .integer(1), .string("true")] {
+                var invalid = fixture
+                invalid[key] = value
+                report["codex_config_fixture"] = .object(invalid)
+                XCTAssertThrowsError(try state.receive(event("config", 1, "completed", report)))
+            }
+        }
+        var extra = fixture
+        extra["path"] = .string("synthetic forbidden path")
+        report["codex_config_fixture"] = .object(extra)
+        XCTAssertThrowsError(try state.receive(event("config", 1, "completed", report)))
+        _ = try state.receive(event("config", 1, "completed", runtimeReport()))
     }
 
     func testDictionaryEvidenceAndFailureCodeAreStrict() throws {

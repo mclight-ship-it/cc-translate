@@ -152,6 +152,16 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
   - [x] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
+  - [ ] 第一步：只接既有 `read_native_config` 的 Darwin 分支；共享已验证 C 组信号/
+    zombie-only 判断原语，随包装载失败必须明确失败，不回退裸 PID kill。
+  - [ ] 第二步（依赖第一步）：在同一调用链以非阻塞有界管道驱动 initialize/config/read，
+    成功/错误/8 秒期限均先清自有组再回收；保持 Windows 路径及完整 native env/cwd/安全覆盖。
+  - [ ] 第三步（依赖第二步）：真实 Mac fake app-server 验证协议、洪泛/阻塞/后代/兄弟存活，
+    并从现有显式合成诊断入口验证包内接入；不运行真实账号/模型，不宣称完整 provider 可用。
+  - [ ] 后续独立前置：catalog/cache 路径及 logger 显式传入实际 provider 构造链；
+    当前默认缓存仍可能落 HOME/APPDATA，警告会延迟导入 cc_core，不能直接把整个 exec 当便携。
+  - [ ] 前置完成后再分别处理 exec、常驻 app-server、预热/取消与提交快照；
+    现有 poll/wait 会提前 reap，不能仅在旧 `_kill_process` 里补一行 killpg。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
   - [x] 原生显式版本探针先接入自有组监督；fake CLI 正常/取消/超时/输出超限/后代回归。
@@ -377,6 +387,30 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   `helper-smoke.json` 的 dictionary 四字段、清理/不可变均通过；Python **3.12.14**。
   临时 app zip 已清理，仅会话目录留脱敏 JSON。实机交接更新到该固定制品，
   仍不代表首次 TCC/签名/真实账号完成。
+
+### Codex 只读配置探针监督（验证中）
+
+- 已按依赖先拆步骤，再接实际 `read_native_config` Darwin 调用链；未同时移植 exec、
+  常驻 app-server、Claude 或 catalog。Windows 原默认路径保持，新增可选取消参数不会被其他
+  平台静默忽略；只为已接入的 Darwin 分支提供事件取消。
+- 复用 C 已验证的 `waitid(WNOWAIT)` / 只查自有组的 zombie-only EPERM 处理，新增 ABI 1
+  项目自有 dylib 随包。动态库固定路径/ABI/必要资源/Mach-O 检查，缺失即失败，无宿主回退。
+  每次组信号先证明仍是本进程子进程，Python 收到 ECHILD 后不再发信号或 wait。
+- stdin/stdout 非阻塞，8 秒 RPC / 8 MiB 接收预算；取消、错误、超时和正常返回都只有一处
+  TERM→KILL→wait/关闭。没有 reader daemon；不自动重试、不 source profile、不执行 auth helper/
+  MCP/model turn。实际 native loader argv/env/cwd/merged layers及原安全覆盖不改变。
+- 现有显式 runtime probe 在真正包内 Mac 中实际调用一个临时 synthetic app-server，
+  验证两条非模型 RPC、完整环境字段与返回 routing，并将取消事件接入 helper EOF 清理；
+  宿主/Windows 只报告 not_run，不能充作 Mac 证明。原生协议、smoke 和诊断标签同步接入。
+- 新增十项 Windows 可运行的 dispatch/ABI/清理顺序/幂等/权限与所有权失败/取消契约回归；
+  Mac 专属九项真实进程测试在 `macos/PythonTests`，只由包内 Python 显式执行且禁止 skip/
+  宿主替代，包含 TERM-resistant 后代、提前退出、静默超时、输出洪泛、取消、错误脱敏和
+  helper 真 EOF；旧原生版本探针五项进程回归保持。
+- 针对性 **147 tests，18.667s，OK**；下一步正常完整 hook 与真实 Mac build/进程/bundle
+  验证。此时还没有新的 Mac 通过证据，不能把源码接入或模拟测试当作阶段验收完成。
+- 补齐 setup 失败脱敏、helper 取消接线和最终装配后再次针对性 **148 tests，20.655s，OK**。
+- 尚未解决：catalog 路径/logger 的 cc_core 耦合、完整 exec/app-server/Claude 生命周期及
+  paid-turn 快照/取消接线；真实用户账号、签名/首次权限仍单独待验。没有新增付费请求或大 UI。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。

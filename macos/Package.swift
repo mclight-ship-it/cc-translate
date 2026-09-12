@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "CCTranslateMac", targets: ["CCTranslateMac"]),
+        .library(name: "CCProcessSupport", type: .dynamic, targets: ["CCProcessSupport"]),
         .library(name: "CCTranslateSupport", targets: ["CCTranslateSupport"])
     ],
     targets: [

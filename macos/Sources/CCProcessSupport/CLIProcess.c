@@ -10,6 +10,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+int cc_process_support_abi(void) { return 1; }
+
 int cc_spawn_cli_version(const char *executable, const char *home, const char *path,
                          int output, int errors, pid_t *pid) {
     if (!executable || !home || !path || !pid || output < 3 || errors < 3 ||
@@ -89,13 +91,15 @@ int cc_cli_reap(pid_t pid, int *exit_code) {
 
 int cc_cli_signal_group(pid_t pid, int signal) {
     if (pid <= 1 || (signal != SIGTERM && signal != SIGKILL)) return EINVAL;
+    int exited = 0;
+    int error = cc_cli_has_exited(pid, &exited);
+    if (error) return error;
     if (kill(-pid, signal) == 0 || errno == ESRCH) return 0;
-    int error = errno;
+    error = errno;
     if (error != EPERM) return error;
 
     // Darwin returns EPERM even for a group containing only zombies. Do not
     // swallow a real permission failure: inspect only this pinned group.
-    int exited = 0;
     error = cc_cli_has_exited(pid, &exited);
     if (error) return error;
     if (!exited) return EPERM;

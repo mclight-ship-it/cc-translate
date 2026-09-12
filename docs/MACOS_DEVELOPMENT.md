@@ -56,7 +56,8 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
 - `translator.pyw`、`cc_core.py` 和 UI mixin 不是服务入口。导入便携核心不能导入 Tk/Win32，
   不能创建/迁移 AppData。`cc_providers` 现在只直接导入纯 base/registry；
   CLI 后端导出在显式访问时才加载，Windows 仍获得原类/函数对象，导入失败原样传播。
-  Mac 开发包只保留该包的 `__init__.py` / `base.py` / `registry.py`，不携带旧 CLI 后端。
+  Mac 开发包保留 `__init__.py` / `base.py` / `registry.py` 及 native config reader、
+  Darwin 监督适配和原 instructions 资源，不携带旧 exec/app-server/Claude 后端或 catalog。
   不能据此宣称原 Windows Codex/Claude 后端已适配 Mac；其 POSIX 监督及真实 native 配置/
   账号验证仍在 P1。每次抽取保留兼容导出并跑 Windows 回归。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
@@ -123,13 +124,28 @@ P0 没有业务配置/历史写操作，不能将无配置版本的探针当作�
 前端保留每 ID 序号验证，切换当前请求后忽略旧请求的 UI 结果；未知 ID/乱序为协议错误。
 握手超时、异常退出或协议错误要可见，禁止 success-shaped fallback。原生持续排空两个输出管道，
 有界读取，避免 pipe 堵塞；退出关闭 stdin，超时仅终止本 App 的 helper。
-P0 helper 不创建 CLI 子进程。原生显式 `--version` 探针的 P1 监督切片用
+P0 初版 helper 不创建 CLI 子进程；当前 P1 显式包内诊断会创建纯合成 config CLI，
+不运行用户的真实 CLI/账号。原生显式 `--version` 探针的 P1 监督切片用
 `posix_spawn` 原子创建独立进程组，在正常退出、取消、超时和输出超限后清理同组后代；
 TERM 宽限后升级 KILL。先用 `waitid(WNOWAIT)` 保留 leader，再发最后一个组信号、reap，
 避免 PID/PGID 复用误伤。只对自己创建且尚未回收的组发信号，不按名称搜索/结束用户 CLI。
 这不是完整 ProviderRuntime；主动 `setsid`/改进程组逃逸的 wrapper 不支持，也不跨组追杀。
 无法确认子进程所有权时显式失败且不再发信号；系统无法完成清理时显示失败并保留回收责任，
-不报告成功。Windows provider 未改；实际 native 配置/认证和模型请求仍待单独实现与验证。
+不报告成功。Windows provider 默认行为保留；实际 native 配置/认证和模型请求仍待单独实现与验证。
+
+Codex 配置探针复用既有 `read_native_config`，Darwin 分支保留原 argv/env/cwd 与安全覆盖，
+只发送 `initialize` / `config/read`，不改模型/认证选择，不创建模型 turn。CPP 组信号原语
+同时构建成项目自有 `Helpers/python/lib/libCCProcessSupport.dylib`，与 CPython 分开标识来源；
+Python 只从包内固定位置加载且要求 ABI 1，不搜索宿主库或降级到裸 PID。
+非阻塞 stdin/stdout 共用 8 秒 RPC 预算，最多接收 8 MiB；stderr 丢弃，错误为固定代码。
+不在最后组信号之前调用 `Popen.poll/wait/communicate`；先 TERM、200ms 后 KILL，再有限等待回收，
+关闭全部管道。丢失子进程所有权后不补杀/再 wait，清理错误不能伪装成功。
+可选取消事件目前仅 Darwin 接入；其他平台若显式传入则明确拒绝，Windows 现有默认调用不变。
+包内合成诊断传入 helper 工作项取消事件，确保 EOF/退出能取消正在等待配置的自有组。
+宿主/Windows 诊断明确报告 `codex_config_fixture: not_run`；真正包内 Mac 必须报告四字段成功，
+由原生协议和 smoke 双重严格校验。此结果不是用户 native 配置/账号兼容证据。
+这里“只读”指 `config/read` RPC，不是承诺未测的官方 CLI 初始化没有磁盘/认证副作用；
+当前诊断只运行合成 CLI，真实用户环境仍须单独验证。
 
 协议结构性错误为连接级失败（保留 ID `protocol`），取消所有本连接任务并退出非零。
 完整帧后的正常 stdin EOF 取消工作并退出；残缺帧 EOF 为错误。原生不得自动重发已提交的付费请求。
@@ -352,7 +368,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 1. **静默与核心**：启动只出现 `CC P0`，不自动弹窗或请求权限。菜单
    `Open P0 input / probes...` → `Bundled core` → `Start bundled helper` →
    `Run synthetic fixture`；默认合成文字应有 SYNTHETIC 标记。依次执行 SQLite/SSL 与显式 HTTPS
-   探针。关闭面板仍保留菜单，重新打开不能显示上次残留结果。
+   探针（同时验证包内纯合成 config 子进程，不调用用户真实 CLI/账号）。
+   关闭面板仍保留菜单，重新打开不能显示上次残留结果。
 2. **权限拒绝与 AX 焦点**：首次不要先授予全部权限；在 TextEdit 选中 `P0 synthetic selection`，
    用菜单 `Read current AX selection (local only)`；缺 AX 权限应 UNKNOWN、不能取旧剪贴板。
    然后 `Permissions / AX` → `Request Accessibility`，按系统设置只批准本测试 App；

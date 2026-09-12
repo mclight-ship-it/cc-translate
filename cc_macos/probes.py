@@ -12,6 +12,7 @@ import tempfile
 from threading import Event
 from cc_dictionary_store import DictionaryStoreError
 from .dictionary_probe import probe_dictionary
+from .config_fixture import probe_config
 
 
 HTTPS_HOST = "www.python.org"
@@ -36,6 +37,9 @@ def _check_cancel(cancel: Event) -> None:
 
 def runtime_probe(*, https: bool, cancel: Event) -> dict:
     _check_cancel(cancel)
+    runtime_root = BUNDLE_CORE.parent.parent / "Helpers" / "python"
+    bundle_runtime = Path(sys.executable).resolve().is_relative_to(runtime_root.resolve())
+    config_fixture = {"status": "not_run"}
     try:
         with tempfile.TemporaryDirectory(prefix="cc-translate-probe-") as directory:
             database = Path(directory) / "probe.sqlite3"
@@ -54,6 +58,14 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
                 dictionary = probe_dictionary(Path(directory) / "synthetic # %.sqlite3")
             except (OSError, sqlite3.Error, DictionaryStoreError) as exc:
                 raise ProbeError("dictionary_probe_failed") from exc
+            _check_cancel(cancel)
+            if sys.platform == "darwin" and bundle_runtime:
+                try:
+                    config_fixture = probe_config(Path(directory) / "config", cancel)
+                except (OSError, ValueError) as exc:
+                    if str(exc) == "config_probe_cancelled":
+                        raise ProbeCancelled() from None
+                    raise ProbeError("config_fixture_failed") from exc
     except (OSError, sqlite3.Error) as exc:
         raise ProbeError("sqlite_probe_failed") from exc
     _check_cancel(cancel)
@@ -66,16 +78,16 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
         raise ProbeError("ssl_context_failed") from exc
     if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
         raise ProbeError("ssl_validation_disabled")
-    runtime_root = BUNDLE_CORE.parent.parent / "Helpers" / "python"
     report = {
         "python": {
             "version": platform.python_version(), "platform": sys.platform,
             "machine": platform.machine(), "isolated": bool(sys.flags.isolated),
             "bytecode_disabled": sys.dont_write_bytecode,
-            "bundle_runtime": Path(sys.executable).resolve().is_relative_to(runtime_root.resolve()),
+            "bundle_runtime": bundle_runtime,
         },
         "sqlite": {"status": "passed", "read_write": True, "version": sqlite3.sqlite_version},
         "dictionary": dictionary,
+        "codex_config_fixture": config_fixture,
         "ssl": {"status": "passed", "version": ssl.OPENSSL_VERSION,
                 "certificate_validation": True, "ca_source": "bundle" if bundled else "system"},
         "https": {"status": "not_run"},

@@ -22,6 +22,8 @@ from tools.macos import bundle, smoke
 
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
+CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "codex_instructions.txt")
+PROVIDER_FILES = CONTRACT_FILES + CONFIG_FILES
 
 
 def member(name, kind=tarfile.REGTYPE, target="", data=b"x"):
@@ -243,15 +245,17 @@ class MachORulesTests(ProjectDirectory):
                 "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
                 "LSUIElement": True, "LSMinimumSystemVersion": "14.0"}
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
-                    "Helpers/python/lib/libpython3.12.dylib"]
+                    "Helpers/python/lib/libpython3.12.dylib",
+                    "Helpers/python/lib/libCCProcessSupport.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
+                     "Resources/Core/cc_macos/config_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
                       for name in lock["required_runtime_licenses"]]
         resources += ["Resources/Core/" + name for name in SHARED_CORE_FILES]
-        resources += ["Resources/Core/cc_providers/" + name for name in CONTRACT_FILES]
+        resources += ["Resources/Core/cc_providers/" + name for name in PROVIDER_FILES]
         for name in binaries + resources:
             path = contents / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,7 +277,7 @@ class MachORulesTests(ProjectDirectory):
         if tool == "lipo":
             return "arm64"
         if args[1] == "-l":
-            minimum = "14.0" if binary.name == "CCTranslateMac" else "11.0"
+            minimum = "14.0" if binary.name in ("CCTranslateMac", "libCCProcessSupport.dylib") else "11.0"
             result = f"Load command 0\n cmd LC_BUILD_VERSION\n platform 1\n minos {minimum}\n"
             if binary.name == "python3":
                 result += "Load command 1\n cmd LC_RPATH\n path @loader_path/../lib (offset 12)\n"
@@ -286,8 +290,8 @@ class MachORulesTests(ProjectDirectory):
         app = self.synthetic_app()
         with patch.object(bundle, "run", side_effect=self.fake_apple_tool) as tools:
             report = bundle.audit_bundle(app, bundle.load_lock())
-        self.assertEqual(len(report["checks"]), 3)
-        self.assertEqual(tools.call_count, 12)
+        self.assertEqual(len(report["checks"]), 4)
+        self.assertEqual(tools.call_count, 16)
         self.assertEqual(report["release_gate"], "NOT PASSED")
 
     def test_audit_checks_unreferenced_macho_and_rejects_newer_os(self):
@@ -341,7 +345,7 @@ class MachORulesTests(ProjectDirectory):
 
     def test_audit_requires_unchanged_provider_contracts(self):
         app = self.synthetic_app()
-        for name in CONTRACT_FILES:
+        for name in PROVIDER_FILES:
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core/cc_providers" / name
                 path.unlink()
@@ -517,6 +521,8 @@ class SmokeContractTests(unittest.TestCase):
                        "isolated": True, "bytecode_disabled": True, "bundle_runtime": True},
             "sqlite": {"status": "passed", "read_write": True},
             "dictionary": {"status": "passed", "read_only": True, "sources_preserved": True, "reopened": True},
+            "codex_config_fixture": {"status": "passed", "fixture": True,
+                                     "methods_verified": True, "routing_preserved": True},
             "ssl": {"status": "passed", "certificate_validation": True, "ca_source": "bundle"},
             "https": {"status": "passed", "certificate_verified": True, "host": "www.python.org"},
         }
@@ -543,6 +549,11 @@ class SmokeContractTests(unittest.TestCase):
                                     ("dictionary", "sources_preserved", False),
                                     ("dictionary", "reopened", False),
                                     ("dictionary", "path", "synthetic forbidden path"),
+                                    ("codex_config_fixture", "status", "not_run"),
+                                    ("codex_config_fixture", "fixture", 1),
+                                    ("codex_config_fixture", "methods_verified", False),
+                                    ("codex_config_fixture", "routing_preserved", False),
+                                    ("codex_config_fixture", "path", "synthetic forbidden path"),
                                     ("ssl", "ca_source", "system"),
                                     ("ssl", "certificate_validation", False),
                                     ("https", "status", "not_run"),
@@ -587,8 +598,9 @@ class HelperBundleIntegrationTests(ProjectDirectory):
             {path.name for path in core.iterdir()},
             {"launch.py", "cc_macos", "cc_providers", *SHARED_CORE_FILES})
         self.assertEqual(bundle.PROVIDER_CONTRACT_FILES, CONTRACT_FILES)
-        self.assertEqual({path.name for path in (core / "cc_providers").iterdir()}, set(CONTRACT_FILES))
-        for name in CONTRACT_FILES:
+        self.assertEqual(bundle.PROVIDER_CONFIG_FILES, CONFIG_FILES)
+        self.assertEqual({path.name for path in (core / "cc_providers").iterdir()}, set(PROVIDER_FILES))
+        for name in PROVIDER_FILES:
             self.assertEqual(
                 (core / "cc_providers" / name).read_bytes(),
                 (bundle.ROOT / "cc_providers" / name).read_bytes())
@@ -602,7 +614,7 @@ class HelperBundleIntegrationTests(ProjectDirectory):
                 if name != missing:
                     (source / name).write_bytes(b"synthetic fixture")
             (source / "cc_providers").mkdir()
-            for name in CONTRACT_FILES:
+            for name in PROVIDER_FILES:
                 (source / "cc_providers" / name).write_bytes(b"synthetic fixture")
             core = self.root / f"Core{index}"
             with self.subTest(missing=missing), patch.object(bundle, "ROOT", source):
@@ -611,12 +623,12 @@ class HelperBundleIntegrationTests(ProjectDirectory):
             self.assertFalse(core.exists())
 
     def test_missing_provider_contract_blocks_packaging(self):
-        for index, missing in enumerate(CONTRACT_FILES):
+        for index, missing in enumerate(PROVIDER_FILES):
             source = self.root / f"source{index}"
             (source / "cc_providers").mkdir(parents=True)
             for name in SHARED_CORE_FILES:
                 (source / name).write_bytes(b"synthetic fixture")
-            for name in CONTRACT_FILES:
+            for name in PROVIDER_FILES:
                 if name != missing:
                     (source / "cc_providers" / name).write_bytes(b"synthetic fixture")
             core = self.root / f"Core{index}"
