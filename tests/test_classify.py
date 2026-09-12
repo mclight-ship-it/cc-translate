@@ -6,7 +6,7 @@ All expected values were captured from the real functions.
 """
 import unittest
 
-from tests._tr import tr
+import cc_classify as tr
 
 
 CLASSIFICATION_MATRIX = (

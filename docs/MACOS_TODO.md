@@ -3,8 +3,9 @@
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
 基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-12。
 当前已获准提交/正常推送 `agents/cc-translate-macos-native` 并使用公有仓库的标准免费 Mac CI；
-首次云验证曾被 GitHub OAuth `workflow` scope 阻断；用户已完成授权，本轮只读响应头复核
-包含该 scope，正准备首次正常推送。尚无 Actions run 或云端通过记录。不推送 master、不发布、不新增付费资源。
+首次云验证曾被 GitHub OAuth `workflow` scope 阻断；用户完成授权后已正常推送，
+真实 Mac 自动化工程门槛通过（run/SHA 见下）。正式 P0 实机/签名门槛仍未通过。
+不推送 master、不发布、不新增付费资源。
 首次提交 `4102190` 的推送被旧 hook 的空树比较阻止。
 已修正新分支基线为目标远端实际公布的 HEAD 与本分支的共同祖先；网络/缺对象等错误仍阻断，
 空远端仍全树扫描。不豁免新增私密内容、不修改旧产品作者信息、不 bypass hooks。
@@ -24,11 +25,11 @@
 
 用户已完成浏览器授权；2026-09-12 本轮 `gh api --include rate_limit` 只筛选响应头，
 确认现有 gh scopes 为 `gist, read:org, repo, workflow`，未读取/输出 token、换账号或绕过限制。
-接下来以该现有认证正常推送唯一开发分支，保留全部 hooks；授权成功不代表 Mac 验证成功。
-此授权不包含 master、Release、签名私钥或付费额度。P1 纯核心仍等待 Mac 自动化门槛。
+以该现有认证正常推送唯一开发分支，保留全部 hooks；授权成功本身不代表 Mac 验证成功。
+此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
-## P0 — 开发中；Mac/签名门槛未通过
+## P0 — Mac 自动化工程门槛通过；实机/签名门槛未通过
 
 ### 文档与隔离
 - [x] 独立 macOS 工作树/分支；不修改 Windows 工作树和用户数据。
@@ -40,20 +41,20 @@
 - [x] Foundation.Process 包内 helper，双管道有界读取、EOF/失败/退出代码；静态核对打包路径。
 - [x] Python v1 NDJSON 合同、握手/能力、唯一 ID/事件序号、长度限制、取消/终态竞态。
 - [x] helper 无 Tk/Win32、无 AppData import 副作用；默认无网络/用户配置访问。
-- [x] 显式 SQLite 实际读写、SSL/HTTPS 证书验证探针代码（联网/发行形态未验收）。
+- [x] 显式 SQLite 实际读写、SSL/HTTPS 证书验证探针；开发包真实联网通过，签名发行形态未验收。
 - [x] AX 三态、Secure Input、按需权限和 Cmd+C 双击/焦点探针代码；真实事件/TCC 未验收。
 - [x] Finder CLI 候选路径发现及显式 `--version` 探针代码；直属 PID 监督，遗留后代的 wrapper 不支持。
-- [x] ScreenCaptureKit 单帧预览确认与本地 Vision OCR 代码；合成 OCR XCTest 已写但未运行。
-- [x] 随包 runtime 锁定/校验、架构/deployment target/dylib/资源/完整许可检查代码（Mach-O 检查未在 Mac 执行）。
+- [x] ScreenCaptureKit 单帧预览确认与本地 Vision OCR 代码；真实 Vision 合成图像 XCTest 通过，真实截图/TCC 未验。
+- [x] 随包 runtime 锁定/校验、架构/deployment target/dylib/资源/完整许可检查；Mac 开发包审计通过。
 - [x] Mac 编译/自动测试工作流落地；已获准开始真实开发分支 CI，结果另记。
 
 ### 验证证据（执行后填命令、环境、结果）
 - [x] Windows 便携协议/进程/打包规则 unittest。
 - [x] Windows 隐私扫描回归及 diff 检查；恢复固定开发词典后正常 pre-push 已执行完整 871 项 unittest（含现有 GUI 单测），不代表 Mac GUI/实机验收。
-- [ ] macOS Swift 编译/XCTest（目前无 Xcode 环境）。
-- [ ] macOS .app 内真实 helper、SQLite、HTTPS、资源定位。
+- [x] macOS Swift 编译/XCTest（真实免费 arm64 CI、固定 Xcode 16.4）。
+- [x] macOS 开发 .app 内真实 helper、SQLite、HTTPS、资源定位；不是签名发行验收。
 - [ ] 原生触发→核心→展示，真实 EOF/取消/退出无残留。
-- [ ] 合成图像真实 Vision OCR 自动测试。
+- [x] 合成图像真实 Vision OCR 自动测试。
 - [ ] Finder 原生/Node CLI 安装路径与版本调用，无 shell profile。
 - [ ] 首次 TCC/AX/热键/焦点/IME/Secure Input/多屏实机矩阵。
 - [ ] Developer ID + Hardened Runtime + 公证/stapling 后干净用户 Finder 运行探针。
@@ -81,12 +82,33 @@ EOF 会给自有 worker 有限清理时间，线程无法启动明确 failed，�
 首次测试仅有 stderr 的 Windows CRLF 断言差异，改为逐行断言后通过，未改协议 LF。
 后续修复了打包目录头边界、smoke 深度/Unicode 校验复用、runtime 四字段合同和 CI 标签；
 官方当前标签 `macos-15` 为 arm64，固定 Xcode 16.4 并重复检查实际架构。
-工作流只为指定 macOS 开发分支配置 push，另有手动入口；上述本地验证时未推送或运行。
+工作流只为指定 macOS 开发分支配置 push，另有手动入口；最初本地验证时未推送或运行，后来真实结果见下。
 依赖归档只下载作静态检查，未安装或执行；临时 staging 中归档已清理，仅保留紧凑验收记录。
 
-### 原生交叉检查与仍需 Mac 验证
+### 首次真实 Mac CI（2026-09-12）
 
-13 个原生工程/源码/测试/资源文件已落盘；26 项 XCTest 已编写，**执行数为 0**。
+- Run：[34697405027](https://github.com/mclight-ship-it/cc-translate/actions/runs/34697405027)，
+  源码 SHA `7310aa82fd331606fc8785fa10a021905aafc85b`，结论 **success**，job 1m35s。
+- 推送前正常 hook：871 Windows tests，OK，51.964s；既有 Tk teardown stderr 警告，无失败或 skip。
+- 实际工具链：arm64，Xcode 16.4 / 16F6，macOS SDK 15.5，Swift 6.1.2。
+
+| Mac 阶段 | 实际结果 |
+|---|---|
+| 便携协议/打包 unittest | 65 tests，OK，6.828s |
+| 普通 `swift test` | 26 项中 25 通过，唯一包内集成因尚未 build 明确 skip；0 failures |
+| 原生探针 | 10 tests 通过，其中 `testVisionRecognizesSyntheticInMemoryImage` 实际调用 Vision，1.742s |
+| release 构建、固定 Python、许可/Mach-O/资源审计 | 全部通过；仍为 development-only、未 Developer ID 签名/公证 |
+| 构建后 `CC_TRANSLATE_APP=... swift test --filter HelperIntegrationTests` | **1 test，0 failures，0 skip，0.353s**；Foundation.Process 实际运行包内 Python，fixture/SQLite/关闭通过 |
+| 独立 HTTPS/SQLite smoke | 包内握手、fixture、SQLite、证书验证 HTTPS、cancel、EOF 全通过 |
+| smoke 后重新审计 | Mach-O/resource 通过，bundle 未被写入；开发 zip 和脱敏报告保留 7 天，未发 Release |
+
+首轮无需修复 Swift/API/链接问题；Actions 的 Node 20→24 / punycode 弃用提示为 warning，
+并非测试失败。SDK/deployment target 通过不代表 macOS 14 真机运行通过。
+
+### 原生交叉检查与仍需实机验证
+
+13 个原生工程/源码/测试/资源文件已落盘；26 项 XCTest 已写并全部实际通过，
+其中唯一包内集成必须以后续构建后的执行为证，不能用首轮 skip 充数。
 已静态核对：`CCTranslateMac` product、开发 Bundle ID/Info.plist、`Helpers/python/bin/python3`、
 `Resources/Core/launch.py`、`-I -B`、四字段 runtime 报告、序号/终态和前端停止宽限。
 原生 P0 结果窗口只用于非激活探针，完整可选择结果/IME/浮窗产品交互仍属于 P2。
@@ -97,25 +119,36 @@ CI 先运行普通 Swift 测试，此时包尚不存在，唯一包内集成测�
 Foundation.Process→包内 helper→fixture/SQLite/关闭流程。初次 skip 不能计为集成通过。
 Python HTTPS smoke 是另一步，不替代原生客户端链路。
 
-Mac 首次执行优先检查这些尚未实编译的 API/生命周期边界：
+首次 Mac 编译/自动化已覆盖这些此前仅静态检查的 API/生命周期边界：
 `SCScreenshotManager.captureImage` / `SCShareableContent` 的 async 导入，
 `MainActor.assumeIsolated` 与 OCR 任务的并发诊断，Carbon/AX 的 CF 桥接，
 `F_SETNOSIGPIPE`、DispatchSourceRead 和关闭管道的顺序。
-它们是待验证点，不是已经确认的编译错误；若 CI 失败，先修到通过，不扩大 P1–P6。
+实际编译通过；真实事件/TCC/焦点行为仍须实机，不凭自动化结果扩大 P2–P6。
 
-尚未运行 macOS 编译、CI、GUI、TCC、签名、公证或发布。
-不得将 Windows 通过或 workflow 文件存在视为 Mac 通过。
+已运行 macOS 编译和 CI；尚未运行真实用户 GUI/TCC、Developer ID 签名、公证或发布。
+上述证据只解锁依赖安全、可独立回归的 P1 纯核心。
 
-## P1 — 等待 P0 自动化工程门槛后并行推进纯核心
+## P1 — 并行推进纯核心，分类切片开发中
 
 Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独立纯核心抽取。
 这不代表正式 P0 的真实 TCC、Finder、签名公证已通过，也不解锁完整 P2–P6 UI。
 - [ ] 平台路径，Application Support/Caches 分工，业务配置/历史单一写入者。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
+  - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
+    不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
+  - [x] 抽取前后 29 个函数/常量 AST 一致（忽略 docstring），没有更改规则。
+  - [ ] 新共享分类、isolated 无副作用、Windows 兼容以及包内 Python 差分回归通过并记录。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
 - [ ] POSIX 本 App 自有进程组取消/回收；warm 不创建付费 turn、请求不自动重试。
 - [ ] 新核心直接 import 测试及 Windows 集成回归，Mac 差分测试。
+
+### P1 分类切片验证中
+
+- 首次针对性执行 91 项：3 failures / 1 error，原因是合成 bundle fixture 未同步新必需文件，
+  以及 Windows isolated Python 自身已预加载 `winreg`。已补齐 fixture、增加缺失/篡改分类模块
+  的失败关闭测试；隔离测试比较新增模块并拦截 import（含缓存模块）/写入/网络，不删除保护断言。
+- 修复后 Windows 针对性联合回归：93 tests，OK，15.237s；完整 hook 与新版 Mac CI 随提交执行后另记。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
@@ -150,7 +183,6 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 ## 下一外部动作
 
 已确认仓库为 PUBLIC、Actions 已启用，授权限于专用开发分支和标准免费 runner。
-GitHub `workflow` scope 授权已完成并核实；现在正常推送并持续跟踪真实构建及修复；
-自动化门槛通过后推进独立 P1 纯核心。
+GitHub `workflow` scope 授权和首次真实 Mac 工程门槛已通过；继续提交/推送并验证独立 P1 纯核心。
 真实权限/签名包探针仍待安排。Developer ID、验收 Mac 和 CLI/账号
 尚未确认；不要为等待资源而扩张未经编译的 P1–P6 界面。

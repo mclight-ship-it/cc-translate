@@ -35,7 +35,9 @@ jobs:
           python3 --version
           python3 -c 'import sys; assert sys.version_info >= (3, 9), "Build harness requires Python 3.9+"'
       - name: Portable offline contract and packaging tests
-        run: python3 -m unittest tests.test_macos_protocol tests.test_macos_bundle
+        run: >-
+          python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle
+          tests.test_classify tests.test_classify_import
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
@@ -46,6 +48,25 @@ jobs:
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 --filter HelperIntegrationTests
       - name: Explicit bundled helper HTTPS and SQLite smoke
         run: python3 tools/macos/smoke.py --allow-https
+      - name: Shared classification regression using only the bundled core and Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B - <<'PY'
+          from pathlib import Path
+          import sys
+          import unittest
+
+          core = Path("tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/Core").resolve()
+          sys.path[:0] = [str(core), str(Path("tests").resolve())]
+          import cc_classify
+          assert Path(cc_classify.__file__).resolve() == core / "cc_classify.py"
+          suite = unittest.defaultTestLoader.loadTestsFromNames(
+              ["test_classify", "test_classify_import"])
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful() or result.skipped:
+              raise SystemExit(1)
+          PY
       - name: Recheck immutable bundle and preserve executable modes in zip
         shell: bash
         run: |

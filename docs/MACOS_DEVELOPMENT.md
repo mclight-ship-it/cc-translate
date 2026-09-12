@@ -1,6 +1,6 @@
 # macOS 原生客户端开发指南
 
-状态：P0 开发中，尚未在 macOS 编译、运行或签名验收。最低版本暂定 macOS 14，
+状态：P0 真实 Mac 自动化工程门槛已通过，P1 纯核心并行开发；首次实机/签名门槛未验收。最低版本暂定 macOS 14，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
 进度与证据以 [MACOS_TODO.md](MACOS_TODO.md) 为准。
 
@@ -19,7 +19,8 @@ Codex/Claude CLI 与用户账号仍是外部前提；不是所有安装方式都
 使用项目公有仓库的标准免费 macOS runner 验证。真实 run/SHA 和结果写入验收清单；
 工作流存在或提交成功本身不代表 CI 通过。不发布、不推送/合并正式分支、不部署覆盖 Windows 应用、
 不购买额度或启用收费大机器。不配置签名私钥、不要求在聊天粘贴凭据、不绕过 Gatekeeper。
-尚待确认：验收 Mac 的 OS/CPU、可用云 runner/额度、Developer ID、真实 CLI/账号和远程 GUI 条件。
+标准免费 arm64 runner 已实际验证；尚待确认验收 Mac 的 OS/CPU、Developer ID、
+真实 CLI/账号和远程 GUI 条件。
 
 ## 2. 架构和目录责任
 
@@ -34,6 +35,7 @@ cc_macos/
   protocol.py               有界、版本化 NDJSON 校验
   server.py                 握手、请求、事件序号、取消和 EOF
   probes.py                 SQLite / SSL 等显式运行时自检，不获取 TCC
+cc_classify.py               P1 共用本地分类；仅依赖 re，无平台/数据路径副作用
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
 .github/workflows/         仅 macOS 开发工作流，与 Windows 发布隔离
@@ -51,6 +53,11 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
   P1 先处理包初始化边界；每次抽取保留兼容导出并跑 Windows 回归。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
   后续需要 XCUITest 时可增加 Xcode 测试宿主，不以未经编译的大量 UI 替代平台探针。
+
+P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主入口保留兼容导出，
+不复制第二套规则。该模块随包放入 `Resources/Core` 并纳入资源哈希和必需文件审计。
+便携回归直接导入模块；Windows 另验证函数 identity；Mac CI 用包内 isolated Python
+执行同一分类矩阵/无副作用测试。此切片尚未增加业务 IPC、真实翻译或 provider 调用。
 
 ## 3. IPC v1 合同
 
@@ -162,6 +169,7 @@ git diff --check
 后续抽取业务模块时把它们原有测试加入同一 unittest 调用；只有涉及集成入口/共享行为时
 升级到完整 Windows 回归。测试不应依赖用户配置、网络、真实 CLI 或 Tk。
 不得把 Windows 测试通过写成 Mac 通过。
+分类切片的针对性命令为 `python -B -m unittest tests.test_classify tests.test_classify_import tests.test_classify_windows tests.test_macos_bundle tests.test_macos_protocol`。
 
 ### macOS 开发/云环境
 

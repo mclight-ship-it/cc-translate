@@ -241,6 +241,7 @@ class MachORulesTests(ProjectDirectory):
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+                     "Resources/Core/cc_classify.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -309,6 +310,18 @@ class MachORulesTests(ProjectDirectory):
         app = self.synthetic_app()
         license_path = app / "Contents/Resources/Licenses/Python/licenses/LICENSE.openssl-3.txt"
         license_path.write_bytes(b"truncated synthetic license")
+        with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
+            bundle.audit_bundle(app, bundle.load_lock())
+
+    def test_audit_requires_shared_classifier(self):
+        app = self.synthetic_app()
+        (app / "Contents/Resources/Core/cc_classify.py").unlink()
+        with self.assertRaisesRegex(bundle.BundleError, "missing bundle resources"):
+            bundle.audit_bundle(app, bundle.load_lock())
+
+    def test_audit_rejects_modified_shared_classifier(self):
+        app = self.synthetic_app()
+        (app / "Contents/Resources/Core/cc_classify.py").write_bytes(b"modified synthetic classifier")
         with self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
             bundle.audit_bundle(app, bundle.load_lock())
 
@@ -514,10 +527,27 @@ class SmokeContractTests(unittest.TestCase):
 
 
 class HelperBundleIntegrationTests(ProjectDirectory):
+    def test_shared_classifier_is_packaged_without_windows_entry(self):
+        core = self.root / "Core"
+        bundle.copy_core_sources(core)
+        self.assertEqual(
+            (core / "cc_classify.py").read_bytes(),
+            (bundle.ROOT / "cc_classify.py").read_bytes())
+        self.assertEqual(
+            {path.name for path in core.iterdir()},
+            {"launch.py", "cc_macos", "cc_classify.py"})
+        self.assertFalse(list(core.rglob("__pycache__")))
+
+    def test_missing_shared_classifier_blocks_packaging(self):
+        core = self.root / "Core"
+        with patch.object(bundle, "ROOT", self.root):
+            with self.assertRaisesRegex(bundle.BundleError, "shared classifier"):
+                bundle.copy_core_sources(core)
+        self.assertFalse(core.exists())
+
     def test_packaged_sources_and_smoke_consumer_with_real_host_helper(self):
         core = self.root / "Core"
-        bundle.copy_sources(bundle.ROOT / "cc_macos", core / "cc_macos")
-        shutil.copy2(bundle.ROOT / "cc_macos/launch.py", core / "launch.py")
+        bundle.copy_core_sources(core)
         session = smoke.Session([sys.executable, "-I", "-B", core / "launch.py"], self.root)
         try:
             session.send("h", "hello", {})

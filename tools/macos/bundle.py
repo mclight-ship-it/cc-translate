@@ -491,6 +491,7 @@ def audit_bundle(app, lock, environment=None):
     required = [
         "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+        "Resources/Core/cc_classify.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
         "Resources/Licenses/Python/PYTHON.json",
@@ -592,6 +593,14 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def copy_core_sources(core):
+    classifier = ROOT / "cc_classify.py"
+    need(classifier.is_file() and not classifier.is_symlink(), "shared classifier missing or linked")
+    copy_sources(ROOT / "cc_macos", core / "cc_macos")
+    shutil.copy2(ROOT / "cc_macos/launch.py", core / "launch.py")
+    shutil.copy2(classifier, core / "cc_classify.py")
+
+
 def build(lock, offline=False):
     environment, toolchain = require_macos()
     # Never update an existing (possibly signed) bundle, even on a second build.
@@ -612,8 +621,7 @@ def build(lock, offline=False):
     (contents / "Info.plist").write_bytes(info)
     excluded = extract_runtime(assets["runtime"], contents / "Helpers/python", lock)
     core = contents / "Resources/Core"
-    copy_sources(ROOT / "cc_macos", core / "cc_macos")
-    shutil.copy2(ROOT / "cc_macos/launch.py", core / "launch.py")
+    copy_core_sources(core)
     (core / "cacert.pem").write_bytes(ca)
     license_root = contents / "Resources/Licenses"
     for name, data in licenses.items():
