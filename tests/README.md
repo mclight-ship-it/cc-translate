@@ -34,3 +34,16 @@ pytest
   后缀，且 GUI 只在 `__main__` 下启动，import 时不会弹窗）。
 - 断言值都是从真实函数的实际输出捕获来的，不是凭空想象——改动这些纯函数后
   跑一遍就能立刻知道有没有改坏原有行为。
+
+## macOS P0 便携测试
+
+`test_macos_protocol.py` 直接导入无界面 helper，并测试真实私有管道子进程、取消/EOF、
+输入边界和临时 SQLite 读写；不导入 Windows 主入口，不访问账号或调用模型。
+`test_macos_bundle.py` 验证打包规则，不在 Windows 执行 Mac 二进制。
+
+```bash
+python -m unittest tests.test_macos_protocol tests.test_macos_bundle
+```
+
+原生 XCTest、真实 HTTPS、GUI/TCC 和签名包必须另在 Mac 验证，不能用这些测试替代。
+环境、命令及未通过的门槛见 [macOS 验收清单](../docs/MACOS_TODO.md)。

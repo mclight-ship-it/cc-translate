@@ -1,0 +1,67 @@
+name: macOS P0 development probe
+
+on:
+  push:
+    branches:
+      - agents/cc-translate-macos-native
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p0:
+    # The official macos-15 label is arm64; verify it again before any build.
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - name: Check out development sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Require the explicitly selected Apple Silicon toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -d "$DEVELOPER_DIR"
+          test "$(/usr/bin/xcodebuild -version | head -n 1)" = "Xcode 16.4"
+          /usr/bin/xcodebuild -version
+          /usr/bin/xcrun --sdk macosx --show-sdk-version
+          /usr/bin/xcrun swift --version
+          python3 --version
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), "Build harness requires Python 3.9+"'
+      - name: Portable offline contract and packaging tests
+        run: python3 -m unittest tests.test_macos_protocol tests.test_macos_bundle
+      - name: Native Swift tests (not GUI or first-use TCC validation)
+        run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
+      - name: Build and audit development-only bundle with pinned runtime
+        run: python3 tools/macos/bundle.py build --development
+      - name: Native Foundation.Process to bundled helper integration (not optional here)
+        env:
+          CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
+        run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 --filter HelperIntegrationTests
+      - name: Explicit bundled helper HTTPS and SQLite smoke
+        run: python3 tools/macos/smoke.py --allow-https
+      - name: Recheck immutable bundle and preserve executable modes in zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/macos/bundle.py verify
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            tools/macos/.build/CCTranslateMac-P0.app \
+            tools/macos/.build/CCTranslateMac-P0.zip
+      - name: Retain synthetic development artifact only (not a Release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-arm64-p0-development-NOT-A-RELEASE
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            tools/macos/.build/CCTranslateMac-P0.zip
+            tools/macos/.build/bundle-audit.json
+            tools/macos/.build/helper-smoke.json

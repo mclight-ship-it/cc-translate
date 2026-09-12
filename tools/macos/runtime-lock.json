@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "purpose": "Unsigned P0 development probe only; not a release",
+  "bundle_identifier": "dev.cc-translate.macos.probe",
+  "deployment_target": "14.0",
+  "architecture": "arm64",
+  "python_version": "3.12.14",
+  "python_target": "aarch64-apple-darwin",
+  "pbs_release": "20260901",
+  "pbs_commit": "4bb01f09aaf362c71e891be4a41cb6d6ddf830b3",
+  "assets": {
+    "runtime": {
+      "filename": "runtime.tar.gz",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "3ee3ee547cedfeb7c2b16b2b7156039f7b470bb8f857e226fd3d2eb11db83c76",
+      "size": 25135464
+    },
+    "full_build": {
+      "filename": "full.tar.zst",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+      "sha256": "dbefa04d4107b449e17022f9c78d3eacbd37a1aa8c166c6220dbd95addf3f318",
+      "size": 54682677
+    },
+    "certifi": {
+      "filename": "certifi.whl",
+      "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "version": "2026.7.22",
+      "size": 136983
+    },
+    "mpl": {
+      "filename": "MPL-2.0.txt",
+      "url": "https://www.mozilla.org/media/MPL/2.0/index.txt",
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+      "size": 16726
+    }
+  },
+  "certificate_member": "certifi/cacert.pem",
+  "certificate_notice_member": "certifi-2026.7.22.dist-info/licenses/LICENSE",
+  "required_runtime_licenses": [
+    "LICENSE.cpython.txt",
+    "LICENSE.bzip2.txt",
+    "LICENSE.expat.txt",
+    "LICENSE.libffi.txt",
+    "LICENSE.liblzma.txt",
+    "LICENSE.libuuid.txt",
+    "LICENSE.mpdecimal.txt",
+    "LICENSE.openssl-3.txt",
+    "LICENSE.sqlite.txt",
+    "LICENSE.zlib.txt"
+  ],
+  "runtime_profile": "stdlib-only: python3, python3.12, libpython3.12.dylib, lib/python3.12; no pip/ensurepip/Tk/Tcl/IDLE/build headers",
+  "excluded_stdlib_roots": [
+    "site-packages",
+    "ensurepip",
+    "idlelib",
+    "tkinter",
+    "turtledemo",
+    "turtle.py",
+    "config-3.12-darwin"
+  ],
+  "license_metadata_exception": {
+    "path": "licenses/LICENSE.zlib-ng.txt",
+    "reason": "This fixed macOS build references alternative zlib-ng metadata but ships no zlib-ng: every referencing extension must link z as a system library, with no bundled z/zlib/zlib-ng link. Retain upstream LICENSE.zlib.txt. Any other missing license is fatal."
+  }
+}
