@@ -2,7 +2,7 @@
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
-本轮仅继续显式平台路径/原子 JSON 基础，不创建完整请求快照、writer 或新 UI。
+显式平台路径/原子 JSON 基础也已通过，本轮在此暂停，不创建完整请求快照、writer 或新 UI。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -46,6 +46,7 @@ cc_classify.py               P1 共用本地分类/词典触发判断；仅依�
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
 cc_result_rules.py           P1 缓存签名/history-kind；只接 caller-resolved 值，不读取 UI/配置
+cc_storage.py                P1 显式 Mac 路径与单文件原子 JSON；不选默认 home，不是唯一 writer
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -110,11 +111,13 @@ route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留
 签名字节/字段顺序/旧版本与错误传播保持不变。
 `_history_meta` 仍在主线程创建现有 job-owned dict；不把已有 frozen `ProviderRequest` 替换成新快照框架。
 Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
-当前存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
+已完成的存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
 共享原子 JSON primitive 由 Windows 兼容入口实际使用；Mac 合成临时目录诊断通过 CI 显式调用，
 不增加 runtime JSON/设置 UI，不选择真实用户数据目录。原子替换不等于完整配置/历史唯一 writer，
 Windows 默认目录、迁移、日志与 schema 保持；`clear_history` 的锁边界另留后续服务处理。
+共享 writer 显式保留 FD 所有权直至关闭，补齐 fdopen 失败的释放；旧 JSON 字节与失败清理策略不变。
+路径是词法解析而非符号链接权限检查，当前 Mac 入口只使用 caller-owned 临时目录，不选择真实业务 home。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。
@@ -343,7 +346,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
 以下固定样本已取得首轮正向用户报告（范围见下），不是后续源码的验收。
-随后 catalog 进程监督及共享规则已分别完成自动化；exec/app-server、配置/历史和完整 UI 等保持暂停。
+随后 catalog 进程监督、共享规则和路径/原子存储基础已分别完成自动化；
+exec/app-server、完整配置/历史服务和 UI 等保持暂停。
 缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
 **固定来源与边界：**
@@ -492,6 +496,18 @@ SHA-256 `a2fec6d9205b44baf858f2d621cf0dbdf4ab9a655285458d26b087bca7474cb8`。
 Windows targeted 140/完整 hook 995、Mac 便携 182/包内核心 91（新增规则 9 项）全部通过，
 既有 Swift/25 项真进程/后置包内集成与资源审计也通过，详见 TODO。
 免费分发和签名状态不变，旧包实机报告不迁移；本轮到此停止新增功能。
+
+### 最新存储基础检查点（仅自动化，不要求现在重装）
+
+源码 `84ab360d61c56875276e73963527721e40c89426`，
+[绿色 run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000) /
+[固定 artifact 10320055600](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000/artifacts/10320055600)，
+到期 2026-09-20 14:59:39 UTC。内层 `CCTranslateMac-P0.zip`：18,358,978 字节，
+SHA-256 `c6266618ae36308d2d7f17252acfc9ad932f7036e0cf48aae0daa875a093ca61`。
+Windows targeted 137/完整 hooks 1049、Mac 便携 198/包内核心 107（新增存储 16 项）通过，
+实际 bundle 身份下的临时存储诊断、既有 25 项真进程/Swift 后置集成/不可变审计均通过。
+原 runtime JSON、业务配置/history schema 和原生 UI 未变；不是完整唯一 writer、迁移或产品。
+新包不继承旧包实机报告，免费分发/签名与人工门槛不变，完整证据见 TODO。
 
 ## 7. 功能对齐矩阵
 

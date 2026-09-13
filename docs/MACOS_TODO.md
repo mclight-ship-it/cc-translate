@@ -139,7 +139,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 自动化不代表完整 P0 首开/TCC 矩阵通过，也不解锁完整 P2–P6 UI；原包的首轮正向用户报告另记。
 当前采用免费 GitHub 分发路线，Developer ID/公证为未选择的可选增强，不是 P1 或免费首测的强制准入。
 - [ ] 平台路径，Application Support/Caches 分工，业务配置/历史单一写入者。
-  - [ ] 当前基础层：显式 Mac home/应用身份解析路径（不创建/迁移），共享原子 JSON 写入；
+  - [x] 路径/原子基础层：显式 Mac home/应用身份解析（不创建/迁移），共享 JSON 原子写入；
+    源码 `84ab360` / [run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000)
+    通过，见[基础层证据](#存储基础可靠检查点2026-09-13)。
     Windows 原入口/默认路径/日志不变，Mac 仅临时合成诊断；不是唯一 writer 或迁移服务。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
@@ -739,7 +741,7 @@ ECHILD 的首信号、末信号和非回收观察路径另由 host contracts 检
 完整接线和真实词库安装切换等；P2–P6 仍未完成。技术上可独立回归的小项不因签名而被阻断，
 只是本次单一切片已结束，不自动开启下一项。免费 GitHub/零付费预算、不发布 Release/不动 master 或 Windows 部署不变。
 
-## 当前单一切片：共享缓存签名与历史类型规则（2026-09-13，已完成）
+## 共享缓存签名与历史类型规则（2026-09-13，已完成）
 
 catalog 检查点及其只读 review 已完成，不重做等价监督改造。本次仅获准完成下列纯规则前置，
 不创建完整请求快照、配置/历史 writer 或 UI，不改模型 prompt/缓存版本、不清用户缓存。
@@ -823,7 +825,7 @@ exec/常驻 app-server/Claude 生命周期及真实词库安装切换、完整 P
 跨版本授权和 macOS 14/26 完整兼容仍需后续集中验证。
 GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可选增强；不发布 Release、不改 master/Windows 部署。
 
-## 当前单一切片：显式平台路径与原子 JSON 基础（2026-09-13）
+## 当前单一切片：显式平台路径与原子 JSON 基础（2026-09-13，已完成）
 
 上一共享规则切片已验收关闭，不重做。当前仅完成下面的依赖基础层：
 
@@ -832,10 +834,10 @@ GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可�
    Mac 应用身份由调用方取现有已校验 Info.plist 的 CFBundleIdentifier，不另建默认常量。
 2. [x] 抽取 Windows 实际 `_atomic_write_json`，同目录唯一 temp、原 JSON 字节、
    flush/fsync/replace 与错误/patch seam 保持；配置/history schema、load/save/log wrapper 不变。
-3. [ ] 包内显式合成诊断使用临时 home，调用路径与真实 JSON 写入/重开/替换；
+3. [x] 包内显式合成诊断使用临时 home，调用路径与真实 JSON 写入/重开/替换；
    同源模块/必需资源/hash/隔离导入、故障矩阵、Windows 消费者与真实 Mac CI 全部回归。
    诊断只由自动化显式调用，不增加业务 UI 或 runtime JSON 字段。
-4. [ ] 正常 hooks/开发分支推送、记录 source/docs SHA/run/artifact/hash，清理下载包后停止。
+4. [x] 正常 hooks/开发分支推送、记录 source/docs SHA/run/artifact/hash，清理下载包后停止。
 
 原子 replace 只保证单个文件完整可见，不保证跨请求/跨进程 read-modify-write 唯一所有权，
 也不等于断电持久性协议。本轮不重构 `_HISTORY_LOCK`/`clear_history`（后者仍未共用锁）、
@@ -859,4 +861,51 @@ GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可�
 - 新增 Windows 接线 **38 tests** 全部通过；最终联合 **137 tests，OK，7.225s**，
   含 **16 项**便携存储/故障测试、现有配置/历史、隔离和包审计。
   回归冻结了 12 项既有 Windows AST，使用稳定序列化/hash，不依赖运行时 Git 历史或 ast.dump 版本格式。
-  本地截至此处没有失败测试；完整 hooks/Mac 仍须真实完成。
+  当时本地没有失败测试，后续完整 hooks/Mac 已按下表真实完成。
+
+### 存储基础可靠检查点（2026-09-13）
+
+- 实际源码 **84ab360d61c56875276e73963527721e40c89426**，正常 privacy/编译/pre-push
+  完整 **1049 Windows tests，OK，57.418s**，无失败/skip；仍只有既有 Tk teardown stderr 警告。
+- [run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000)
+  **success，job 2m37s**，标准免费 macos-15 arm64、Xcode 16.4，
+  image `20260907.0337.1`。本切片 Windows 与真实 Mac CI 均无失败测试或失败重跑。
+
+| 实际执行 | 结果 |
+|---|---|
+| Mac 便携/打包与 Darwin contracts | **198 tests，OK，6.611s** |
+| 普通 XCTest | **35 总数：34 通过 + 1 初次集成 skip，0 failures，9.286s** |
+| 包内 config/catalog 真进程 | **25 tests（9 + 16），OK，56.075s，0 skip** |
+| 构建后 Foundation.Process 强制包内集成 | **1 test 真通过，0 skip，2.752s** |
+| 包内 `-I -B` 同源核心 | **107 tests，OK，0.552s，0 skip**；新增存储 16 项逐项发现并通过 |
+| 包内显式存储入口 | 从实际 Info.plist 取 ID，在 TemporaryDirectory 中执行 `probe_storage`，真实输出通过标记 |
+| 构建、完整许可/资源/Mach-O、HTTPS/SQLite、取消/EOF、不可变和归档 | 所有 steps 通过 |
+
+新增 Mac 实际执行包含：路径无隐式 HOME/目录创建、相对/父级/Bundle home 拒绝、
+Unicode/空格/#/% 路径、JSON 原字节/重开/替换、先 flush/fsync/关闭 FD 再 replace、
+fdopen/部分序列化/flush/fsync/replace 失败后的原文件保留与单操作清理、
+旧 cleanup 失败仍保留 primary exception、相邻操作 temp 不动、缺目录无回退、
+合成诊断拒绝覆盖已有数据目录或写 bundle。诊断不是 stub，也不把其返回值当成功证据。
+
+- 新[artifact 10320055600](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000/artifacts/10320055600)，
+  `macos-arm64-p0-development-NOT-A-RELEASE`，已核验有效；到期 **2026-09-20T14:59:39Z**。
+  内层 **CCTranslateMac-P0.zip，18,358,978 字节**，
+  SHA-256 **c6266618ae36308d2d7f17252acfc9ad932f7036e0cf48aae0daa875a093ca61**。
+  GitHub 外层 artifact SHA-256 为 `4135a1c6c8dbdaa1aa7e34e7203d122e4685cc4e50768e0aee3b149a44bbcd46`，
+  不作为内层校验值。
+- 独立下载核对 **664 库存项 / 54 资源 hash / 19 Git blobs / 6 arm64 Mach-O**；
+  `cc_storage.py` 与 `cc_macos/storage_fixture.py` 均匹配该固定源码。
+  source manifest SHA 正确且 clean，Info.plist 身份与原 lock 一致，无新身份默认；
+  19 份 runtime 许可、605 文件 full-build 覆盖记录保留，ZIP CRC/路径/相对链接及 0755 模式通过。
+- 现有 smoke 的 handshake、fixture、explicit_cancel、eof_cancel、bundle_unchanged、
+  probe_files_cleaned 仍全为 true；包内 Python 3.12.14 / SQLite 3.53.1 / OpenSSL 3.5.8，
+  HTTPS 证书验证通过。未增加 runtime JSON 字段，不把存储 CI 入口声称为新业务设置/诊断按钮。
+- 下载 zip 已删除，合成目录无残留；会话只保留脱敏 JSON/验证记录。
+  最后文档-only 正常 hooks/push，以 `[skip ci]` 避免重复未变源码 CI，交接分别给出源码与文档 SHA。
+
+**基础层到此完成并暂停新增代码。** 本轮无需用户重装、登录或安装 CLI；新包仅自动化，
+用户首轮实测证据仍只属于旧 `eec92a5`。未选择真实业务 home，不导入 Mac 的 `cc_core`，
+Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
+完整唯一 writer、跨请求/跨进程读改写、配置/历史迁移适配、请求快照、provider 生命周期、
+完整 P1/P2–P6 与剩余实机门槛未完成；这些可独立拆分的代码工作不因签名而被阻断，
+但本次不继续开启。免费 GitHub/零预算/不 Release、不改 master 或 Windows 正式部署保持。
