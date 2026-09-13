@@ -651,13 +651,13 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 2. [x] 接入现有 catalog `--version`/`debug models` Darwin 调用，明确 stdout+stderr 实时总限额、
    期限、取消、helper EOF；取消/监督错误不得被缓存降级吞掉后继续请求。Windows 默认路径不变，
    cache/logger/解析/路由/override 安全语义不变。
-3. [ ] 隔离 synthetic CLI 走真实 catalog 冷缓存及磁盘重开路径，不伪造 validated 状态；
+3. [x] 隔离 synthetic CLI 走真实 catalog 冷缓存及磁盘重开路径，不伪造 validated 状态；
    包内 helper/smoke/Swift 严格协议与负例同步，真实 Mac 验证正常/失败/超限/期限/取消/EOF、
    后代清理及无关 sibling 存活，确认 XCTest 被发现执行。
-4. [ ] 针对性 Windows、正常 hooks、唯一分支推送、免费 Mac CI 与包内资源审计真实通过，
+4. [x] 针对性 Windows、正常 hooks、唯一分支推送、免费 Mac CI 与包内资源审计真实通过，
    记录新源码/文档 SHA、run/artifact/hash；失败保留并修复，切片完成后停在可靠检查点。
 
-### Catalog 实现与本地检查（真实 Mac 结果随后记录）
+### Catalog 实现与首次本地检查（历史；实际 Mac 结果见下）
 
 - 配置与 catalog 现在共同调用 `darwin_process.OwnedProcess` 的固定包内 ABI-1 桥接与唯一清理所有者；
   配置 RPC 协议保持不变。catalog 双非阻塞 pipe 总预算 **8 MiB**，每个 CLI 探针 **8 秒**，
@@ -677,5 +677,54 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 首次 Windows 针对性命令误选两个不存在的测试模块：142 项中 2 个 import errors；
   没有安装包或隐藏失败。改用现有 `tests.test_providers` 后 **196 tests，OK，20.655s**；
   加入最终 ECHILD 负例后联合复跑 **197 tests，OK，20.475s**，覆盖 config/catalog、原 provider、
-  便携存储/导入、协议与打包。Mac 新 suite 静态确认 16 个顶层测试方法，但尚未执行；
-  完整 hooks/Mac CI 随后记录，不能据本地结果勾选真实 Mac 通过。
+  便携存储/导入、协议与打包。当时仅静态确认 Mac 新 suite 的 16 个顶层测试方法；
+  随后已按下表完成真实执行，不将这次静态检查算作 Mac 通过证据。
+
+### Catalog 可靠检查点（2026-09-13，已完成本次单一切片）
+
+- 原包匿名用户报告已先以文档提交 **a6f64f4e420c762fb3ff3702b64f93f5817c8968** 正常推送；
+  该报告仍只属于 `eec92a5` / run `34706318638` / artifact `10301738307`。
+- 新执行源码 **a0c2df6fe7fa41d8e6c8034cfdc9303a6636453b**，正常 hooks 完成 privacy/编译及
+  **959 Windows tests，OK，56.867s**，无失败/skip；只有既有 Tk teardown stderr 警告。
+- [run 34761449362](https://github.com/mclight-ship-it/cc-translate/actions/runs/34761449362)，
+  **success，job 2m30s**，标准免费 macos-15 arm64、固定 Xcode 16.4。此次真实 Mac CI 无失败重跑；
+  前述本地选错两个测试模块的错误记录保留，未跳过断言或绕过 hooks。
+
+| 实际执行 | 结果 |
+|---|---|
+| Mac 便携/打包及 Darwin host contracts | **173 tests，OK，7.316s** |
+| 普通 XCTest | **35 总数：34 通过 + 1 初次包内集成 skip，0 failures** |
+| 新 catalog 协议 XCTest | `testCatalogProcessRequiresCompleteSyntheticProcessEvidence` 明确发现并通过，0.008s |
+| 包内 Python 真进程 | **25 tests：9 config + 16 catalog，OK，52.830s，0 skip** |
+| 构建后 Foundation.Process 强制包内集成 | **1 test 真通过，0 skip，2.347s**；不是将初次 skip 当通过 |
+| 包内同源纯核心 | **82 tests，OK，0.446s，0 skip** |
+| bundle、完整许可/资源/Mach-O、HTTPS/SQLite、取消/EOF、不可变审计 | 全部通过 |
+
+16 项 catalog 真进程用例逐项实际执行：包内路径/真实桥接、冷三次/命中不启动/重开一次、
+早退成功和非零退出、TERM-resistant 后代持 pipe、关闭全部输出但 leader 仍活、
+静默及 roundtrip 八秒期限、stdout/stderr/双流共享八 MiB 洪泛、开始后的取消、预取消隔离、
+原始 stderr 不外泄、真实 helper EOF 与 stdin 未关闭时协议取消、固定诊断入口。
+每例验证独立 sibling 存活；leader 已回收，孤儿后代只接受消失或 launchd 名下不可运行 zombie。
+测试不在失败后凭记录的 PID 补杀/补 wait，不替生产代码回收后伪造通过。
+ECHILD 的首信号、末信号和非回收观察路径另由 host contracts 检查，禁止后续 signal/wait。
+
+- 新[artifact 10319141756](https://github.com/mclight-ship-it/cc-translate/actions/runs/34761449362/artifacts/10319141756)
+  名称 `macos-arm64-p0-development-NOT-A-RELEASE`，已核验未过期；到期 **2026-09-20T14:03:44Z**。
+  内层 **CCTranslateMac-P0.zip** 为 **18,356,322 字节**，
+  SHA-256 **26803ef34f2b07bb55491a570991f615538321eefb21a1ad823f0c7a54a47881**。
+  GitHub 外层 artifact SHA-256 为 `4e550d17ddf00fcace3be8f85e858d4a21eec4849ec81a2698972bdfbb3491fd`，
+  不与内层值混用。
+- 独立下载复核 **661 库存项 / 51 资源哈希 / 16 Git blobs / 6 arm64 Mach-O**，
+  source manifest 为上述源码 SHA 且 clean；ZIP CRC、唯一路径、安全相对链接和执行模式通过。
+  原存储 `cli_simulated=true` 和新增真实合成进程 `fixture/process_verified/cache_verified/reopen_verified=true`
+  同时存在；smoke 的 handshake、fixture、explicit_cancel、eof_cancel、bundle_unchanged、
+  probe_files_cleaned 均为 true。未运行用户真实 CLI、登录、模型请求或修改用户配置。
+- 只读生产差异复核未发现直接引入的高置信错误；临时 App zip 已清理，仅会话目录保留脱敏 JSON。
+  最后文档-only 提交使用 `[skip ci]`，正常推送，不为未变源码重跑 CI。
+
+**本轮到此暂停新增代码。** 新包只经过自动化，不能继承旧包的用户正向实测或 macOS 26 兼容性。
+仍无用户 CLI/账号/模型验收，不要求现在安装。干净用户/quarantine/Open Anyway 实际路径、
+权限拒绝/重启、多屏/Spaces/IME、跨版本权限保留和人工进程树检查继续待办。
+完整 P1 仍缺配置/历史单写、请求快照、exec/常驻 app-server/Claude 生命周期、预热/付费不重试
+完整接线和真实词库安装切换等；P2–P6 仍未完成。技术上可独立回归的小项不因签名而被阻断，
+只是本次单一切片已结束，不自动开启下一项。免费 GitHub/零付费预算、不发布 Release/不动 master 或 Windows 部署不变。

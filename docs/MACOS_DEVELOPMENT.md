@@ -1,7 +1,8 @@
 # macOS 原生客户端开发指南
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
-本轮仅继续 catalog 真进程监督，其他功能不扩展。完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
+catalog 真进程监督切片也已通过 Windows/Mac 自动化，本轮停在该检查点，不扩展其他功能。
+完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
 进度与证据以 [MACOS_TODO.md](MACOS_TODO.md) 为准。
@@ -327,7 +328,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
 以下固定样本已取得首轮正向用户报告（范围见下），不是后续源码的验收。
-当前仅另行推进 catalog 进程监督；exec/app-server、配置/历史和完整 UI 等保持暂停。
+随后仅完成 catalog 进程监督自动化；exec/app-server、配置/历史和完整 UI 等保持暂停。
 缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
 **固定来源与边界：**
@@ -449,6 +450,21 @@ artifact `10301738307`，不得转记到后续构建。用户自报 Apple Silico
 
 这些是首轮正向实机探针报告，不是完整 P0/P1 或产品验收。免费分发与用户本人选择官方单 App
 例外的路线不变；拒绝权限、干净首开、跨版本授权保留、完整平台/焦点矩阵与真实 provider 仍待验证。
+
+### 后续 catalog 检查点制品（仅自动化，不继承上述用户报告）
+
+源码 `a0c2df6fe7fa41d8e6c8034cfdc9303a6636453b`，
+[绿色 run 34761449362](https://github.com/mclight-ship-it/cc-translate/actions/runs/34761449362) /
+[固定 artifact 10319141756](https://github.com/mclight-ship-it/cc-translate/actions/runs/34761449362/artifacts/10319141756)，
+到期 2026-09-20 14:03:44 UTC。内层 `CCTranslateMac-P0.zip`：18,356,322 字节，
+SHA-256 `26803ef34f2b07bb55491a570991f615538321eefb21a1ad823f0c7a54a47881`。
+这个 hash 仅对应新包；上面首测包及用户证据仍是原始 `eec92a5`，不能混用。
+
+新包仍是 fixture/诊断，没有 Developer ID/公证或完整 bundle seal；不要求用户现在重新安装或安装 CLI。
+以后如需测试此包，沿用上面的只读内层校验、Finder 与适用时用户亲自选择官方单 App 例外的流程，
+但使用此处的新来源/校验值，并另报新 SHA；不能把旧包的权限/焦点报告当作新包已通过。
+新增 `catalog_process_fixture` 在显式离线 runtime 探针中执行包内合成 CLI，不使用用户账号或模型。
+真实执行数与资源证据见 TODO；此切片完成后暂停，完整 P0/P1 与 P2–P6 未完成。
 
 ## 7. 功能对齐矩阵
 
