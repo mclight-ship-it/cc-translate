@@ -67,9 +67,15 @@ Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_win
 以 `-I -B` 执行相同便携用例，并断言导入的是包内模块，而非源码或宿主 Python。
 分类/方向抽取不改变 P0 协议能力；helper/UI 仍只有合成 fixture 和诊断，没有真实翻译。
 
-## P1 native config 进程监督
+## P1 native config / catalog 进程监督
 
 `tests.test_codex_config_darwin_contract` 在 Windows 检查 dispatch、库边界和清理顺序，
 不执行 Darwin 二进制。`macos/PythonTests/test_codex_config_process.py` 只在 Mac CI
 使用真正包内 Python/C 库执行，覆盖合成 app-server、后代与 EOF；非 Mac 直接失败而非 skip。
 其 fake CLI 不代表真实账号、官方 CLI 版本或完整 native provider 已通过。
+
+`tests.test_codex_catalog_darwin_contract` 另验 catalog Darwin 调度、8 秒/8 MiB 参数、
+取消隔离、fatal 监督失败不降级或提交请求，以及 Windows 旧路径不加载桥接。
+`macos/PythonTests/test_codex_catalog_process.py` 使用实际包内模块/CLI 子进程，
+覆盖冷缓存三次与磁盘重开一次真实调用、双流总限额、期限、取消/EOF、后代清理和 sibling 存活。
+配置与 catalog 共用 C 所有权边界；正常/错误均先处理组再回收 leader，ECHILD 后停止所有组操作。

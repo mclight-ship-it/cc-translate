@@ -11,11 +11,13 @@ from unittest.mock import Mock, patch
 
 from cc_providers.codex_config import CODEX_CONFIG_OVERRIDES, CodexConfigError, read_native_config
 from cc_providers import codex_config_darwin as native
+from cc_providers import darwin_process as owned
+from cc_providers.darwin_process import ProcessError
 
 
 class TestDarwinConfigContract(unittest.TestCase):
     def setUp(self):
-        signals = patch.object(native, "signal", SimpleNamespace(SIGTERM=15, SIGKILL=9))
+        signals = patch.object(owned, "signal", SimpleNamespace(SIGTERM=15, SIGKILL=9))
         signals.start()
         self.addCleanup(signals.stop)
 
@@ -37,8 +39,8 @@ class TestDarwinConfigContract(unittest.TestCase):
 
     def test_no_host_library_fallback(self):
         with patch("ctypes.CDLL") as load:
-            with self.assertRaisesRegex(CodexConfigError, "config_runtime_unavailable"):
-                native._load_supervision()
+            with self.assertRaisesRegex(ProcessError, "runtime_unavailable"):
+                owned.load_supervision()
             load.assert_not_called()
 
     def test_setup_os_error_has_only_a_fixed_diagnostic(self):
@@ -57,17 +59,19 @@ class TestDarwinConfigContract(unittest.TestCase):
             library.write_bytes(b"synthetic-not-a-library")
             bridge = Mock()
             bridge.cc_process_support_abi.return_value = 2
-            with patch.object(native, "__file__", str(core / "codex_config_darwin.py")), \
+            with patch.object(owned, "__file__", str(core / "darwin_process.py")), \
                     patch("ctypes.CDLL", return_value=bridge):
-                with self.assertRaisesRegex(CodexConfigError, "config_runtime_unavailable"):
-                    native._load_supervision()
+                with self.assertRaisesRegex(ProcessError, "runtime_unavailable"):
+                    owned.load_supervision()
 
     def session(self, signal_error=0, wait_error=None):
-        session = native._ConfigSession.__new__(native._ConfigSession)
+        session = owned.OwnedProcess.__new__(owned.OwnedProcess)
         session.closed = False
-        session.selector = Mock()
+        session.finished = False
+        session.owned = True
         session.bridge = Mock()
         session.process = Mock(pid=12345)
+        session.process.stderr = None
         calls = []
         session.bridge.cc_cli_signal_group.side_effect = (
             lambda pid, sig: (calls.append((pid, sig)), signal_error)[1])
@@ -88,12 +92,11 @@ class TestDarwinConfigContract(unittest.TestCase):
         session.process.poll.assert_not_called()
         session.process.stdin.close.assert_called_once()
         session.process.stdout.close.assert_called_once()
-        session.selector.close.assert_called_once()
 
     def test_permission_failure_is_not_suppressed(self):
         session, _ = self.session(signal_error=errno.EPERM)
         with patch.object(native.time, "sleep"):
-            with self.assertRaisesRegex(CodexConfigError, "config_probe_cleanup_failed"):
+            with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
                 session.close()
         session.process.stdin.close.assert_called_once()
         session.process.stdout.close.assert_called_once()
@@ -101,7 +104,7 @@ class TestDarwinConfigContract(unittest.TestCase):
     def test_wait_failure_still_closes_both_pipes(self):
         session, _ = self.session(wait_error=subprocess.TimeoutExpired("synthetic", 2))
         with patch.object(native.time, "sleep"):
-            with self.assertRaisesRegex(CodexConfigError, "config_probe_cleanup_failed"):
+            with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
                 session.close()
         session.process.stdin.close.assert_called_once()
         session.process.stdout.close.assert_called_once()
@@ -109,9 +112,48 @@ class TestDarwinConfigContract(unittest.TestCase):
     def test_lost_child_ownership_never_signals_or_reaps_again(self):
         session, calls = self.session(signal_error=errno.ECHILD)
         with patch.object(native.time, "sleep"):
-            with self.assertRaisesRegex(CodexConfigError, "config_probe_cleanup_failed"):
+            with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
                 session.close()
         self.assertEqual(calls, [(12345, 15)])
+        session.process.wait.assert_not_called()
+        self.assertEqual(session.process.returncode, -1)
+
+    def test_non_reaping_observation_lost_ownership_blocks_all_future_signals(self):
+        session, calls = self.session()
+        session.bridge.cc_cli_has_exited.return_value = errno.ECHILD
+        with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
+            session.has_exited()
+        with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
+            session.close()
+        session.close()
+        self.assertEqual(calls, [])
+        session.process.poll.assert_not_called()
+        session.process.wait.assert_not_called()
+        self.assertEqual(session.process.returncode, -1)
+        session.process.stdout.close.assert_called_once()
+
+    def test_config_translates_shared_errors_and_closes_its_selector(self):
+        for code in ("runtime_unavailable", "probe_unavailable", "probe_cleanup_failed"):
+            with patch.object(native, "_ConfigSession", side_effect=ProcessError(code)):
+                with self.assertRaisesRegex(CodexConfigError, "^config_" + code + "$"):
+                    native.read_config(["synthetic"], {}, "unused")
+        session = native._ConfigSession.__new__(native._ConfigSession)
+        session.closed = False
+        session.selector = Mock()
+        session.owner = Mock()
+        session.close()
+        session.close()
+        session.selector.close.assert_called_once()
+        session.owner.close.assert_called_once()
+
+    def test_ownership_lost_at_final_signal_never_waits(self):
+        session, _ = self.session()
+        session.bridge.cc_cli_signal_group.side_effect = [0, errno.ECHILD]
+        with patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(ProcessError, "probe_cleanup_failed"):
+                session.close()
+        session.close()
+        self.assertEqual(session.bridge.cc_cli_signal_group.call_count, 2)
         session.process.wait.assert_not_called()
         self.assertEqual(session.process.returncode, -1)
 

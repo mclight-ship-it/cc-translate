@@ -49,6 +49,10 @@ final class ProtocolTests: XCTestCase {
                 "status": .string("passed"), "cli_simulated": .bool(true),
                 "cache_verified": .bool(true), "reopen_verified": .bool(true)
             ]),
+            "catalog_process_fixture": .object([
+                "status": .string("passed"), "fixture": .bool(true), "process_verified": .bool(true),
+                "cache_verified": .bool(true), "reopen_verified": .bool(true)
+            ]),
             "ssl": .object([
                 "status": .string("passed"), "version": .string("OpenSSL synthetic"),
                 "certificate_validation": .bool(true), "ca_source": .string("bundle")
@@ -254,6 +258,7 @@ final class ProtocolTests: XCTestCase {
             "isolated": .bool(false), "bytecode_disabled": .bool(false), "bundle_runtime": .bool(false)
         ])
         report["codex_config_fixture"] = .object(["status": .string("not_run")])
+        report["catalog_process_fixture"] = .object(["status": .string("not_run")])
         let result = try state.receive(event("runtime", 1, "completed", report))
         XCTAssertEqual(result.payload["python"]?.object?["bundle_runtime"], .bool(false))
         XCTAssertEqual(result.payload["https"]?.object?["status"], .string("not_run"))
@@ -364,6 +369,39 @@ final class ProtocolTests: XCTestCase {
             "code": .string("catalog_fixture_failed")
         ]))
         XCTAssertEqual(failure.safeFailureCode, "catalog_fixture_failed")
+    }
+
+    func testCatalogProcessRequiresCompleteSyntheticProcessEvidence() throws {
+        var state = try connected()
+        try state.register(ClientMessage(id: "catalog_process", type: "request", payload: [
+            "operation": .string("runtime_probe")
+        ]))
+        _ = try state.receive(event("catalog_process", 0, "accepted", ["operation": .string("runtime_probe")]))
+        let fixture = try XCTUnwrap(runtimeReport()["catalog_process_fixture"]?.object)
+        var report = runtimeReport()
+        report.removeValue(forKey: "catalog_process_fixture")
+        XCTAssertThrowsError(try state.receive(event("catalog_process", 1, "completed", report)))
+        report["catalog_process_fixture"] = .object(["status": .string("not_run")])
+        XCTAssertThrowsError(try state.receive(event("catalog_process", 1, "completed", report)))
+        for key in fixture.keys {
+            var incomplete = fixture
+            incomplete.removeValue(forKey: key)
+            report["catalog_process_fixture"] = .object(incomplete)
+            XCTAssertThrowsError(try state.receive(event("catalog_process", 1, "completed", report)))
+        }
+        for key in ["fixture", "process_verified", "cache_verified", "reopen_verified"] {
+            for value in [JSONValue.bool(false), .integer(1), .string("true")] {
+                var invalid = fixture
+                invalid[key] = value
+                report["catalog_process_fixture"] = .object(invalid)
+                XCTAssertThrowsError(try state.receive(event("catalog_process", 1, "completed", report)))
+            }
+        }
+        var extra = fixture
+        extra["path"] = .string("synthetic forbidden path")
+        report["catalog_process_fixture"] = .object(extra)
+        XCTAssertThrowsError(try state.receive(event("catalog_process", 1, "completed", report)))
+        _ = try state.receive(event("catalog_process", 1, "completed", runtimeReport()))
     }
 
     func testHTTPSRequiresBundledCAAndFixedHost() throws {

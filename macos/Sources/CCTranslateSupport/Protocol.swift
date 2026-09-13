@@ -444,7 +444,7 @@ public struct ProtocolState {
 
     private func runtimePayload(_ payload: [String: JSONValue], https: Bool) -> Bool {
         guard Set(payload.keys) == ["python", "sqlite", "dictionary", "codex_config_fixture",
-                                   "catalog_storage_fixture", "ssl", "https"],
+                                   "catalog_storage_fixture", "catalog_process_fixture", "ssl", "https"],
               let python = payload["python"]?.object,
               Set(python.keys) == ["version", "platform", "machine", "isolated", "bytecode_disabled", "bundle_runtime"],
               let pythonVersion = python["version"]?.string, !pythonVersion.isEmpty,
@@ -476,6 +476,11 @@ public struct ProtocolState {
                      "methods_verified": .bool(true), "routing_preserved": .bool(true)]) :
             .object(["status": .string("not_run")])
         guard payload["codex_config_fixture"] == fixtureExpected else { return false }
+        let catalogExpected: JSONValue = platform == "darwin" && python["bundle_runtime"] == .bool(true) ?
+            .object(["status": .string("passed"), "fixture": .bool(true), "process_verified": .bool(true),
+                     "cache_verified": .bool(true), "reopen_verified": .bool(true)]) :
+            .object(["status": .string("not_run")])
+        guard payload["catalog_process_fixture"] == catalogExpected else { return false }
         if https {
             return ssl["ca_source"] == .string("bundle") &&
                 Set(network.keys) == ["status", "host", "certificate_verified"] &&

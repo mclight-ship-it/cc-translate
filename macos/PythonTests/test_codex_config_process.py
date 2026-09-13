@@ -14,7 +14,7 @@ import unittest
 from cc_macos.config_fixture import create_cli
 import cc_macos
 from cc_providers.codex_config import CODEX_CONFIG_OVERRIDES, CodexConfigError, read_native_config
-from cc_providers.codex_config_darwin import _load_supervision
+from cc_providers.darwin_process import load_supervision
 
 
 if sys.platform != "darwin":
@@ -23,7 +23,7 @@ if sys.platform != "darwin":
 
 class TestOwnedNativeConfig(unittest.TestCase):
     def test_bridge_is_real_and_correct_abi(self):
-        self.assertEqual(_load_supervision().cc_process_support_abi(), 1)
+        self.assertEqual(load_supervision().cc_process_support_abi(), 1)
 
     def test_native_config_with_term_resistant_descendant(self):
         self.exercise("child")

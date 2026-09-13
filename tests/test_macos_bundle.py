@@ -22,7 +22,7 @@ from tools.macos import bundle, smoke
 
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
-CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "codex_instructions.txt")
+CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 CATALOG_FILES = ("codex_catalog.py",)
 PROVIDER_FILES = CONTRACT_FILES + CONFIG_FILES + CATALOG_FILES
 
@@ -252,6 +252,7 @@ class MachORulesTests(ProjectDirectory):
                      "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cc_macos/config_fixture.py",
                      "Resources/Core/cc_macos/catalog_fixture.py",
+                     "Resources/Core/cc_macos/catalog_process_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -527,6 +528,8 @@ class SmokeContractTests(unittest.TestCase):
                                      "methods_verified": True, "routing_preserved": True},
             "catalog_storage_fixture": {"status": "passed", "cli_simulated": True,
                                         "cache_verified": True, "reopen_verified": True},
+            "catalog_process_fixture": {"status": "passed", "fixture": True, "process_verified": True,
+                                        "cache_verified": True, "reopen_verified": True},
             "ssl": {"status": "passed", "certificate_validation": True, "ca_source": "bundle"},
             "https": {"status": "passed", "certificate_verified": True, "host": "www.python.org"},
         }
@@ -563,6 +566,12 @@ class SmokeContractTests(unittest.TestCase):
                                     ("catalog_storage_fixture", "cache_verified", False),
                                     ("catalog_storage_fixture", "reopen_verified", False),
                                     ("catalog_storage_fixture", "path", "synthetic forbidden path"),
+                                    ("catalog_process_fixture", "status", "not_run"),
+                                    ("catalog_process_fixture", "fixture", 1),
+                                    ("catalog_process_fixture", "process_verified", False),
+                                    ("catalog_process_fixture", "cache_verified", False),
+                                    ("catalog_process_fixture", "reopen_verified", 1),
+                                    ("catalog_process_fixture", "path", "synthetic forbidden path"),
                                     ("ssl", "ca_source", "system"),
                                     ("ssl", "certificate_validation", False),
                                     ("https", "status", "not_run"),

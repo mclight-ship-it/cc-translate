@@ -44,6 +44,10 @@ final class HelperIntegrationTests: XCTestCase {
                             "status": .string("passed"), "cli_simulated": .bool(true),
                             "cache_verified": .bool(true), "reopen_verified": .bool(true)
                         ]))
+                        XCTAssertEqual(event.payload["catalog_process_fixture"], .object([
+                            "status": .string("passed"), "fixture": .bool(true), "process_verified": .bool(true),
+                            "cache_verified": .bool(true), "reopen_verified": .bool(true)
+                        ]))
                         XCTAssertEqual(event.payload["codex_config_fixture"], .object([
                             "status": .string("passed"), "fixture": .bool(true),
                             "methods_verified": .bool(true), "routing_preserved": .bool(true)

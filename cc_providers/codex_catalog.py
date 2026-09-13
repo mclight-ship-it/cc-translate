@@ -1,11 +1,13 @@
 """App-owned, version-checked snapshots of Codex's effective model metadata."""
 
 import hashlib
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -22,6 +24,10 @@ _MAX_BYTES = 8 * 1024 * 1024
 
 class CatalogError(ValueError):
     pass
+
+
+class CatalogProbeError(RuntimeError):
+    """Fatal supervision failure; never fall back to another discovery/turn."""
 
 
 def _models(payload):
@@ -72,6 +78,7 @@ class CodexModelCatalog:
         self._validated = None
         self.status = "not_checked"
         self._log_error = log_error
+        self._probe_cancel = None
 
     def _warn(self, code):
         log_error = self._log_error
@@ -87,6 +94,14 @@ class CodexModelCatalog:
         args = list(args)
         for override in CODEX_CONFIG_OVERRIDES:
             args.extend(("-c", override))
+        if sys.platform == "darwin":
+            from .darwin_process import capture_output, ProcessError
+            try:
+                return capture_output(
+                    [self.command, *args], self.env, self.work_dir,
+                    cancel_event=self._probe_cancel, timeout=8, max_bytes=_MAX_BYTES)
+            except ProcessError as error:
+                raise CatalogProbeError("catalog_" + str(error)) from None
         completed = subprocess.run(
             [self.command, *args], capture_output=True, timeout=8,
             env=self.env, cwd=self.work_dir,
@@ -98,8 +113,39 @@ class CodexModelCatalog:
             raise CatalogError("catalog_output_too_large")
         return completed.stdout
 
-    def overrides(self, model="auto", *, ignore_user_config=False, native_config=None):
+    @staticmethod
+    def _check_cancel(cancel_event):
+        if cancel_event is not None and cancel_event.is_set():
+            raise CatalogProbeError("catalog_probe_cancelled")
+
+    @contextmanager
+    def _probe_scope(self, cancel_event):
+        if sys.platform == "darwin":
+            deadline = time.monotonic() + 8
+            while True:
+                self._check_cancel(cancel_event)
+                if time.monotonic() >= deadline:
+                    raise CatalogProbeError("catalog_probe_timeout")
+                if self._lock.acquire(timeout=0.05):
+                    break
+        else:
+            self._lock.acquire()
+        try:
+            # All resolution, including nested _run/_validate calls, owns this
+            # lock. The per-request event must never leak to a later request.
+            self._probe_cancel = cancel_event
+            self._check_cancel(cancel_event)
+            yield
+            self._check_cancel(cancel_event)
+        finally:
+            self._probe_cancel = None
+            self._lock.release()
+
+    def overrides(self, model="auto", *, ignore_user_config=False, native_config=None, cancel_event=None):
         """Resolve only before process startup, never retry a submitted turn."""
+        if cancel_event is not None and sys.platform != "darwin":
+            raise CatalogProbeError("catalog_cancel_unsupported")
+        self._check_cancel(cancel_event)
         environment = self.env if self.env is not None else os.environ
         if environment.get("CC_TRANSLATE_CODEX_CATALOG", "").lower() == "off":
             self.status = "disabled"
@@ -115,7 +161,7 @@ class CodexModelCatalog:
                         and routing.intersection(layer.get("config") or {})):
                     self._warn("layered_config_not_managed")
                     return ()
-        with self._lock:
+        with self._probe_scope(cancel_event):
             if time.monotonic() < self._failure_until:
                 return ()
             try:

@@ -6,11 +6,12 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
 from .base import ProviderResult
-from .codex_catalog import SUPPORTED_CODEX_VERSIONS
+from .codex_catalog import CatalogProbeError, SUPPORTED_CODEX_VERSIONS
 from .codex_config import (
     CodexConfigError, child_environment, integration_overrides, read_native_config,
 )
@@ -262,7 +263,7 @@ class CodexAppServerTransport:
         self._idle_generation = 0
         self._closed = False
 
-    def build_command(self, request):
+    def build_command(self, request, *, cancel_event=None):
         command = [
             self.command,
             "app-server",
@@ -270,14 +271,15 @@ class CodexAppServerTransport:
             "stdio://",
             "--strict-config",
         ]
-        native = read_native_config(self.command, self.env, self.work_dir)
+        probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+        native = read_native_config(self.command, self.env, self.work_dir, **probe_options)
         config = native["config"]
         for override in _APP_SERVER_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
         if self.catalog is not None:
-            for override in self.catalog.overrides(request.model, native_config=native):
+            for override in self.catalog.overrides(request.model, native_config=native, **probe_options):
                 command.extend(("-c", override))
         return command
 
@@ -345,7 +347,8 @@ class CodexAppServerTransport:
             self._cancel_idle_timer()
             if proc is not None:
                 self._stop_process(proc)
-            proc = self._start_process(request)
+            probe_options = {"cancel_event": self._prewarm_cancel_event} if sys.platform == "darwin" else {}
+            proc = self._start_process(request, **probe_options)
             started_process = True
             output_queue = self._output_queue
 
@@ -388,7 +391,7 @@ class CodexAppServerTransport:
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
-        except CodexConfigError as exc:
+        except (CodexConfigError, CatalogProbeError) as exc:
             return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
@@ -496,7 +499,8 @@ class CodexAppServerTransport:
                     self._stop_process(proc)
                 spawn_started_at = time.perf_counter()
                 try:
-                    proc = self._start_process(request)
+                    probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+                    proc = self._start_process(request, **probe_options)
                 except OSError as exc:
                     return ProviderResult(
                         False, error_code="cli_unavailable",
@@ -654,7 +658,7 @@ class CodexAppServerTransport:
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
-        except CodexConfigError as exc:
+        except (CodexConfigError, CatalogProbeError) as exc:
             return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
@@ -678,12 +682,13 @@ class CodexAppServerTransport:
         if proc is not None:
             self._stop_process(proc)
 
-    def _start_process(self, request):
+    def _start_process(self, request, *, cancel_event=None):
         with self._state_lock:
             if self._closed:
                 raise OSError("app-server transport is shut down")
+            probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
             proc = subprocess.Popen(
-                self.build_command(request),
+                self.build_command(request, **probe_options),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

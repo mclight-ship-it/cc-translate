@@ -73,6 +73,12 @@ def validate_runtime(report, lock):
          "status", "cli_simulated", "cache_verified", "reopen_verified"} and catalog["status"] == "passed"
          and all(catalog[key] is True for key in ("cli_simulated", "cache_verified", "reopen_verified")),
          "synthetic catalog storage not confirmed")
+    process = report.get("catalog_process_fixture")
+    need(isinstance(process, dict) and set(process) == {
+         "status", "fixture", "process_verified", "cache_verified", "reopen_verified"} and
+         process["status"] == "passed" and all(process[key] is True for key in (
+             "fixture", "process_verified", "cache_verified", "reopen_verified")),
+         "synthetic catalog process not confirmed")
     ssl = report.get("ssl", {})
     need(ssl.get("status") == "passed" and ssl.get("certificate_validation") is True
          and ssl.get("ca_source") == "bundle", "bundled CA SSL verification not confirmed")

@@ -31,7 +31,7 @@ APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
-PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "codex_instructions.txt")
+PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 PROVIDER_CATALOG_FILES = ("codex_catalog.py",)
 PROVIDER_CORE_FILES = PROVIDER_CONTRACT_FILES + PROVIDER_CONFIG_FILES + PROVIDER_CATALOG_FILES
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
@@ -500,6 +500,7 @@ def audit_bundle(app, lock, environment=None):
         "Resources/Core/cc_macos/dictionary_probe.py",
         "Resources/Core/cc_macos/config_fixture.py",
         "Resources/Core/cc_macos/catalog_fixture.py",
+        "Resources/Core/cc_macos/catalog_process_fixture.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
         "Resources/Licenses/Python/PYTHON.json",

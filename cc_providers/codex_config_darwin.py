@@ -1,47 +1,20 @@
 """Bounded native config RPC with sole ownership of an unreaped Darwin group."""
 
 import json
-import errno
 import os
-from pathlib import Path
 import selectors
-import signal
-import subprocess
 import time
 
 from .codex_config import CodexConfigError
+from .darwin_process import OwnedProcess, ProcessError
 
 
 PROBE_TIMEOUT = 8
 MAX_CONFIG_BYTES = 8 * 1024 * 1024
 
 
-def _load_supervision():
-    import ctypes
-
-    core = Path(__file__).resolve().parents[1]
-    contents = core.parent.parent
-    library = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
-    if (core.name != "Core" or core.parent.name != "Resources" or contents.name != "Contents"
-            or not library.is_file() or library.is_symlink()
-            or not library.resolve().is_relative_to(contents.resolve())):
-        raise CodexConfigError("config_runtime_unavailable")
-    try:
-        bridge = ctypes.CDLL(str(library))
-        bridge.cc_process_support_abi.argtypes = []
-        bridge.cc_process_support_abi.restype = ctypes.c_int
-        bridge.cc_cli_signal_group.argtypes = [ctypes.c_int, ctypes.c_int]
-        bridge.cc_cli_signal_group.restype = ctypes.c_int
-        if bridge.cc_process_support_abi() != 1:
-            raise CodexConfigError("config_runtime_unavailable")
-        return bridge
-    except (OSError, AttributeError):
-        raise CodexConfigError("config_runtime_unavailable") from None
-
-
 class _ConfigSession:
     def __init__(self, args, env, work_dir, cancel_event=None):
-        self.bridge = _load_supervision()
         self.selector = selectors.DefaultSelector()
         self.buffer = bytearray()
         self.received = 0
@@ -50,13 +23,11 @@ class _ConfigSession:
         self.cancel_event = cancel_event
         self.deadline = time.monotonic() + PROBE_TIMEOUT
         try:
-            self.process = subprocess.Popen(
-                args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                env=env, cwd=work_dir, start_new_session=True, bufsize=0,
-            )
-        except (OSError, ValueError):
+            self.owner = OwnedProcess(args, env, work_dir, rpc=True)
+            self.process = self.owner.process
+        except ProcessError:
             self.selector.close()
-            raise CodexConfigError("config_probe_unavailable") from None
+            raise
         try:
             os.set_blocking(self.process.stdin.fileno(), False)
             os.set_blocking(self.process.stdout.fileno(), False)
@@ -138,35 +109,17 @@ class _ConfigSession:
             return
         self.closed = True
         self.selector.close()
-        failed = False
-        owned = True
-        # No Popen poll/wait/communicate may run before the final group signal.
-        # The strong reference keeps Popen's destructor from reaping our leader.
-        for signum in (signal.SIGTERM, signal.SIGKILL):
-            error = self.bridge.cc_cli_signal_group(self.process.pid, signum)
-            if error != 0:
-                failed = True
-            if error == errno.ECHILD:
-                owned = False
-                self.process.returncode = -1
-                break
-            if signum == signal.SIGTERM:
-                time.sleep(0.2)
-        try:
-            if owned:
-                self.process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            failed = True
-        for stream in (self.process.stdin, self.process.stdout):
-            try:
-                stream.close()
-            except OSError:
-                failed = True
-        if failed:
-            raise CodexConfigError("config_probe_cleanup_failed")
+        self.owner.close()
 
 
 def read_config(args, env, work_dir, *, cancel_event=None):
+    try:
+        return _read_config(args, env, work_dir, cancel_event=cancel_event)
+    except ProcessError as error:
+        raise CodexConfigError("config_" + str(error)) from None
+
+
+def _read_config(args, env, work_dir, *, cancel_event=None):
     try:
         session = _ConfigSession(args, env, work_dir, cancel_event)
     except OSError:

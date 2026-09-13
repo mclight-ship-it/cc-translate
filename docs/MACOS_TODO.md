@@ -646,9 +646,9 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 
 ### Catalog 真进程监督：按依赖完整接入与验证
 
-1. [ ] 从现有配置监督提取实际共享的 C 自有组/pipe/退出观察边界，配置原行为保持；
+1. [x] 从现有配置监督提取实际共享的 C 自有组/pipe/退出观察边界，配置原行为保持；
    leader 未回收前完成 TERM/KILL/reap，ECHILD 后不得再 signal/wait，不追杀逃离组进程。
-2. [ ] 接入现有 catalog `--version`/`debug models` Darwin 调用，明确 stdout+stderr 实时总限额、
+2. [x] 接入现有 catalog `--version`/`debug models` Darwin 调用，明确 stdout+stderr 实时总限额、
    期限、取消、helper EOF；取消/监督错误不得被缓存降级吞掉后继续请求。Windows 默认路径不变，
    cache/logger/解析/路由/override 安全语义不变。
 3. [ ] 隔离 synthetic CLI 走真实 catalog 冷缓存及磁盘重开路径，不伪造 validated 状态；
@@ -656,3 +656,26 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
    后代清理及无关 sibling 存活，确认 XCTest 被发现执行。
 4. [ ] 针对性 Windows、正常 hooks、唯一分支推送、免费 Mac CI 与包内资源审计真实通过，
    记录新源码/文档 SHA、run/artifact/hash；失败保留并修复，切片完成后停在可靠检查点。
+
+### Catalog 实现与本地检查（真实 Mac 结果随后记录）
+
+- 配置与 catalog 现在共同调用 `darwin_process.OwnedProcess` 的固定包内 ABI-1 桥接与唯一清理所有者；
+  配置 RPC 协议保持不变。catalog 双非阻塞 pipe 总预算 **8 MiB**，每个 CLI 探针 **8 秒**，
+  取消检查间隔至多 50ms（清理另需 TERM 后 200ms、KILL 与至多 2 秒 wait）。
+  leader 早退时先处理同组后代再 drain EOF；关闭 pipe 但未退出仍受期限控制。
+- catalog 的事件仅在 manager 锁内绑定到当前请求，退出作用域清空；等锁也可取消/限时。
+  所有监督错误为固定 `CatalogProbeError`，不被原 native-discovery 降级捕获。
+  Windows 默认仍执行原 `subprocess.run`；显式在非 Darwin 给 catalog 新取消参数会拒绝而非忽略。
+- 现有 provider command-building 仅转交 Darwin 的取消事件并接收该固定错误，防止失败后提交请求；
+  没有改写 exec/app-server/Claude 的长驻进程或模型 turn。其完整监督仍待后续阶段。
+- `_models`、`_read`、`_atomic_write`、`_resolve`、`_validate` 五个函数的 AST 与 `a6f64f4` 完全一致：
+  版本、TTL、fingerprint、缓存/解析/路由、冷三次及新 manager 磁盘重开 roundtrip 算法不变。
+- 新 `catalog_process_fixture` 使用包内 Python 创建临时合成 CLI，真实走 catalog 原路径，
+  不替换 `_run` 或填充 `_validated`；原 `catalog_storage_fixture.cli_simulated=true` 保留。
+  runtime 新独立字段包含 `fixture/process_verified/cache_verified/reopen_verified`，非包内 Darwin 为
+  `not_run`；Swift 严格键/布尔/平台规则、负例与包内集成/smoke 同步，不增加 UI 功能。
+- 首次 Windows 针对性命令误选两个不存在的测试模块：142 项中 2 个 import errors；
+  没有安装包或隐藏失败。改用现有 `tests.test_providers` 后 **196 tests，OK，20.655s**；
+  加入最终 ECHILD 负例后联合复跑 **197 tests，OK，20.475s**，覆盖 config/catalog、原 provider、
+  便携存储/导入、协议与打包。Mac 新 suite 静态确认 16 个顶层测试方法，但尚未执行；
+  完整 hooks/Mac CI 随后记录，不能据本地结果勾选真实 Mac 通过。

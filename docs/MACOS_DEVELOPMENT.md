@@ -91,9 +91,14 @@ OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路�
 已有 manager，stream/warm 共用同一对象。未传时保留 Windows APPDATA/展开 HOME 的默认路径
 及延迟 `cc_core.log_error`；显式传入不导入该模块。cache root/logger 不加入 fingerprint，
 TTL、配置/二进制/native-cache 签名、冷缓存三次探针及重开后的 roundtrip 规则不变。
-当前合成诊断仅在临时目录创建合成 binary identity、配置、model metadata 和缓存，
-严格报告 `cli_simulated=true`；不启动真实 CLI，不读账号，不激活任何付费 turn。
-这不是完整平台配置/历史单写边界，也不代表尚未监督的 catalog 子进程已可供原生翻译使用。
+原存储诊断仅在临时目录创建合成 binary identity、配置、metadata 和缓存，继续报告 `cli_simulated=true`。
+新增的包内 Darwin `catalog_process_fixture` 则启动包内 Python 构造的合成 CLI，真正调用原
+catalog 冷缓存和重开路径，严格区分 `fixture=true` 与真实进程证据；两者都不运行用户 CLI/账号/模型。
+catalog 与配置探针共用固定包内 C 自有组边界，catalog 每次 8 秒、stdout+stderr 共 8 MiB；
+取消/EOF/早退和正常完成均先 TERM/KILL 再回收 leader，ECHILD 后不再 signal/wait。
+不追杀主动逃离组的 wrapper；fatal 监督失败不降级或继续提交 turn。Windows 默认执行路径保持。
+这不是完整平台配置/历史单写或可用的原生翻译 provider。最新代码的实际验证以 TODO 为准，
+旧包的用户正向报告不迁移到新构建。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。

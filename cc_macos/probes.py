@@ -40,6 +40,7 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
     runtime_root = BUNDLE_CORE.parent.parent / "Helpers" / "python"
     bundle_runtime = Path(sys.executable).resolve().is_relative_to(runtime_root.resolve())
     config_fixture = {"status": "not_run"}
+    catalog_process = {"status": "not_run"}
     try:
         with tempfile.TemporaryDirectory(prefix="cc-translate-probe-") as directory:
             database = Path(directory) / "probe.sqlite3"
@@ -66,6 +67,16 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
                 raise ProbeError("catalog_fixture_failed") from exc
             _check_cancel(cancel)
             if sys.platform == "darwin" and bundle_runtime:
+                from .catalog_process_fixture import probe_catalog_process
+                from cc_providers.codex_catalog import CatalogProbeError
+                try:
+                    catalog_process = probe_catalog_process(Path(directory) / "catalog-process", cancel)
+                except CatalogProbeError as exc:
+                    if str(exc) == "catalog_probe_cancelled":
+                        raise ProbeCancelled() from None
+                    raise ProbeError("catalog_fixture_failed") from exc
+                except (OSError, ValueError) as exc:
+                    raise ProbeError("catalog_fixture_failed") from exc
                 try:
                     config_fixture = probe_config(Path(directory) / "config", cancel)
                 except (OSError, ValueError) as exc:
@@ -95,6 +106,7 @@ def runtime_probe(*, https: bool, cancel: Event) -> dict:
         "dictionary": dictionary,
         "codex_config_fixture": config_fixture,
         "catalog_storage_fixture": catalog_fixture,
+        "catalog_process_fixture": catalog_process,
         "ssl": {"status": "passed", "version": ssl.OPENSSL_VERSION,
                 "certificate_validation": True, "ca_source": "bundle" if bundled else "system"},
         "https": {"status": "not_run"},
