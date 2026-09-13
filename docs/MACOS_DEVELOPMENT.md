@@ -62,10 +62,12 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
   不能创建/迁移 AppData。`cc_providers` 现在只直接导入纯 base/registry；
   CLI 后端导出在显式访问时才加载，Windows 仍获得原类/函数对象，导入失败原样传播。
   Mac 开发包保留 `__init__.py` / `base.py` / `registry.py` 及 native config reader、
-  Darwin 监督适配、原 instructions 资源及 catalog 存储实现，不携带旧 exec/app-server/Claude 后端。
-  catalog 只由合成诊断替代 CLI 输出边界，实际写入/重开临时缓存；未放行真实 version/debug-models。
-  不能据此宣称原 Windows Codex/Claude 后端已适配 Mac；其 POSIX 监督及真实 native 配置/
-  账号验证仍在 P1。每次抽取保留兼容导出并跑 Windows 回归。
+  Darwin 监督适配、原 instructions 资源及 catalog 实现，不携带旧 exec/app-server/Claude 后端。
+  旧 storage fixture 仍以 `cli_simulated=true` 标明替代 CLI 输出、实际写入/重开临时缓存。
+  新 `catalog_process_fixture` 则用包内 Python 真正运行合成 CLI 的 version/debug-models，
+  经原 catalog 调用链验证冷缓存与重开；这不是运行用户官方 CLI，也不是放行真实用户 provider。
+  原 Windows Codex/Claude 后端的完整 POSIX 生命周期、用户官方 CLI/native 配置/账号兼容仍待验证。
+  每次抽取保留兼容导出并跑 Windows 回归，不能据合成进程通过宣称完整 Mac provider 可用。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
   后续需要 XCUITest 时可增加 Xcode 测试宿主，不以未经编译的大量 UI 替代平台探针。
 
