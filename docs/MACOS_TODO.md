@@ -64,6 +64,9 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 - [ ] 可信 GitHub 下载/校验后由 Finder 首开；适用警告时用户自行选择官方单 App 例外，再运行探针。
 - [ ] 可选且当前未选择：Developer ID / Hardened Runtime / 公证/stapling；不是免费首测前置。
 - [ ] 确认 macOS 最低运行版本、Apple Silicon 支持；Intel 独立验证后再承诺。
+  - [x] 同一 Mac15/Xcode 16.4 arm64 制品在实际 macOS 14.8.9/26.6.2 完成包内自动化；
+    [run 34765811135](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135)，完整证据见末尾。
+    这不是整个 macOS 14+ GUI/权限兼容承诺，也不修改最低 deployment target。
 
 ### 已执行记录
 
@@ -825,7 +828,7 @@ exec/常驻 app-server/Claude 生命周期及真实词库安装切换、完整 P
 跨版本授权和 macOS 14/26 完整兼容仍需后续集中验证。
 GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可选增强；不发布 Release、不改 master/Windows 部署。
 
-## 当前单一切片：显式平台路径与原子 JSON 基础（2026-09-13，已完成）
+## 历史检查点：显式平台路径与原子 JSON 基础（2026-09-13，已完成）
 
 上一共享规则切片已验收关闭，不重做。当前仅完成下面的依赖基础层：
 
@@ -910,16 +913,16 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
 完整 P1/P2–P6 与剩余实机门槛未完成；这些可独立拆分的代码工作不因签名而被阻断，
 但本次不继续开启。免费 GitHub/零预算/不 Release、不改 master 或 Windows 正式部署保持。
 
-## 当前单一切片：同制品 macOS 14/26 运行矩阵（2026-09-13）
+## 当前单一切片：同制品 macOS 14/26 运行矩阵（2026-09-13，已完成）
 
-1. [ ] 完整保留 macos-15/Xcode 16.4 producer 的所有测试/构建/审计；归档后生成固定 SHA、
+1. [x] 完整保留 macos-15/Xcode 16.4 producer 的所有测试/构建/审计；归档后生成固定 SHA、
    本 run/attempt、zip hash 和内容/模式/链接摘要的 receipt，输出精确 artifact ID。
-2. [ ] needs producer 的标准 macos-14/26 arm64 jobs（fail-fast=false）只下载该 ID；
+2. [x] needs producer 的标准 macos-14/26 arm64 jobs（fail-fast=false）只下载该 ID；
    先验证 zip hash，再 ditto 解压，不构建/重签被测 App，不安装 Python/依赖或更换账号。
-3. [ ] 复用相同包内 core/process suites、显式 storage、HTTPS/SQLite/cancel/EOF smoke 和完整审计；
+3. [x] 复用相同包内 core/process suites、显式 storage、HTTPS/SQLite/cancel/EOF smoke 和完整审计；
    集成 harness 单独复制同 SHA 的现有 support/C/HelperIntegrationTests，不包含 App target，
    以预装 Xcode 16.2 / 26.6 编译；产品仍是 16.4 制品。harness 不适配时保留错误，不改 ABI/断言凑绿。
-4. [ ] 断言实际 sw_vers major/arm64/选定 Xcode，记录 producer 与 harness 编译器、测试计数和前后不可变；
+4. [x] 断言实际 sw_vers major/arm64/选定 Xcode，记录 producer 与 harness 编译器、测试计数和前后不可变；
    runtime 仅上传小型去敏报告，不重复上传 App。完成真实三 job 后记录证据、清理 zip、正常收尾。
 
 官方 runner 表/镜像 README 只是选择依据，不是执行证据。当前不增加功能，不重做已验收纯核心；
@@ -937,3 +940,72 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
   `test_plain_paste` fake API：只返回 ctypes buffer 地址、不保留 buffer 对象，释放后被 memmove 写坏堆。
   已仅修测试 fixture 持有这两个分配，目标改为空缓冲并断言真实复制内容；生产剪贴板/Windows
   行为不改，没有屏蔽测试、跳过断言或归咎于既有 Tk teardown 警告。
+- 修复后 debug allocator 下联合 **128 tests，OK，21.159s**。额外带
+  `PYTHONFAULTHANDLER=1` 的完整诊断跑到 **1096 项**，但原 GUI branded launcher 退出码为 1；
+  单项复现确认仅设置该诊断环境变量也失败，仅 `PYTHONMALLOC=debug` 时该单项通过。
+  不改无关启动器、不把此诊断失败隐去。正常环境下剪贴板+启动器 **12 tests，OK，0.496s**，
+  随后原始正常 pre-push（未注入这两个诊断变量）**1096 tests，OK，55.733s**，无失败/skip，
+  privacy/编译均通过，成功推送；既有 Tk teardown stderr 警告仍在。
+
+### 同包三系统可靠检查点
+
+- 实际源码 **70fe79beee870c74ed1b4e078d98ac4fa89fce74**，含矩阵实现 `0bb40a9` 与上述测试 fixture
+  生命周期修复。没有业务逻辑/协议/ABI、最低 OS 声明或 Windows 生产代码变化。
+- [run 34765811135](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135) **success，attempt 1**；
+  三个 jobs 的全部 steps 均 success。首次真实矩阵即通过，没有 Mac 失败重跑、harness 编译妥协或 runtime 测试跳过。
+  以下是实际报告，不是 runner README 推测：
+
+| job | OS / build，均 arm64 | image | 实际 Xcode / build | Swift / clang / SDK |
+|---|---|---|---|---|
+| [producer 103746446392](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/job/103746446392)，2m51s | 15.7.9 / 24G830 | 20260907.0337.1 | 16.4 / 16F6 | 6.1.2 / 1700.0.13.5 / 15.5 |
+| [runtime 103746853056](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/job/103746853056)，1m51s | 14.8.9 / 23J631 | 20260831.0302.1 | harness 16.2 / 16C5032a | 6.0.3 / 1600.0.30.1 / 15.2 |
+| [runtime 103746853097](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/job/103746853097)，2m20s | 26.6.2 / 25G83 | 20260907.0351.1 | harness 26.6 / 17F113 | 6.3.3 / 2100.1.1.101 / 26.5 |
+
+| 实际执行 | producer 15 | runtime 14 | runtime 26 |
+|---|---|---|---|
+| 便携/打包/Darwin contracts | **245 tests，8.371s**，含本轮控制层 47 项 | 不重复宿主测试 | 不重复宿主测试 |
+| 原始普通 XCTest | **35 总数：34 pass + 1 初次集成 skip，0 failures，9.178s** | 只编译独立集成 harness | 只编译独立集成 harness |
+| 包内 config/catalog synthetic 真进程 | **25 tests，55.494s** | **25 tests，55.540s** | **25 tests，55.257s** |
+| 包内 `-I -B` 同源核心 | **107 tests，0.529s** | **107 tests，0.673s** | **107 tests，0.481s** |
+| 强制 Foundation.Process → 包内 helper | **1 test，2.495s** | **1 test，2.439s** | **1 test，2.780s** |
+| 显式临时 storage / HTTPS / SQLite / cancel / EOF / 不可变审计 | 全通过 | 全通过 | 全通过 |
+
+除 producer 首次尚未构建 App 的集成 skip 外，以上包内/后置与两个 harness **均 0 skip/0 failure/0 error**；
+日志确认原集成测试实际发现执行，不采用 Swift Testing 的附带“0 tests”行充数。
+三个系统均真实输出 `Bundled storage fixture passed with bundle identity and temporary home`。
+真进程覆盖仍含期限、输出限额、取消/helper EOF、正常/错误退出、TERM-KILL-reap、leader/ECHILD 所有权与兄弟存活，
+没有运行用户 CLI/账号/配置/模型。产品 dylib/Python 都来自相同 App，不把独立 harness 构建当产品重建。
+
+#### 固定制品与独立核验
+
+- 唯一 App [artifact 10321110850](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/artifacts/10321110850)，
+  `macos-arm64-p0-development-NOT-A-RELEASE`，API 已核验有效，到期 **2026-09-20T15:33:30Z**。
+  内层 **CCTranslateMac-P0.zip，18,358,978 字节**，
+  SHA-256 **3a79f5fa2b82a2ec7b936309f2a593fe237f1a863a7d169c90391804b7bccc70**。
+  API 外层 artifact digest `6077d0b7c4f1d29dfd839086799161d6dab028fb3a533ea11849dc2bd66b067a`
+  与内层 hash 分开，不互相替代。
+- 两个 runtime 只消费此 run 的精确 ID；其小型报告分别为
+  [Mac14 artifact 10320387319](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/artifacts/10320387319)
+  （2,393 字节，到期 2026-09-20T15:35:31Z）与
+  [Mac26 artifact 10320991222](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/artifacts/10320991222)
+  （2,393 字节，到期 2026-09-20T15:35:58Z），均有效，不含第二份 App。
+- 独立下载核验 ZIP CRC、路径、App/Python 0755 和 python3 相对链接，
+  **664 库存 / 54 资源 hash / 26 个 Core 同源 Git blobs / 6 arm64 Mach-O / 19 份 runtime 许可**。
+  605 个保留文件的原 full-build 许可覆盖记录不变；source manifest 为该源码且 clean。
+  本轮扩大逐字节 Git 对照到包内全部 26 个 Python/instructions 源文件，未增加包内业务模块。
+- producer/14/26 及下载归档的文件内容/模式/链接摘要均为
+  `6c41d32ac1c275c4203f847f74e47f8286faf4cc52a96ca6003bbd28a7a7f96e`；
+  两 runtime 均最终 `stage=complete`、`bundle_unchanged=true`。
+  两个独立 harness 的同源树摘要相同：
+  `d72b49a127231ec4fd38b9906041b754555e57222c0d8acdda8d41e7eb84c08b`，原集成测试未改字节。
+- 包内 Python 3.12.14 / SQLite 3.53.1 / OpenSSL 3.5.8、隔离/禁 bytecode、CA/HTTPS 证书验证全通过；
+  handshake、fixture、explicit_cancel、eof_cancel、probe_files_cleaned 在三系统均为 true。
+  没有用 Windows 执行 Mac 二进制。临时 zip 已清理，仅保留脱敏 JSON；最终证据 docs-only 正常提交/push，
+  不为未变源码再次启动 CI。
+
+**本次仅同制品跨系统自动化切片完成，到此停止新增功能。**
+旧 `eec92a5` / `34706318638` 用户正向实机报告仍独立，用户自报 26.5.2 未独立核验；
+当前新包没有 Finder/干净用户/Gatekeeper 官方例外/TCC/多屏/Spaces/IME 实测。
+Intel、完整 P0/P1、请求快照/配置历史唯一 writer、exec/app-server/Claude 及 P2–P6 仍待办。
+后续纯核心/synthetic 回归技术上可以独立推进，不伪称被付费签名阻断，但不属于本轮。
+免费 GitHub 分发/零预算不变；不发布 Release、不改 master/Windows 部署、不要求用户现在重装或安装 CLI。

@@ -2,10 +2,11 @@
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
-显式平台路径/原子 JSON 基础也已通过；本轮仅增加同一 Mac15 制品的 Mac14/26 运行 CI，
-不创建完整请求快照、writer、provider 或新 UI。新系统未执行前不作为兼容性证据。
+显式平台路径/原子 JSON 基础也已通过；同一 Mac15/Xcode 16.4 制品现已在标准免费
+macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
+本轮到此停止，不创建完整请求快照、writer、provider 或新 UI。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
-macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
+macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
 进度与证据以 [MACOS_TODO.md](MACOS_TODO.md) 为准。
 
@@ -312,11 +313,20 @@ CA 固定来自 certifi 2026.7.22，随包保留其 notice 和另外校验的完
 不用不存在的 `macos-15-arm64` 标签；固定 Xcode 16.4 路径并显式失败，不自动改工具链。
 未来镜像版本会滚动，启动前检查可用性和额度，不能把标签当成 OS 镜像不可变 pin。
 
+新增标准 `macos-14`/`macos-26` runtime jobs 依赖上述 producer，`fail-fast=false`。
+它们只下载同一次 workflow 的精确 producer artifact ID；归档 SHA、源码 SHA、clean manifest、
+资源库存以及文件字节/模式/相对链接摘要均与 producer receipt 比较。由同 SHA checkout 提供测试，
+以 App 内 Python `-I -B` 运行原 core/process 清单和显式临时 storage fixture，没有宿主 Python fallback。
+HTTPS/SQLite、helper 取消/EOF 与前后完整审计同样执行，不修改、重签或重建被测 App。
+Foundation.Process harness 只复制原 support/C/集成测试，不包含 App target；
+分别用预装 Xcode 16.2/26.6 编译，绝不把 harness 的编译身份混为产品的 Xcode 16.4。
+每个 runtime 只上传四份小型 JSON，不重复上传 App；实际版本、计数和固定制品见本节末及 TODO。
+
 不能使用开发机系统 Python 冒充随包核心。smoke 检查实际解释器是否在 bundle、版本/架构、
 isolated 状态、SQLite 读写、真实 TLS、取消/EOF 及 bundle 不被写入。
 Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来掩盖。
 
-### P0 App 的显式验收入口（以下操作尚未在 Mac 执行）
+### P0 App 的显式验收入口（步骤模板；原包用户报告见下，不代表最新包实机已验）
 
 1. Finder 启动后仅应出现 `CC P0` 菜单栏项目，不自动弹窗、申请权限或联网。
 2. `Open P0 input / probes...` → `Bundled core` → `Start bundled helper`，
@@ -498,7 +508,7 @@ Windows targeted 140/完整 hook 995、Mac 便携 182/包内核心 91（新增�
 既有 Swift/25 项真进程/后置包内集成与资源审计也通过，详见 TODO。
 免费分发和签名状态不变，旧包实机报告不迁移；本轮到此停止新增功能。
 
-### 最新存储基础检查点（仅自动化，不要求现在重装）
+### 后续存储基础检查点（仅自动化，不要求现在重装）
 
 源码 `84ab360d61c56875276e73963527721e40c89426`，
 [绿色 run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000) /
@@ -509,6 +519,21 @@ Windows targeted 137/完整 hooks 1049、Mac 便携 198/包内核心 107（新�
 实际 bundle 身份下的临时存储诊断、既有 25 项真进程/Swift 后置集成/不可变审计均通过。
 原 runtime JSON、业务配置/history schema 和原生 UI 未变；不是完整唯一 writer、迁移或产品。
 新包不继承旧包实机报告，免费分发/签名与人工门槛不变，完整证据见 TODO。
+
+### 最新同制品跨系统检查点（仅自动化，不要求现在重装）
+
+源码 `70fe79beee870c74ed1b4e078d98ac4fa89fce74`，
+[绿色 run 34765811135](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135)，三个 jobs 的全部 steps success。
+唯一 App [artifact 10321110850](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135/artifacts/10321110850)，
+到期 2026-09-20 15:33:30 UTC。内层 `CCTranslateMac-P0.zip`：18,358,978 字节，
+SHA-256 `3a79f5fa2b82a2ec7b936309f2a593fe237f1a863a7d169c90391804b7bccc70`。
+producer 实际 macOS 15.7.9/Xcode 16.4；同包在 macOS 14.8.9/26.6.2 原样运行，
+各有 25 项真实 synthetic 进程、107 项核心、临时存储、HTTPS/SQLite/取消/EOF 和 1 项强制 Foundation 集成通过。
+两个 runtime 的 harness 分别用 Xcode 16.2/26.6，产品不重建。
+Windows 正常完整 hooks 1096 项、producer 便携 245 项及原 Swift 测试通过；初次集成 skip 与后置实跑分开记录。
+独立核验 664 库存/54 资源 hash/26 Git blobs/6 arm64 Mach-O，三系统内容/模式/链接摘要一致。
+本包没有新增业务能力；原始 `eec92a5` 用户正向报告仍独立。
+不代表 Finder/干净首开/Gatekeeper/TCC、多屏/IME、用户官方 CLI/账号、Intel 或完整 P0/P1/P2–P6 已完成。
 
 ## 7. 功能对齐矩阵
 
