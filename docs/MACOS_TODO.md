@@ -931,3 +931,9 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
 - Windows 首轮联合 **115 tests，OK，20.651s**；补齐未知错误传播与不可写 App 报告负例后，
   最终针对性联合 **119 tests，OK，20.540s**。输出中的 `BLOCKED` 为“未显式准许 HTTPS”的预期负例，
   不是 CI 结果；此时三个系统尚待真实执行。
+- 首次代码提交 `0bb40a9` 的两次正常 pre-push 都被完整 Windows suite 的原生崩溃阻止，未推送、
+  未绕过。第二次 faulthandler 捕获 access violation；新增测试+provider 的 103 项及含原 GUI 的
+  534 项定向复现都通过，不能据此称全套已好。随后完整 `PYTHONMALLOC=debug` 明确定位原
+  `test_plain_paste` fake API：只返回 ctypes buffer 地址、不保留 buffer 对象，释放后被 memmove 写坏堆。
+  已仅修测试 fixture 持有这两个分配，目标改为空缓冲并断言真实复制内容；生产剪贴板/Windows
+  行为不改，没有屏蔽测试、跳过断言或归咎于既有 Tk teardown 警告。

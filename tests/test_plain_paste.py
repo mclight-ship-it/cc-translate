@@ -12,7 +12,7 @@ from tests._tr import tr
 class TestPlainTextClipboard(unittest.TestCase):
     def _apis(self, *, has_text=True, send_input=4):
         source = ctypes.create_unicode_buffer("Hello\r\n世界")
-        destination = ctypes.create_unicode_buffer("Hello\r\n世界")
+        destination = ctypes.create_unicode_buffer(len(source))
         user32 = types.SimpleNamespace(
             IsClipboardFormatAvailable=mock.Mock(return_value=has_text),
             OpenClipboard=mock.Mock(return_value=True),
@@ -24,6 +24,8 @@ class TestPlainTextClipboard(unittest.TestCase):
             GetAsyncKeyState=mock.Mock(return_value=0),
         )
         kernel32 = types.SimpleNamespace(
+            # GlobalLock returns raw addresses; retain both allocations until the fake API is released.
+            buffers=(source, destination),
             GlobalAlloc=mock.Mock(return_value=202),
             GlobalLock=mock.Mock(side_effect=[
                 ctypes.addressof(source),
@@ -58,6 +60,7 @@ class TestPlainTextClipboard(unittest.TestCase):
             plain_paste.CF_UNICODETEXT, 202)
         user32.CloseClipboard.assert_called_once_with()
         kernel32.GlobalFree.assert_not_called()
+        self.assertEqual(kernel32.buffers[1].value, kernel32.buffers[0].value)
 
     def test_ctrl_v_requires_every_injected_event(self):
         user32, kernel32 = self._apis(send_input=3)
