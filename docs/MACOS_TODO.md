@@ -157,7 +157,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     包内只携带三个契约文件，不携带 CLI 后端/用户认证，不宣称 native Mac provider 已实现。
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
   - [x] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
-  - [ ] 共享缓存签名与历史类型规则：显式值纯模块、Windows 兼容 wrapper 和 Mac 同源回归；
+  - [x] 共享缓存签名与历史类型规则：显式值纯模块、Windows 兼容 wrapper 和 Mac 同源回归；
+    源码 `fa6a0b8` / [run 34762885485](https://github.com/mclight-ship-it/cc-translate/actions/runs/34762885485) 通过，
+    见[共享规则证据](#共享规则可靠检查点2026-09-13)。
     保留旧拼接字节/版本、local route 优先级和 OCR > code > dict > text，不创建完整 RequestSnapshot。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
   - [x] 第一步：只接既有 `read_native_config` 的 Darwin 分支；共享已验证 C 组信号/
@@ -727,16 +729,17 @@ ECHILD 的首信号、末信号和非回收观察路径另由 host contracts 检
 - 只读生产差异复核未发现直接引入的高置信错误；临时 App zip 已清理，仅会话目录保留脱敏 JSON。
   最后文档-only 提交使用 `[skip ci]`，正常推送，不为未变源码重跑 CI。
 
-**本轮到此暂停新增代码。** 新包只经过自动化，不能继承旧包的用户正向实测或 macOS 26 兼容性。
+**历史 catalog 委派在此暂停新增代码，随后另行授权下述纯规则切片。**
+该 catalog 包只经过自动化，不能继承旧包的用户正向实测或 macOS 26 兼容性。
 仍无用户 CLI/账号/模型验收，不要求现在安装。干净用户/quarantine/Open Anyway 实际路径、
 权限拒绝/重启、多屏/Spaces/IME、跨版本权限保留和人工进程树检查继续待办。
 完整 P1 仍缺配置/历史单写、请求快照、exec/常驻 app-server/Claude 生命周期、预热/付费不重试
 完整接线和真实词库安装切换等；P2–P6 仍未完成。技术上可独立回归的小项不因签名而被阻断，
 只是本次单一切片已结束，不自动开启下一项。免费 GitHub/零付费预算、不发布 Release/不动 master 或 Windows 部署不变。
 
-## 当前单一切片：共享缓存签名与历史类型规则（2026-09-13）
+## 当前单一切片：共享缓存签名与历史类型规则（2026-09-13，已完成）
 
-catalog 检查点及其只读 review 已完成，不重做等价监督改造。现在仅获准继续下列纯规则前置，
+catalog 检查点及其只读 review 已完成，不重做等价监督改造。本次仅获准完成下列纯规则前置，
 不创建完整请求快照、配置/历史 writer 或 UI，不改模型 prompt/缓存版本、不清用户缓存。
 
 1. [x] 将签名字符串和 history-kind 优先级放入无副作用的 `cc_result_rules.py`；
@@ -744,12 +747,12 @@ catalog 检查点及其只读 review 已完成，不重做等价监督改造。�
    本地签名不查询 provider；字段顺序、字符串转换/真假判断、可选 revision 与异常传播保持。
 2. [x] 原 `_history_meta` 主线程捕获、缓存命中、截图/本地与 AI 词典/摘要消费者使用真实 wrapper；
    不重写 metadata dict。history kind 复用 `cc_classify.is_single_word`，保留测试替换该判断的语义。
-3. [ ] 旧实现差分及固定字节矩阵、惰性优先级/错误传播、隔离导入无用户磁盘网络访问；
+3. [x] 旧实现差分及固定字节矩阵、惰性优先级/错误传播、隔离导入无用户磁盘网络访问；
    包含同源模块的 Mac 包用 `-I -B` 实际跑相同纯规则测试，不为此扩展 runtime JSON。
-4. [ ] 正常 Windows targeted/hooks、唯一分支推送、标准免费 Mac CI、制品资源/内层 hash 审计；
+4. [x] 正常 Windows targeted/hooks、唯一分支推送、标准免费 Mac CI、制品资源/内层 hash 审计；
    回写准确源码/文档 SHA 与计数后清理并停止，不继承 `eec92a5` 的旧包用户实测结论。
 
-### 规则实现与本地验证（Mac 证据随后记录）
+### 规则实现与本地验证（阶段记录，最终 Mac 证据见下）
 
 - 三个共享入口为 `local_cache_signature`、`provider_cache_signature`、`history_kind`，
   只依赖已有 `cc_classify.is_single_word`。Windows 原方法调用同一入口，未增加版本/转义/规范化。
@@ -764,7 +767,7 @@ catalog 检查点及其只读 review 已完成，不重做等价监督改造。�
   isolated 导入测试禁止平台/provider/Tk、用户数据读取/写入或联网。没有新增 IPC 字段。
 - 首轮便携/隔离/打包 **50 tests，OK，5.963s**；加入完整字段组合及既有 Windows
   词典/缓存/历史元数据/截图与 job-isolation 消费者后 **112 tests，OK，7.813s**。
-  新 Windows wrapper 差分矩阵、完整 hooks 和实际 Mac/随包 Python 执行证据仍须另记。
+  当时尚未执行新增 Windows 差分/完整 hooks/Mac，后续结果分别记录如下。
 - 新 Windows 差分首轮 **26 tests，25 pass，1 个测试含 1 FAIL + 1 ERROR**：
   核心曾二次执行 model 转换，把已转换空字符串改成 auto，且对 str 子类触发额外异常。
   已修正为只拼接 caller-resolved 字段，保留空值/子类字节和 UI 原求值顺序；
@@ -774,3 +777,46 @@ catalog 检查点及其只读 review 已完成，不重做等价监督改造。�
   保留对非法 provider/revision 的原异常类型、完整消息和字段序号断言。
 - 最终针对性联合 **140 tests，OK，7.230s**，包含 **9 项**便携规则和
   **27 项**新增 Windows wrapper/真实消费者回归；原有失败断言全部保留并通过。
+
+### 共享规则可靠检查点（2026-09-13）
+
+- 实际执行源码 **fa6a0b87a6d9caa6e6b863cd850060518e5a1d51**；
+  正常 privacy/编译/pre-push 完整 **995 Windows tests，OK，58.240s**，无失败/skip，
+  只有既有 Tk teardown stderr 警告。仅推送开发分支，没有绕过 hooks。
+- [run 34762885485](https://github.com/mclight-ship-it/cc-translate/actions/runs/34762885485)
+  **success，job 2m18s**；标准免费 macos-15 arm64、Xcode 16.4，
+  image `20260907.0337.1`。本切片真实 Mac CI 一次通过；本地失败与修复记录保留。
+
+| 实际执行 | 结果 |
+|---|---|
+| Mac 便携/打包与既有 Darwin contracts | **182 tests，OK，5.760s** |
+| 普通 XCTest | **35 总数：34 通过 + 1 初次包内集成 skip，0 failures，9.140s** |
+| 包内 Python config/catalog 真进程 | **25 tests（9 + 16），OK，52.619s，0 skip** |
+| 构建后 Foundation.Process 强制包内集成 | **1 test 真通过，0 skip，2.490s** |
+| 包内 `-I -B` 同源纯核心 | **91 tests，OK，0.402s，0 skip**；新增规则 9 项逐项发现并通过 |
+| 构建、资源/许可/Mach-O、HTTPS/SQLite、取消/EOF、不可变及归档 | 所有 steps 通过 |
+
+- 新[artifact 10318888821](https://github.com/mclight-ship-it/cc-translate/actions/runs/34762885485/artifacts/10318888821)，
+  名称 `macos-arm64-p0-development-NOT-A-RELEASE`，已核验有效，
+  到期 **2026-09-20T14:33:14Z**。内层 **CCTranslateMac-P0.zip，18,357,050 字节**，
+  SHA-256 **a2fec6d9205b44baf858f2d621cf0dbdf4ab9a655285458d26b087bca7474cb8**。
+  GitHub 外层 artifact SHA-256 `6e7c763f2144e6855bbe7d140ec1fb1de82a0cec2a4fdd5778c0dcd0e9729013`
+  是另一层归档的摘要，不与内层值混用。
+- 独立下载复核 **662 库存项 / 52 资源哈希 / 17 Git blobs / 6 arm64 Mach-O**；
+  新 `cc_result_rules.py` 与上述固定 Git blob 字节相同，source manifest 为该 SHA 且 clean。
+  19 份 runtime 许可、605 个保留文件的原 full-build 覆盖记录仍在；ZIP CRC、唯一路径、
+  相对 python3 链接及 App/Python 的 0755 模式均通过，不在 Windows 冒充执行 Mac 二进制。
+- 包内 Python 3.12.14 / SQLite 3.53.1 / OpenSSL 3.5.8，隔离、禁 bytecode、HTTPS 证书验证通过；
+  handshake、fixture、explicit_cancel、eof_cancel、bundle_unchanged、probe_files_cleaned 均为 true。
+  未扩 runtime JSON/Swift 契约，没有新增真实 CLI、账号、模型调用或写入用户配置/历史。
+- 临时 App zip 已删除，只保留会话内脱敏审计 JSON。最后证据文档单独正常提交/push，
+  纯文档使用 `[skip ci]`，不为未变源码重复 CI；源码与文档提交在交接时分别标识。
+
+**本次单一切片结束，暂停新增代码。** 不要求用户现在重装或安装 CLI；
+首轮用户正向报告仍只属于 `eec92a5` / `34706318638`，新包只有自动化证据。
+这不是完整 RequestSnapshot、P1、P0 或产品完成：平台路径/配置历史单写、完整快照、
+exec/常驻 app-server/Claude 生命周期及真实词库安装切换、完整 P2–P6 仍待办。
+后续纯规则/显式路径的小步与 synthetic provider 回归技术上仍可独立推进，不因付费签名而阻断，
+但不属于本次委派。真实用户 CLI/账号、干净首开与官方例外路径、权限拒绝/重启、多屏/Spaces/IME、
+跨版本授权和 macOS 14/26 完整兼容仍需后续集中验证。
+GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可选增强；不发布 Release、不改 master/Windows 部署。

@@ -1,8 +1,8 @@
 # macOS 原生客户端开发指南
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
-catalog 真进程监督切片也已通过 Windows/Mac 自动化；本轮仅继续缓存签名/history-kind 纯规则前置，
-不创建完整请求快照、writer 或新 UI，不扩展其他功能。
+catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
+本轮在共享规则检查点暂停，不创建完整请求快照、writer 或新 UI，不扩展其他功能。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -104,9 +104,10 @@ catalog 与配置探针共用固定包内 C 自有组边界，catalog 每次 8 �
 不追杀主动逃离组的 wrapper；fatal 监督失败不降级或继续提交 turn。Windows 默认执行路径保持。
 这不是完整平台配置/历史单写或可用的原生翻译 provider。最新代码的实际验证以 TODO 为准，
 旧包的用户正向报告不迁移到新构建。
-下一单一切片仅把缓存签名拼接和历史类型优先级抽到 `cc_result_rules.py`，Windows wrapper 实际复用。
+缓存签名拼接和历史类型优先级已抽到 `cc_result_rules.py`，Windows wrapper 实际复用。
 route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留 UI 层；核心仅收显式值，
-本地路线不得查询 provider，签名字节/字段顺序/旧版本与错误传播保持不变。
+已转换字段不二次执行 `str` 或 model auto fallback。本地路线不查询 provider，
+签名字节/字段顺序/旧版本与错误传播保持不变。
 `_history_meta` 仍在主线程创建现有 job-owned dict；不把已有 frozen `ProviderRequest` 替换成新快照框架。
 Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
@@ -337,7 +338,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
 以下固定样本已取得首轮正向用户报告（范围见下），不是后续源码的验收。
-随后仅完成 catalog 进程监督自动化；exec/app-server、配置/历史和完整 UI 等保持暂停。
+随后 catalog 进程监督及共享规则已分别完成自动化；exec/app-server、配置/历史和完整 UI 等保持暂停。
 缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
 **固定来源与边界：**
@@ -474,6 +475,18 @@ SHA-256 `26803ef34f2b07bb55491a570991f615538321eefb21a1ad823f0c7a54a47881`。
 但使用此处的新来源/校验值，并另报新 SHA；不能把旧包的权限/焦点报告当作新包已通过。
 新增 `catalog_process_fixture` 在显式离线 runtime 探针中执行包内合成 CLI，不使用用户账号或模型。
 真实执行数与资源证据见 TODO；此切片完成后暂停，完整 P0/P1 与 P2–P6 未完成。
+
+### 后续共享规则检查点制品（仅自动化，不要求现在重装）
+
+源码 `fa6a0b87a6d9caa6e6b863cd850060518e5a1d51`，
+[绿色 run 34762885485](https://github.com/mclight-ship-it/cc-translate/actions/runs/34762885485) /
+[固定 artifact 10318888821](https://github.com/mclight-ship-it/cc-translate/actions/runs/34762885485/artifacts/10318888821)，
+到期 2026-09-20 14:33:14 UTC。内层 `CCTranslateMac-P0.zip`：18,357,050 字节，
+SHA-256 `a2fec6d9205b44baf858f2d621cf0dbdf4ab9a655285458d26b087bca7474cb8`。
+本包仅增加同源缓存签名/history-kind 纯规则，不改变诊断 IPC 或增加真实翻译。
+Windows targeted 140/完整 hook 995、Mac 便携 182/包内核心 91（新增规则 9 项）全部通过，
+既有 Swift/25 项真进程/后置包内集成与资源审计也通过，详见 TODO。
+免费分发和签名状态不变，旧包实机报告不迁移；本轮到此停止新增功能。
 
 ## 7. 功能对齐矩阵
 
