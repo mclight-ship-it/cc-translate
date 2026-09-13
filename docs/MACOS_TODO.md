@@ -130,13 +130,14 @@ Python HTTPS smoke 是另一步，不替代原生客户端链路。
 `F_SETNOSIGPIPE`、DispatchSourceRead 和关闭管道的顺序。
 实际编译通过；真实事件/TCC/焦点行为仍须实机，不凭自动化结果扩大 P2–P6。
 
-已运行 macOS 编译和 CI；尚未运行真实用户 GUI/TCC、Developer ID 签名、公证或发布。
+首轮 CI 当时已运行 macOS 编译和 CI；尚未运行真实用户 GUI/TCC、Developer ID 签名、公证或发布。
 上述证据只解锁依赖安全、可独立回归的 P1 纯核心。
 
-## P1 — 分类/方向纯核心切片通过，其他依赖继续待办
+## P1 — 已完成切片见下；其余依赖继续待办，完整 P1 未完成
 
 Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独立纯核心抽取。
-这不代表正式 P0 的真实 TCC、Finder、签名公证已通过，也不解锁完整 P2–P6 UI。
+自动化不代表完整 P0 首开/TCC 矩阵通过，也不解锁完整 P2–P6 UI；原包的首轮正向用户报告另记。
+当前采用免费 GitHub 分发路线，Developer ID/公证为未选择的可选增强，不是 P1 或免费首测的强制准入。
 - [ ] 平台路径，Application Support/Caches 分工，业务配置/历史单一写入者。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
@@ -169,12 +170,13 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     - [x] 合成 fixture 替代 CLI 输出边界，但实际运行 fingerprint、写入、roundtrip、state 激活和重开；
       显式路径之外不写入、不导入 cc_core，也不调用未监督 CLI。
     - [x] Windows 构造链/原行为及 Mac 包内同源验收通过。
-  - [ ] 后续候选（本轮主动暂停，尚未实施）：真实 catalog version/debug-models 的自有组监督；
-    不改已提交 turn 或调用真实账号。它可独立自动验证，不是被签名技术性阻断。
-    - [ ] 复用已有 C ABI/所有权规则，接入既有 catalog `_run` 的 Darwin 分支；
+  - [x] catalog version/debug-models 真进程自有组监督：源码 `a0c2df6` /
+    [run 34761449362](https://github.com/mclight-ship-it/cc-translate/actions/runs/34761449362) 已通过，
+    见[完整证据](#catalog-可靠检查点2026-09-13已完成本次单一切片)。不改已提交 turn 或调用真实账号。
+    - [x] 复用已有 C ABI/所有权规则，已接入既有 catalog `_run` 的 Darwin 分支；
       stdout/stderr 在读取期间限额，deadline 后清组再 reap，不按进程名追杀。
-    - [ ] 真 Mac fake CLI 覆盖冷缓存三调用、缓存重开 roundtrip、超时/洪泛/退出后后代/兄弟存活；
-      原 argv/env/cwd/安全覆盖与缓存回归保持，确认调用链后才扩到 exec/app-server。
+    - [x] 真 Mac fake CLI 覆盖冷缓存三调用、缓存重开 roundtrip、超时/洪泛/退出后后代/兄弟存活；
+      原 argv/env/cwd/安全覆盖与缓存回归保持，16 项 catalog 真进程测试实际通过；不扩到 exec/app-server。
   - [ ] 前置完成后再分别处理 exec、常驻 app-server、预热/取消与提交快照；
     现有 poll/wait 会提前 reap，不能仅在旧 `_kill_process` 里补一行 killpg。
 - [ ] Claude 独立生命周期/流式/诊断适配；未知认证明确展示。
@@ -481,8 +483,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   provider 白名单只新增 catalog 文件，不含 exec/app-server/Claude 或真实词库/账号数据。
   包内 Python 3.12.14 的 `catalog_storage_fixture` 四字段及清理/不可变均通过；
   明确 `cli_simulated=true`，没有运行真实 catalog CLI。两轮临时 zip 已清理，脱敏 JSON 留会话目录。
-- 此为可重复的 P1 存储依赖检查点，不是全部 P1 完成；按随后收尾指令暂停下一进程监督依赖。
-  用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因本轮绿色改为通过。
+- 此历史记录是可重复的 P1 存储依赖检查点，不是全部 P1 完成；当时按收尾指令暂停下一进程监督依赖。
+  当时用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因该轮绿色改为通过。
 
 ## P2 — 等待 P1
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
@@ -551,10 +553,11 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   同组后代受监督、主动逃离组的 wrapper 不支持；本次没有扩大保证或改变生命周期逻辑。
   本轮委派到此结束；除本次验证记录收尾外停止任何新增实现。后续 P1/P2–P6 不属于本轮。
 
-### 尚可独立推进，但本轮主动暂停
+### 历史：2026-09-12 当时尚可独立推进，但主动暂停
 
 - 真实 catalog version/debug-models 的实时输出限额、期限/取消与自有进程组监督；
-  可用 fake CLI 做 Mac CI，不需要签名或真实账号。当前只有存储隔离完成，尚无该进程实现。
+  可用 fake CLI 做 Mac CI，不需要签名或真实账号。当时只有存储隔离完成，尚无该进程实现；
+  后续已完成 catalog 监督，当前状态以 P1 清单和末尾可靠检查点为准。
 - 现有纯核心的额外边界/错误矩阵、协议资源契约与离线故障回归；仍可自动验证。
 - 配置/历史路径与唯一写入者、完整 ProviderRuntime 技术上也有可拆分自动化部分，
   但属于本轮明确不再开启的大链路，不是已完成项，也不因缺签名自动变成技术阻断。
@@ -570,7 +573,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
    `--version` 不能证明认证/真实模型可用。P0 五组探针不要求登录；真实账号测试时用户自行登录，
    不上传认证、屏幕或工作内容，不自动提交付费 turn。
 
-完整 P1 尚缺平台配置/历史单写、请求快照、真实 catalog/exec/常驻 app-server/Claude 生命周期、
+上述历史冻结时，完整 P1 尚缺平台配置/历史单写、请求快照、真实 catalog/exec/常驻 app-server/Claude 生命周期、
 预热/取消/付费不重试接线和真实词库安装切换等。P2–P6 的完整交互、业务闭环、多屏下载、
 发行签名更新、系统矩阵/性能长稳及发布均未完成。**不得把整个移植标完成。**
 
@@ -589,7 +592,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] 首次真实 Finder/Gatekeeper/TCC 和 macOS 26 兼容性待用户实测。设备自报不等于已验，
   不在公开仓库记录个人主机或身份信息；Intel 未验。跨版本更新是否保留授权另待实测。
 
-本轮不新增 catalog 进程、exec/app-server、配置历史、完整 ProviderRuntime 或大 UI。
+该准备切片当时不新增 catalog 进程、exec/app-server、配置历史、完整 ProviderRuntime 或大 UI。
 真实账号/模型不参与，P1 其余部分和 P2–P6 仍待办。先最小静默/helper 验证，再集中逐项 TCC；
 辅助功能/输入监控/屏幕内容权限与首次打开例外分开。完成本切片后停在待实机结果处。
 
