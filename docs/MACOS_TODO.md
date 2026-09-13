@@ -7,7 +7,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
 当前已获准提交/正常推送 `agents/cc-translate-macos-native` 并使用公有仓库的标准免费 Mac CI；
 首次云验证曾被 GitHub OAuth `workflow` scope 阻断；用户完成授权后已正常推送，
-真实 Mac 自动化工程门槛通过（run/SHA 见下）。正式 P0 首次 Finder/Gatekeeper/TCC 仍未通过。
+真实 Mac 自动化工程门槛通过（run/SHA 见下）；首轮用户正向探针报告已记录，完整 P0 首开/TCC 矩阵未通过。
 不推送 master、不发布、不新增付费资源。
 首次提交 `4102190` 的推送被旧 hook 的空树比较阻止。
 已修正新分支基线为目标远端实际公布的 HEAD 与本分支的共同祖先；网络/缺对象等错误仍阻断，
@@ -32,7 +32,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
-## P0 — Mac 自动化工程门槛通过；免费分发首次实机门槛未通过
+## P0 — Mac 自动化与首轮正向用户探针已完成；完整首开/TCC 矩阵未通过
 
 ### 文档与隔离
 - [x] 独立 macOS 工作树/分支；不修改 Windows 工作树和用户数据。
@@ -574,7 +574,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 预热/取消/付费不重试接线和真实词库安装切换等。P2–P6 的完整交互、业务闭环、多屏下载、
 发行签名更新、系统矩阵/性能长稳及发布均未完成。**不得把整个移植标完成。**
 
-## 当前切片：免费 GitHub 分发与首轮实机验证（2026-09-13）
+## 已完成的准备切片：免费 GitHub 分发与首轮实机验证（2026-09-13）
 
 - [x] 采用免费站外分发默认路线；Developer ID/公证是未选择的可选增强，无会员不阻断首测。
 - [x] 核对 [Apple 官方 Open Anyway 说明](https://support.apple.com/en-us/102445)
@@ -622,3 +622,37 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   缺少付费身份不再是阻断；下载首开、macOS 26 兼容性、真实 TCC 和跨版本权限保留仍待实测。
 - 临时下载 App zip 已清理，仅会话目录保留原始脱敏审计/smoke JSON；本地未安装或启动 Mac 程序。
   文档提交采用 `[skip ci]`，正常 hooks/非 force 推送，不把无源码变化的 CI 跳过当新验证。
+
+## 首轮正向实机报告与下一单一切片（2026-09-13）
+
+- [x] 匿名用户实测证据归属 **eec92a5794dd9a78ccf91f6f594e0d189e44d4e1** /
+  [run 34706318638](https://github.com/mclight-ship-it/cc-translate/actions/runs/34706318638) /
+  artifact **10301738307**，不归属文档 HEAD 或未来代码。详情见[指南的用户报告表](MACOS_DEVELOPMENT.md#首轮匿名用户报告2026-09-13仅原始固定包)。
+- [x] 用户确认顶部菜单静默启动；离线包内 runtime（arm64/darwin、Python 3.12.14）、
+  SQLite 3.53.1 读写、OpenSSL 3.5.8 / bundle CA / 证书验证、词典只读/重开/来源、
+  config fixture 方法/路由、catalog 合成存储 cache/reopen 通过。离线 HTTPS not_run 是预期，
+  随后显式 HTTPS 用户回报 passed。
+- [x] 授予 AX 后 PRESENT/合成文字正确，面板不抢 TextEdit 输入焦点；双 Cmd+C 及普通粘贴正常，
+  Stop 后不再触发新 B 结果；主屏保留 A 帧在屏幕改 B 后 OCR 仍为 A，Cancel/clear 清空图文。
+- [x] 用户报告正常 Quit 菜单消失、Finder 重开正常。没有人工进程树检查，不能证明全部后代退出。
+- [ ] 尚无独立 OS 版本佐证；只记录匿名 Apple Silicon / macOS 26 候选自报，不作完整兼容结论。
+- [ ] 未观察 Open Anyway，缺少干净用户/quarantine 来源证据；用户未明确回报内层 hash MATCH
+  或单独 synthetic-stream 结果，不能用此前 CI/静态核验代替这些用户检查。
+- [ ] 授权前 UNKNOWN、各权限拒绝/重启、多屏/Spaces/IME/完整焦点矩阵、跨版本授权保留未验。
+- [ ] 用户无 Codex/Claude CLI；版本、真实账号/native 配置/模型 NOT RUN，不要求现在安装。
+
+首轮正向探针完成不代表全部 P0/P1 完成。免费 GitHub/零付费预算及官方单 App 例外路线不变。
+旧“暂停 catalog”现仅由本次单一切片授权取代；不启动 exec/app-server、Claude、UI、配置/历史改造。
+
+### Catalog 真进程监督：按依赖完整接入与验证
+
+1. [ ] 从现有配置监督提取实际共享的 C 自有组/pipe/退出观察边界，配置原行为保持；
+   leader 未回收前完成 TERM/KILL/reap，ECHILD 后不得再 signal/wait，不追杀逃离组进程。
+2. [ ] 接入现有 catalog `--version`/`debug models` Darwin 调用，明确 stdout+stderr 实时总限额、
+   期限、取消、helper EOF；取消/监督错误不得被缓存降级吞掉后继续请求。Windows 默认路径不变，
+   cache/logger/解析/路由/override 安全语义不变。
+3. [ ] 隔离 synthetic CLI 走真实 catalog 冷缓存及磁盘重开路径，不伪造 validated 状态；
+   包内 helper/smoke/Swift 严格协议与负例同步，真实 Mac 验证正常/失败/超限/期限/取消/EOF、
+   后代清理及无关 sibling 存活，确认 XCTest 被发现执行。
+4. [ ] 针对性 Windows、正常 hooks、唯一分支推送、免费 Mac CI 与包内资源审计真实通过，
+   记录新源码/文档 SHA、run/artifact/hash；失败保留并修复，切片完成后停在可靠检查点。

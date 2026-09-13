@@ -1,7 +1,8 @@
 # macOS 原生客户端开发指南
 
-状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过；本轮只准备免费 GitHub 分发的首次实机验证，
-不扩展其他功能。首次 Finder/Gatekeeper/TCC 未验收。最低版本暂定 macOS 14，macOS 26 兼容性未验，
+状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
+本轮仅继续 catalog 真进程监督，其他功能不扩展。完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
+macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
 进度与证据以 [MACOS_TODO.md](MACOS_TODO.md) 为准。
 
@@ -320,7 +321,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
-本轮只准备免费站外下载与首测入口；catalog 进程、exec/app-server、配置/历史和完整 UI 等保持暂停。
+以下固定样本已取得首轮正向用户报告（范围见下），不是后续源码的验收。
+当前仅另行推进 catalog 进程监督；exec/app-server、配置/历史和完整 UI 等保持暂停。
 缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
 **固定来源与边界：**
@@ -341,7 +343,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
   没有 Apple 开发者身份或公证保证；校验和匹配也不证明软件无恶意行为，用户仍须判断是否信任来源。
   当前 `.app` 未做完整 bundle ad-hoc 签名；单个二进制的 ad-hoc 不等于 Developer ID 或公证，
   也不是 Personal Team 的设备限期/七天重签模式。用户不需要自己签名。
-  **当前包尚未通过首次 Gatekeeper/Finder 验收，只能按下面的免费首测流程试验，不能宣称兼容已完成。**
+  **已有正常启动/退出重开的用户报告，但缺少干净用户/quarantine 来源证据，不能宣称完整首开或兼容验收完成。**
   CI 的 XCTest/helper 成功不证明 Finder 能打开，也不证明首次权限可用。
 
 **下载安装（不安装开发工具）：**
@@ -422,6 +424,26 @@ Quit: PASS / FAIL / NOT RUN
 不附整个 Console/系统日志、`ps` 命令行、CLI stdout/stderr、路径下拉框、用户目录、邮箱、
 认证文件、真实选区、剪贴板或屏幕。只在上述合成步骤重现；需要更多信息时由协调者提出最小
 定向采集，而不是让用户打包全部日志。本轮报告中 NOT RUN/拒绝/阻断必须保留，不能填 PASS。
+
+### 首轮匿名用户报告（2026-09-13；仅原始固定包）
+
+全部归属源码 `eec92a5794dd9a78ccf91f6f594e0d189e44d4e1` / run `34706318638` /
+artifact `10301738307`，不得转记到后续构建。用户自报 Apple Silicon / macOS 26 候选设备，
+尚无独立系统版本佐证；runtime 报告为 arm64/darwin。不保存个人身份、主机路径或原始用户日志。
+
+| 项目 | 用户实际确认 | 未确认边界 |
+|---|---|---|
+| 启动 | 初以为双击无响应，随后确认顶部 `CC P0`，符合静默启动 | 未观察到 Open Anyway；无干净用户/quarantine 来源证据，不推断所有下载均可直接打开 |
+| 离线 runtime | 包内/isolated/禁 bytecode 为 true；Python 3.12.14，SQLite 3.53.1 读写通过，OpenSSL 3.5.8 / bundle CA / 证书验证通过 | 离线 HTTPS not_run 是预期；未单独回报 synthetic-stream |
+| 合成存储与配置 | 词典只读/重开/来源、config fixture 方法/路由、catalog cache/reopen 均通过 | catalog 的 CLI 明确仍为 simulated；不证明真实 CLI/账号兼容 |
+| AX/焦点 | 授予 Accessibility 后 PRESENT、合成选区正确；面板出现后直接输入仍留在 TextEdit | 授权前 UNKNOWN/拒绝路径未单独确认 |
+| 主动 Cmd+C | 双复制显示合成选区、普通粘贴保留；Stop 后不再产生新 B 结果 | 输入监控拒绝及重启细节未报告 |
+| 保留截图 | 主屏 A 帧预览后屏幕改 B，OCR 仍为 A；Cancel/clear 图文均清空 | 多屏/Spaces/拒绝路径未验 |
+| HTTPS/退出重开 | 用户明确回报 HTTPS passed，Quit 后菜单消失，Finder 重开正常 | 未检查进程树，菜单消失不能证明全部后代回收 |
+| CLI/下载校验 | 无 Codex/Claude CLI，版本/账号/模型 NOT RUN；不要求为本轮安装 | 用户未明确回报内层 hash MATCH；既有 CI/下载审计哈希不等于用户侧校验 |
+
+这些是首轮正向实机探针报告，不是完整 P0/P1 或产品验收。免费分发与用户本人选择官方单 App
+例外的路线不变；拒绝权限、干净首开、跨版本授权保留、完整平台/焦点矩阵与真实 provider 仍待验证。
 
 ## 7. 功能对齐矩阵
 
