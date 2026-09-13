@@ -69,6 +69,13 @@ Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_win
 
 缓存签名/history-kind 的固定字节矩阵与冻结旧方法差分在 `tests.test_result_rules`；
 Windows 另运行 `tests.test_result_rules_windows` 验证真实 wrapper、元数据捕获和缓存/历史消费者。
+
+存储基础层：`python -B -m unittest tests.test_storage tests.test_storage_windows tests.test_classify_import`。
+便携矩阵使用临时目录，验证显式 Mac 路径、不创建/回退、真实 JSON 字节/重开/替换、
+fdopen/部分写入/flush/fsync/replace 故障及单操作 temp/descriptor 清理；
+Windows 消费者仍走原配置/历史/日志入口。Mac CI 还从实际 bundle Info.plist 取应用身份，
+显式调用包内 `cc_macos.storage_fixture`，生命周期由 TemporaryDirectory 管理。
+这不是唯一 writer/跨进程事务测试，也不访问用户配置或新增 runtime JSON 字段。
 配置默认/i18n/provider selection 留在 UI，纯模块不导入 `cc_core` 或访问用户磁盘/网络。
 这些测试不表示完整请求快照或历史写入所有权已实现。
 

@@ -41,7 +41,7 @@ jobs:
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
           tests.test_catalog_storage_portable
           tests.test_codex_config_darwin_contract tests.test_codex_catalog_darwin_contract
-          tests.test_result_rules
+          tests.test_result_rules tests.test_storage
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
@@ -100,13 +100,23 @@ jobs:
           assert Path(cc_providers.codex_catalog.__file__).resolve() == core / "cc_providers/codex_catalog.py"
           import cc_result_rules
           assert Path(cc_result_rules.__file__).resolve() == core / "cc_result_rules.py"
+          import cc_storage
+          import cc_macos.storage_fixture
+          assert Path(cc_storage.__file__).resolve() == core / "cc_storage.py"
+          assert Path(cc_macos.storage_fixture.__file__).resolve() == core / "cc_macos/storage_fixture.py"
           suite = unittest.defaultTestLoader.loadTestsFromNames(
               ["test_classify", "test_is_single_word", "test_direction", "test_classify_import",
                "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
-               "test_catalog_storage_portable", "test_result_rules"])
+               "test_catalog_storage_portable", "test_result_rules", "test_storage"])
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           if not result.wasSuccessful() or result.skipped:
               raise SystemExit(1)
+          import plistlib
+          import tempfile
+          identity = plistlib.loads((core.parent.parent / "Info.plist").read_bytes())["CFBundleIdentifier"]
+          with tempfile.TemporaryDirectory(prefix="cc-storage-fixture-") as directory:
+              cc_macos.storage_fixture.probe_storage(Path(directory) / "synthetic home", identity)
+          print("Bundled storage fixture passed with bundle identity and temporary home")
           PY
       - name: Recheck immutable bundle and preserve executable modes in zip
         shell: bash

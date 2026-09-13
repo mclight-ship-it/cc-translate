@@ -139,6 +139,8 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
 自动化不代表完整 P0 首开/TCC 矩阵通过，也不解锁完整 P2–P6 UI；原包的首轮正向用户报告另记。
 当前采用免费 GitHub 分发路线，Developer ID/公证为未选择的可选增强，不是 P1 或免费首测的强制准入。
 - [ ] 平台路径，Application Support/Caches 分工，业务配置/历史单一写入者。
+  - [ ] 当前基础层：显式 Mac home/应用身份解析路径（不创建/迁移），共享原子 JSON 写入；
+    Windows 原入口/默认路径/日志不变，Mac 仅临时合成诊断；不是唯一 writer 或迁移服务。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -820,3 +822,41 @@ exec/常驻 app-server/Claude 生命周期及真实词库安装切换、完整 P
 但不属于本次委派。真实用户 CLI/账号、干净首开与官方例外路径、权限拒绝/重启、多屏/Spaces/IME、
 跨版本授权和 macOS 14/26 完整兼容仍需后续集中验证。
 GitHub 免费分发/零预算不变，Developer ID/公证只是未选择的可选增强；不发布 Release、不改 master/Windows 部署。
+
+## 当前单一切片：显式平台路径与原子 JSON 基础（2026-09-13）
+
+上一共享规则切片已验收关闭，不重做。当前仅完成下面的依赖基础层：
+
+1. [x] 无副作用的共享 `cc_storage.py` 接收显式 home 与 application identifier，
+   返回 Application Support/Caches 路径；不查环境默认、不创建/迁移、不回退资源或源码目录。
+   Mac 应用身份由调用方取现有已校验 Info.plist 的 CFBundleIdentifier，不另建默认常量。
+2. [x] 抽取 Windows 实际 `_atomic_write_json`，同目录唯一 temp、原 JSON 字节、
+   flush/fsync/replace 与错误/patch seam 保持；配置/history schema、load/save/log wrapper 不变。
+3. [ ] 包内显式合成诊断使用临时 home，调用路径与真实 JSON 写入/重开/替换；
+   同源模块/必需资源/hash/隔离导入、故障矩阵、Windows 消费者与真实 Mac CI 全部回归。
+   诊断只由自动化显式调用，不增加业务 UI 或 runtime JSON 字段。
+4. [ ] 正常 hooks/开发分支推送、记录 source/docs SHA/run/artifact/hash，清理下载包后停止。
+
+原子 replace 只保证单个文件完整可见，不保证跨请求/跨进程 read-modify-write 唯一所有权，
+也不等于断电持久性协议。本轮不重构 `_HISTORY_LOCK`/`clear_history`（后者仍未共用锁）、
+完整配置迁移/历史服务、请求快照或 provider 生命周期，不让签名费用成为新要求。
+
+### 基础层接入与本地阶段记录
+
+- `cc_storage.macos_user_paths` 只进行词法解析，显式绝对 home 与应用 ID，无 getenv/Path.home/
+  resolve/mkdir；拒绝相对路径、父级跳转与 `.app` 内 home。它不是符号链接授权/完整路径所有权服务。
+  Mac 自动化从实际 bundle Info.plist 取得 ID，在独立 TemporaryDirectory 中明确创建两种目录，
+  用共享 primitive 各执行写入/重开/替换；失败直接传播，成功后由调用方清理整个合成 home。
+- Windows `_atomic_write_json` 为同函数兼容导出，原 json/os/tempfile patch seam 不变；
+  保留旧 JSON 参数/本目录唯一 temp/flush/fsync/replace/原异常与 best-effort temp cleanup。
+  明确保留 raw descriptor 所有权（fdopen closefd=False，finally close），补上 fdopen 失败前的泄漏窗口；
+  原 cleanup 失败不遮盖 primary error 的行为不变，不把残留 temp 的故障用例当已清理通过。
+- `_resolve_data_dir`、`_user_data_path` 和 load_config/save_config/load_history/add_history/clear_history
+  七个函数 AST 与 `5ecc987` 完全一致。没有改变 Windows 的默认目录、迁移或日志行为。
+- 首轮便携/隔离 **15 tests，OK，0.401s**；补充路径/目录故障并联合既有
+  配置/历史/原子写入、隔离与打包后 **99 tests，OK，6.987s**。
+  新 Windows 接线测试、完整 hooks 和实际 Mac/包内入口证据随后记录，不以本地代替。
+- 新增 Windows 接线 **38 tests** 全部通过；最终联合 **137 tests，OK，7.225s**，
+  含 **16 项**便携存储/故障测试、现有配置/历史、隔离和包审计。
+  回归冻结了 12 项既有 Windows AST，使用稳定序列化/hash，不依赖运行时 Git 历史或 ast.dump 版本格式。
+  本地截至此处没有失败测试；完整 hooks/Mac 仍须真实完成。

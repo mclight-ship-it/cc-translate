@@ -62,6 +62,7 @@ from cc_dictionary_cache import DictionaryAiCache
 from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
 from cc_dictionary_metrics import DictionaryMetrics
 from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
+from cc_storage import atomic_write_json as _atomic_write_json
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -625,29 +626,6 @@ def load_config() -> "Config":
     except Exception as e:
         log_error("load_config", e)
     return cfg
-
-
-def _atomic_write_json(path: str, data: Any) -> None:
-    """Write JSON to ``path`` atomically.
-
-    Dumps to a uniquely-named temp file in the same directory, flushes+fsyncs it,
-    then ``os.replace()``s it over the target. Because the swap is atomic, a
-    crash or hard ``os._exit`` mid-write can never leave a truncated/corrupt
-    file — readers always see either the old complete file or the new one."""
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        raise
 
 
 def save_config(cfg: Dict[str, Any]) -> None:

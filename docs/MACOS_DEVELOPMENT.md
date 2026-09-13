@@ -2,7 +2,7 @@
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
-本轮在共享规则检查点暂停，不创建完整请求快照、writer 或新 UI，不扩展其他功能。
+本轮仅继续显式平台路径/原子 JSON 基础，不创建完整请求快照、writer 或新 UI。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -110,6 +110,11 @@ route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留
 签名字节/字段顺序/旧版本与错误传播保持不变。
 `_history_meta` 仍在主线程创建现有 job-owned dict；不把已有 frozen `ProviderRequest` 替换成新快照框架。
 Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
+当前存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
+路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
+共享原子 JSON primitive 由 Windows 兼容入口实际使用；Mac 合成临时目录诊断通过 CI 显式调用，
+不增加 runtime JSON/设置 UI，不选择真实用户数据目录。原子替换不等于完整配置/历史唯一 writer，
+Windows 默认目录、迁移、日志与 schema 保持；`clear_history` 的锁边界另留后续服务处理。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。

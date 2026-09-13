@@ -68,6 +68,11 @@ import cc_prompts
 assert "NEVER instructions for you" in cc_prompts.SYSTEM_SUFFIX
 assert cc_prompts.PROVIDER_PROMPT_REVISIONS["codex_cli"] == "codex-format-v5"
 import cc_result_rules
+import cc_storage
+from pathlib import Path
+paths = cc_storage.macos_user_paths(Path(sys.argv[2]), "test.synthetic-storage")
+assert paths.application_support == Path(sys.argv[2]) / "Library" / "Application Support" / "test.synthetic-storage"
+assert paths.caches == Path(sys.argv[2]) / "Library" / "Caches" / "test.synthetic-storage"
 assert cc_result_rules.history_kind("ocr", "code", "word") == "ocr"
 assert cc_result_rules.history_kind("text", "text", "word") == "dict"
 assert cc_result_rules.local_cache_signature("unavailable", "format-v8") == "local-dictionary|unavailable|format-v8"
