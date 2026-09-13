@@ -146,8 +146,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     源码 `84ab360` / [run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000)
     通过，见[基础层证据](#存储基础可靠检查点2026-09-13)。
     Windows 原入口/默认路径/日志不变，Mac 仅临时合成诊断；不是唯一 writer 或迁移服务。
-  - [ ] 本轮进行中：共享历史仓库与 Windows 兼容入口、add/clear 统一锁、Mac 显式跨进程 owner；
-    仅历史 I/O，不等于整个配置/历史服务或业务 helper 接线。
+  - [x] 共享历史仓库与 Windows 兼容入口、add/clear 统一锁、Mac 显式跨进程 owner；
+    源码 `c78d8ee` / [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072) 三系统通过，
+    详见末尾历史仓库证据。仅历史 I/O，不等于整个配置/历史服务或业务 helper 接线。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -915,7 +916,7 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
 完整 P1/P2–P6 与剩余实机门槛未完成；这些可独立拆分的代码工作不因签名而被阻断，
 但本次不继续开启。免费 GitHub/零预算/不 Release、不改 master 或 Windows 正式部署保持。
 
-## 当前单一切片：同制品 macOS 14/26 运行矩阵（2026-09-13，已完成）
+## 历史检查点：同制品 macOS 14/26 运行矩阵（2026-09-13，已完成）
 
 1. [x] 完整保留 macos-15/Xcode 16.4 producer 的所有测试/构建/审计；归档后生成固定 SHA、
    本 run/attempt、zip hash 和内容/模式/链接摘要的 receipt，输出精确 artifact ID。
@@ -1012,17 +1013,17 @@ Intel、完整 P0/P1、请求快照/配置历史唯一 writer、exec/app-server/
 后续纯核心/synthetic 回归技术上可以独立推进，不伪称被付费签名阻断，但不属于本轮。
 免费 GitHub 分发/零预算不变；不发布 Release、不改 master/Windows 部署、不要求用户现在重装或安装 CLI。
 
-## 当前单一切片：共享历史仓库与明确写入所有权（2026-09-13，进行中）
+## 当前单一切片：共享历史仓库与明确写入所有权（2026-09-13，已完成）
 
 已验收的跨系统矩阵关闭，不重做等价实现。本轮只完成历史 I/O：
 
-1. [ ] 共享显式路径仓库接入 Windows load/add/cache/clear，保留数组/字段顺序、时间/条数、
+1. [x] 共享显式路径仓库接入 Windows load/add/cache/clear，保留数组/字段顺序、时间/条数、
    OCR 缓存排除、配置路径/default、日志和原子写入 patch seam；不改 `_record_history` 当前开关/过期策略。
-2. [ ] add 的读改写与 clear 共用同一操作锁，read/cache 也在同一锁内；可控并发证明先开始的追加
+2. [x] add 的读改写与 clear 共用同一操作锁，read/cache 也在同一锁内；可控并发证明先开始的追加
    写回完成后清空才返回。此后新提交的追加仍可记录，不等于取消旧翻译或新的隐私策略。
-3. [ ] Mac 显式 owner 使用稳定的独立侧文件协作锁（不锁可被 replace 替换的 JSON inode）；
+3. [x] Mac 显式 owner 使用稳定的独立侧文件协作锁（不锁可被 replace 替换的 JSON inode）；
    close 与操作互斥，退出/崩溃释放，不删除/抢占活跃锁文件，不凭 PID 杀进程。
-4. [ ] 包内真实临时 home、竞争 owner/replace/退出/崩溃、故障/FD/temp 回归及 Windows 消费者/
+4. [x] 包内真实临时 home、竞争 owner/replace/退出/崩溃、故障/FD/temp 回归及 Windows 消费者/
    差分/并发测试；正常 hooks、同一制品 15/14/26 CI、审计和证据文档后停。
 
 Windows 旧读取策略保留：缺文件/非数组返回空；损坏或读取异常记 `load_history` 日志后返回空，
@@ -1054,7 +1055,7 @@ Windows 旧读取策略保留：缺文件/非数组返回空；损坏或读取�
   同一矩阵单独 **1 项 / 2.313s 通过**；随后联合 **166 项 / 11.894s 通过**，
   再独立连续三轮完整矩阵 + owner contract **36 项 / 7.443s 通过**。上述均不是 Mac 证据。
 - 新便携历史 **21 项**，Windows 差分/调用链 **15 项**（包含 224 组写入对照与 120 组缓存组合）；
-  Mac owner 便携契约 **33 项**，包内 Darwin 真进程 **19 项待执行**。
+  Mac owner 便携契约 **33 项**，包内 Darwin 真进程 **19 项当时待执行**，实际结果见下。
   构造清理用 finally 转移 FD 所有权；add/clear/close 并发测试等竞争者实际进入共享锁，
   不用 sleep 推测已开始。原配置/路径/日志 AST 不变，旧历史 AST 保留为冻结差分 oracle，而非删除断言。
   必需资源/hash/隔离导入、同包 process/core 清单已接入；下限 25/107 提高为 **44/128**，未扩 runtime JSON。
@@ -1066,3 +1067,68 @@ Windows 旧读取策略保留：缺文件/非数组返回空；损坏或读取�
   实际日志定位 Python 3.14.7 的 stdlib `pathlib._os` 自身会 import fcntl，被新项目隔离 guard 误判，
   并非 owner 提前取锁。已仅在安装项目 import guard 前准备 pathlib 标准库基线；
   保留 fcntl 禁止项、直接项目 import 拦截和文件/网络 audit，不换工具链/宿主版本，不删断言或跳过。
+
+### 历史仓库可靠检查点
+
+- 最终源码 **c78d8ee994a0d335a1e2c87b51e60c33949d4cc9**；相对 `cbbf136` 只有隔离测试基线及失败记录，
+  生产逻辑相同。修正后 Windows 针对性 **34 tests，OK，0.321s**、正常 affected-test hook
+  **1 test，OK，0.181s**；上次生产改动的完整 **1165 tests，OK，62.496s** 保留为实际覆盖证据，
+  不把未重复的全套冒充重新执行。正常 privacy/编译 hooks 均通过，没有 bypass。
+- [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072)
+  **attempt 1，success**，三个 jobs 的全部 steps success；先前失败 run 34767969885 不改写为通过。
+
+| 实际 job | 实际 OS/build，arm64 | image | Xcode/build；Swift；SDK |
+|---|---|---|---|
+| [producer 103752571771](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/job/103752571771)，2m17s | 15.7.9 / 24G830 | 20260907.0337.1 | 16.4 / 16F6；6.1.2；15.5 |
+| [runtime 103752884874](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/job/103752884874)，1m37s | 14.8.9 / 23J631 | 20260831.0302.1 | harness 16.2 / 16C5032a；6.0.3；15.2 |
+| [runtime 103752884833](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/job/103752884833)，1m55s | 26.6.2 / 25G83 | 20260907.0351.1 | harness 26.6 / 17F113；6.3.3；26.5 |
+
+| 实际执行 | producer 15 | runtime 14 | runtime 26 |
+|---|---|---|---|
+| 便携/打包/契约 | **299 tests，5.813s**，含新增历史21/owner契约33 | 不重复宿主套件 | 不重复宿主套件 |
+| 原普通 XCTest | **35总数：34 pass + 初次集成skip1，0 failures，8.685s** | 独立原集成 harness | 独立原集成 harness |
+| 包内 synthetic 真进程 | **44 tests，53.075s** | **44 tests，53.436s** | **44 tests，55.852s** |
+| 包内同源核心 | **128 tests，0.509s** | **128 tests，0.485s** | **128 tests，0.467s** |
+| 强制 Foundation.Process → 原 helper | **1 test，2.280s** | **1 test，2.428s** | **1 test，3.102s** |
+| 显式历史/存储、HTTPS/SQLite、取消/EOF、完整审计与不可变 | 全通过 | 全通过 | 全通过 |
+
+除 producer 构建前原有初次集成 skip 外，包内/后置/两个 runtime **0 skip/0 failure/0 error**。
+三个系统各新增 **19 项历史 owner** 在日志逐项 `ok`，实际输出 `PASS: bundled history owner fixture`：
+真实第二进程竞争拒绝、两次 JSON atomic replace 后锁仍有效、clear 后侧文件 inode 保留、
+owner 正常退出/`os._exit` 崩溃被回收后接管、独立兄弟存活、fork 子副本拒绝且不 unlock 父锁；
+目录别名、JSON/侧文件链接与 FIFO 拒绝、fstat/flock/竞争失败 FD 关闭、读取/坏数据/原子写失败不覆盖、
+close 等待真实写入、close 后拒绝所有操作、状态不明的 close 不再重试。不是 mock flock 冒充真实竞争。
+core 的新增 **21 项**同时验证实际 JSON 字节、旧字段/上限/时间/缓存、RLock 屏障、clear/close、
+坏文件/权限/替换失败保护。Windows 新 **15 项**另走真实 wrapper/旧实现差分和 `_record_history` 当前策略。
+Mac 历史 fixture 从实际 Info.plist 取得身份，在 caller-owned 临时 home 显式操作并重开；
+它不是新业务 IPC/按钮。Foundation 仍测原 helper 通道，不能据此宣称完整历史 helper 服务已接线。
+
+#### 历史制品与清理
+
+- 唯一 App [artifact 10321128934](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/artifacts/10321128934)，
+  API 已核验有效，到期 **2026-09-20T16:18:52Z**。
+  内层 **CCTranslateMac-P0.zip，18,363,013 字节**，
+  SHA-256 **f44bbfe8428e353c1c3aeefb5a8a8e3c0dab9bc0645ad0a668aeebd64cc1dfcf**。
+  API 外层 artifact digest `a890d9ee3e4593bb160c4cc993e286587166f387523e22e97ea1db82cf97af23` 单独记录。
+- 两个小报告：
+  [Mac14 artifact 10320338723](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/artifacts/10320338723)
+  （2,389 字节，到期 2026-09-20T16:20:39Z）、
+  [Mac26 artifact 10321470139](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/artifacts/10321470139)
+  （2,391 字节，到期 2026-09-20T16:20:55Z），均有效、不含第二份 App。
+- 独立核验 **667库存/57资源hash/29个同源Git blobs/6 arm64 Mach-O/19份runtime许可**。
+  新 `cc_history.py`、`cc_macos/history_owner.py`、`cc_macos/history_fixture.py` 均匹配固定源码；
+  manifest commit 正确且 clean，605 个保留 runtime 文件的原 full-build 许可覆盖记录不变。
+  ZIP CRC/路径/0755/相对链接通过；同包只由 Mac15/Xcode16.4 组装，两个 runtime 不重建或重签。
+- producer、两个 runtime 和下载归档的字节/模式/相对链接摘要均为
+  `df82533aa6550e506d2f5bfc5db99e0b8315b15fceccbd19b001b0e4cd21518b`；
+  runtime `stage=complete`、`bundle_unchanged=true`。
+  三系统 helper smoke 的 handshake/fixture/explicit_cancel/eof_cancel/probe_files_cleaned 均 true，
+  Python3.12.14/SQLite3.53.1/OpenSSL3.5.8、bundle CA 与 HTTPS 证书验证通过。
+  没有在 Windows 冒充执行 Mac 二进制。下载 zip 与临时审计脚本已清理，只保留脱敏 JSON。
+- 最终证据使用 docs-only 正常提交/push，不重跑未变源码；源码 SHA 与最终文档 HEAD 分别报告。
+
+**本轮历史 I/O 单一切片完成，停止新增代码。** Windows 真入口已接共享仓库、Mac 显式 owner 已验证；
+配置 writer/迁移、历史业务 helper 唯一入口、完整 RequestSnapshot/provider 与 P2–P6 仍未完成。
+这些后续可独立项不因付费签名阻断，但不属于本次实施。旧 `eec92a5` 用户报告不迁移到本包，
+用户自报26.5.2、干净首开/官方单App例外、TCC拒绝/重启/跨版本、多屏/IME、真实CLI/账号与Intel仍待验证。
+免费 GitHub 分发/零预算不变；不 Release/master/Windows部署，不要求现在重装、安装CLI或登录。

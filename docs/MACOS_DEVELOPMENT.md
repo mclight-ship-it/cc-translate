@@ -4,8 +4,8 @@
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
 显式平台路径/原子 JSON 基础也已通过；同一 Mac15/Xcode 16.4 制品现已在标准免费
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
-上述矩阵已验收关闭；当前只实现共享历史仓库与显式 Mac owner，
-不创建完整配置 writer、请求快照、provider 或新 UI。新历史代码尚待本轮独立自动化证据。
+共享历史仓库和显式 Mac owner 已接入，并完成新包的 Windows/三系统自动化；
+本轮到此停止，不创建完整配置 writer、请求快照、provider 或新 UI，也未增加历史业务 IPC。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -45,11 +45,14 @@ cc_macos/
   protocol.py               有界、版本化 NDJSON 校验
   server.py                 握手、请求、事件序号、取消和 EOF
   probes.py                 SQLite / SSL 等显式运行时自检，不获取 TCC
+  history_owner.py           显式 Mac 历史 owner；稳定侧文件 flock、操作锁、close/fork 边界
+  history_fixture.py         仅 CI 显式调用的临时历史写入/查询/清空/重开，不是业务按钮
 cc_classify.py               P1 共用本地分类/词典触发判断；仅依赖 re，无平台/数据路径副作用
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
 cc_result_rules.py           P1 缓存签名/history-kind；只接 caller-resolved 值，不读取 UI/配置
 cc_storage.py                P1 显式 Mac 路径与单文件原子 JSON；不选默认 home，不是唯一 writer
+cc_history.py                P1 共享历史仓库；Windows 原入口复用，单进程统一操作锁与严格默认读取
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -118,9 +121,19 @@ Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
 共享原子 JSON primitive 由 Windows 兼容入口实际使用；Mac 合成临时目录诊断通过 CI 显式调用，
 不增加 runtime JSON/设置 UI，不选择真实用户数据目录。原子替换不等于完整配置/历史唯一 writer，
-Windows 默认目录、迁移、日志与 schema 保持；`clear_history` 的锁边界另留后续服务处理。
+Windows 默认目录、迁移、日志与 schema 保持；历史的 add/clear 锁边界现已由下述仓库统一。
 共享 writer 显式保留 FD 所有权直至关闭，补齐 fdopen 失败的释放；旧 JSON 字节与失败清理策略不变。
 路径是词法解析而非符号链接权限检查，当前 Mac 入口只使用 caller-owned 临时目录，不选择真实业务 home。
+共享历史仓库现由 Windows load/add/cache/clear 真实入口使用；原数组/字段顺序/时间/限额、缓存匹配与
+OCR 排除不变，已有 `cc_result_rules` 元数据路径不变。add/clear/load/cache 共用一把可重入操作锁；
+clear 等正在写回的 add 完成后再删除，而在 clear 之后获得锁的新 add 仍可记录，不改变取消/隐私策略。
+Windows 既有损坏读取日志/空视图兼容和写入错误日志留在 wrapper，不将其用作 Mac 默认错误策略。
+Mac 必须显式构造 `MacHistoryOwner`，在 caller-owned 目录对稳定 `.lock` 侧文件取得非阻塞 flock；
+JSON replace/clear 不替换或删除侧文件，close 与操作互斥，close 后拒绝写入，fork 继承对象拒绝操作。
+只在显式 Darwin 构造时导入 fcntl；损坏/读取错误直接传播，不当空历史覆盖。异常/崩溃接管已用真实
+包内合成进程验证，但锁是协作式，不是抵御恶意目录替换的权限系统。单进程仓库本身不是跨进程锁。
+现有 helper 的业务历史接线、配置唯一 writer/迁移仍未实现；新 history fixture 由 CI 单独显式调用，
+Foundation 集成继续验证原 helper 通道，不宣称已有新的历史 IPC 或用户数据服务。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。
@@ -521,7 +534,7 @@ Windows targeted 137/完整 hooks 1049、Mac 便携 198/包内核心 107（新�
 原 runtime JSON、业务配置/history schema 和原生 UI 未变；不是完整唯一 writer、迁移或产品。
 新包不继承旧包实机报告，免费分发/签名与人工门槛不变，完整证据见 TODO。
 
-### 最新同制品跨系统检查点（仅自动化，不要求现在重装）
+### 后续同制品跨系统检查点（仅自动化，不要求现在重装）
 
 源码 `70fe79beee870c74ed1b4e078d98ac4fa89fce74`，
 [绿色 run 34765811135](https://github.com/mclight-ship-it/cc-translate/actions/runs/34765811135)，三个 jobs 的全部 steps success。
@@ -535,6 +548,23 @@ Windows 正常完整 hooks 1096 项、producer 便携 245 项及原 Swift 测试
 独立核验 664 库存/54 资源 hash/26 Git blobs/6 arm64 Mach-O，三系统内容/模式/链接摘要一致。
 本包没有新增业务能力；原始 `eec92a5` 用户正向报告仍独立。
 不代表 Finder/干净首开/Gatekeeper/TCC、多屏/IME、用户官方 CLI/账号、Intel 或完整 P0/P1/P2–P6 已完成。
+
+### 最新历史仓库检查点（仅自动化，不要求现在重装）
+
+源码 `c78d8ee994a0d335a1e2c87b51e60c33949d4cc9`，
+[绿色 run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072)，三 jobs 全部 steps success。
+[唯一 App artifact 10321128934](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072/artifacts/10321128934)
+到期 **2026-09-20T16:18:52Z**；内层 `CCTranslateMac-P0.zip` **18,363,013 字节**，
+SHA-256 **f44bbfe8428e353c1c3aeefb5a8a8e3c0dab9bc0645ad0a668aeebd64cc1dfcf**。
+Mac15.7.9/Xcode16.4 只构建一次，同包在 14.8.9/26.6.2 arm64 原样验证：
+每系统 **44 进程测试（新增历史19）/128核心（新增历史21）/1强制 Foundation 集成**，均无 skip/错误。
+Windows 生产改动完整 hooks **1165**、联合 targeted **199**；随后仅隔离测试基线修正的 targeted34/hook1 通过。
+producer 便携 **299**、普通 XCTest **34 pass + 初次集成skip1**，后置集成真执行。
+首次失败及修复完整保留在 TODO，不把 Python3.14 标准库的 fcntl 导入误判或下游未执行当绿色。
+独立核验 **667库存/57资源hash/29同源Git blobs/6 arm64 Mach-O/19 runtime许可**；
+三系统与下载包的内容/模式/链接摘要一致，临时 zip 已清理。
+Windows add/clear 统一锁与 Mac owner 生命周期已完成；这不是配置/历史完整 helper 服务、新UI或全P1完成，
+也不继承旧 `eec92a5` 用户报告或验证用户自报26.5.2。免费分发及人工门槛不变。
 
 ## 7. 功能对齐矩阵
 
