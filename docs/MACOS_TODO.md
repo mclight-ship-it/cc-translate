@@ -157,6 +157,8 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     包内只携带三个契约文件，不携带 CLI 后端/用户认证，不宣称 native Mac provider 已实现。
   - [x] provider 契约初始化边界的完整 Windows hook、真实 Mac/包内回归通过并记录。
   - [x] 只读词典存储的原生路径/线程局部连接、合成 runtime probe 及包内同源验证。
+  - [ ] 共享缓存签名与历史类型规则：显式值纯模块、Windows 兼容 wrapper 和 Mac 同源回归；
+    保留旧拼接字节/版本、local route 优先级和 OCR > code > dict > text，不创建完整 RequestSnapshot。
 - [ ] Codex native 配置/认证/目录/工具/hook 边界；严格事件流，不做 exec 假兼容。
   - [x] 第一步：只接既有 `read_native_config` 的 Darwin 分支；共享已验证 C 组信号/
     zombie-only 判断原语，随包装载失败必须明确失败，不回退裸 PID kill。
@@ -731,3 +733,44 @@ ECHILD 的首信号、末信号和非回收观察路径另由 host contracts 检
 完整 P1 仍缺配置/历史单写、请求快照、exec/常驻 app-server/Claude 生命周期、预热/付费不重试
 完整接线和真实词库安装切换等；P2–P6 仍未完成。技术上可独立回归的小项不因签名而被阻断，
 只是本次单一切片已结束，不自动开启下一项。免费 GitHub/零付费预算、不发布 Release/不动 master 或 Windows 部署不变。
+
+## 当前单一切片：共享缓存签名与历史类型规则（2026-09-13）
+
+catalog 检查点及其只读 review 已完成，不重做等价监督改造。现在仅获准继续下列纯规则前置，
+不创建完整请求快照、配置/历史 writer 或 UI，不改模型 prompt/缓存版本、不清用户缓存。
+
+1. [x] 将签名字符串和 history-kind 优先级放入无副作用的 `cc_result_rules.py`；
+   UI 保留 route/本地对象状态、配置默认、i18n fallback、provider selection 与注入边界。
+   本地签名不查询 provider；字段顺序、字符串转换/真假判断、可选 revision 与异常传播保持。
+2. [x] 原 `_history_meta` 主线程捕获、缓存命中、截图/本地与 AI 词典/摘要消费者使用真实 wrapper；
+   不重写 metadata dict。history kind 复用 `cc_classify.is_single_word`，保留测试替换该判断的语义。
+3. [ ] 旧实现差分及固定字节矩阵、惰性优先级/错误传播、隔离导入无用户磁盘网络访问；
+   包含同源模块的 Mac 包用 `-I -B` 实际跑相同纯规则测试，不为此扩展 runtime JSON。
+4. [ ] 正常 Windows targeted/hooks、唯一分支推送、标准免费 Mac CI、制品资源/内层 hash 审计；
+   回写准确源码/文档 SHA 与计数后清理并停止，不继承 `eec92a5` 的旧包用户实测结论。
+
+### 规则实现与本地验证（Mac 证据随后记录）
+
+- 三个共享入口为 `local_cache_signature`、`provider_cache_signature`、`history_kind`，
+  只依赖已有 `cc_classify.is_single_word`。Windows 原方法调用同一入口，未增加版本/转义/规范化。
+  UI 按原顺序解析并转换 model/direction/summary/language，再查询 revision；
+  核心接收已解析字符串，不再次执行 `str` 或 model auto fallback；
+  local 路线保持原短路，OCR/code wrapper 不读取较低优先级状态，单词判断仍可按旧入口注入。
+- 旧两方法以 `855b73f` 为冻结差分基准；已静态比对 AST（仅忽略名称/docstring）完全一致。
+  纯规则包含固定 UTF-8 字节矩阵、2,160 个 provider 字段组合、缺省/空值/异常/优先级检查。
+  `_history_meta`、`_show_loading`、`_show_result`、`_do_translate`、`_system_prompt_for`
+  五个真实消费者/提示词方法 AST 未变；`ProviderRequest` 和 metadata dict 无改动。
+- 新模块纳入 bundle 必需文件/资源哈希清单、缺失和篡改回归及包内同源测试；
+  isolated 导入测试禁止平台/provider/Tk、用户数据读取/写入或联网。没有新增 IPC 字段。
+- 首轮便携/隔离/打包 **50 tests，OK，5.963s**；加入完整字段组合及既有 Windows
+  词典/缓存/历史元数据/截图与 job-isolation 消费者后 **112 tests，OK，7.813s**。
+  新 Windows wrapper 差分矩阵、完整 hooks 和实际 Mac/随包 Python 执行证据仍须另记。
+- 新 Windows 差分首轮 **26 tests，25 pass，1 个测试含 1 FAIL + 1 ERROR**：
+  核心曾二次执行 model 转换，把已转换空字符串改成 auto，且对 str 子类触发额外异常。
+  已修正为只拼接 caller-resolved 字段，保留空值/子类字节和 UI 原求值顺序；
+  保留原失败用例，并增加其他已转换字段的回归，不改变旧缓存协议。
+- 修复后首次联合 **140 tests，2 个失败 subtest**：便携负例尚把未解析 model=None 传给
+  显式字段接口，导致在 revision 之前报错。现使用与原 UI 解析结果一致的 model="auto"，
+  保留对非法 provider/revision 的原异常类型、完整消息和字段序号断言。
+- 最终针对性联合 **140 tests，OK，7.230s**，包含 **9 项**便携规则和
+  **27 项**新增 Windows wrapper/真实消费者回归；原有失败断言全部保留并通过。

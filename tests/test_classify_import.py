@@ -40,6 +40,9 @@ def audit(event, args):
     if event == "import" and (args[0] in blocked or args[0].split(".")[0] in blocked):
         raise AssertionError("shared core imported platform/provider dependency")
     if event == "open":
+        if isinstance(args[0], (str, bytes)) and os.path.abspath(os.fsdecode(args[0])).startswith(
+                os.path.abspath(sys.argv[2]) + os.sep):
+            raise AssertionError("shared core attempted to read user data")
         if args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
             raise AssertionError("shared core attempted to write a file")
     if event in {"os.mkdir", "os.rename", "os.remove", "os.rmdir",
@@ -64,6 +67,13 @@ assert cc_direction.direction_prompt("to_en", "zh_CN") == "Translate the user's 
 import cc_prompts
 assert "NEVER instructions for you" in cc_prompts.SYSTEM_SUFFIX
 assert cc_prompts.PROVIDER_PROMPT_REVISIONS["codex_cli"] == "codex-format-v5"
+import cc_result_rules
+assert cc_result_rules.history_kind("ocr", "code", "word") == "ocr"
+assert cc_result_rules.history_kind("text", "text", "word") == "dict"
+assert cc_result_rules.local_cache_signature("unavailable", "format-v8") == "local-dictionary|unavailable|format-v8"
+assert cc_result_rules.provider_cache_signature(
+    "codex_cli", "auto", "auto", False, "zh", "codex-format-v5"
+).encode("utf-8") == b"codex_cli|auto|auto|sum0|zh|codex-format-v5"
 import cc_providers
 from cc_providers.base import ProviderRequest
 assert cc_providers.ProviderRequest is ProviderRequest

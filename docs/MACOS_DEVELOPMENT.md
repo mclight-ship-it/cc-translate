@@ -1,7 +1,8 @@
 # macOS 原生客户端开发指南
 
 状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
-catalog 真进程监督切片也已通过 Windows/Mac 自动化，本轮停在该检查点，不扩展其他功能。
+catalog 真进程监督切片也已通过 Windows/Mac 自动化；本轮仅继续缓存签名/history-kind 纯规则前置，
+不创建完整请求快照、writer 或新 UI，不扩展其他功能。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26 仅有候选设备的用户报告，尚无独立系统版本佐证或完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -44,6 +45,7 @@ cc_macos/
 cc_classify.py               P1 共用本地分类/词典触发判断；仅依赖 re，无平台/数据路径副作用
 cc_direction.py              P1 共用方向路由/方向提示词；UI 语言由调用方显式传入
 cc_prompts.py                P1 既有文本提示词及独立 provider revision；无导入副作用
+cc_result_rules.py           P1 缓存签名/history-kind；只接 caller-resolved 值，不读取 UI/配置
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -102,6 +104,11 @@ catalog 与配置探针共用固定包内 C 自有组边界，catalog 每次 8 �
 不追杀主动逃离组的 wrapper；fatal 监督失败不降级或继续提交 turn。Windows 默认执行路径保持。
 这不是完整平台配置/历史单写或可用的原生翻译 provider。最新代码的实际验证以 TODO 为准，
 旧包的用户正向报告不迁移到新构建。
+下一单一切片仅把缓存签名拼接和历史类型优先级抽到 `cc_result_rules.py`，Windows wrapper 实际复用。
+route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留 UI 层；核心仅收显式值，
+本地路线不得查询 provider，签名字节/字段顺序/旧版本与错误传播保持不变。
+`_history_meta` 仍在主线程创建现有 job-owned dict；不把已有 frozen `ProviderRequest` 替换成新快照框架。
+Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。

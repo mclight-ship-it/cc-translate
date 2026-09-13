@@ -61,6 +61,7 @@ from cc_dictionary_artifact import DictionaryArtifactManager
 from cc_dictionary_cache import DictionaryAiCache
 from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
 from cc_dictionary_metrics import DictionaryMetrics
+from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -1870,13 +1871,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return i18n.get("result.title")
 
     def _history_kind(self):
-        if self._last_origin == "ocr":
-            return "ocr"
-        if self._last_class == "code":
-            return "code"
-        if self._last_input and is_single_word(self._last_input):
-            return "dict"
-        return "text"
+        # Higher-priority routes must not read lower-priority UI state.
+        origin = self._last_origin
+        if origin == "ocr":
+            return history_kind(origin, None, None)
+        content_class = self._last_class
+        if content_class == "code":
+            return history_kind(origin, content_class, None)
+        return history_kind(origin, content_class, self._last_input, word_test=is_single_word)
 
     def _cache_signature(self, route=None) -> str:
         """A compact fingerprint of the settings that change a translation's
@@ -1891,23 +1893,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             dictionary_version = (
                 dictionary.cache_version if dictionary is not None
                 else "unavailable")
-            return "|".join((
-                "local-dictionary", dictionary_version, FORMATTER_VERSION))
+            return local_cache_signature(dictionary_version, FORMATTER_VERSION)
         selection = self._provider_selection()
-        fields = [
-            selection.provider_id,
-            str(selection.model or "auto"),
-            str(self.cfg.get(CFG.DIRECTION, "auto")),
-            "sum1" if self.cfg.get(
-                CFG.SUMMARY_ENABLED,
-                DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]) else "sum0",
-            str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language()),
-        ]
+        # Preserve coercion/error order before looking up the prompt revision.
+        provider_id = selection.provider_id
+        model = str(selection.model or "auto")
+        direction = str(self.cfg.get(CFG.DIRECTION, "auto"))
+        summary_enabled = bool(self.cfg.get(
+            CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]))
+        language = str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language())
         prompt_revision = PROVIDER_PROMPT_REVISIONS.get(
             selection.provider_id, "")
-        if prompt_revision:
-            fields.append(prompt_revision)
-        return "|".join(fields)
+        return provider_cache_signature(
+            provider_id, model, direction, summary_enabled, language, prompt_revision)
 
     def _remember_result(self, ok, title, text):
         self._last_result_ok = bool(ok)

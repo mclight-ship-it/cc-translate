@@ -20,7 +20,8 @@ import zipfile
 from tools.macos import bundle, smoke
 
 
-SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py")
+SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
+                     "cc_result_rules.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 CATALOG_FILES = ("codex_catalog.py",)

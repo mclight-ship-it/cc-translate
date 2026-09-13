@@ -41,6 +41,7 @@ jobs:
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
           tests.test_catalog_storage_portable
           tests.test_codex_config_darwin_contract tests.test_codex_catalog_darwin_contract
+          tests.test_result_rules
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
@@ -97,10 +98,12 @@ jobs:
           assert Path(cc_providers.__file__).resolve() == core / "cc_providers/__init__.py"
           assert Path(cc_dictionary_store.__file__).resolve() == core / "cc_dictionary_store.py"
           assert Path(cc_providers.codex_catalog.__file__).resolve() == core / "cc_providers/codex_catalog.py"
+          import cc_result_rules
+          assert Path(cc_result_rules.__file__).resolve() == core / "cc_result_rules.py"
           suite = unittest.defaultTestLoader.loadTestsFromNames(
               ["test_classify", "test_is_single_word", "test_direction", "test_classify_import",
                "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
-               "test_catalog_storage_portable"])
+               "test_catalog_storage_portable", "test_result_rules"])
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           if not result.wasSuccessful() or result.skipped:
               raise SystemExit(1)

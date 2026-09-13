@@ -60,12 +60,17 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 ## P1 共享分类与方向
 
 ```bash
-python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable tests.test_classify_import
+python -B -m unittest tests.test_classify tests.test_is_single_word tests.test_direction tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable tests.test_classify_import tests.test_result_rules
 ```
 
 Windows 兼容验证另加 `tests.test_classify_windows tests.test_direction_windows tests.test_prompts_windows`。Mac CI 还会用 `.app` 内的 Python
 以 `-I -B` 执行相同便携用例，并断言导入的是包内模块，而非源码或宿主 Python。
 分类/方向抽取不改变 P0 协议能力；helper/UI 仍只有合成 fixture 和诊断，没有真实翻译。
+
+缓存签名/history-kind 的固定字节矩阵与冻结旧方法差分在 `tests.test_result_rules`；
+Windows 另运行 `tests.test_result_rules_windows` 验证真实 wrapper、元数据捕获和缓存/历史消费者。
+配置默认/i18n/provider selection 留在 UI，纯模块不导入 `cc_core` 或访问用户磁盘/网络。
+这些测试不表示完整请求快照或历史写入所有权已实现。
 
 ## P1 native config / catalog 进程监督
 
