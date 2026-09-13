@@ -16,6 +16,10 @@ class TestSharedCoreIsolation(unittest.TestCase):
 import builtins
 import os
 import sys
+from pathlib import Path
+
+# Python 3.14's pathlib imports fcntl on POSIX. Prepare this stdlib baseline
+# before guarding project imports; an explicit project fcntl import still fails.
 
 sys.path.insert(0, sys.argv[1])
 for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
@@ -71,7 +75,6 @@ import cc_result_rules
 import cc_storage
 import cc_history
 import cc_macos.history_owner
-from pathlib import Path
 paths = cc_storage.macos_user_paths(Path(sys.argv[2]), "test.synthetic-storage")
 assert paths.application_support == Path(sys.argv[2]) / "Library" / "Application Support" / "test.synthetic-storage"
 assert paths.caches == Path(sys.argv[2]) / "Library" / "Caches" / "test.synthetic-storage"

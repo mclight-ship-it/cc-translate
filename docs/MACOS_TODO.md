@@ -1060,3 +1060,9 @@ Windows 旧读取策略保留：缺文件/非数组返回空；损坏或读取�
   必需资源/hash/隔离导入、同包 process/core 清单已接入；下限 25/107 提高为 **44/128**，未扩 runtime JSON。
 - 最终联合针对性 **199 tests，OK，11.937s**，无失败/skip；包含旧 Windows 历史消费者、
   故障/并发/差分、owner 契约、隔离导入与资源/runner 校验。后续正常 hooks 与真实三系统结果另记。
+- 首次源码 `cbbf136fc914c1796063f15d74168b31af07e1a3` 正常 hooks **1165 tests，OK，62.496s**；
+  [run 34767969885](https://github.com/mclight-ship-it/cc-translate/actions/runs/34767969885) 在 producer
+  便携阶段 **299 tests / 5.277s，1 failure**，下游 runtime 未执行，不能算通过。
+  实际日志定位 Python 3.14.7 的 stdlib `pathlib._os` 自身会 import fcntl，被新项目隔离 guard 误判，
+  并非 owner 提前取锁。已仅在安装项目 import guard 前准备 pathlib 标准库基线；
+  保留 fcntl 禁止项、直接项目 import 拦截和文件/网络 audit，不换工具链/宿主版本，不删断言或跳过。
