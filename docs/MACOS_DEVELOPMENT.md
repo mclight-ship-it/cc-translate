@@ -1,6 +1,7 @@
 # macOS 原生客户端开发指南
 
-状态：P0 真实 Mac 自动化工程门槛已通过，P1 纯核心并行开发；首次实机/签名门槛未验收。最低版本暂定 macOS 14，
+状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过；本轮只准备免费 GitHub 分发的首次实机验证，
+不扩展其他功能。首次 Finder/Gatekeeper/TCC 未验收。最低版本暂定 macOS 14，macOS 26 兼容性未验，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
 进度与证据以 [MACOS_TODO.md](MACOS_TODO.md) 为准。
 
@@ -12,16 +13,18 @@ Windows 原入口继续工作；不将 macOS 半成品接入 Windows 安装、�
 
 开发者可在 Windows 编码和测试便携核心。原生编译、链接、资源、GUI、TCC 和签名必须在真实
 macOS 环境验证。推荐经授权后使用云端 macOS CI，用户 Mac 只承担 CLI 登录、授权和两轮集中验收。
-最终发行目标是用户安装运行不需要 Xcode、Python 或 Git；开发机器/CI 则需要 Xcode 和构建用
-Python。当前未签名开发包不满足普通用户双击即用条件，首轮测试路径见下方实机交接。
+项目默认选择 **GitHub 免费站外分发**，不上 App Store，不要求付费 Apple Developer 会员。
+用户安装测试不需要 Xcode、Python、Git 或开发者账号；开发机器/CI 才需要构建工具。
+未识别/未公证应用可能需要用户亲自按 Apple 官方流程为本 App 选择“仍要打开”，不是保证双击即用。
+Developer ID/公证是未选择的可选付费增强，不是免费路线的安装前置，也不标为已通过。
 Codex/Claude CLI 与用户账号仍是外部前提；不是所有安装方式都需要 Node 或 Homebrew。
 
 当前已获准提交并正常推送唯一开发分支 `agents/cc-translate-macos-native`，
 使用项目公有仓库的标准免费 macOS runner 验证。真实 run/SHA 和结果写入验收清单；
 工作流存在或提交成功本身不代表 CI 通过。不发布、不推送/合并正式分支、不部署覆盖 Windows 应用、
 不购买额度或启用收费大机器。不配置签名私钥、不要求在聊天粘贴凭据、不绕过 Gatekeeper。
-标准免费 arm64 runner 已实际验证；尚待确认验收 Mac 的 OS/CPU、Developer ID、
-真实 CLI/账号和远程 GUI 条件。
+标准免费 arm64 runner 已实际验证；真实设备兼容性和首次权限仍待本机验证。
+真实 CLI/账号另行验收，不属于本轮合成探针，也不要求用户先购买签名身份。
 
 ## 2. 架构和目录责任
 
@@ -211,7 +214,8 @@ Mac 词典下载由 URLSession 完成，核心校验固定哈希、来源、版�
 
 Python/其构建中 OpenSSL、SQLite 等组件、必要第三方包以及未来 Sparkle 的完整许可和来源
 必须随包。运行时制品需固定 URL/version/SHA-256、生成来源清单并拒绝缺失许可证的输入。
-应用自身授权条款尚待确认，第三方 notices 不代替应用许可；确认前不对外发布。
+正式开源发布仍需明确应用自身许可，第三方 notices 不代替应用许可；
+本轮只提供已授权的开发测试 artifact，不创建 Release 或重新授权第三方内容。
 P0 不增加 Windows runtime requirements，不全局安装工具。
 
 ## 6. 可重复构建与验证
@@ -304,82 +308,73 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
    Cancel/关闭清空图像，没有磁盘保存或模型上传。
 7. 退出应用后检查本 App 的 helper/版本探针结束。此前运行的用户 CLI 不应受影响。
 
-这些是开发探针，不是完整产品 UI/本地化。签名、首次 TCC、多屏、IME 和发行包的验收清单
+这些是开发探针，不是完整产品 UI/本地化。完整性、首次 TCC、多屏、IME 和发行包的验收清单
 仍全部保留，不能因为菜单或 API 代码存在而勾选实机通过。
 
-开发 `.app` 与发行 `.app` 明确区分。P0 正式门槛要求 Developer ID + Hardened Runtime +
-公证/stapling 后，从干净用户 Finder 启动，执行包内 HTTPS 证书验证、SQLite 读写、
-资源定位和 CLI 调用；没有身份/凭据时继续未通过。不要添加未经证明必要的宽泛 entitlement。
+开发 `.app` 与完整产品明确区分。免费路线的 P0 实机门槛是：从可信 GitHub 下载并校验，
+经 Finder 正常打开（适用时由用户选择单 App 官方例外），再验证 helper、资源、SQLite/HTTPS 与首次 TCC。
+2026-09-12 曾把 Developer ID + Hardened Runtime + 公证/stapling 作为唯一首测前置；
+该方案已由 2026-09-13 免费分发决策取代。可选付费增强仍未实施，不是当前阻断或购买要求。
+不要添加未经证明必要的宽泛 entitlement。未来每次更新是否保留 TCC 授权仍须实机验证。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
 
 ### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
 
-本轮现有切片已完成并冻结新增代码；下一阶段先协调正常下载包签名和首次实机入口。
-其余可独立自动化的 P1 工作只是主动暂停，不是全部被签名阻断；完整剩余范围见验收清单末尾。
+本轮只准备免费站外下载与首测入口；catalog 进程、exec/app-server、配置/历史和完整 UI 等保持暂停。
+缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
-**先由协调者确认测试路径，不让用户猜安装问题：**
+**固定来源与边界：**
 
-- 用户测试 Mac 的 OS/芯片尚未确认；以下是条件要求，不是已知用户配置。等待用户在场后
-  由协调者统一确认；本轮按最新范围指令暂停纯核心扩展，等待下一阶段协调。
+- 只提供 Apple Silicon / arm64 测试包；CI 实际为 macOS 15.7.9、Xcode 16.4。
+  macOS 14 仅 deployment target 候选；macOS 26 和 Intel 未验。设备自报不是兼容性证据，
+  个人设备/身份信息不写入公开仓库。
 - [已通过的 run 34706318638](https://github.com/mclight-ship-it/cc-translate/actions/runs/34706318638)；
   固定源码 SHA `eec92a5794dd9a78ccf91f6f594e0d189e44d4e1`。
 - [下载开发 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34706318638/artifacts/10301738307)
   （GitHub 登录后下载，名称 `macos-arm64-p0-development-NOT-A-RELEASE`，
   2026-09-19 16:49 UTC 到期）。外层归档含 `CCTranslateMac-P0.zip`、
   `bundle-audit.json`、`helper-smoke.json`；不是 Release/安装器。
-- 首轮优先 **Apple Silicon / arm64 + macOS 15**；CI 实际为 15.7.9、Xcode 16.4。
-  macOS 14 只是 deployment target 候选，Intel 未验，不让 Intel 用户试装 arm64 包。
 - **仅 fixture/诊断，不是完整翻译产品。** 不登录账号、不发送模型请求，不测试真实翻译能力。
 - 构建脚本未对 `.app` 执行开发证书/Developer ID 签名，也未开启并验证 Hardened Runtime、
-  公证或 stapling；单个 Mach-O 可能有工具链产生的 ad-hoc 签名，不等于 `.app` 已签名。
-  **当前下载包没有通过干净用户的 Gatekeeper/Finder 首开验收，不能交给普通用户当作双击即用包。**
+  公证或 stapling；本轮核验 6 个 Mach-O 均有工具链产生的嵌入式 ad-hoc 代码签名，
+  代码页与下载内容一致，但没有完整 bundle 资源签名，不等于 Apple 身份验证。
+  没有 Apple 开发者身份或公证保证；校验和匹配也不证明软件无恶意行为，用户仍须判断是否信任来源。
+  当前 `.app` 未做完整 bundle ad-hoc 签名；单个二进制的 ad-hoc 不等于 Developer ID 或公证，
+  也不是 Personal Team 的设备限期/七天重签模式。用户不需要自己签名。
+  **当前包尚未通过首次 Gatekeeper/Finder 验收，只能按下面的免费首测流程试验，不能宣称兼容已完成。**
   CI 的 XCTest/helper 成功不证明 Finder 能打开，也不证明首次权限可用。
 
-| 用户条件 | 本轮可执行路径 |
-|---|---|
-| 没有开发环境，只愿意下载运行 | **先阻断安装测试**：还缺协调者提供的 Developer ID 签名、Hardened Runtime、公证/stapling 包及其首开证据；不要让用户自行签名、修改安全设置或猜绕过方法 |
-| 已有受支持的 Mac 开发环境 | 仅开发者可选下面的**本机源码开发构建**路径；不是所选云构建路线的用户必需步骤，不代替发行 Gatekeeper 验收 |
+**下载安装（不安装开发工具）：**
 
-开发者路径要求本机已有完整 Xcode 16.4（许可/首次组件已正常完成）、Git、Python 3.9+，
-并同意下载锁定的构建输入。普通最终用户不需要这些工具。若没有这些条件，交回协调者，
-不要求为了本轮临时全局安装工具。以下在 Mac Terminal 中新建专用测试目录；已有同名目录或
-测试 App 时停止，不覆盖/删除。不要在 Windows 仓库或正式应用目录执行。
+1. 仅使用上面的固定 GitHub artifact 链接，核对仓库、run 与源码 SHA；GitHub 可能要求登录免费账号。
+   不使用转存站/镜像。解压外层 artifact，先保留内层 `CCTranslateMac-P0.zip`。
+   若已过期或不可用，联系协调者重新提供经核验的制品与校验值，不改用未知来源。
+2. 用 macOS 自带终端输入 `/usr/bin/shasum -a 256 `（末尾留空格），把内层 zip 拖入窗口，再回车。
+   这是只读校验，不需安装 Python/Git/Xcode。比较输出 SHA-256 与下方已发布值；不一致或文件缺失就停止。
+   内层 `CCTranslateMac-P0.zip` 大小 **18,351,930 字节**，SHA-256：
+   `5443c28e048d93da1551c8627f3292528de239dc0a9f63d3bd5516a6d24c450c`。
+   这是内层 App zip 的值，不是 GitHub 外层 artifact zip 的值；只需回报 MATCH/MISMATCH，不发个人路径。
+3. 双击内层 zip 解压，把 `CCTranslateMac-P0.app` 移到“应用程序”；已有同名 App 时先停止，不覆盖。
+   在 Finder 双击 App，先正常尝试打开，不直接运行包内二进制。
+4. 仅当提示属于“无法验证开发者”或“Apple 无法验证是否不含恶意软件”，并且用户已核对来源且愿意承担
+   未识别/未公证软件的风险，才由用户本人打开 **系统设置 → 隐私与安全性 → 仍要打开（Open Anyway）**，
+   核对是本 App，再在再次出现的提示中确认“打开”。系统会为该 App 保存例外，不是全局关闭 Gatekeeper。
+5. 如果明确提示**会损坏电脑/检测到恶意软件、App 损坏或被修改、组织策略禁止**，或没有适用的
+   Open Anyway 入口，停止并报告提示类别；不要猜隐藏命令，也不要对这些阻断指导强开。
 
-```sh
-(
-  set -eu
-  test "$(uname -m)" = arm64
-  export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
-  export MACOSX_DEPLOYMENT_TARGET=14.0
-  test -d "$DEVELOPER_DIR"
-  test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
-  python3 -c 'import sys; assert sys.version_info >= (3, 9)'
-  test ! -e CCTranslate-P0-test
-  git clone --single-branch --branch agents/cc-translate-macos-native \
-    https://github.com/mclight-ship-it/cc-translate.git CCTranslate-P0-test
-  cd CCTranslate-P0-test
-  git checkout --detach eec92a5794dd9a78ccf91f6f594e0d189e44d4e1
-  python3 -B tools/macos/bundle.py build --development
-  python3 -B tools/macos/smoke.py --allow-https
-  target="$HOME/Applications/CCTranslateMac-P0.app"
-  test ! -e "$target"
-  mkdir -p "$HOME/Applications"
-  ditto tools/macos/.build/CCTranslateMac-P0.app "$target"
-  open "$target"
-)
-```
-
-这是本机开发来源的常规 `open`，不是已验证的用户安装流程。若 `open` 被系统/组织策略阻止，
-或出现无法验证开发者、损坏、恶意内容等提示，**停止并回报提示类别**，不要运行去隔离属性、
-关闭 Gatekeeper/SIP、`tccutil reset`、重签下载包或直接执行包内二进制来绕过首开检查。
-安全背景见 [Apple：安全地打开 Mac App](https://support.apple.com/en-us/102445)。
+以上按 [Apple 官方说明](https://support.apple.com/en-us/102445)（2026-05-27 发布，2026-09-13 核对）。
+例外只能由用户亲自决定，不由脚本或远程工具批准。绝不清除 quarantine、关闭 Gatekeeper/SIP、
+执行 `tccutil reset`、让用户重签下载包或直跑包内程序。首次打开确认与辅助功能/输入监控/屏幕录制
+TCC 是不同授权；先完成下面第 1 组，成功后再集中做权限组，不预先授予所有权限。
 
 **正常打开后只做以下五组检查；全部使用新建 TextEdit 中的合成文字，不使用工作文档/真实截图：**
 
 1. **静默与核心**：启动只出现 `CC P0`，不自动弹窗或请求权限。菜单
    `Open P0 input / probes...` → `Bundled core` → `Start bundled helper` →
-   `Run synthetic fixture`；默认合成文字应有 SYNTHETIC 标记。依次执行 SQLite/SSL 与显式 HTTPS
-   探针（同时验证包内纯合成 config 子进程及 catalog 临时存储，不调用用户真实 CLI/账号）。
+   `Run synthetic fixture`；默认合成文字应有 SYNTHETIC 标记。先点 `SQLite / SSL / config (offline)`，
+   再自愿点 `HTTPS probe (explicit network)`（仅访问固定公共站点，不发送用户内容）。
+   两者同时验证包内纯合成 config 子进程及 catalog 临时存储，不调用用户真实 CLI/账号。
+   此最小组失败就停止并回报固定错误码，不继续申请 TCC 或要求 CLI 登录。
    关闭面板仍保留菜单，重新打开不能显示上次残留结果。
 2. **权限拒绝与 AX 焦点**：首次不要先授予全部权限；在 TextEdit 选中 `P0 synthetic selection`，
    用菜单 `Read current AX selection (local only)`；缺 AX 权限应 UNKNOWN、不能取旧剪贴板。
@@ -411,7 +406,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ```text
 Build: eec92a5794dd9a78ccf91f6f594e0d189e44d4e1 / run 34706318638
-Route: local-source-development / blocked-before-open
+Route: github-download / per-app-open-anyway / blocked-before-open
+Archive SHA256: MATCH / MISMATCH
 macOS: <version>   CPU: arm64   Displays: <count, scaling>
 Open: PASS / BLOCKED / FAIL; system alert category: <category only>
 Core: PASS / FAIL / NOT RUN; fixed error code: <code only>
@@ -447,16 +443,16 @@ Quit: PASS / FAIL / NOT RUN
 
 | 阶段 | 范围 | 通过条件 |
 |---|---|---|
-| P0 平台可行性 | 本文骨架、私有 IPC、权限/AX/热键、Finder CLI、随包 Python、截图/OCR、CI | 真 Mac 触发→核心→展示；签名公证发行形态探针；确定 OS/CPU |
+| P0 平台可行性 | 本文骨架、私有 IPC、权限/AX/热键、Finder CLI、随包 Python、截图/OCR、CI | 可信下载/校验及 Finder 首开（适用时单 App 官方例外）；真 Mac 触发→核心→展示；确定实测 OS/CPU |
 | P1 共享核心抽取 | 路径、分类/提示词、缓存历史、provider 生命周期、自有进程组监督 | 无 Tk/Win32；Windows/macOS 规则一致；Windows 回归 |
 | P2 原生主流程 | 结果、输入、流式取消、词典翻译解释摘要重译复制 | 所有主流程闭环，不伪装兼容 |
 | P3 剩余功能 | OCR/截图、管理许可、历史设置诊断、粘贴主题语言 | 功能矩阵每项有测试或真实验收 |
-| P4 分发生命周期 | 打包签名公证、登录项、Sparkle 更新、卸载 | N→N+1，协议/数据/权限一致 |
+| P4 分发生命周期 | 免费打包/完整性、登录项、Sparkle 更新、卸载；Developer ID/公证仅可选 | N→N+1，协议/数据/权限一致，重新授权行为实测 |
 | P5 加固集中验收 | UI 时序、性能长稳、拒绝权限、多屏/休眠 | 未解决高优故障为零，缺环境不算通过 |
 | P6 正式发布 | 安装文档截图、许可证、支持/局限、专属资产 | 用户另行确认后发布，不污染 Windows 通道 |
 
-默认顺序 P0→P1→P2→P3→P4→P5→P6；打包、签名和权限可行性提前在 P0 阻断检查。
-P0 自动化工程门槛通过后，可并行推进能独立验证的 P1 纯核心抽取；正式 P0 实机/签名门槛
+默认顺序 P0→P1→P2→P3→P4→P5→P6；打包、首次打开和权限可行性提前在 P0 检查。
+P0 自动化工程门槛通过后，技术上可并行推进独立 P1；本轮范围不包含这些扩展。正式 P0 实机门槛
 仍须单独验收，不得据此盲目扩张 P2–P6 UI。P0 代码完成、Windows 验证、Mac 验证和发行验证
 是四个不同状态。
 
@@ -468,7 +464,7 @@ P0 自动化工程门槛通过后，可并行推进能独立验证的 P1 纯核�
 
 第一轮平台探针：首次权限拒绝/允许、TextEdit/Safari/Chrome/VS Code/Terminal/PDF 选区、
 Finder CLI、账号、输入法、跨应用焦点、多屏/Spaces/Secure Input。
-第二轮完整候选：全部主流程、安装/登录项/休眠、深浅色双语长内容、浏览器新下载公证包、
+第二轮完整候选：全部主流程、安装/登录项/休眠、深浅色双语长内容、浏览器新下载的免费分发包、
 N→N+1 更新及权限/资料保留。目标是两轮，不为省次数隐藏故障或取消必要发行验收。
 
 自动化优先覆盖来源按下期间 AI 更新、关闭时迟到结果、拖动时菜单、下载进度更新、
@@ -478,7 +474,7 @@ N→N+1 更新及权限/资料保留。目标是两轮，不为省次数隐藏�
 | 阻断 | 处理 |
 |---|---|
 | 无可靠选区/权限 | unknown + 快速输入，不读取历史剪贴板冒充选区 |
-| 签名包不能运行 runtime/CLI | 停止扩展 UI，先修打包/调用边界 |
+| 下载包不能正常打开或运行 runtime/CLI | 停止扩展 UI，检查提示类别/完整性/打包边界，不指导强开恶意或损坏提示 |
 | 核心抽取破坏 Windows | 不进入正式分支，保留兼容并回归 |
 | 协议错配/迟到 | 显式失败、拒绝旧事件，不自动重放模型请求 |
 | runner 无 GUI/TCC/最低 OS | 明确未验证，转有权限的真实 Mac |

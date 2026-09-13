@@ -1,10 +1,13 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-12。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-13。
+**当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
+Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
+已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
 当前已获准提交/正常推送 `agents/cc-translate-macos-native` 并使用公有仓库的标准免费 Mac CI；
 首次云验证曾被 GitHub OAuth `workflow` scope 阻断；用户完成授权后已正常推送，
-真实 Mac 自动化工程门槛通过（run/SHA 见下）。正式 P0 实机/签名门槛仍未通过。
+真实 Mac 自动化工程门槛通过（run/SHA 见下）。正式 P0 首次 Finder/Gatekeeper/TCC 仍未通过。
 不推送 master、不发布、不新增付费资源。
 首次提交 `4102190` 的推送被旧 hook 的空树比较阻止。
 已修正新分支基线为目标远端实际公布的 HEAD 与本分支的共同祖先；网络/缺对象等错误仍阻断，
@@ -29,7 +32,7 @@
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
-## P0 — Mac 自动化工程门槛通过；实机/签名门槛未通过
+## P0 — Mac 自动化工程门槛通过；免费分发首次实机门槛未通过
 
 ### 文档与隔离
 - [x] 独立 macOS 工作树/分支；不修改 Windows 工作树和用户数据。
@@ -58,7 +61,8 @@
 - [x] 合成图像真实 Vision OCR 自动测试。
 - [ ] Finder 原生/Node CLI 安装路径与版本调用，无 shell profile。
 - [ ] 首次 TCC/AX/热键/焦点/IME/Secure Input/多屏实机矩阵。
-- [ ] Developer ID + Hardened Runtime + 公证/stapling 后干净用户 Finder 运行探针。
+- [ ] 可信 GitHub 下载/校验后由 Finder 首开；适用警告时用户自行选择官方单 App 例外，再运行探针。
+- [ ] 可选且当前未选择：Developer ID / Hardened Runtime / 公证/stapling；不是免费首测前置。
 - [ ] 确认 macOS 最低运行版本、Apple Silicon 支持；Intel 独立验证后再承诺。
 
 ### 已执行记录
@@ -252,10 +256,11 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 开发 app zip 已从本地临时下载中清理，只留会话内脱敏 JSON；远端 artifact 到期自动清理。
 
 - [首轮用户 Mac 交接（开发指南对应小节）](MACOS_DEVELOPMENT.md)
-  已写明具体 run/artifact/SHA、普通下载包尚不能承诺首开、签名缺失条件、本机源码开发路径、
-  五组显式探针及手动白名单 TXT 脱敏回报。用户配置和签名条件由协调者统一询问。
-- 当前不让普通用户自行去隔离属性、关闭 Gatekeeper/SIP、重签下载包、直跑二进制或脚本重置 TCC；
-  无开发环境且无签名分发条件时安装测试明确阻断。纯核心工作不因该人工门槛停摆。
+  当时写明具体 run/artifact/SHA、不能承诺普通下载首开、签名缺失条件、本机源码开发路径、
+  五组显式探针及手动白名单 TXT 脱敏回报。现已按 2026-09-13 决策更新为免费首测路线。
+- 不让普通用户自行去隔离属性、关闭 Gatekeeper/SIP、重签下载包、直跑二进制或脚本重置 TCC；
+  当时无开发环境且无签名分发条件时安装测试阻断，纯核心继续；该首开前置现已取消，
+  改为可信下载及适用时用户本人选择官方单 App 例外，仍不保证首次实机成功。
 - 收尾仅更新两份文档，正常 privacy hook，提交注明 `[skip ci]`；执行源码/测试/workflow
   与已绿色的 `f526459` 完全相同。下一独立纯核心候选是请求快照/提示词剩余部分与平台路径；
   不把本轮结果误标为全部 P1 或正式 P0 已完成。
@@ -276,7 +281,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   构建后原生包内集成 **1 test 真正通过、0 skip、0.473s**；
   包内分类/词典/方向/隔离 **52 tests，0.108s，0 skip**。
   bundle/完整许可/Mach-O/HTTPS/SQLite/cancel/EOF/不可变审计全部通过。
-- 用户 Mac 芯片/OS 仍未确认，首次实机/签名门槛仍保留。此块完成后顺序推进下面的提示词，
+- 当时用户 Mac 芯片/OS 未确认，首次实机/签名门槛保留（签名前置现由免费路线取代）。此块完成后顺序推进下面的提示词，
   没有因为用户不在场而暂停，也不把两个候选同时铺开。
 
 ### 静态文本提示词目录（2026-09-12 已验证）
@@ -492,7 +497,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
 
 ## P4 — 等待 P3（可行性已在 P0 提前检查）
-- [ ] 完整签名清单、最小 entitlement、公证、stapling、干净用户 Gatekeeper。
+- [ ] 免费分发完整性/资源/归档检查、最小权限和干净用户 Gatekeeper 首开；不全局关闭保护。
+- [ ] 可选付费增强（未选择、未通过）：Developer ID、公证/stapling；不得作为购买要求。
 - [ ] SMAppService 实际状态、独立 Mac 资产/版本与 Sparkle 更新签名。
 - [ ] N→N+1 更新保护数据/权限；失败/取消/重启；不在 bundle git pull。
 - [ ] 卸载可选清理自身数据，不删除共享 CLI/账号/Node。
@@ -509,9 +515,9 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] Mac 安装说明、截图、已验 CLI/OS/CPU 范围、已知局限与诊断。
 - [ ] 用户确认后才推送发布渠道/Release；不影响 Windows 产品。
 
-## 本轮冻结交接（2026-09-12 UTC）
+## 历史冻结交接（2026-09-12 UTC；首次测试路线已由 2026-09-13 更新）
 
-**最新指令：完成现有切片后暂停新增代码，下一阶段先由协调者落实正常下载包签名/首次实机入口。**
+**当时指令：完成现有切片后暂停新增代码，下一阶段先由协调者落实正常下载包签名/首次实机入口。**
 这取代前面历史记录中的“立即继续下一切片”，不把暂停伪称所有剩余工作都被签名阻断。
 随后获准的收尾仅同步既有监督范围的旧文案：取消状态、CLI 提示及对应注释/指南；
 不更改 App/delegate 生命周期、退出回调或进程算法，不扩大 UI。该源码文案修正另跑正常 CI。
@@ -553,7 +559,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - 配置/历史路径与唯一写入者、完整 ProviderRuntime 技术上也有可拆分自动化部分，
   但属于本轮明确不再开启的大链路，不是已完成项，也不因缺签名自动变成技术阻断。
 
-### 下一阶段必须由协调者落实的条件
+### 当时提出的条件（历史；付费身份前置现已取消）
 
 1. 用户 Mac 的实际 **OS 版本/CPU**；Apple Silicon/macOS 15 优先，macOS 14 仅候选、Intel 未验。
 2. **Apple Developer Program/团队资格和可用 Developer ID 身份**，不视为已有或批准购买；
@@ -567,3 +573,52 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 完整 P1 尚缺平台配置/历史单写、请求快照、真实 catalog/exec/常驻 app-server/Claude 生命周期、
 预热/取消/付费不重试接线和真实词库安装切换等。P2–P6 的完整交互、业务闭环、多屏下载、
 发行签名更新、系统矩阵/性能长稳及发布均未完成。**不得把整个移植标完成。**
+
+## 当前切片：免费 GitHub 分发与首轮实机验证（2026-09-13）
+
+- [x] 采用免费站外分发默认路线；Developer ID/公证是未选择的可选增强，无会员不阻断首测。
+- [x] 核对 [Apple 官方 Open Anyway 说明](https://support.apple.com/en-us/102445)
+  （2026-05-27 发布）：先正常尝试打开，可信来源的未识别/未公证警告可由用户亲自保存单 App 例外。
+  这不是全局关闭 Gatekeeper；没有 Apple 身份/公证保证。
+- [x] 指南区分可适用警告与恶意软件/损坏/组织策略阻断；后者停止检查，不指导强开。
+  不清 quarantine、不关闭 Gatekeeper/SIP、不 reset TCC、不重签用户下载包、不直跑包内二进制。
+- [x] 重新核验现有 artifact 有效性、bundle/Python/项目 dylib/归档模式与哈希；无确凿缺口就复用，
+  不凭猜测增加 ad-hoc 签名。若需构建端 ad-hoc，它仅作完整性签名，不代表 Apple 认证/公证，
+  不是 Personal Team 七天设备签名，也不要求用户安装开发工具。
+- [x] 固定唯一 GitHub 下载、内层 zip SHA-256、到期及最小 Finder/静默/helper/TCC 步骤，见开发指南。
+- [ ] 首次真实 Finder/Gatekeeper/TCC 和 macOS 26 兼容性待用户实测。设备自报不等于已验，
+  不在公开仓库记录个人主机或身份信息；Intel 未验。跨版本更新是否保留授权另待实测。
+
+本轮不新增 catalog 进程、exec/app-server、配置历史、完整 ProviderRuntime 或大 UI。
+真实账号/模型不参与，P1 其余部分和 P2–P6 仍待办。先最小静默/helper 验证，再集中逐项 TCC；
+辅助功能/输入监控/屏幕内容权限与首次打开例外分开。完成本切片后停在待实机结果处。
+
+### 本轮制品审计与复用结论
+
+- 2026-09-13 再次从项目 GitHub 下载并只读核验 artifact **10301738307**，未过期；
+  固定 run **34706318638**、源码 **eec92a5794dd9a78ccf91f6f594e0d189e44d4e1**、
+  到期 **2026-09-19T16:49:22Z**。不创建新包、Release 或新的源码 CI。
+- 内层 **CCTranslateMac-P0.zip**：**18,351,930 字节**；
+  SHA-256 **5443c28e048d93da1551c8627f3292528de239dc0a9f63d3bd5516a6d24c450c**。
+  唯一用户下载入口为[该 artifact](https://github.com/mclight-ship-it/cc-translate/actions/runs/34706318638/artifacts/10301738307)。
+  GitHub API 的外层归档摘要为 `sha256:3e2e4ff83759c4b23d7fa4a3b414f5b2a4eba919766a9065e71fed3423f4f20f`；
+  它与内层 App zip 是不同文件，用户流程只需校验内层。
+- ZIP CRC、唯一路径/安全路径、659 个文件/链接条目与原审计清单完全一致，
+  49 份资源哈希与 14 份 Git 源码 blobs 一致；只含 App 与 ditto 的 AppleDouble 元数据，
+  主程序和包内 Python 可执行权限为 0755，`python3 -> python3.12` 是包内相对链接。
+- 6 个 Mach-O 均为 arm64；已有 Mac CI 的系统/包内动态链接和 deployment-target 审计保持有效。
+  本轮静态核对其 6 个 CodeDirectory（ad-hoc 标志）共 **9,255 个代码页摘要**全部匹配。
+  这不是运行 `codesign --verify` 或取得 Apple 认证，也不是 Gatekeeper/TCC 实机验收。
+  `.app` 没有完整资源签名 seal；未发现必须修补的压缩/可执行模式/引用或代码页损坏，
+  因而不为猜测问题增加构建端重签，不改变旧测试/打包契约。
+- 真实包内 Python **3.12.14**、SQLite **3.53.1**、OpenSSL **3.5.8** 和项目 dylib 已在原 Mac run
+  实际通过 helper/HTTPS/SQLite/config/catalog/取消/EOF；本次核对原 smoke 的清理和不可变证据。
+  路径来自 Bundle 自身而非开发机固定路径；用户无需安装 Xcode/Python/Git/Apple 开发者账号。
+- 复用的验证数仍是：Windows **950**，Mac 便携 **154**，普通 XCTest **33 通过 + 1 初次 skip**，
+  构建后集成 **1 真通过/0 skip**、包内 config **9** / 核心 **82**；没有将旧运行冒称新测试。
+  本次仅改文档并进行下载归档核验，未运行新的单测/构建或 Mac 二进制，不以预授权 CI 代替首次测试。
+- 原报告 `development_only=true`、`release_gate=NOT PASSED`、`not_tested` 保持原样；
+  它们诚实表示完整产品/旧付费增强/人工门槛未通过，不表示免费官方单 App 例外路线被禁止。
+  缺少付费身份不再是阻断；下载首开、macOS 26 兼容性、真实 TCC 和跨版本权限保留仍待实测。
+- 临时下载 App zip 已清理，仅会话目录保留原始脱敏审计/smoke JSON；本地未安装或启动 Mac 程序。
+  文档提交采用 `[skip ci]`，正常 hooks/非 force 推送，不把无源码变化的 CI 跳过当新验证。
