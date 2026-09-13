@@ -260,36 +260,31 @@ def exercise(session, lock):
     return report
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--allow-https", action="store_true", help="explicitly contact www.python.org")
-    args = parser.parse_args(argv)
+def run_smoke(app, build, *, untested_os=()):
     session = None
     scratch_created = False
-    scratch = BUILD / "smoke-scratch"
-    report_path = BUILD / "helper-smoke.json"
+    scratch = build / "smoke-scratch"
+    report_path = build / "helper-smoke.json"
     try:
-        need(args.allow_https, "bundled smoke requires explicit --allow-https")
-        require_macos()
-        need(APP.is_dir(), "development bundle missing; build it first")
-        need(not APP.is_symlink() and not BUILD.is_symlink(), "symlinked development output")
+        need(app.is_dir(), "development bundle missing; build it first")
+        need(not app.is_symlink() and not build.is_symlink(), "symlinked development output")
         need(not scratch.exists() and not scratch.is_symlink(), "stale smoke scratch directory")
-        before = snapshot(APP)
+        before = snapshot(app)
         scratch.mkdir()
         scratch_created = True
         write_json(report_path, {"status": "NOT PASSED", "development_only": True})
-        command = [APP / "Contents/Helpers/python/bin/python3", "-I", "-B",
-                   APP / "Contents/Resources/Core/launch.py"]
+        command = [app / "Contents/Helpers/python/bin/python3", "-I", "-B",
+                   app / "Contents/Resources/Core/launch.py"]
         session = Session(command, scratch)
         report = exercise(session, load_lock())
-        need(snapshot(APP) == before, "helper modified the bundle")
+        need(snapshot(app) == before, "helper modified the bundle")
         need(set(scratch.iterdir()) == {scratch / "home"} and not any((scratch / "home").iterdir()),
              "helper left probe files or wrote user configuration")
         write_json(report_path, {
             "status": "passed", "development_only": True, "runtime": report,
             "handshake": True, "fixture": True, "explicit_cancel": True, "eof_cancel": True,
             "bundle_unchanged": True, "probe_files_cleaned": True, "release_gate": "NOT PASSED",
-            "not_tested": ["native UI", "Finder", "TCC", "Developer ID", "notarization", "macOS 14"],
+            "not_tested": ["native UI", "Finder", "TCC", "Developer ID", "notarization", *untested_os],
         })
         print("Bundled helper handshake/fixture/SQLite/SSL/HTTPS/cancel/EOF passed.")
         print("No Finder, GUI/TCC, minimum-OS or signing claim.")
@@ -304,6 +299,20 @@ def main(argv=None):
             session.dispose()
         if scratch_created and scratch.is_dir() and not scratch.is_symlink():
             shutil.rmtree(scratch)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--allow-https", action="store_true", help="explicitly contact www.python.org")
+    args = parser.parse_args(argv)
+    try:
+        need(args.allow_https, "bundled smoke requires explicit --allow-https")
+        require_macos()
+    except (BundleError, OSError, ValueError, subprocess.SubprocessError) as error:
+        detail = str(error) if isinstance(error, BundleError) else type(error).__name__
+        print("BLOCKED: bundled helper smoke failed:", detail, file=sys.stderr)
+        return 1
+    return run_smoke(APP, BUILD, untested_os=("macOS 14",))
 
 
 if __name__ == "__main__":

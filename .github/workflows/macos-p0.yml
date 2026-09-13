@@ -14,6 +14,9 @@ jobs:
     # The official macos-15 label is arm64; verify it again before any build.
     runs-on: macos-15
     timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      archive_sha256: ${{ steps.seal.outputs.archive_sha256 }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
       MACOSX_DEPLOYMENT_TARGET: "14.0"
@@ -42,33 +45,16 @@ jobs:
           tests.test_catalog_storage_portable
           tests.test_codex_config_darwin_contract tests.test_codex_catalog_darwin_contract
           tests.test_result_rules tests.test_storage
+          tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
       - name: Native config and catalog process lifecycle with bundled Python (synthetic only)
-        shell: bash
-        run: |
-          set -euo pipefail
-          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B - <<'PY'
-          from pathlib import Path
-          import sys
-          import unittest
-          core = Path("tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/Core").resolve()
-          sys.path[:0] = [str(core), str(Path("macos/PythonTests").resolve())]
-          import cc_providers.codex_config
-          import cc_providers.codex_catalog
-          import cc_providers.darwin_process
-          assert Path(cc_providers.codex_config.__file__).resolve() == core / "cc_providers/codex_config.py"
-          assert Path(cc_providers.codex_catalog.__file__).resolve() == core / "cc_providers/codex_catalog.py"
-          assert Path(cc_providers.darwin_process.__file__).resolve() == core / "cc_providers/darwin_process.py"
-          suite = unittest.defaultTestLoader.loadTestsFromNames(
-              ["test_codex_config_process", "test_codex_catalog_process"])
-          assert suite.countTestCases() >= 20, "Native process suites must actually be discovered"
-          result = unittest.TextTestRunner(verbosity=2).run(suite)
-          if not result.wasSuccessful() or result.skipped:
-              raise SystemExit(1)
-          PY
+        run: >-
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app
+          --suite process --report tools/macos/.build/process-tests.json
       - name: Native Foundation.Process to bundled helper integration (not optional here)
         env:
           CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
@@ -76,48 +62,10 @@ jobs:
       - name: Explicit bundled helper HTTPS and SQLite smoke
         run: python3 tools/macos/smoke.py --allow-https
       - name: Shared rules and prompt contracts with bundled Python
-        shell: bash
-        run: |
-          set -euo pipefail
-          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B - <<'PY'
-          from pathlib import Path
-          import sys
-          import unittest
-
-          core = Path("tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/Core").resolve()
-          sys.path[:0] = [str(core), str(Path("tests").resolve())]
-          import cc_classify
-          import cc_direction
-          import cc_prompts
-          import cc_providers
-          import cc_dictionary_store
-          import cc_providers.codex_catalog
-          assert Path(cc_classify.__file__).resolve() == core / "cc_classify.py"
-          assert Path(cc_direction.__file__).resolve() == core / "cc_direction.py"
-          assert Path(cc_prompts.__file__).resolve() == core / "cc_prompts.py"
-          assert Path(cc_providers.__file__).resolve() == core / "cc_providers/__init__.py"
-          assert Path(cc_dictionary_store.__file__).resolve() == core / "cc_dictionary_store.py"
-          assert Path(cc_providers.codex_catalog.__file__).resolve() == core / "cc_providers/codex_catalog.py"
-          import cc_result_rules
-          assert Path(cc_result_rules.__file__).resolve() == core / "cc_result_rules.py"
-          import cc_storage
-          import cc_macos.storage_fixture
-          assert Path(cc_storage.__file__).resolve() == core / "cc_storage.py"
-          assert Path(cc_macos.storage_fixture.__file__).resolve() == core / "cc_macos/storage_fixture.py"
-          suite = unittest.defaultTestLoader.loadTestsFromNames(
-              ["test_classify", "test_is_single_word", "test_direction", "test_classify_import",
-               "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
-               "test_catalog_storage_portable", "test_result_rules", "test_storage"])
-          result = unittest.TextTestRunner(verbosity=2).run(suite)
-          if not result.wasSuccessful() or result.skipped:
-              raise SystemExit(1)
-          import plistlib
-          import tempfile
-          identity = plistlib.loads((core.parent.parent / "Info.plist").read_bytes())["CFBundleIdentifier"]
-          with tempfile.TemporaryDirectory(prefix="cc-storage-fixture-") as directory:
-              cc_macos.storage_fixture.probe_storage(Path(directory) / "synthetic home", identity)
-          print("Bundled storage fixture passed with bundle identity and temporary home")
-          PY
+        run: >-
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app
+          --suite core --report tools/macos/.build/core-tests.json
       - name: Recheck immutable bundle and preserve executable modes in zip
         shell: bash
         run: |
@@ -126,7 +74,13 @@ jobs:
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
             tools/macos/.build/CCTranslateMac-P0.app \
             tools/macos/.build/CCTranslateMac-P0.zip
+      - name: Seal exact same-run archive identity and producer environment
+        id: seal
+        run: >-
+          python3 -B tools/macos/runtime_matrix.py seal --directory tools/macos/.build
+          --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
       - name: Retain synthetic development artifact only (not a Release)
+        id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-arm64-p0-development-NOT-A-RELEASE
@@ -137,3 +91,84 @@ jobs:
             tools/macos/.build/CCTranslateMac-P0.zip
             tools/macos/.build/bundle-audit.json
             tools/macos/.build/helper-smoke.json
+            tools/macos/.build/runtime-receipt.json
+            tools/macos/.build/process-tests.json
+            tools/macos/.build/core-tests.json
+
+  runtime:
+    needs: p0
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            major: 14
+            xcode: "16.2"
+          - os: macos-26
+            major: 26
+            xcode: "26.6"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      PRODUCER_ARTIFACT_ID: ${{ needs.p0.outputs.artifact_id }}
+    steps:
+      - name: Check out the same workflow source SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require the runtime platform and preinstalled harness toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PRODUCER_ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          /usr/bin/sw_vers
+          uname -m
+          test "$(uname -m)" = arm64
+          test "$(/usr/bin/sw_vers -productVersion | cut -d. -f1)" = '${{ matrix.major }}'
+          test -d "$DEVELOPER_DIR"
+          test "$(/usr/bin/xcodebuild -version | head -n 1)" = 'Xcode ${{ matrix.xcode }}'
+          /usr/bin/xcodebuild -version
+          /usr/bin/xcrun swift --version
+      - name: Download only the producer artifact ID from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.p0.outputs.artifact_id }}
+          path: tools/macos/.build/received
+          merge-multiple: true
+      - name: Check the producer zip hash before extracting with modes and links
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.p0.outputs.archive_sha256 }}
+        run: |
+          set -euo pipefail
+          test "${#EXPECTED_SHA256}" = 64
+          cd tools/macos/.build/received
+          test -f CCTranslateMac-P0.zip
+          test ! -e CCTranslateMac-P0.app
+          printf '%s  CCTranslateMac-P0.zip\n' "$EXPECTED_SHA256" | /usr/bin/shasum -a 256 -c -
+          /usr/bin/ditto -x -k CCTranslateMac-P0.zip .
+          test -x CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3
+          test -x CCTranslateMac-P0.app/Contents/MacOS/CCTranslateMac
+          test "$(readlink CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3)" = python3.12
+      - name: Run the immutable producer app with this OS and a separate integration harness
+        run: >-
+          tools/macos/.build/received/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/runtime_matrix.py run --directory tools/macos/.build/received
+          --output tools/macos/.build/runtime-evidence --source-sha '${{ github.sha }}'
+          --run-id '${{ github.run_id }}' --archive-sha256 '${{ needs.p0.outputs.archive_sha256 }}'
+          --os-major '${{ matrix.major }}' --xcode '${{ matrix.xcode }}' --allow-https
+      - name: Retain only the small runtime evidence (never a second app archive)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-${{ matrix.major }}-same-artifact-runtime-evidence
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            tools/macos/.build/runtime-evidence/runtime-report.json
+            tools/macos/.build/runtime-evidence/process.json
+            tools/macos/.build/runtime-evidence/core.json
+            tools/macos/.build/runtime-evidence/helper-smoke.json

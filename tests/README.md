@@ -57,6 +57,14 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 原生 XCTest、真实 HTTPS、GUI/TCC 和签名包必须另在 Mac 验证，不能用这些测试替代。
 环境、命令及未通过的门槛见 [macOS 验收清单](../docs/MACOS_TODO.md)。
 
+同制品矩阵控制层：`python -B -m unittest tests.test_macos_runtime tests.test_macos_bundled_tests tests.test_macos_bundle tests.test_macos_protocol`。
+这些离线负例不执行 Mac 二进制。Mac15 producer 与 Mac14/26 consumer 共用
+`tools/macos/bundled_tests.py`（明确包内 `-I -B`、原 process/core 套件、真实 storage fixture）。
+`runtime_matrix.py` 校验同 run/SHA 的精确 artifact、zip hash/资源/模式/链接与前后不可变，
+并复用 HTTPS/SQLite/cancel/EOF smoke。独立 Swift harness 复制当前 checkout 的 support/C 与
+原 HelperIntegrationTests，只编译测试宿主，不生成或修改被测 App；失败/skip/空套件不能通过。
+真实 OS/编译器与执行结果必须取 Actions 日志/去敏报告，不从 runner README 推定。
+
 ## P1 共享分类与方向
 
 ```bash

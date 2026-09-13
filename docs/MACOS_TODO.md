@@ -909,3 +909,25 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
 完整唯一 writer、跨请求/跨进程读改写、配置/历史迁移适配、请求快照、provider 生命周期、
 完整 P1/P2–P6 与剩余实机门槛未完成；这些可独立拆分的代码工作不因签名而被阻断，
 但本次不继续开启。免费 GitHub/零预算/不 Release、不改 master 或 Windows 正式部署保持。
+
+## 当前单一切片：同制品 macOS 14/26 运行矩阵（2026-09-13）
+
+1. [ ] 完整保留 macos-15/Xcode 16.4 producer 的所有测试/构建/审计；归档后生成固定 SHA、
+   本 run/attempt、zip hash 和内容/模式/链接摘要的 receipt，输出精确 artifact ID。
+2. [ ] needs producer 的标准 macos-14/26 arm64 jobs（fail-fast=false）只下载该 ID；
+   先验证 zip hash，再 ditto 解压，不构建/重签被测 App，不安装 Python/依赖或更换账号。
+3. [ ] 复用相同包内 core/process suites、显式 storage、HTTPS/SQLite/cancel/EOF smoke 和完整审计；
+   集成 harness 单独复制同 SHA 的现有 support/C/HelperIntegrationTests，不包含 App target，
+   以预装 Xcode 16.2 / 26.6 编译；产品仍是 16.4 制品。harness 不适配时保留错误，不改 ABI/断言凑绿。
+4. [ ] 断言实际 sw_vers major/arm64/选定 Xcode，记录 producer 与 harness 编译器、测试计数和前后不可变；
+   runtime 仅上传小型去敏报告，不重复上传 App。完成真实三 job 后记录证据、清理 zip、正常收尾。
+
+官方 runner 表/镜像 README 只是选择依据，不是执行证据。当前不增加功能，不重做已验收纯核心；
+跨系统自动化也不等于 Finder/干净用户/Gatekeeper/TCC、用户自报 26.5.2 或 Intel 已通过。
+
+- 控制层已接入：producer 原 process/core 清单抽到同一 runner（下限 25/107，空/缺/skip/失败拒绝），
+  保留全部原生/便携/网络/资源阶段。runtime 只使用精确输出 artifact ID、同 run/SHA/hash，
+  报告目录拒绝放入 App；测试前后比较内容/模式/相对链接并复用完整审计。
+- Windows 首轮联合 **115 tests，OK，20.651s**；补齐未知错误传播与不可写 App 报告负例后，
+  最终针对性联合 **119 tests，OK，20.540s**。输出中的 `BLOCKED` 为“未显式准许 HTTPS”的预期负例，
+  不是 CI 结果；此时三个系统尚待真实执行。
