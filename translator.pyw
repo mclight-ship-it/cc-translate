@@ -63,6 +63,7 @@ from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
 from cc_dictionary_metrics import DictionaryMetrics
 from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
 from cc_storage import atomic_write_json as _atomic_write_json
+from cc_history import HistoryRepository, read_history as _read_history
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -642,16 +643,21 @@ CODEX_STREAM_RETRY_ERRORS = frozenset({
     "unknown_appserver_event",
 })
 
-# Serialises the read-modify-write in add_history so concurrent translation
-# workers (each may append a result) can't interleave and lose entries.
-_HISTORY_LOCK = threading.Lock()
+# All history operations share ownership, including clear racing an append.
+# Reentrant because add/cache retain the public load_history injection seam.
+_HISTORY_LOCK = threading.RLock()
+
+
+def _history_repository(reader=None, writer=None):
+    path = HISTORY_PATH
+    if reader is None:
+        reader = lambda: _read_history(path, strict=False)
+    return HistoryRepository(path, lock=_HISTORY_LOCK, reader=reader, writer=writer)
 
 
 def load_history() -> List[Dict[str, Any]]:
     try:
-        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
+        return _history_repository().load()
     except FileNotFoundError:
         return []
     except Exception as e:
@@ -659,32 +665,18 @@ def load_history() -> List[Dict[str, Any]]:
         return []
 
 
+def _write_history(path, entries):
+    try:
+        _atomic_write_json(path, entries)
+    except Exception as e:
+        log_error("add_history", e)
+
+
 def add_history(input_text: str, output_text: str, is_dict: bool, limit: int,
                 is_code: bool = False, kind: Optional[str] = None,
                 sig: Optional[str] = None) -> None:
-    if kind not in ("text", "dict", "code", "ocr"):
-        if is_code:
-            kind = "code"
-        elif is_dict:
-            kind = "dict"
-        else:
-            kind = "text"
-    with _HISTORY_LOCK:
-        entries = load_history()
-        entries.insert(0, {
-            "ts": time.strftime("%Y-%m-%d %H:%M"),
-            "input": input_text or "",
-            "output": output_text or "",
-            "is_dict": bool(is_dict),
-            "is_code": bool(is_code),
-            "kind": kind,
-            "sig": sig or "",
-        })
-        del entries[max(1, int(limit)):]
-        try:
-            _atomic_write_json(HISTORY_PATH, entries)
-        except Exception as e:
-            log_error("add_history", e)
+    _history_repository(reader=load_history, writer=_write_history).add(
+        input_text, output_text, is_dict, limit, is_code=is_code, kind=kind, sig=sig)
 
 
 def find_cached_translation(text: str, kind: str, sig: str):
@@ -696,25 +688,14 @@ def find_cached_translation(text: str, kind: str, sig: str):
     to the current direction/model/summary/language. Lets the app skip a
     re-translation of something the user already translated.
     """
-    if not text or not text.strip():
-        return None
-    if kind not in ("text", "dict", "code"):
-        return None
-    key = text.strip()
-    for entry in load_history():
-        if (entry.get("kind") == kind
-                and (entry.get("sig") or "") == (sig or "")
-                and (entry.get("input") or "").strip() == key):
-            out = (entry.get("output") or "").strip()
-            if out:
-                return out
-    return None
+    return _history_repository(reader=load_history).find_cached(text, kind, sig)
 
 
 def clear_history() -> None:
     try:
-        if os.path.exists(HISTORY_PATH):
-            os.remove(HISTORY_PATH)
+        with _HISTORY_LOCK:
+            if os.path.exists(HISTORY_PATH):
+                _history_repository().clear()
     except Exception as e:
         # One-shot user action ("clear history"): if it fails the user gets no
         # visible feedback, so leave a trace instead of swallowing silently.

@@ -4,7 +4,8 @@
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
 显式平台路径/原子 JSON 基础也已通过；同一 Mac15/Xcode 16.4 制品现已在标准免费
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
-本轮到此停止，不创建完整请求快照、writer、provider 或新 UI。
+上述矩阵已验收关闭；当前只实现共享历史仓库与显式 Mac owner，
+不创建完整配置 writer、请求快照、provider 或新 UI。新历史代码尚待本轮独立自动化证据。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。

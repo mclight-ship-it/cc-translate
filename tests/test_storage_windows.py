@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 import cc_storage as storage
+from tests.history_reference import SOURCE as HISTORY_REFERENCE_SOURCE
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,7 +119,7 @@ class TestWindowsStorageExports(unittest.TestCase):
                 self.assertIs(getattr(tr, name), module)
                 self.assertIs(getattr(storage, name), module)
 
-    def test_windows_consumers_paths_schema_and_lock_match_frozen_baseline(self):
+    def test_config_paths_and_frozen_history_oracle_match_baseline(self):
         for filename, names in (
                 ("translator.pyw", (
                     "Config", "load_config", "save_config", "load_history",
@@ -140,6 +141,12 @@ class TestWindowsStorageExports(unittest.TestCase):
                 return result
 
             before, after = BASELINE_AST_SHA256[filename], definitions(current)
+            # The history extraction now has differential/concurrency coverage.
+            # Keep the old oracle itself frozen; config/path/log definitions remain unchanged.
+            if filename == "translator.pyw":
+                original_history = definitions(HISTORY_REFERENCE_SOURCE)
+                for name in ("load_history", "add_history", "clear_history", "_HISTORY_LOCK"):
+                    after[name] = original_history[name]
             for name in names:
                 with self.subTest(filename=filename, name=name):
                     self.assertIn(name, before)

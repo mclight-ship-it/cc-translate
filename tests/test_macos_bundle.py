@@ -21,7 +21,7 @@ from tools.macos import bundle, smoke
 
 
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
-                     "cc_result_rules.py", "cc_storage.py")
+                     "cc_result_rules.py", "cc_storage.py", "cc_history.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 CATALOG_FILES = ("codex_catalog.py",)
@@ -255,6 +255,8 @@ class MachORulesTests(ProjectDirectory):
                      "Resources/Core/cc_macos/catalog_fixture.py",
                      "Resources/Core/cc_macos/catalog_process_fixture.py",
                      "Resources/Core/cc_macos/storage_fixture.py",
+                     "Resources/Core/cc_macos/history_owner.py",
+                     "Resources/Core/cc_macos/history_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
                      "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
         resources += ["Resources/Licenses/Python/licenses/" + name
@@ -363,7 +365,7 @@ class MachORulesTests(ProjectDirectory):
 
     def test_audit_requires_unchanged_diagnostic_probes(self):
         app = self.synthetic_app()
-        for name in ("dictionary_probe.py", "storage_fixture.py"):
+        for name in ("dictionary_probe.py", "storage_fixture.py", "history_owner.py", "history_fixture.py"):
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core/cc_macos" / name
                 path.unlink()

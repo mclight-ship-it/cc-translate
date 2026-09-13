@@ -45,6 +45,7 @@ jobs:
           tests.test_catalog_storage_portable
           tests.test_codex_config_darwin_contract tests.test_codex_catalog_darwin_contract
           tests.test_result_rules tests.test_storage
+          tests.test_history tests.test_history_owner_contract
           tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0

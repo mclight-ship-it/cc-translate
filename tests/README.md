@@ -83,6 +83,13 @@ Windows 另运行 `tests.test_result_rules_windows` 验证真实 wrapper、元�
 fdopen/部分写入/flush/fsync/replace 故障及单操作 temp/descriptor 清理；
 Windows 消费者仍走原配置/历史/日志入口。Mac CI 还从实际 bundle Info.plist 取应用身份，
 显式调用包内 `cc_macos.storage_fixture`，生命周期由 TemporaryDirectory 管理。
+
+共享历史仓库：`python -B -m unittest tests.test_history tests.test_history_windows tests.test_history_owner_contract tests.test_storage_windows`。
+Windows 真实入口与冻结旧实现比较字段/序列化、缓存/日志及错误策略；配置/路径旧 AST 仍冻结，
+历史旧 AST 改为验证差分 oracle，并额外用可观察的真实 RLock 验证 add/clear/close 竞争，不靠短 sleep。
+Mac 的 `macos/PythonTests/test_history_owner_process.py` 必须由现有包内 process runner 运行，
+检查稳定侧文件 flock、第二 owner、JSON replace/clear、真实退出/崩溃/fork、FD/临时文件和显式 history fixture。
+不在 Windows skip 冒充完成，不扩业务 IPC；process/core 下限提高到 44/128，原有测试全部保留。
 这不是唯一 writer/跨进程事务测试，也不访问用户配置或新增 runtime JSON 字段。
 配置默认/i18n/provider selection 留在 UI，纯模块不导入 `cc_core` 或访问用户磁盘/网络。
 这些测试不表示完整请求快照或历史写入所有权已实现。

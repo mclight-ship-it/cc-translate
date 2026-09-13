@@ -146,6 +146,8 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     源码 `84ab360` / [run 34764132000](https://github.com/mclight-ship-it/cc-translate/actions/runs/34764132000)
     通过，见[基础层证据](#存储基础可靠检查点2026-09-13)。
     Windows 原入口/默认路径/日志不变，Mac 仅临时合成诊断；不是唯一 writer 或迁移服务。
+  - [ ] 本轮进行中：共享历史仓库与 Windows 兼容入口、add/clear 统一锁、Mac 显式跨进程 owner；
+    仅历史 I/O，不等于整个配置/历史服务或业务 helper 接线。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1009,3 +1011,52 @@ Windows 的历史锁/清空、默认目录/迁移与日志行为保持原样。
 Intel、完整 P0/P1、请求快照/配置历史唯一 writer、exec/app-server/Claude 及 P2–P6 仍待办。
 后续纯核心/synthetic 回归技术上可以独立推进，不伪称被付费签名阻断，但不属于本轮。
 免费 GitHub 分发/零预算不变；不发布 Release、不改 master/Windows 部署、不要求用户现在重装或安装 CLI。
+
+## 当前单一切片：共享历史仓库与明确写入所有权（2026-09-13，进行中）
+
+已验收的跨系统矩阵关闭，不重做等价实现。本轮只完成历史 I/O：
+
+1. [ ] 共享显式路径仓库接入 Windows load/add/cache/clear，保留数组/字段顺序、时间/条数、
+   OCR 缓存排除、配置路径/default、日志和原子写入 patch seam；不改 `_record_history` 当前开关/过期策略。
+2. [ ] add 的读改写与 clear 共用同一操作锁，read/cache 也在同一锁内；可控并发证明先开始的追加
+   写回完成后清空才返回。此后新提交的追加仍可记录，不等于取消旧翻译或新的隐私策略。
+3. [ ] Mac 显式 owner 使用稳定的独立侧文件协作锁（不锁可被 replace 替换的 JSON inode）；
+   close 与操作互斥，退出/崩溃释放，不删除/抢占活跃锁文件，不凭 PID 杀进程。
+4. [ ] 包内真实临时 home、竞争 owner/replace/退出/崩溃、故障/FD/temp 回归及 Windows 消费者/
+   差分/并发测试；正常 hooks、同一制品 15/14/26 CI、审计和证据文档后停。
+
+Windows 旧读取策略保留：缺文件/非数组返回空；损坏或读取异常记 `load_history` 日志后返回空，
+旧 add 仍调用这一兼容读取入口。只在 Windows wrapper 保留既有宽异常日志边界，
+不把它作为 Mac 的默认策略。Mac 写入前严格读盘，损坏 JSON/无效历史结构/权限错误直接失败，
+不得当空数组覆盖；显式 clear 仍可删除损坏文件。共享原子 JSON primitive 不重造。
+共享规则 `cc_result_rules` 继续由现有 metadata 调用链使用，不改变 kind 的上层选择规则。
+后续完整配置/历史服务仍需唯一 helper 业务接线；本轮只显式合成入口，不增加 IPC/UI 按钮、
+完整 RequestSnapshot、配置迁移或 provider/exec/app-server。
+
+### 历史仓库实现与本地阶段记录
+
+- `cc_history.HistoryRepository` 接显式路径，以同一 RLock 覆盖 load/add/cache/clear/close；
+  复用 `cc_storage.atomic_write_json`，保留 JSON 字节/字段顺序/时间/上限和原缓存匹配。
+  Windows wrapper 共用原 `_HISTORY_LOCK` 名称（改为可重入锁以保留 public load 注入），
+  `_atomic_write_json`/load/log seam 保留，`_record_history` 和历史 UI 消费者未改策略。
+- Mac `MacHistoryOwner` 只接受显式绝对路径，确认已存在父目录并消除目录别名；
+  拒绝 `.app`/JSON symlink，不创建目录/迁移/回退。fcntl 只在显式 Darwin 构造时导入。
+  `history.json.lock` 为示例稳定侧文件，O_NOFOLLOW/CLOEXEC/0600、regular-file 检查、非阻塞 flock；
+  第二 owner 明确拒绝，JSON replace/clear 不影响侧文件，close 不删除它。
+  close 与正在进行的操作互斥；fork 继承对象在进入继承的线程锁前拒绝，
+  子进程只关闭自身 FD 副本，不 unlock 父 owner。close 错误可见且不重试状态不明的 FD。
+  这是协作式所有权，不是防恶意篡改/目录替换的权限沙箱；调用方仍须保护其数据目录。
+- 线性化：取得操作锁并完成追加写回后，等待的 clear 才删除；clear 返回后不能再被该已完成追加“复活”。
+  若另一次 add 在 clear 之后取得锁则仍可记录，不取消旧翻译，也不冻结用户当前 history 开关。
+- 首次 Windows 联合 **89 项 / 5.644s，2 failures**：差分矩阵一轮保留旧内容并出现旧日志文件，
+  因当时断言未附日志、临时目录已清理，具体写入异常未保留，不能宣称已定位根因。
+  已让字节差分失败附实际兼容日志，不改生产写入重试/异常策略、不删矩阵或放宽断言。
+  同一矩阵单独 **1 项 / 2.313s 通过**；随后联合 **166 项 / 11.894s 通过**，
+  再独立连续三轮完整矩阵 + owner contract **36 项 / 7.443s 通过**。上述均不是 Mac 证据。
+- 新便携历史 **21 项**，Windows 差分/调用链 **15 项**（包含 224 组写入对照与 120 组缓存组合）；
+  Mac owner 便携契约 **33 项**，包内 Darwin 真进程 **19 项待执行**。
+  构造清理用 finally 转移 FD 所有权；add/clear/close 并发测试等竞争者实际进入共享锁，
+  不用 sleep 推测已开始。原配置/路径/日志 AST 不变，旧历史 AST 保留为冻结差分 oracle，而非删除断言。
+  必需资源/hash/隔离导入、同包 process/core 清单已接入；下限 25/107 提高为 **44/128**，未扩 runtime JSON。
+- 最终联合针对性 **199 tests，OK，11.937s**，无失败/skip；包含旧 Windows 历史消费者、
+  故障/并发/差分、owner 契约、隔离导入与资源/runner 校验。后续正常 hooks 与真实三系统结果另记。

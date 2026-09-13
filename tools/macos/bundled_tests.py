@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROCESS_TEST_MODULES = (
     "test_codex_config_process",
     "test_codex_catalog_process",
+    "test_history_owner_process",
 )
 CORE_TEST_MODULES = (
     "test_classify",
@@ -30,13 +31,17 @@ CORE_TEST_MODULES = (
     "test_catalog_storage_portable",
     "test_result_rules",
     "test_storage",
+    "test_history",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
-MINIMUM_TEST_COUNTS = {"process": 25, "core": 107}
+MINIMUM_TEST_COUNTS = {"process": 44, "core": 128}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
     "cc_providers.darwin_process",
+    "cc_history",
+    "cc_macos.history_owner",
+    "cc_macos.history_fixture",
 )
 CORE_BUNDLE_MODULES = (
     "cc_classify",
@@ -48,6 +53,7 @@ CORE_BUNDLE_MODULES = (
     "cc_result_rules",
     "cc_storage",
     "cc_macos.storage_fixture",
+    "cc_history",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 
