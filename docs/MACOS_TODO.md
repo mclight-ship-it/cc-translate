@@ -80,6 +80,25 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   其中 smoke 的 `--allow-https` 拒绝提示是既有离线负例，不是实际联网验证。
   尚需正常完整 hook 和真实同包三系统执行，仍不调用官方 CLI/账号/模型。
 
+首个真实 native 后端源码/CI（未验收）：
+
+- `9ef1bb338b9a081abd83ee8116a6ce087ec99ef2` 正常提交并推送；
+  privacy、编译、完整 hook **1487 / 75.891s OK**，有既有 Tk teardown stderr，
+  无失败或 skip；不代表旧 `WinError5` 已解决。
+- [run 34831141381](https://github.com/mclight-ship-it/cc-translate/actions/runs/34831141381)
+  的 producer portable、Swift、完整 bundle 构建/审计已通过；
+  包内 process **163 / 240.111s / 10 failures**。后置 Foundation/core/14/26
+  没有通过，不能引用上轮绿色替代。
+- 九项失败位于 FIFO 生命周期证明：已读完活跃标记后才向 kqueue 注册，
+  其 readiness 代理断言没有收到事件。改以有界 nonblocking read 的实际 EOF
+  为消亡条件，仍拒绝 EAGAIN 超时、不删数据/组/FD/时限断言；
+  新增活跃 writer 必须 EAGAIN、关闭后必须 EOF 的正反回归，并记录 late-selector
+  观测。需由下一真实 Mac run 确认，不能靠 Windows 证明 FIFO 行为。
+- 另一项是参数证据索引错误：receipt 的 args 不含 executable，旧 `[5:][1::2]`
+  错取 `-c`；现断言精确四元素前缀、偶数键值组与全部 `-c`，再从正确偏移核对
+  每项实际安全 override 与 catalog 字节。生产参数没有改动。
+  新 process 发现下限为 **164**，core 保持 **403**，所有原断言/方法保留。
+
 基线源码 `4021270362418c0876dfd7aa51c4c697694f3758`、文档 `ae04dc1`；
 历史/config 业务链已验收，不重复旧源码 CI。按用户授权继续到真正人工前置，
 不将付费签名资格或未完成全部真人矩阵当作纯工程开发的停止条件。

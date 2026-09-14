@@ -247,14 +247,39 @@ class TestDarwinRpcProcess(OwnerProcessCase):
         # A unique FIFO proves this descendant released its descriptors without
         # signalling or looking up a possibly reused PID after leader reaping.
         self.assertEqual(os.read(session.alive_fd, 64), b"alive\n")
+        self.assert_fifo_eof(session)
+
+    def assert_fifo_eof(self, session):
         end = time.monotonic() + 3
-        with selectors.DefaultSelector() as selector:
-            selector.register(session.alive_fd, selectors.EVENT_READ)
-            self.assertTrue(selector.select(max(0, end - time.monotonic())),
-                            "The TERM-resistant descendant still holds its liveness pipe.")
-            self.assertEqual(os.read(session.alive_fd, 1), b"")
+        # A kqueue registered after FIFO EOF need not report a new readiness
+        # event. Nonblocking read distinguishes a live writer (EAGAIN) from EOF.
+        while True:
+            try:
+                remaining = os.read(session.alive_fd, 1)
+            except BlockingIOError:
+                self.assertLess(time.monotonic(), end,
+                                "The TERM-resistant descendant still holds its liveness pipe.")
+                time.sleep(0.01)
+                continue
+            self.assertEqual(remaining, b"")
+            break
         self.assertLess(time.monotonic() - session.started_at, 12,
                         "Cleanup must be proved before the 20-second synthetic fallback.")
+        self.assertFalse(list(session.fixture.glob("fallback-*")))
+
+    def test_real_fifo_probe_distinguishes_live_writer_from_closed_group(self):
+        session = self.create("group")
+        self.assertEqual(self.receive(session), "ready")
+        self.assertEqual(os.read(session.alive_fd, 64), b"alive\n")
+        with self.assertRaises(BlockingIOError):
+            os.read(session.alive_fd, 1)
+        session.close()
+        self.assert_fifo_eof(session)
+        self.assertEqual(os.read(session.alive_fd, 1), b"")
+        with selectors.DefaultSelector() as selector:
+            selector.register(session.alive_fd, selectors.EVENT_READ)
+            print("Synthetic FIFO: read EOF verified; late selector ready =",
+                  bool(selector.select(0)))
         self.assertFalse(list(session.fixture.glob("fallback-*")))
 
     def test_real_bundle_bridge_and_nonblocking_rpc_pipes(self):

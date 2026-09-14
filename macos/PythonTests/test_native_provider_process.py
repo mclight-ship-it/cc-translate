@@ -194,7 +194,12 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertEqual(turn["sandboxPolicy"], {"type": "readOnly", "networkAccess": False})
         self.assertEqual(turn["approvalPolicy"], "never")
         process = next(call for call in self.calls() if call.get("kind") == "provider")
-        overrides = process["args"][5:][1::2]
+        self.assertEqual(process["args"][:4],
+                         ["app-server", "--listen", "stdio://", "--strict-config"])
+        arguments = process["args"][4:]
+        self.assertEqual(len(arguments) % 2, 0)
+        self.assertEqual(arguments[::2], ["-c"] * (len(arguments) // 2))
+        overrides = arguments[1::2]
         expected = list(CODEX_CONFIG_OVERRIDES) + list(
             integration_overrides(native_provider_fixture.NATIVE_CONFIG["config"]))
         self.assertEqual(overrides[:-1], expected)
