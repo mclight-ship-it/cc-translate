@@ -108,10 +108,11 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(bundled_tests.CORE_TEST_MODULES, (
             "test_classify", "test_is_single_word", "test_direction", "test_classify_import",
             "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
-            "test_catalog_storage_portable", "test_result_rules", "test_storage", "test_history"))
+            "test_catalog_storage_portable", "test_result_rules", "test_storage", "test_history",
+            "test_config_rules"))
         self.assertEqual(bundled_tests.SUITE_MODULES, {
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 44, "core": 128})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 44, "core": 147})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:
@@ -127,7 +128,8 @@ class InventoryTests(unittest.TestCase):
             "cc_history", "cc_macos.history_owner", "cc_macos.history_fixture"))
         self.assertEqual(bundled_tests.CORE_BUNDLE_MODULES, (
             "cc_classify", "cc_direction", "cc_prompts", "cc_providers", "cc_dictionary_store",
-            "cc_providers.codex_catalog", "cc_result_rules", "cc_storage", "cc_macos.storage_fixture", "cc_history"))
+            "cc_providers.codex_catalog", "cc_result_rules", "cc_storage", "cc_macos.storage_fixture", "cc_history",
+            "cc_config"))
 
     def test_checkout_is_derived_from_script_not_current_directory_or_latest_bundle(self):
         self.assertEqual(bundled_tests.ROOT, Path(bundled_tests.__file__).resolve().parents[2])
@@ -313,8 +315,8 @@ class ResultTests(ProjectDirectory):
                 code, report, storage, _ = self.run_main(outcome=outcome)
                 self.assertEqual(code, 1)
                 self.assertEqual(report["status"], "failed")
-                self.assertEqual(report["tests_run"], 128)
-                self.assertEqual(report[field], 128)
+                self.assertEqual(report["tests_run"], 147)
+                self.assertEqual(report[field], 147)
                 self.assertEqual(report["storage_fixture"], "not_run")
                 storage.assert_not_called()
 
@@ -334,7 +336,7 @@ class ResultTests(ProjectDirectory):
         self.assertEqual(code, 1)
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["storage_fixture"], "failed")
-        self.assertEqual(report["tests_run"], 128)
+        self.assertEqual(report["tests_run"], 147)
         self.assertEqual(report["errors"], 1)
 
     def test_invalid_interpreter_writes_failed_report_without_loading_suite(self):
@@ -402,7 +404,7 @@ class ResultTests(ProjectDirectory):
 
     def test_unsuccessful_result_without_failure_list_cannot_pass(self):
         result = SimpleNamespace(
-            testsRun=128, failures=[], errors=[], skipped=[], wasSuccessful=lambda: False)
+            testsRun=147, failures=[], errors=[], skipped=[], wasSuccessful=lambda: False)
         with patch.object(unittest.TextTestRunner, "run", return_value=result):
             code, report, storage, _ = self.run_main()
         self.assertEqual(code, 1)

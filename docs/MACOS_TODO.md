@@ -1237,6 +1237,9 @@ python -B -m unittest -v tests.test_history tests.test_history_windows tests.tes
 
 ### 下一配置持久化候选（只读调查，尚未开放实施）
 
+以下为前次只读建议。2026-09-14 新授权仅开放无 I/O 配置规则/默认与迁移计划共享，
+不是下述配置 owner、线程锁或迁移文件服务；实施与验收记录另列于末尾。
+
 1. **真实入口与线程边界。** `translator.pyw` 的 `load_config` / `save_config` /
    `TranslatorApp._save_config` 是实际磁盘链；加载有迁移写回，初始化检测语言可保存配置。
    `_run_startup_tasks` 在后台线程设置 `AUTOSTART_INITIALIZED` 后也保存同一 `self.cfg`；
@@ -1262,3 +1265,25 @@ python -B -m unittest -v tests.test_history tests.test_history_windows tests.tes
    `test_storage_windows` 固定字节/未知键/错误矩阵验证；随后再单独批准显式配置 owner、
    启动后台任务与 UI 保存所有权和 Mac 合成入口。完整服务、RequestSnapshot/provider/UI 不在本次内，
    此建议未执行，也不因付费签名成为不可独立推进项。
+
+### 无 I/O 配置规则切片（2026-09-14，实施中）
+
+1. [ ] 单一 `cc_config` 常量/Config/迁移计划来源，Windows 真实 Config/load_config 接线，
+   保留 dict 子类、字段/对象身份、原异常范围、内存与 raw 磁盘写回区别和最多一次 save。
+2. [ ] 冻结旧实现/AST 差分、类型/边界/marker/未知键/失败及真实 Windows 消费者回归；
+   同源模块与测试进入包内 isolated Python，验证零环境/用户文件/平台导入副作用。
+3. [ ] 正常针对性/完整 hooks、免费同包 15/14/26 CI，记录新测试真实发现、资源审计与固定 SHA。
+
+WinError 5 拒绝来源仍未定位，前述原 writer 对照失败保留；不加生产重试或改绿旧矩阵。
+仅纯规则可以继续独立验证，不等于配置持久化、线程安全、Mac config owner 或业务 helper 已完成；
+不扩 runtime JSON、UI、全局锁、后台 cfg 竞态、RequestSnapshot/provider。
+
+- 首次联合针对性 **215 tests / 13.171s，4 failures**：包内 runner 负例中四个断言仍写旧 128，
+  实际新增 19 项纯配置规则后计数为 147。已同步负例的完整计数（包括 failure/error/skip 与 fixture 失败），
+  不删除负例、不改失败判定、不降低下限；这次失败不是 WinError 5。修正后结果另记。
+- 修正计数后的同组联合 **215 tests / 12.376s，82 failures**：新 Windows 实际磁盘差分矩阵
+  出现 `save_config` 的 `PermissionError / WinError 5`，首个原始磁盘 payload 字节断言失败，
+  后续子用例仍看到保留的同一错误日志并继续失败；82 是断言失败数，不等于 82 次独立写入异常。
+  本次不是“targeted 全绿”，拒绝来源仍未知，不猜测与旧现象具有同一个外部原因。
+  已保留完整日志，不换目录、不清日志规避、不削弱断言或重复运行直到成功。
+  新纯规则及修正后的 runner 负例执行正常；后续仅按原授权尝试正常完整 hooks，结果另记。

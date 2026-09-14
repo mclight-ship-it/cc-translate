@@ -32,9 +32,10 @@ CORE_TEST_MODULES = (
     "test_result_rules",
     "test_storage",
     "test_history",
+    "test_config_rules",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
-MINIMUM_TEST_COUNTS = {"process": 44, "core": 128}
+MINIMUM_TEST_COUNTS = {"process": 44, "core": 147}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
@@ -54,6 +55,7 @@ CORE_BUNDLE_MODULES = (
     "cc_storage",
     "cc_macos.storage_fixture",
     "cc_history",
+    "cc_config",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 

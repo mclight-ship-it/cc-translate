@@ -56,6 +56,25 @@ def audit(event, args):
 before = set(sys.modules)
 builtins.__import__ = guarded_import
 sys.addaudithook(audit)
+class NoEnvironment:
+    def __getattribute__(self, name):
+        raise AssertionError("configuration rules read environment")
+
+def no_getenv(*args, **kwargs):
+    raise AssertionError("configuration rules read environment")
+
+original_environment, original_getenv = os.environ, os.getenv
+os.environ, os.getenv = NoEnvironment(), no_getenv
+try:
+    import cc_config
+    raw = {"font_size": "16", "future": "\u4e2d"}
+    cfg = cc_config.Config(raw)
+    changed, payload = cc_config.plan_config_migration(raw, cfg)
+    assert cfg.font_size == 16 and changed
+    assert payload["font_size"] == "16" and payload["future"] == "\u4e2d"
+    assert "language" not in cc_config.DEFAULT_CONFIG
+finally:
+    os.environ, os.getenv = original_environment, original_getenv
 import cc_classify
 assert cc_classify.classify_selection("def foo():\n    pass") == "code"
 assert cc_classify.classify_selection("ordinary prose") == "text"

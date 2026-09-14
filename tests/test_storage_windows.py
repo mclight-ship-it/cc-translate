@@ -3,7 +3,6 @@
 import ast
 from concurrent.futures import ThreadPoolExecutor
 import errno
-import hashlib
 import inspect
 import json
 import os
@@ -16,6 +15,8 @@ from unittest import mock
 
 import cc_storage as storage
 from tests.history_reference import SOURCE as HISTORY_REFERENCE_SOURCE
+from tests.test_config_rules import LEGACY_LOAD_SOURCE, _ast_hash
+import cc_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,24 +39,6 @@ BASELINE_AST_SHA256 = {
         "DEFAULT_CONFIG": "40150450e4a7a621640b05df3f581959a75f99f056d4e3498eaa3abe97a0b0ad",
     },
 }
-
-
-def _ast_hash(node):
-    def canonical(value):
-        if isinstance(value, ast.AST):
-            # Python 3.12 added empty type_params; ignore only that empty
-            # metadata rather than relying on version-specific ast.dump output.
-            return [type(value).__name__, [
-                [name, canonical(child)]
-                for name, child in ast.iter_fields(value)
-                if name != "type_params" or child
-            ]]
-        if isinstance(value, list):
-            return [canonical(child) for child in value]
-        return value
-
-    serialized = json.dumps(canonical(node), ensure_ascii=True, separators=(",", ":"))
-    return hashlib.sha256(serialized.encode("ascii")).hexdigest()
 
 
 # The entry fixture imports Windows modules, but must not migrate a real
@@ -141,12 +124,18 @@ class TestWindowsStorageExports(unittest.TestCase):
                 return result
 
             before, after = BASELINE_AST_SHA256[filename], definitions(current)
-            # The history extraction now has differential/concurrency coverage.
-            # Keep the old oracle itself frozen; config/path/log definitions remain unchanged.
+            # Moved definitions remain AST-identical; the changed loaders have
+            # frozen-oracle differential coverage through the real entry points.
+            shared_config = definitions(inspect.getsource(cc_config))
             if filename == "translator.pyw":
                 original_history = definitions(HISTORY_REFERENCE_SOURCE)
                 for name in ("load_history", "add_history", "clear_history", "_HISTORY_LOCK"):
                     after[name] = original_history[name]
+                after["Config"] = shared_config["Config"]
+                after["load_config"] = definitions(LEGACY_LOAD_SOURCE)["load_config"]
+            else:
+                for name in ("CFG", "DEFAULT_CONFIG"):
+                    after[name] = shared_config[name]
             for name in names:
                 with self.subTest(filename=filename, name=name):
                     self.assertIn(name, before)

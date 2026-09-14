@@ -53,6 +53,7 @@ cc_prompts.py                P1 既有文本提示词及独立 provider revision
 cc_result_rules.py           P1 缓存签名/history-kind；只接 caller-resolved 值，不读取 UI/配置
 cc_storage.py                P1 显式 Mac 路径与单文件原子 JSON；不选默认 home，不是唯一 writer
 cc_history.py                P1 共享历史仓库；Windows 原入口复用，单进程统一操作锁与严格默认读取
+cc_config.py                 P1 无 I/O 的单一默认/Config/迁移计划；不提供配置 owner/磁盘迁移服务
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -134,6 +135,16 @@ JSON replace/clear 不替换或删除侧文件，close 与操作互斥，close �
 包内合成进程验证，但锁是协作式，不是抵御恶意目录替换的权限系统。单进程仓库本身不是跨进程锁。
 现有 helper 的业务历史接线、配置唯一 writer/迁移仍未实现；新 history fixture 由 CI 单独显式调用，
 Foundation 集成继续验证原 helper 通道，不宣称已有新的历史 IPC 或用户数据服务。
+无 I/O 配置规则现移到 `cc_config`：CFG、DEFAULT_CONFIG 与整个 Config 类保留抽取前 AST，
+Windows 导出同一常量/默认 dict/Config 对象，`_coerce` 和 typed accessors 保留；
+未知键与嵌套对象身份、字段顺序、缺省语言键和原转换异常范围不改。
+`load_config` 仍在原 Windows 路径读取和记录错误，但实际调用共享 `plan_config_migration(raw, cfg)`。
+计划只补原 raw 副本的 UI/Labs 标记和 streaming 字段，并按旧逻辑升级显式 cfg 的 streaming 开关；
+不会把全部归一化字段写盘，最多原 save 入口一次，保存失败仍保留旧盘/返回已迁移内存。
+这是规则共享，不是 Mac 配置持久化或线程安全保证；真实用户文件选择、迁移文件服务、
+配置 owner、后台共享 cfg 与 UI 保存竞争、唯一业务 helper 接线均未在本切片实现。
+Windows WinError 5 的已有复核和实际旧 writer 对照均失败，拒绝来源仍未知；
+不以纯规则/旧三系统成功覆盖该阻断，不新增重试或弱化旧测试。最新实际验收见 TODO。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
 保留 POSIX 文件名中的字面反斜杠并正确转义空格/`#`/`%`。原 builder-v3 DDL 移到同一模块，
 builder 仍导出同一个 `SCHEMA`，表/索引/来源 identity/许可字段和数据版本不变。

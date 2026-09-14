@@ -64,6 +64,7 @@ from cc_dictionary_metrics import DictionaryMetrics
 from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
 from cc_storage import atomic_write_json as _atomic_write_json
 from cc_history import HistoryRepository, read_history as _read_history
+from cc_config import Config, plan_config_migration
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -445,181 +446,13 @@ def codex_summary_instruction(target_lang):
 
 
 
-class Config(dict):
-    """Typed, self-validating view over the user config.
-
-    Subclasses ``dict`` so every existing access pattern keeps working
-    unchanged — ``cfg[key]``, ``cfg.get(key)``, ``cfg[key] = v`` and
-    ``json.dump(cfg, ...)`` all behave exactly as before. On top of that it:
-
-      * merges ``DEFAULT_CONFIG`` so every known key is always present, and
-      * coerces each known key to the type of its default (a config file that
-        somehow holds a wrong-typed value can't crash the UI downstream), and
-      * exposes typed read-only properties for the hot keys so new code can
-        say ``cfg.model`` instead of ``cfg.get(CFG.MODEL, ...)`` with a
-        literal fallback repeated at every call site.
-
-    Unknown keys are preserved untouched for forward-compatibility."""
-
-    def __init__(self, data=None):
-        raw = dict(data or {})
-        super().__init__(DEFAULT_CONFIG)
-        if data:
-            self.update(data)
-        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
-            # Settings used to serialize the internal dark-launch default
-            # (ui_v2=false) into ordinary user configs even though users had no
-            # UI control for it. Move every pre-release config to the production
-            # v2 default once; the marker lets a subsequent explicit false keep
-            # selecting legacy.
-            self[CFG.UI_V2] = True
-            self[CFG.UI_V2_DEFAULT_MIGRATED] = True
-        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
-            # Earlier releases serialized both Labs features as false by
-            # default. Promote existing configs once, then preserve any later
-            # explicit opt-out.
-            self[CFG.SUMMARY_ENABLED] = True
-            self[CFG.CLIPBOARD_PROTECTION_ENABLED] = True
-            self[CFG.LABS_DEFAULTS_MIGRATED] = True
-        if CFG.MODEL_PROVIDER not in raw:
-            # Configs from before provider selection existed contain only the
-            # legacy Claude "model" key. Preserve that explicit old choice;
-            # genuinely new/partial configs use the current GPT default.
-            self[CFG.MODEL_PROVIDER] = (
-                "claude_cli" if CFG.MODEL in raw
-                else DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
-        if CFG.CLAUDE_MODEL not in raw:
-            self[CFG.CLAUDE_MODEL] = raw.get(
-                CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
-        if CFG.CODEX_MODEL not in raw:
-            self[CFG.CODEX_MODEL] = DEFAULT_CONFIG[CFG.CODEX_MODEL]
-        elif self[CFG.CODEX_MODEL] == "gpt-5.4-mini":
-            # The former standalone mini option is now an internal branch of
-            # smart routing, so migrate saved selections to the complete mode.
-            self[CFG.CODEX_MODEL] = "auto-fast"
-        # Keep the old key synchronized for one downgrade-compatible release.
-        self[CFG.MODEL] = self[CFG.CLAUDE_MODEL]
-        self._coerce()
-
-    def _coerce(self):
-        """Force every known key to the type of its default; on mismatch that
-        can't be coerced, fall back to the default rather than keep a value
-        that would break a downstream widget."""
-        for key, default in DEFAULT_CONFIG.items():
-            if key not in self:
-                self[key] = default
-                continue
-            value = self[key]
-            try:
-                if isinstance(default, bool):
-                    # bool is a subclass of int, so test it before int.
-                    if isinstance(value, bool):
-                        continue
-                    if isinstance(value, (int, float)):
-                        self[key] = bool(value)
-                    elif isinstance(value, str):
-                        self[key] = value.strip().lower() in ("1", "true", "yes", "on")
-                    else:
-                        self[key] = default
-                elif isinstance(default, int):
-                    self[key] = int(value)
-                elif isinstance(default, float):
-                    self[key] = float(value)
-                elif isinstance(default, str):
-                    self[key] = value if isinstance(value, str) else str(value)
-            except (TypeError, ValueError):
-                self[key] = default
-
-    # ---- Typed accessors (optional convenience; the dict API still works) ----
-    @property
-    def model(self):
-        return self.get(CFG.MODEL, DEFAULT_CONFIG[CFG.MODEL])
-
-    @property
-    def model_provider(self):
-        return self.get(CFG.MODEL_PROVIDER, DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
-
-    @property
-    def claude_model(self):
-        return self.get(CFG.CLAUDE_MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
-
-    @property
-    def codex_model(self):
-        return self.get(CFG.CODEX_MODEL, DEFAULT_CONFIG[CFG.CODEX_MODEL])
-
-    @property
-    def direction(self):
-        return self.get(CFG.DIRECTION, DEFAULT_CONFIG[CFG.DIRECTION])
-
-    @property
-    def theme(self):
-        return self.get(CFG.THEME, DEFAULT_CONFIG[CFG.THEME])
-
-    @property
-    def font_size(self):
-        return self.get(CFG.FONT_SIZE, DEFAULT_CONFIG[CFG.FONT_SIZE])
-
-    @property
-    def max_chars(self):
-        return self.get(CFG.MAX_CHARS, DEFAULT_CONFIG[CFG.MAX_CHARS])
-
-    @property
-    def double_press_window(self):
-        return self.get(CFG.DOUBLE_PRESS_WINDOW,
-                        DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
-
-    @property
-    def popup_layout(self):
-        return self.get(CFG.POPUP_LAYOUT, DEFAULT_CONFIG[CFG.POPUP_LAYOUT])
-
-    @property
-    def language(self):
-        return self.get(CFG.LANGUAGE)
-
-    @property
-    def history_enabled(self):
-        return self.get(CFG.HISTORY_ENABLED, DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
-
-    @property
-    def history_limit(self):
-        return self.get(CFG.HISTORY_LIMIT, DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
-
-    @property
-    def ocr_engine(self):
-        return self.get(CFG.OCR_ENGINE, DEFAULT_CONFIG[CFG.OCR_ENGINE])
-
-    @property
-    def summary_enabled(self):
-        return self.get(CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
-
-
 def load_config() -> "Config":
     cfg = Config()
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f)
         cfg = Config(raw)
-        migrated = dict(raw)
-        config_changed = False
-        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
-            migrated[CFG.UI_V2] = cfg[CFG.UI_V2]
-            migrated[CFG.UI_V2_DEFAULT_MIGRATED] = cfg[
-                CFG.UI_V2_DEFAULT_MIGRATED]
-            config_changed = True
-        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
-            migrated[CFG.SUMMARY_ENABLED] = cfg[CFG.SUMMARY_ENABLED]
-            migrated[CFG.CLIPBOARD_PROTECTION_ENABLED] = cfg[
-                CFG.CLIPBOARD_PROTECTION_ENABLED]
-            migrated[CFG.LABS_DEFAULTS_MIGRATED] = cfg[
-                CFG.LABS_DEFAULTS_MIGRATED]
-            config_changed = True
-        if not cfg[CFG.CODEX_STREAMING_EXPERIMENTAL]:
-            # Streaming no longer has a user-facing opt-out. Upgrade saved
-            # "off" values so existing users do not get stuck on a hidden
-            # setting after the control is removed.
-            cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
-            migrated[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
-            config_changed = True
+        config_changed, migrated = plan_config_migration(raw, cfg)
         if config_changed:
             save_config(migrated)
     except FileNotFoundError:

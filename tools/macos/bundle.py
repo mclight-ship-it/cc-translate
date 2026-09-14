@@ -30,7 +30,7 @@ BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
-                       "cc_result_rules.py", "cc_storage.py", "cc_history.py")
+                       "cc_result_rules.py", "cc_storage.py", "cc_history.py", "cc_config.py")
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 PROVIDER_CATALOG_FILES = ("codex_catalog.py",)

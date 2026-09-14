@@ -21,6 +21,7 @@ import threading
 from datetime import datetime, timedelta
 
 import i18n
+from cc_config import CFG, DEFAULT_CONFIG
 from cc_classify import is_single_word
 from cc_direction import (
     LANGUAGES, DIRECTION_MODES, CJK_SOURCE_RATIO,
@@ -396,80 +397,6 @@ def log_error(where: str, exc: BaseException) -> None:
             f.write(line)
     except Exception:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Config-key constants and defaults.
-# ---------------------------------------------------------------------------
-class CFG:
-    """String constants for every key in the user config dict.
-    Use these instead of bare string literals to catch typos at lint time."""
-    MODEL = "model"
-    MODEL_PROVIDER = "model_provider"
-    CLAUDE_MODEL = "claude_model"
-    CODEX_MODEL = "codex_model"
-    CODEX_STREAMING_EXPERIMENTAL = "codex_streaming_experimental"
-    DOUBLE_PRESS_WINDOW = "double_press_window"
-    FONT_SIZE = "font_size"
-    DIRECTION = "direction"
-    MAX_CHARS = "max_chars"
-    THEME = "theme"
-    POPUP_LAYOUT = "popup_layout"
-    HISTORY_ENABLED = "history_enabled"
-    HISTORY_LIMIT = "history_limit"
-    AUTO_UPDATE_ENABLED = "auto_update_enabled"
-    AUTO_UPDATE_HOUR = "auto_update_hour"
-    OCR_ENGINE = "ocr_engine"
-    OCR_HOTKEY_ENABLED = "ocr_hotkey_enabled"
-    LANGUAGE = "language"
-    CLIPBOARD_PROTECTION_ENABLED = "clipboard_protection_enabled"
-    PLAIN_TEXT_PASTE_ENABLED = "plain_text_paste_enabled"
-    AUTOSTART_INITIALIZED = "autostart_initialized"
-    SUMMARY_ENABLED = "summary_enabled"
-    LOCAL_DICTIONARY_ENABLED = "local_dictionary_enabled"
-    # One-time marker for promoting the initial Labs features to on-by-default
-    # without overriding a later explicit opt-out.
-    LABS_DEFAULTS_MIGRATED = "labs_defaults_migrated"
-    TRAY_CLICK_ACTION = "tray_click_action"
-    # V2 is the production UI. Keep the saved flag and environment override so
-    # support/dev builds can still force the legacy UI when diagnosing a
-    # regression.
-    UI_V2 = "ui_v2"
-    # One-time marker for configs that saved the old dark-launch default. Before
-    # this marker existed, Settings persisted ``ui_v2: false`` even though no
-    # user-facing opt-out existed; migrate that generated value once so existing
-    # users receive v2 too. A later explicit false is preserved.
-    UI_V2_DEFAULT_MIGRATED = "ui_v2_default_migrated"
-
-
-DEFAULT_CONFIG = {
-    CFG.MODEL: "haiku",
-    CFG.MODEL_PROVIDER: "codex_cli",
-    CFG.CLAUDE_MODEL: "haiku",
-    CFG.CODEX_MODEL: "auto-fast",
-    CFG.CODEX_STREAMING_EXPERIMENTAL: True,
-    CFG.DOUBLE_PRESS_WINDOW: 0.5,
-    CFG.FONT_SIZE: 12,
-    CFG.DIRECTION: "auto",
-    CFG.MAX_CHARS: 5000,
-    CFG.THEME: "system",
-    CFG.POPUP_LAYOUT: "dynamic",
-    CFG.HISTORY_ENABLED: True,
-    CFG.HISTORY_LIMIT: 100,
-    CFG.AUTO_UPDATE_ENABLED: True,
-    CFG.AUTO_UPDATE_HOUR: 3,
-    CFG.OCR_ENGINE: "claude",
-    CFG.OCR_HOTKEY_ENABLED: True,
-    CFG.CLIPBOARD_PROTECTION_ENABLED: True,
-    CFG.PLAIN_TEXT_PASTE_ENABLED: False,
-    CFG.AUTOSTART_INITIALIZED: False,
-    CFG.SUMMARY_ENABLED: True,
-    CFG.LOCAL_DICTIONARY_ENABLED: False,
-    CFG.LABS_DEFAULTS_MIGRATED: True,
-    CFG.TRAY_CLICK_ACTION: "settings",
-    CFG.UI_V2: True,
-    CFG.UI_V2_DEFAULT_MIGRATED: True,
-}
 
 
 # ---------------------------------------------------------------------------
