@@ -11,14 +11,20 @@ macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Fo
 按最新连续授权，完整请求快照已接 Windows 派发/执行并通过同包三系统验证：
 源码 `8797fc7` / [run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)，
 Windows正常完整hook1357；每系统90进程/277核心/9精确Foundation，新35个快照方法逐项执行。
-Darwin native Codex 后端随后已通过同包三系统：
-最新修复源码 `6d029d1` / [run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)，
+Darwin native Codex 后端前置修复源码 `6d029d1` /
+[run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)，
 正常Windows完整hook1494；每系统172进程/410核心/9精确Foundation，
-本次新增14个进程/核心方法逐名各执行一次。**这是内部native后端，翻译helper/Swift API和新翻译UI
-尚未接入；未调用官方CLI/账号/真实模型。**
+该次新增14个进程/核心方法逐名各执行一次；当时尚无翻译helper/Swift API/UI。
 此前独立审查发现idle回收责任、item终态及非法item类型三项生产缺陷；现已实证并修复，
 正常联合300项、完整hook和同包三系统均通过；旧13b6543绿灯不代作这三项修复证据。
-接下来继续显式翻译业务接线，无需用户重新授权。
+**当前翻译业务链已接通并通过真实合成进程验证**：源码
+`2b116f0731803b52d87565d1e8e4602b6794c324` /
+[run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)，
+正常Windows完整hook1542；同包三系统各185进程/458核心/13精确Foundation。
+新增31 Swift unit、13 process、48 core均实际执行；Foundation使用真实包内helper/native合成CLI，
+不是只mock provider。现有原生UI已增加显式启用、输入/选区/流式结果、设置、历史及复制入口。
+**官方CLI/账号/真实模型及新UI真人操作仍未验证，不是完整产品验收**；
+下一外部步骤集中在[新包操作交接](#native-translation-user-check)，不会代用户安装/登录或发送真实模型请求。
 旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
@@ -196,9 +202,9 @@ native按operation隔离item终态，拒绝完成后重复/迟到事件，同时
 [完整制品/hash/旧反例/修复中失败](MACOS_TODO.md#darwin-native-checkpoint) 已记录；
 完整681库存/71资源/43源码路径和6实际Mach-O核验完成，临时归档已清理。
 原9项Foundation仍覆盖诊断/config/history，**此后端检查点未增加翻译IPC或UI**。
-下一步将同一后端接显式业务连接与Swift API；普通启动、hello及诊断/config-only不自动运行CLI。
+后续已用同一后端接显式翻译业务连接与Swift API，见下文；普通启动、hello及诊断/config-only不自动运行CLI。
 合成测试与官方CLI安装/账号/真实模型、Finder/TCC/IME/多屏验收始终分开。
-当前不要求用户操作，不因付费签名资格冻结安全工程开发；旧WinError5未知风险不变。
+不因付费签名资格冻结安全工程开发；旧WinError5未知风险不变。
 
 已完成的存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
@@ -206,7 +212,8 @@ native按operation隔离item终态，拒绝完成后重复/迟到事件，同时
 不增加 runtime JSON/设置 UI，不选择真实用户数据目录。原子替换不等于完整配置/历史唯一 writer，
 Windows 默认目录、迁移、日志与 schema 保持；历史的 add/clear 锁边界现已由下述仓库统一。
 共享 writer 显式保留 FD 所有权直至关闭，补齐 fdopen 失败的释放；旧 JSON 字节与失败清理策略不变。
-路径是词法解析而非符号链接权限检查，当前 Mac 入口只使用 caller-owned 临时目录，不选择真实业务 home。
+路径primitive是词法解析而非符号链接权限检查；上述基础层验证只使用caller-owned临时目录。
+当前UI业务连接只有在用户明确启用后才选择其home，后续owner仍执行自己的路径与生命周期检查。
 共享历史仓库现由 Windows load/add/cache/clear 真实入口使用；原数组/字段顺序/时间/限额、缓存匹配与
 OCR 排除不变，已有 `cc_result_rules` 元数据路径不变。add/clear/load/cache 共用一把可重入操作锁；
 clear 等正在写回的 add 完成后再删除，而在 clear 之后获得锁的新 add 仍可记录，不改变取消/隐私策略。
@@ -375,7 +382,50 @@ Swift提供`startBusiness`兼容别名以及`loadHistory(pageSize:cursor:)`、
 两轮更早真实Mac测试前置/库存失败和修复仍见TODO。
 本地独立核对674库存/64资源/36源码路径及同包内容、模式和链接，新内层zip
 SHA-256为`bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`。
-真实业务API接通不等于UI或完整翻译；本轮不要求用户重装，也不继承旧包Finder/TCC报告。
+该历史检查点当时未接翻译/UI，也不继承旧包Finder/TCC报告。
+
+### 显式 native 翻译协议与生命周期（当前）
+
+默认诊断连接保持原协议和provider惰性导入。`startTranslation(runtime:home:codexCommand:environment:)`
+是独立、明确的选择；实际bundle ID仍由Info.plist取得，home/CLI绝对路径只在启动时绑定一次。
+CLI环境是严格string→string JSON（最大32768 UTF-8字节），经私有
+`CC_TRANSLATE_CODEX_ENV`传递，HOME必须等于显式home且必须有PATH；不放argv、不从环境补值，
+也不将CLI环境直接变成helper的加载器环境。默认诊断模式不创建业务目录/读取配置/启动CLI。
+启用时获取config/history双owner，provider构造不spawn；首次translate才执行native CLI。
+
+协议版本仍为1，新增mode的ready为`fixture:false`、`backend:native_appserver`及六项能力：
+原config/history五操作加translate，不把业务称synthetic。translate精确接收
+`operation/text/app_language/origin/use_cache/record_history`；text非空白、UTF-8最多8192字节，
+language只zh_CN/en_US，origin只text/selection，两个布尔不接受整数替代。
+配置决定Codex profile/方向/summary/限额；payload不接受每请求path、env、model或服务端timeout覆盖。
+Swift API的timeout只控制客户端等待，不改写执行快照的服务端预算。
+原load的streaming强制迁移保持，所以磁盘false不代表已提供非流式设置开关。
+
+共享摘要规则已原样抽取，Windows真实重导出/消费者及patch seams保持；
+helper捕获完整不可变RequestSnapshot，复用分类、方向、prompt及原cache签名字节。
+翻译worker可与原storage FIFO并行，native执行本身串行且不占状态操作锁；
+完成时在锁内重读**已提交的当前**history开关/limit。显式record_history=false不写，
+history关闭时也不查询cache；命中只读且不重复追加。执行输入冻结，不冻结取消/UI状态。
+原子replace不等于单writer，协作flock也不是恶意目录的沙箱；输入快照期间调用者不能并发修改输入容器。
+
+事件为accepted(seq0)→started(seq1)→delta→唯一终态；未启动worker的精确worker_start_failed仍为seq1确定失败。
+delta含text/submitted:true；completed含text/submitted/cached/kind/target_lang/summarize/history/history_error。
+cache命中submitted=false、history=unchanged；history=failed必须有固定storage错误码，其余必须null。
+已产生delta后不允许终态submitted=false。最终文本可修正流式中间文本，不要求二者拼接相同。
+单delta的compact JSON字符串最多4096字节，累计与最终文本各最多24000字节，计UTF-8及转义；
+每请求实际完整响应envelope/序号/LF累计最多1MiB，单frame仍64KiB，超限不截断或写坏历史。
+
+queued取消可以确定未执行；started翻译的取消终态必须等native实际清理。
+开始不可逆历史提交后不撤销写入；保存失败仍交付翻译文本并显式标history=failed。
+丢响应/超时/强停时pending翻译优先报告translationOutcomeUnknown，不假称回滚、不自动重放。
+EOF/shutdown停止接新请求并drain；仅translation入口捕获SIGTERM，handler只置标志，
+正常循环清理自有native组及双owner后退出143。Swift普通stop不自动强杀；
+故障为关闭stdin→30秒→SIGTERM→30秒→SIGKILL，forceStop直接SIGTERM后留30秒。
+这些界限不承诺SIGKILL、崩溃或脱离组后代的回收，不引入guardian或按进程名杀用户CLI。
+
+新包实测同包15.7.9/14.8.9/26.6.2、185process/458core/13Foundation；
+原172/410/9全部保留。首轮无App前置上下文错误、正常Windows hook及完整制品审计见
+[当前检查点](MACOS_TODO.md#translation-ipc-checkpoint)，不以初次13个可选skip替代后置执行。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
@@ -413,7 +463,9 @@ Python 只从包内固定位置加载且要求 ABI 1，不搜索宿主库或降�
 
 普通启动只显示菜单栏图标，不弹窗、不申请权限、不联网、不探测用户选区。
 用户通过显式菜单打开 P0 面板、运行合成 IPC、运行时自检或平台探针。
-结果窗口与快速输入是最小探针界面，不是已完成产品 UI。
+结果窗口与快速输入仍是开发界面，不是已完成产品UI。当前已有显式native启用、输入/AX翻译、
+流式结果/复制、设置保存和历史分页/清空；只有用户另外开启选区翻译时，被动Cmd+C才可触发模型。
+关闭窗口停止连接；关闭结果窗口会请求取消当前翻译。GUI/TCC/IME/多屏行为仍须真人验收。
 
 ### 权限、选区、快捷键和剪贴板
 
@@ -548,11 +600,11 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ### P0 App 的显式验收入口（步骤模板；原包用户报告见下，不代表最新包实机已验）
 
-1. Finder 启动后仅应出现 `CC P0` 菜单栏项目，不自动弹窗、申请权限或联网。
-2. `Open P0 input / probes...` → `Bundled core` → `Start bundled helper`，
+1. 最新开发包Finder启动后仅应出现 `CC Dev` 菜单栏项目，不自动弹窗、申请权限或联网。
+2. `Open input / diagnostics...` → `Bundled core` → `Start bundled helper`，
    再 `Run synthetic fixture`；结果必须标为 SYNTHETIC，不是翻译。用新输入和 Cancel/Stop
    验证迟到结果不污染当前显示，关闭窗口不退出菜单栏应用。
-3. `SQLite / SSL probe (no network)` 与 `HTTPS probe (explicit network)` 分别执行；
+3. `SQLite / SSL / config (offline)` 与 `HTTPS probe (explicit network)` 分别执行；
    四字段报告不暴露本机绝对路径。后者只有 bundle CA 验证真实 TLS 后才能 passed。
 4. `Permissions / AX` 分别请求权限；回到目标 App 选择文本，通过菜单 AX 入口读取，
    或显式启动被动双击 Cmd+C。AX-only 探针不读/写剪贴板；全局监听要求 AX 与输入监控。
@@ -574,11 +626,63 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 不要添加未经证明必要的宽泛 entitlement。未来每次更新是否保留 TCC 授权仍须实机验证。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
 
-### 首轮用户 Mac 验证交接（固定开发样本；正常打开后约 10–15 分钟）
+<a id="native-translation-user-check"></a>
+
+### 当前 native 翻译开发包：下一轮最小用户操作
+
+这是新增业务链的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
+macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；官方CLI/账号/模型与GUI操作不属于该证据。
+
+- 源码：`2b116f0731803b52d87565d1e8e4602b6794c324`；
+  [run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)；
+  [artifact10348832396](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053/artifacts/10348832396)。
+- 内层`CCTranslateMac-P0.zip`：18,491,375 bytes；
+  SHA-256 `d778a34d7d0155120bd5683834b69b76a479813f3d5d8ad144d2b91732bef3f9`。
+  artifact按本次设置保留到2026-09-21；过期时只取新的经核验固定run，不使用未知镜像。
+- Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
+  本包**有显式native调用能力**，不再是只有fixture；但不是完整翻译产品，也未验证真实账户可用。
+  打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
+
+**最小顺序：**
+
+1. 从固定artifact取出内层zip，用系统`/usr/bin/shasum -a 256`只读校验上述内层值。
+   先退出旧Mac测试App；如“应用程序”里有同名包，停止并自行妥善移开旧测试副本，不覆盖正在运行的包。
+   解压内层并从Finder正常打开。仅适用的未识别/未公证提示，可由用户按Apple官方单App
+   “系统设置 → 隐私与安全性 → 仍要打开”流程决定；恶意软件、损坏/修改、组织策略或没有该入口时停止。
+   不清quarantine、关闭Gatekeeper/SIP、重签或运行包内二进制。
+2. 顶部应仅出现`CC Dev`，不自动弹窗、申请权限或调用模型。
+   `Open input / diagnostics...` → `Bundled core` → `Start bundled helper`，
+   先做synthetic fixture、offline及明确点击HTTPS探针；这是诊断，不是翻译。
+   完成后`Stop helper`，不把同一连接同时当诊断和native业务。
+3. **只有用户愿意使用其CLI账号时才继续。**先确认兼容的官方Codex CLI（当前协议固定0.146.0）
+   及正常登录；安装方式/依赖按官方所选途径，不一律要求Node/Homebrew，不在聊天交凭据，
+   不由测试包安装或登录。旧用户报告当时没有CLI，不能推断现在已有。
+   `CLI locator`选择Codex并定位/选择可执行文件；`--version`探针只证明命令退出成功，
+   不显示版本全文、也不证明认证。没有合适CLI就停在这里，保留诊断功能。
+4. `Translate` → `Enable native Codex`。这一步明确创建本App的Application Support状态，
+   加载设置但不调用模型。使用一段自行输入的合成短句；明确点击`Translate`会使用该CLI账号，
+   可能产生模型费用，仅在用户愿意时执行。观察流式结果/固定错误；`Copy result`只在点击时写剪贴板。
+   错误、超时或unknown不要自动/反复重发；`provider_version_unsupported`不代表已提交模型。
+5. 如需同轮验证状态：关闭history开关，等保存及读回完成后再发一条合成请求；
+   历史不应新增。重新开启、完成一条后在History读取，再退出重开核对。清空需明确确认，
+   会请求取消当前翻译；已开始写入不能倒退，但清空操作等待该写入。只使用合成内容。
+6. 最后集中做权限/焦点：先在诊断中分别请求AX/Input Monitoring并用TextEdit合成选区验证三态；
+   native已启用时，可用菜单`Translate current AX selection`。被动Cmd+C翻译需在Permissions/AX
+   另外开启选区翻译开关；确认用户复制仍正常，AX unknown不读旧剪贴板。
+   屏幕按钮仍是同帧本地OCR，不上传/自动翻译。拒绝权限、IME/Spaces/多屏可另集中复验，
+   不把本轮自动化当这些真人结果。
+
+**失败只回报脱敏摘要：**固定source/run、芯片/系统版本、内层hash MATCH/MISMATCH、
+发生步骤、固定错误码、是否显示submitted/unknown及是否能正常退出重开。
+当前无自动诊断导出按钮；不要发送CLI原始日志、环境、账号/认证文件、真实配置/历史、
+真实屏幕/剪贴板或个人路径。unknown不等于未计费/未写入，不能据此重放。
+仅安装/登录、Finder/TCC及真实模型需要用户操作；已完成的工程链不以付费签名资格为前置。
+
+### 首轮用户 Mac 验证交接（历史固定开发样本；正常打开后约 10–15 分钟）
 
 以下固定样本已取得首轮正向用户报告（范围见下），不是后续源码的验收。
 随后 catalog 进程监督、共享规则和路径/原子存储基础已分别完成自动化；
-exec/app-server、完整配置/历史服务和 UI 等保持暂停。
+该样本阶段的app-server、完整配置/历史服务和UI尚未接入；后续结果见上方当前检查点。
 缺少付费身份不阻断本路线，但首次打开是否成功必须由实机结果确认，不能用 CI 代替。
 
 **固定来源与边界：**
@@ -838,7 +942,8 @@ SHA-256 **d661cff7cfe5ea768a4e65a0fec6639b1a027da0ff316ee3e76d05f805316753**。
 SHA-256 `bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`。
 同包14/26无需重编译或重签；新包的历史/配置API测试只使用临时home，不代表Finder/TCC/GUI已验。
 两轮Mac失败、worker跨端review缺陷与修复、实际系统/编译器、完整资源/源码/hash/不可变证据见
-[历史业务验收](MACOS_TODO.md#history-ipc-checkpoint)。完整翻译链与新UI仍待接通，旧用户包实测身份不变。
+[历史业务验收](MACOS_TODO.md#history-ipc-checkpoint)。该历史检查点当时尚未接翻译链/UI；
+当前后续结果见[翻译业务检查点](MACOS_TODO.md#translation-ipc-checkpoint)，旧用户包实测身份不变。
 
 ## 7. 功能对齐矩阵
 

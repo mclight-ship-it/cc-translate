@@ -34,28 +34,31 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 <a id="translation-ipc-checkpoint"></a>
 
-## 当前连续依赖：显式 native 翻译业务与原生触发（进行中）
+## 当前检查点：显式 native 翻译业务已通过同包三系统，账号/实机未验
 
 前置`6d029d1` / 文档`e577c5b`及run34836719504已获独立增量审查和三系统报告核验接受，
 三项审查问题关闭，不重复该源码CI。按持续授权实际接下一业务链：
 
 - [x] 原摘要/阈值共享抽取且Windows真实入口复用；分类/方向/prompt/cache字节保持，
   helper构造完整RequestSnapshot，不导入cc_core/Tk/Win32。
-- [ ] 显式连接固定home、实际Info.plist身份、CLI绝对路径与私有编码环境；
+- [x] 显式连接固定home、实际Info.plist身份、CLI绝对路径与私有编码环境；
   普通诊断/config-only不启动CLI。Native环境不放argv，也不直接污染helper加载器环境。
-- [ ] 翻译worker与原storage FIFO并行，实际provider调用不占状态操作锁；
+- [x] 翻译worker与原storage FIFO并行，实际provider调用不占状态操作锁；
   执行快照冻结，完成时重新检查已提交的当前history开关/limit，取消/UI状态不冻结。
   已开始最终history提交后不假称可撤销；关闭等待受控执行/写入并释放双owner。
-- [ ] Python/Swift严格同协议：ID/seq/唯一终态、实际UTF8和转义字节、完整envelope累计预算、
+- [x] Python/Swift严格同协议：ID/seq/唯一终态、实际UTF8和转义字节、完整envelope累计预算、
   submitted/未知结果/不重放；原config/history五操作及默认启动保持。
-- [ ] 临时home中的真实Foundation→包内helper→合成native CLI→配置/历史；
-  原生现有输入/选区界面提供明确启用与用户触发，不自动运行用户CLI或模型。
-- [ ] 针对性Windows/正常hook、新同包15/14/26、精确新增发现/来源/许可/清理及文档检查点。
+- [x] 临时home中的真实Foundation→包内helper→合成native CLI→配置/历史。
+- [x] 现有原生界面已提供明确启用、输入/选区触发、流式结果/复制、设置保存和历史分页/清空；
+  App已编译，默认启动不执行用户CLI或模型。这一行不是GUI真人验收。
+- [x] 针对性Windows/正常hook、同包15/14/26、精确新增发现/完整App来源/许可/清理。
+- [ ] 官方Codex安装/兼容版本/账号/真实模型，以及新包Finder/TCC/IME/焦点/多屏集中验收。
 
-当前源码仍在实现，不把未验证的业务连接或合成CLI当作完整产品、官方账号/模型、
-Finder/TCC/IME/多屏验收。旧Windows WinError5来源未知继续保留。
+当前已有可调用并经真实合成进程验证的翻译开发闭环，不把合成CLI当作官方账号/模型可用，
+不把UI编译当Finder/TCC/IME/多屏验收。Claude Darwin、完整vision/词典呈现等仍未完成，
+不宣称整个P0/P1/P2–P6完成。旧Windows WinError5来源未知继续保留。
 
-本轮未提交验证记录（不是新Mac CI证据）：
+本轮预提交及首轮失败记录（与最终Mac证据分开）：
 - 摘要抽取前原27项通过，新增测试先行因模块尚不存在而失败；抽取后新15项加原摘要/元数据共43项通过。
   主将源码读取及隔离子进程指向实际导入模块，
   保证后续随包验证不回退checkout。新增八方向/代码/词典/长文快照回归后45项通过。
@@ -67,11 +70,10 @@ Finder/TCC/IME/多屏验收。旧Windows WinError5来源未知继续保留。
 - 随后Windows真实Summary/Config/AtomicWrites/storage/history消费者及快照/provider/翻译协议联合
   556/26.423s通过。旧WinError5仍未定位，不以这一绿色宣称解决。
 - Swift代理交付31项新协议/连接XCTest，Windows未执行；主发现Foundation新增extension误嵌套，
-  已由原代理移至文件作用域并保留13方法/全部断言，编译与真实发现仍待Mac。
-- 已新增13个真实Mac process和4个Foundation方法，尚未执行。当前185 process/458 core及13 Foundation
-  为本轮计划执行门槛（其中旧基线172/410/9），不能写成已通过。
+  已移至文件作用域并保留13方法/全部断言；后续真实编译/发现结果见下。
+- 新增13个Mac process、48个core及4个Foundation；原172/410/9覆盖保留。
 - 正常SIGTERM是可捕获退出：仅显式translation入口安装处理器，只置标志，不在signal handler取锁；
-  原循环取消/drain、清理自有native组及双owner后非零退出。便携调度回归通过，真实组消亡待Mac执行。
+  原循环取消/drain、清理自有native组及双owner后非零退出。便携调度与后续三系统真实组消亡均通过。
   不承诺SIGKILL、崩溃或恶意脱离进程组的后代安全，也不声称强退回滚。
 - 本轮测试遵守已有load强制streaming迁移：false磁盘配置会规范化/迁移为true；
   场景改名streaming-migration并检查真实迁移及delta，不误报为非流式业务执行。
@@ -81,15 +83,52 @@ Finder/TCC/IME/多屏验收。旧Windows WinError5来源未知继续保留。
   App后置仍要求CC_TRANSLATE_APP及13精确方法实际passed、零skip，没有放宽后置门槛。
   首轮原生代码已编译，31个新增Swift协议/合成连接测试实际通过；完整App/真实业务集成未运行。
 
+**最终源码 `2b116f0731803b52d87565d1e8e4602b6794c324` /
+[run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)**：
+实际watch exit0，API核对attempt1、三jobs全部steps success。正常第二次完整hook
+**1542/74.504s OK**；第一次1542/74.563s与本次分开留存，均有原Tk teardown stderr警告，
+无失败/skip，不代表旧WinError5根因已解决。最终runner门槛47/1.462s及前置上下文修复门槛
+1/0.042s通过；没有重跑未变源码凑绿。
+
+| 实际系统 | 包内process | 包内core | 后置Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 producer | 185 / 345.212s | 458 / 5.316s | 13 / 60.220s |
+| 14.8.9 / Xcode16.2 harness | 185 / 312.723s | 458 / 3.236s | 13 / 53.262s |
+| 26.6.2 / Xcode26.6 harness | 185 / 327.219s | 458 / 3.741s | 13 / 54.798s |
+
+所有包内suite零failure/error/skip。每系统新增13 process、48 core及全部13 Foundation均逐名
+各发现且通过一次；producer新增31 Swift unit亦逐名通过一次。初次Swift99项含13项尚无App的
+可选skip，与后置13实际执行明确分开；producer portable648/12.002s。
+配置规范化/真实snapshot prompt、方向/代码/词典/summary、stream/cache/history/reopen、
+当前optout、预算/坏盘/竞争、queued/started取消、EOF/shutdown/SIGTERM与丢stdout不重放均有真实合成证据。
+
+完整App制品：
+- [producer artifact10348832396](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053/artifacts/10348832396)，
+  内层`CCTranslateMac-P0.zip`为 **18,491,375 bytes**，
+  SHA-256 `d778a34d7d0155120bd5683834b69b76a479813f3d5d8ad144d2b91732bef3f9`。
+- 内容/模式/链接tree：`66509e0cf9fb982befbf508f488783f328e4818364e07f0e1e884de14aeb0d15`；
+  14报告artifact10348922271、26报告artifact10348444972，均来自同run，不重建/重签产品。
+- 主独立逐文件核验 **684库存、74资源hash、46源码路径（45唯一Git blob路径）、6真实Mach-O、
+  19 runtime许可**；源字节直接对照指定Git提交，Mach-O头/最低系统/依赖/rpath与审计一致。
+  排除本轮构建bridge后606条runtime文件/链接与上次已验收包相同，包含固定605原构建文件覆盖声明；
+  不把这两个不同口径混作计数。HTTPS证书验证、SQLite、原诊断/取消/EOF及bundle不变/临时文件清理通过。
+- 完整App临时下载及两份审计脚本已删除并核实不存在，保留小JSON/日志/逐名发现证据；
+  源码与后续docs-only提交身份分开，不用文档提交替代源码CI。
+
+下一真实外部验证见[新包最小操作交接](MACOS_DEVELOPMENT.md#native-translation-user-check)。
+测试App有显式真实native调用能力，但目前仅使用合成CLI验证；不因免费路线而购买签名，
+不在未获用户主动操作时安装/登录或调用其模型。
+
 <a id="darwin-native-checkpoint"></a>
 
-## 当前连续依赖：Darwin native 三项审查修复已通过同包验证（2026-09-14）
+## 前置检查点：Darwin native 三项审查修复已通过同包验证（2026-09-14）
 
 `e525c97` 文档检查点之后，独立审查发现三项确定生产缺陷；下述
 `13b6543` / run34832960738 的绿色**不代表这些缺陷已修复**。
 真正修复源码为 **`6d029d1b7418be2c6d7ae47c1babab550ac441b3`** /
 [run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)；
-正常完整hook及同包三系统均通过。翻译IPC/UI仍未接入，下一步继续该显式业务链。
+正常完整hook及同包三系统均通过。该前置检查点当时未接翻译IPC/UI；
+后续业务链见上方当前检查点，不把两轮证据混为同一源码。
 
 - [x] 未改生产前，三个反例实际得到 **3 tests / 0.032s / 13 failures / 4 errors**：
   空闲timer撞同模型warm版本探测后未重排；同item重复完成/终态后delta或start被接受；

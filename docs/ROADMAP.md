@@ -2,10 +2,23 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 配置与历史业务链已验证，完整翻译仍待接通
+## macOS 原生移植 — 显式 Codex 翻译链已验证，账号与实机待验
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
+
+当前源码 **`2b116f0`** /
+[run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)
+已把不可变请求、Darwin native Codex、私有helper/Swift流式API与现有原生显式入口接通。
+输入/选区、复制、设置保存、当前history开关及分页/清空已有开发入口；
+默认启动不读业务数据/运行CLI，不自动安装、登录或发送模型请求。
+同一个App在15.7.9/14.8.9/26.6.2各通过 **185真实合成进程/458核心/13Foundation**，
+原覆盖全部保留；31新增Swift unit也实际通过。正常Windows完整hook1542通过。
+684库存/74资源/46源码路径/6Mach-O/许可和不可变摘要已独立核验，首轮前置测试错误及修复留证。
+**这证明合成端到端工程链，不证明官方CLI/账号/模型可用，也不证明GUI/TCC/IME/多屏。**
+下一外部验证是用户自己的兼容CLI/登录、明确同意的一次合成文本模型调用和集中Mac操作，
+见[固定新包与最小步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)；
+不是购买签名或重装Windows的要求，Claude/完整vision与全部产品能力仍待实现。
 
 SwiftUI/AppKit + 随包 Python 无界面核心；macOS 14+ 候选、Apple Silicon 优先。
 现阶段只在隔离开发分支推进；不影响 Windows 发布，不代表已支持 macOS。
@@ -17,7 +30,7 @@ Developer ID/公证仅为未选择的可选增强。可信下载的适用警告�
 后续 catalog 真进程监督、缓存签名/history-kind 共享纯规则及跨平台回归已通过；
 新包仅自动化，不能继承旧包用户报告。Windows 保留原签名字节、路由/类型优先级与缓存，
 显式 Mac 路径与共享原子 JSON 基础也已完成真实 Windows/Mac 回归；
-路径不创建/迁移，Mac 只运行临时合成诊断，Windows 默认与持久化入口保持。
+该基础层路径不创建/迁移、当时Mac只运行临时合成诊断，Windows默认与持久化入口保持。
 同一个 macOS 15.7.9/Xcode 16.4 制品现已在标准免费 macOS 14.8.9/26.6.2 arm64 CI 运行；
 包内核心/真实 synthetic 进程/临时存储/HTTPS/SQLite/取消/EOF 和 Foundation 集成全部通过，
 产品未重建或重签，前后内容/模式/链接摘要相同，详细 run/SHA/制品见验收清单。
@@ -82,19 +95,19 @@ accepted→failed(seq1)曾被Swift误判为OutcomeUnknown；已仅为精确worke
 全部真实失败、[制品/hash与限制](MACOS_TODO.md#request-snapshot-checkpoint) 持久化，
 源码与后续docs-only身份分离。此处完成的是共享快照依赖与真实Windows消费者，
 该快照切片本身尚不是Mac模型执行或完整翻译闭环。
-随后 Darwin native Codex 内部后端及三项审查修复已完成自动化：最新源码`6d029d1` /
+随后 Darwin native Codex 内部后端及三项审查修复已完成自动化：该后端修复源码`6d029d1` /
 [run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)，
 正常Windows hook1494通过；同包15.7.9/14.8.9/26.6.2每系统172进程/410核心/9精确Foundation，
 本次新增14方法逐名各执行一次，681库存/71资源/43源码路径及6实际Mach-O独立核验。
 复用native app-server而非exec fallback，显式环境/catalog、自有组、流式/取消/timeout/EOF
 已用真实合成CLI验证；[两次真实失败、修复和制品证据](MACOS_TODO.md#darwin-native-checkpoint)
-均保留。**翻译helper/Swift API与新翻译UI尚未接入，官方CLI账号/模型未运行**；
+均保留。**该后端检查点当时未接翻译helper/Swift API/UI，官方CLI账号/模型未运行**；
 此前审查发现idle回收、item终态和非法类型三项生产缺陷，已保留旧反例并修复；
 正常联合300项、新源码完整hook/172进程/410核心/9Foundation同包验证均已通过。
-旧13b6543绿灯不代替这三项修复证据；接下来继续这条业务接线，再接原生显式交互，
-不等待用户重复授权。
+旧13b6543绿灯不代替这三项修复证据；后续业务链与原生显式交互已在本节顶部更新，
+不将较早后端结果代作新链的通过证据。
 用户旧配置迁移/全App配置线程安全仍未完成。
-当前不要求用户重装或登录，不宣称整个P0/P1/P2–P6完成；旧WinError5未知风险继续保留。
+不会自动安装或登录，不宣称整个P0/P1/P2–P6完成；旧WinError5未知风险继续保留。
 
 ## 术语表 / 风格预设 — 待办，独立于移植
 
