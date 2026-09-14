@@ -1,11 +1,12 @@
 # macOS 原生客户端开发指南
 
-状态（2026-09-13）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
+状态（2026-09-14）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
 显式平台路径/原子 JSON 基础也已通过；同一 Mac15/Xcode 16.4 制品现已在标准免费
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
 共享历史仓库和显式 Mac owner 已接入，并完成新包的 Windows/三系统自动化；
-本轮到此停止，不创建完整配置 writer、请求快照、provider 或新 UI，也未增加历史业务 IPC。
+配置owner现已接入显式私有helper与Swift API，含保存/迁移可读性修复，在同包三系统通过。
+本轮到此停止，不创建完整请求快照、provider 或新 UI，也未增加历史业务 IPC。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -163,10 +164,11 @@ history/config 共用稳定侧文件所有权原语；config 的 `config.json.lo
 配置 owner 的已完成证据以 TODO 为准。后续业务切片已接同一 owner 到私有 helper 与
 Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfiguration` API；
 真实测试只选择临时 home + 所选 App 实际 Info.plist 身份。
-主链 `9614eab` / run34808290474 已完成同包15/14/26三系统（每系统73进程/211核心/4Foundation）。
-但随后独立review确认保存/迁移预算缺陷，该绿色不构成最终接受，正在按真实反例修复可读性不变式。
-后续初始化符号链接环固定错误补充 `4d769e7` 的正常Windows hook复现旧WinError5，
-1274项中2条关联断言失败，推送被阻断；新74/212门槛尚未在Mac运行，不继承旧绿包结论。
+历史主链 `9614eab` / run34808290474 虽绿色，但独立review确认保存/迁移预算缺陷，未最终接受。
+初始化路径环补充 `4d769e7` 当时的正常Windows hook复现旧WinError5，1274项中2条关联断言失败。
+随后实质可读性修复 `c459652` / run34809961745 已正常hook1280通过并推送，
+同包15/14/26三系统实际76进程/218核心/5Foundation通过，含路径环及所有新反例。
+历史失败不删除，不把这次正常成功当作Windows拒绝来源已解决。
 精确源码/制品/hash与失败见[配置业务检查点](MACOS_TODO.md#configuration-ipc-checkpoint)。
 没有设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
 真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、历史业务 helper 接线/
@@ -242,8 +244,8 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
   原子文件完整性不等于回滚/完整事务，协作侧文件锁不是恶意篡改沙箱。
 - 这是真实可调用配置业务链，不是新增翻译/设置 UI。Foundation 后置集成必须精确执行五项
   （诊断、配置读保存重开、坏盘保护、竞争接管、保存/迁移可读性预算），包内进程测试另用真实 fsync 后的测试端 FIFO
-  屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。上述主链在9614eab三系统实际通过；
-  此后新增路径环和可读性预算修复不继承旧绿色，验收状态以 TODO 为准。
+  屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。
+  全部五项及路径环/可读性反例已在c459652的新三系统运行通过，不继承旧绿色；证据以TODO为准。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
@@ -658,7 +660,7 @@ Windows正常完整hook单次 **1194 / 67.382s OK**，但先前targeted **215 / 
 本次只共享Config/default/纯迁移计划并接原Windows入口，不是Mac配置存储/owner/线程安全或新UI；
 不增加任何CLI/模型请求，用户无需现在重装。新包不继承旧包实机结论，正式平台/许可门槛不变。
 
-### 最新配置 owner 服务检查点（仅自动化，不要求现在重装）
+### 历史配置 owner 服务检查点（仅自动化，当时尚未接业务helper）
 
 源码 **0fd56c2d9f3630d03b078ad62e66e998fbc3419e**，
 [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
@@ -678,6 +680,23 @@ Windows联合337首次1项旧AST检查失败，冻结原方法后该项通过，
 旧配置文件迁移/请求快照/provider仍待办，用户旧包实测不绑定本源码。
 完整计数、OS/Image/编译器、失败、hash与文档/源码身份分离见
 [配置 owner 验收记录](MACOS_TODO.md#config-owner-checkpoint)。
+
+### 最新配置业务与可读性检查点（仅自动化，不要求现在重装）
+
+源码 **c4596526bd7429f76b701228bf35f031f737a3a5** /
+[run34809961745](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745)，三jobs全部steps success。
+正常Windows联合301/32.124s、完整hook1280/69.220s通过；未删旧WinError5失败或改写未知根因。
+两个review反例先在旧生产实现真实失败，修复后包内每系统76进程/218核心/5精确Foundation通过；
+正常保存/读/重开、明确拒绝后旧盘/锁保持、真实raw迁移预算和关闭时序都有直接测试。
+原生启动/诊断面板仍不选择用户配置，不新增设置UI或自动读取用户HOME业务数据。
+
+[唯一App artifact10335050150](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745/artifacts/10335050150)，
+到期 **2026-09-21T05:34:52Z**，内层 `CCTranslateMac-P0.zip` **18,388,246字节**，
+SHA-256 **d661cff7cfe5ea768a4e65a0fec6639b1a027da0ff316ee3e76d05f805316753**。
+同一15/Xcode16.4产品在14.8.9/26.6.2原样运行，独立673库存/63资源hash/35源码路径/
+6 arm64 Mach-O/19许可通过，前后字节/模式/相对链接不变；临时下载包清理。
+完整实际OS/编译器/计数及源码与文档身份见[业务配置验收](MACOS_TODO.md#configuration-ipc-checkpoint)。
+这不是完整P1、全App可变配置线程安全或用户实机结论，旧包用户报告不迁移；免费路线及零付费不变。
 
 ## 7. 功能对齐矩阵
 

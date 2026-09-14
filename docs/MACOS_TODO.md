@@ -165,10 +165,11 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     源码 `0fd56c2` / [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
     同包三系统通过，见[配置 owner 证据](#config-owner-checkpoint)。
     该历史检查点尚未接业务 helper；不改变 Windows 配置入口或后台共享 cfg 策略。
-  - [ ] 配置业务私有 helper + Swift 可调用 API：主链源码 `9614eab` 曾通过同包三系统，
-    但独立review发现保存/迁移可读性缺陷，不能最终接受；当前按真实反例修复中。
-    初始化错误边界补充 `4d769e7` 曾被真实 Windows hook WinError5 阻断，未推送/未跑 Mac，
-    见[业务 IPC 证据与阻断](#configuration-ipc-checkpoint)，不把旧绿包绑定本地新提交。
+  - [x] 配置业务私有 helper + Swift 可调用 API，含独立review后的保存/迁移可读性修复：
+    源码 `c459652` / [run34809961745](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745)
+    同包三系统76进程/218核心/5Foundation通过，正常Windows hook1280通过，
+    见[业务 IPC 证据与历史失败](#configuration-ipc-checkpoint)。
+    旧9614eab绿色未覆盖完整性缺陷；4d769e7的历史WinError5推送失败仍保留，不称拒绝来源已解决。
     不接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
@@ -1457,7 +1458,7 @@ Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 r
 
 <a id="configuration-ipc-checkpoint"></a>
 
-### 配置业务私有 IPC 切片（2026-09-14，主链已验证，补充修复推送阻断）
+### 配置业务私有 IPC 切片（2026-09-14，已完成本次接线与可读性修复）
 
 1. [x] 保留普通启动/空 hello/fixture/runtime_probe 的零用户配置 I/O；
    仅显式配置连接启动参数选择 caller home + 实际 Info.plist 身份，首次有效 hello 创建目录/取得 owner。
@@ -1467,7 +1468,7 @@ Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 r
    EOF/shutdown 等待已经开始的操作、释放 owner 后退出；响应丢失/强制终止为结果未知，不重试/重放。
 4. [x] 真实 Foundation -> 包内 helper -> 临时配置 load/save/退出/重开/竞争/坏文件；
    包内真进程加测试端 writer 屏障覆盖 cancel/EOF/shutdown 等待，不增加生产测试开关。
-5. [ ] 同步后置 XCTest 的准确方法集合/数量与严格0skip门槛，正常 Windows/hooks 与同包15/14/26，
+5. [x] 同步后置 XCTest 的准确方法集合/数量与严格0skip门槛，正常 Windows/hooks 与同包15/14/26，
    固定源码/文档/制品证据及临时包清理后停止。
 
 本轮不接 history/provider/完整 RequestSnapshot，不改原生应用启动或现有诊断面板，
@@ -1546,7 +1547,7 @@ storage fixture、HTTPS证书/SQLite、旧helper取消/EOF、资源/模式/相�
   **932c5c21180be2e04d7dd10ac0c28832d3e47a25b0395762226d358afdf7b62c**。
   内层zip与临时审计脚本已清理，保留本会话小JSON/日志；未在Windows运行Mac二进制。
 
-#### 当前真实阻断：不是本地修复已通过全部门槛
+#### 历史推送阻断：以下为67dc9ac时状态，后续实质修复后的新结果另记
 
 本地补充源码 **4d769e7066c7a0d1be6c77d018e529c40e8f781e**：
 初始化固定错误/严格runner targeted **62项 / 1.048s / OK**。
@@ -1568,7 +1569,7 @@ hook拒绝推送。真实旧Windows历史矩阵的一个subtest
 旧 `eec92a5` 用户实测仍只属于旧包；本轮不验证用户真实文件/TCC/干净首开/官方CLI/账号/Intel。
 免费GitHub/零预算路线保持，用户不需要现在重装、安装CLI或登录。
 
-#### 独立review后的保存/迁移可读性修复（实施中）
+#### 独立review后的保存/迁移可读性修复（已验证）
 
 父独立review发现两个真实数据完整性问题；旧9614eab绿色不能当它们的通过证据。
 先在未改生产实现上运行三个新增反例：**3 tests / 0.072s / 3 failures**，全部未按新不变式拒绝写入。
@@ -1586,7 +1587,55 @@ compact和缩进表示，以及规范化后的返回视图。缩进UTF-8按write
 
 新增旧缺陷反例、compact和disk未来迁移payload恰好/多1字节、只迁移一次、无temp残留、
 原盘不变、关闭等待validator、真实helper拒绝后仍持锁/接管、Foundation保存读取重开/固定拒绝。
-待执行最新联合Windows/hooks及同包三系统；新门槛76进程/218核心/精确5Foundation不能提前标通过。
+实现时增加门槛为76进程/218核心/精确5Foundation，未提前标通过；随后真实执行结果见最终检查点。
 上一1274项WinError5失败继续保留，本次是实质完整性修复后的新验证，不是对旧代码重复凑绿。
 修复后最新联合Windows协议/仓库/旧Config与AtomicWrites/隔离/打包/严格runner回归：
 **301项 / 32.124s / OK**；包含三个原失败反例及exact/over边界，不替代真实Mac或正常完整hook。
+
+#### 可读性修复最终自动化检查点
+
+- 源码 **c4596526bd7429f76b701228bf35f031f737a3a5**；
+  [run34809961745](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745)，attempt1，
+  三jobs和全部steps success。正常完整pre-push **1280项 / 69.220s / OK**，privacy/compile通过。
+  这是实质修复后的单次正常验证，随此前两个本地提交一起正常推送；没有绕过失败hook。
+  旧1274项WinError5失败、拒绝来源未知及既有Tk teardown stderr均保留，不能据这次成功标为根因已修。
+- producer portable **404项 / 9.474s / OK**。普通Swift **50项 / 9.107s**：
+  45 pass、5个尚无App的集成明确skip、0fail；后置精确5个方法都必须实际运行且0skip。
+
+| 实际系统 / build / arm64 | 产品或独立harness | 进程76 | 核心218 | 后置Foundation5 |
+|---|---|---:|---:|---:|
+| 15.7.9 / 24G830 | producer Xcode16.4 / Swift6.1.2 / SDK15.5 | 63.121s | 2.320s | 6.315s |
+| 14.8.9 / 23J631 | harness Xcode16.2 / Swift6.0.3 / SDK15.2 | 65.843s | 2.004s | 6.184s |
+| 26.6.2 / 25G83 | harness Xcode26.6 / Swift6.3.3 / SDK26.5 | 60.075s | 1.350s | 5.189s |
+
+包内各组全部0 failure/error/skip；image分别
+`20260907.0337.1` / `20260831.0302.1` / `20260907.0351.1`。
+独立从固定源码AST核对每个系统 **33配置业务便携、38配置仓库、13配置IPC真进程**
+全部逐项ok且各执行一次；包括原3个失败反例、实际缩进预算、compact/disk恰好和超过1字节、
+既存raw迁移拒绝与原盘/temp/lock保护、close等待validator、正常保存/读/重开。
+路径符号链接环的固定错误也在此包真实执行，不再沿用4d769e7当时“尚未Mac运行”的状态。
+Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取/重开；
+4000零扩张和near-limit raw明确failed且旧值不变，外部near-limit文件连续load不覆写。
+原诊断、竞争、坏盘、取消/EOF、HTTPS/SQLite、storage/history/config fixtures与资源不可变门槛均保留。
+
+- [唯一App artifact10335050150](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745/artifacts/10335050150)，
+  `macos-arm64-p0-development-NOT-A-RELEASE`，API未过期，到期 **2026-09-21T05:34:52Z**。
+  内层 `CCTranslateMac-P0.zip` **18,388,246字节**，SHA-256
+  **d661cff7cfe5ea768a4e65a0fec6639b1a027da0ff316ee3e76d05f805316753**。
+  外层artifact18,174,788字节，不能用它代替内层大小/hash。
+- Mac14 [小报告10334900913](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745/artifacts/10334900913)
+  2,550字节，到期2026-09-21T05:37:23Z；Mac26
+  [小报告10333998396](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745/artifacts/10333998396)
+  2,549字节，到期2026-09-21T05:37:08Z。同run/commit原始App只在15构建，14/26不重建/重签。
+- 独立zip CRC/0755/全部相对链接与 **673库存 / 63资源hash / 35包内源码路径**
+  （34不同Git路径）逐字节核对通过；**6 arm64 Mach-O / 19实际runtime许可 / 605保留文件覆盖**保持。
+  本次修改模块与固定Git blobs一致；项目自身许可仍标requires separate confirmation，未Release。
+  归档及三系统内容/模式/链接摘要：
+  **8189c0940c11322c98d69d87671b47efe3f22661af901117edf32d50eaa97937**。
+- 内层zip与本轮临时审计脚本已清理，小JSON/逐项日志保留。最终仅三文档提交与上述源码分开，
+  正常privacy/docs-only hooks推送，不为未变源码重复CI；精确最终文档HEAD以Git与交接记录为准。
+
+本配置业务链切片及两个review完整性修复已有真实自动化证据，不等于全P1/完整产品。
+用户路径选择UI、旧配置文件迁移服务、全App共享cfg/完整RequestSnapshot、历史业务IPC/provider仍未做。
+旧eec92a5用户实测不迁移到本包，TCC/干净首开/用户官方CLI/账号/Intel仍单列待验；
+免费GitHub/零预算不变，不要求用户现在重装、安装CLI或登录。
