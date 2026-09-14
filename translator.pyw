@@ -24,6 +24,7 @@ import uuid
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
@@ -62,6 +63,7 @@ from cc_dictionary_cache import DictionaryAiCache
 from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
 from cc_dictionary_metrics import DictionaryMetrics
 from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
+from cc_request import RequestSnapshot
 from cc_storage import atomic_write_json as _atomic_write_json
 from cc_history import HistoryRepository, read_history as _read_history
 from cc_config import Config, plan_config_migration
@@ -879,15 +881,23 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return i18n.get("error.no_result")
 
     def _call_model(self, text, system_prompt, selection=None,
-                    cancel_event=None, task="text"):
+                    cancel_event=None, task="text", *, snapshot=None):
+        if snapshot is not None:
+            selection = snapshot.selection
+            text = snapshot.request.user_text
+            system_prompt = snapshot.request.system_prompt
+            task = snapshot.request.task
         selection = selection or self._provider_selection()
         if selection.provider_id == CLAUDE_PROVIDER:
+            if snapshot is not None:
+                return self._call_claude(
+                    text, system_prompt, request=snapshot.request)
             return self._call_claude(
                 text, system_prompt, model=selection.model)
         if selection.provider_id != CODEX_PROVIDER:
             return False, i18n.get("error.unknown_provider").format(
                 provider=selection.provider_id)
-        request = ProviderRequest(
+        request = snapshot.request if snapshot is not None else ProviderRequest(
             task=task,
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
@@ -909,15 +919,22 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return True, result.text
         return False, self._provider_error_text(result)
 
-    def _call_model_image(self, img_path, selection=None, cancel_event=None):
+    def _call_model_image(self, img_path, selection=None, cancel_event=None,
+                          *, snapshot=None):
+        if snapshot is not None:
+            selection = snapshot.selection
+            img_path = snapshot.request.image_paths[0]
         selection = selection or self._provider_selection()
         if selection.provider_id == CLAUDE_PROVIDER:
+            if snapshot is not None:
+                return self._call_claude_vision(
+                    img_path, request=snapshot.request)
             return self._call_claude_vision(
                 img_path, model=selection.model)
         if selection.provider_id != CODEX_PROVIDER:
             return False, i18n.get("error.unknown_provider").format(
                 provider=selection.provider_id)
-        request = ProviderRequest(
+        request = snapshot.request if snapshot is not None else ProviderRequest(
             task="image",
             model=selection.model,
             system_prompt=OCR_VISION_PROMPT,
@@ -1550,10 +1567,47 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         threading.Thread(target=self._do_translate, args=(text, job_id, meta),
                          daemon=True).start()
 
-    def _history_meta(self) -> Dict[str, Any]:
+    def _request_snapshot(
+            self, text, system_prompt, selection=None, *, source_text,
+            origin="text", content_class="text", kind=None, sig="",
+            summarize=False, task="text", image_paths=(), timeout_seconds=60.0,
+            action="translation", direction=None):
+        """Capture on the dispatching thread; cancellation and UI stay outside."""
+        selection = selection or self._provider_selection()
+        cfg = getattr(self, "cfg", DEFAULT_CONFIG)
+        app_language = cfg.get(CFG.LANGUAGE) or i18n.get_language()
+        direction = cfg.get(CFG.DIRECTION, "auto") if direction is None else direction
+        model = selection.model
+        if selection.provider_id == CLAUDE_PROVIDER:
+            model = model or cfg[CFG.MODEL]
+        elif selection.provider_id == CODEX_PROVIDER and not image_paths:
+            model = codex_request_model(model, len(text))
+        return RequestSnapshot(
+            request=ProviderRequest(
+                task=task, model=model, system_prompt=system_prompt,
+                user_text=text, image_paths=tuple(image_paths),
+                timeout_seconds=timeout_seconds),
+            selection=selection, config=cfg, input=source_text, origin=origin,
+            content_class=content_class,
+            kind=kind if kind is not None else history_kind(
+                origin, content_class, source_text, word_test=is_single_word),
+            sig=sig, direction=direction, app_language=app_language,
+            target_lang=None if (
+                image_paths or action not in ("translation", "retranslate")
+                or (action == "translation" and (
+                    content_class == "code" or is_single_word(source_text or "")))
+            ) else resolve_target_lang(direction, app_language, source_text or ""),
+            summarize=bool(summarize), dictionary=is_single_word(source_text or ""),
+            stream_enabled=bool(cfg.get(
+                CFG.CODEX_STREAMING_EXPERIMENTAL,
+                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])),
+            action=action,
+        )
+
+    def _history_meta(self):
         """Capture the per-job history fields from the current self._last_*
-        state. Must be called on the main thread at request start; the returned
-        dict is then owned by that job's worker thread."""
+        state. Must be called on the main thread at request start. The read-only
+        view keeps mutable cancellation/UI handles outside the execution snapshot."""
         selection = self._provider_selection()
         text = self._last_input or ""
         summarize = self._should_summarize(text)
@@ -1565,20 +1619,23 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             target_lang = resolve_target_lang(
                 mode, app_language, text)
             system_prompt = codex_summary_instruction(target_lang)
-        return {
-            "input": self._last_input,
-            "origin": self._last_origin,
-            "is_code": self._last_class == "code",
-            "kind": self._history_kind(),
-            "sig": self._cache_signature(),
+        snapshot = self._request_snapshot(
+            text, system_prompt, selection, source_text=self._last_input,
+            origin=self._last_origin, content_class=self._last_class,
+            kind=self._history_kind(), sig=self._cache_signature(),
+            summarize=summarize, task=task)
+        return MappingProxyType({
+            **snapshot.history_metadata,
             "provider": selection.provider_id,
             "model": selection.model,
-            "direction": self.cfg.get(CFG.DIRECTION, "auto"),
+            "direction": snapshot.direction,
             "summarize": summarize,
             "task": task,
             "system_prompt": system_prompt,
             "cancel_event": getattr(self, "_provider_cancel_event", None),
-        }
+            "stream_session": getattr(self, "_ss", None),
+            "snapshot": snapshot,
+        })
 
     def _animate_loading(self, step):
         """Spin the accent indicator through LOADING_SPINNER frames."""
@@ -1708,6 +1765,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._refresh_tray_menu()
 
     def _do_translate(self, text, job_id, meta):
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         provider_id = meta.get("provider", CLAUDE_PROVIDER)
         if provider_id != CLAUDE_PROVIDER:
             self._do_provider_translate(text, job_id, meta)
@@ -1715,15 +1775,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # Long, non-dictionary text streams so the translation appears
         # progressively; short text uses the simpler one-shot path.
         t0 = time.perf_counter()
-        ss = self._ss   # bind this job's session; a newer job swaps self._ss
-        dictionary = is_single_word(text)
-        is_code = bool(meta.get(
-            "is_code", self._last_class == "code"))
+        ss = meta["stream_session"] if snapshot is not None else self._ss
+        dictionary = snapshot.dictionary if snapshot is not None else is_single_word(text)
+        is_code = (snapshot.content_class == "code" if snapshot is not None else
+                   bool(meta.get("is_code", self._last_class == "code")))
         # Summary mode needs a different system prompt than the warm process was
         # spawned with, so it must skip the warm fast-path and take the cold
         # streaming path (which rebuilds the prompt via _system_prompt_for).
-        summarize = bool(meta.get(
-            "summarize", self._should_summarize(text)))
+        summarize = (snapshot.summarize if snapshot is not None else
+                     bool(meta.get("summarize", self._should_summarize(text))))
 
         # Fast path: a pre-warmed process already has the CLI initialised and
         # the right system prompt loaded, so we skip the ~2s cold startup.
@@ -1760,11 +1820,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                         "ok": True,
                     })
                     return   # streaming handled display + history
-            ok, result = self._call_claude(
-                text,
-                meta.get("system_prompt"),
-                model=meta.get("model"),
-            )
+            if snapshot is not None:
+                ok, result = self._call_claude(
+                    text, snapshot.request.system_prompt, request=snapshot.request)
+            else:
+                ok, result = self._call_claude(
+                    text, meta.get("system_prompt"), model=meta.get("model"))
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
             log_error("translate", e)
@@ -1783,16 +1844,20 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 ok, result, job_id, record=False))
 
     def _do_provider_translate(self, text, job_id, meta):
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         selection = ProviderSelection(
             provider_id=meta.get("provider", ""),
             model=meta.get("model"),
         )
         cancel_event = meta.get("cancel_event")
         t0 = time.perf_counter()
-        dictionary = is_single_word(text)
-        stream_enabled = self.cfg.get(
-            CFG.CODEX_STREAMING_EXPERIMENTAL,
-            DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
+        dictionary = snapshot.dictionary if snapshot is not None else is_single_word(text)
+        stream_enabled = (snapshot.stream_enabled if snapshot is not None else
+                          self.cfg.get(
+                              CFG.CODEX_STREAMING_EXPERIMENTAL,
+                              DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL]))
         fast_profile = selection.model == "auto-fast"
         stream_eligible = (
             selection.provider_id == CODEX_PROVIDER
@@ -1810,7 +1875,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if stream_eligible:
             try:
                 stream_handled = self._stream_codex(
-                    text, job_id, self._ss, meta, selection)
+                    text, job_id,
+                    meta["stream_session"] if snapshot is not None else self._ss,
+                    meta, selection)
                 if stream_handled:
                     route = dict(getattr(
                         self, "_last_provider_route", {}) or {})
@@ -1851,10 +1918,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         try:
             ok, result = self._call_model(
                 text,
-                meta.get("system_prompt") or self._system_prompt_for(text),
+                snapshot.request.system_prompt if snapshot is not None else (
+                    meta.get("system_prompt") or self._system_prompt_for(text)),
                 selection,
                 cancel_event,
                 task=meta.get("task", "text"),
+                **({"snapshot": snapshot} if snapshot is not None else {}),
             )
         except Exception as exc:
             ok = False
@@ -1926,9 +1995,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         ``codex exec``. Once a turn is submitted or any output arrives, a failure
         is surfaced rather than issuing a duplicate model request.
         """
-        system_prompt = (
+        snapshot = meta.get("snapshot")
+        system_prompt = snapshot.request.system_prompt if snapshot is not None else (
             meta.get("system_prompt") or self._system_prompt_for(text))
-        request = ProviderRequest(
+        if snapshot is not None:
+            text = snapshot.request.user_text
+        request = snapshot.with_timeout(90.0) if snapshot is not None else ProviderRequest(
             task=meta.get("task", "text"),
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
@@ -2118,12 +2190,18 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         deltas through the same display pipeline as _stream_claude. Returns True
         on success, or False to fall back to the cold path. The warm process is
         consumed and a replacement for the same profile is spawned afterwards."""
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         if profile == "dictionary":
             expected_key = ("dictionary", meta.get("model"))
         else:
             expected_key = (
                 "translate", meta.get("model"), meta.get("direction"))
-        warm = self._take_warm(profile, expected_key=expected_key)
+        warm = self._take_warm(
+            profile, expected_key=expected_key,
+            **({"expected_prompt": snapshot.request.system_prompt}
+               if snapshot is not None else {}))
         if warm is None:
             return False
         ss.popup_ready = False
@@ -2178,9 +2256,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         child process is always cleaned up, and only a non-error terminal
         `result` event (or, failing that, accumulated deltas) counts as success
         — a mid-stream abort no longer passes truncated text off as a result."""
-        system_prompt = (
-            meta.get("system_prompt") or self._system_prompt_for(text))
-        model = meta.get("model") or self.cfg[CFG.MODEL]
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
+            system_prompt = snapshot.request.system_prompt
+            model = snapshot.request.model
+        else:
+            system_prompt = (
+                meta.get("system_prompt") or self._system_prompt_for(text))
+            model = meta.get("model") or self.cfg[CFG.MODEL]
         payload = f"<text>\n{text}\n</text>"
         ss.popup_ready = False
         t0 = time.perf_counter()
@@ -2387,10 +2471,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             log_error("stream_finalize", e)
 
     def _call_claude(self, text: str, system_prompt: Optional[str] = None,
-                     *, model: Optional[str] = None) -> Tuple[bool, str]:
-        if system_prompt is None:
-            system_prompt = self._system_prompt_for(text)
-        model = model or self.cfg[CFG.MODEL]
+                     *, model: Optional[str] = None,
+                     request=None) -> Tuple[bool, str]:
+        if request is not None:
+            text, system_prompt, model = (
+                request.user_text, request.system_prompt, request.model)
+        else:
+            if system_prompt is None:
+                system_prompt = self._system_prompt_for(text)
+            model = model or self.cfg[CFG.MODEL]
         # Wrap the selection in tags so a bare word isn't mistaken for an
         # instruction (fixes short inputs returning "请提供要翻译的文本").
         payload = f"<text>\n{text}\n</text>"
@@ -2409,7 +2498,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                  "--no-session-persistence"],
                 input=payload,
                 capture_output=True, text=True, encoding="utf-8",
-                timeout=60,
+                timeout=request.timeout_seconds if request is not None else 60,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if proc.stdout:
@@ -2472,7 +2561,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 return None
         return None
 
-    def _show_result(self, ok, result, job_id=None, record=True):
+    def _show_result(self, ok, result, job_id=None, record=True, *, history_meta=None):
         if job_id is not None and not self._job_is_current(job_id):
             return
         self._stop_animation()
@@ -2487,7 +2576,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             self._maybe_add_as_text_button(self.popup)
             self._maybe_add_ai_dictionary_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
-        if record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
+        if record and ok and history_meta is not None:
+            self._record_history(
+                job_id, history_meta, result,
+                is_dict=is_single_word(history_meta["input"]))
+        elif record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
                 self._last_input or self._last_origin == "ocr"):
             add_history(self._last_input or "", result,
                         is_single_word(self._last_input),

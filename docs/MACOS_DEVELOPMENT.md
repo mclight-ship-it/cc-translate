@@ -8,7 +8,8 @@ macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Fo
 配置owner现已接入显式私有helper与Swift API，含保存/迁移可读性修复，在同包三系统通过。
 历史现也接入同一业务连接及Swift分页/记录/清空API，含worker未启动确定失败的跨端修复，
 同包三系统90进程/242核心/9Foundation通过。旧89/242/8绿灯未覆盖该review缺陷，不代作修复证据。
-本轮到此停止，不创建完整请求快照、provider 或新 UI；旧Windows WinError5拒绝来源仍未知。
+按最新连续授权继续实现完整请求快照，当前已接 Windows 派发/执行并进入联合验证；
+Mac provider/新翻译 UI 尚未接入。旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -124,8 +125,31 @@ catalog 与配置探针共用固定包内 C 自有组边界，catalog 每次 8 �
 route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留 UI 层；核心仅收显式值，
 已转换字段不二次执行 `str` 或 model auto fallback。本地路线不查询 provider，
 签名字节/字段顺序/旧版本与错误传播保持不变。
-`_history_meta` 仍在主线程创建现有 job-owned dict；不把已有 frozen `ProviderRequest` 替换成新快照框架。
+`_history_meta` 现在主线程创建只读兼容视图，旧历史字段不变，另包含共享 `RequestSnapshot`
+和独立的取消/stream session 引用；仍复用已有 frozen `ProviderRequest`，不替换 provider 契约。
 Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
+
+### 请求执行快照（2026-09-14，验证中）
+
+`cc_request.RequestSnapshot` 无用户 I/O/环境/platform 依赖，冻结配置映射及嵌套 JSON 集合，
+保留未知字段/顺序与原值，不再次规范化配置；拒绝隐藏可变对象及循环，不回显 caller key。
+既有 `ProviderRequest`/`ProviderSelection` 独立复制，image paths 变为 tuple。
+快照持有执行输入、prompt、所选 profile/执行 model、cache 签名、方向/目标语言/分类/任务；
+`with_timeout()` 只生成原契约的超时副本，不修改捕获值或旧 60/90 秒选择。
+方向不适用的图片、词典/代码专用提示词和非翻译追加动作不伪造单一 target language。
+
+Windows 主翻译（cold/stream/warm）、vision、词典补充及结果追加动作在启动 worker 前捕获，
+实际 provider/CLI 消费该快照，不在执行中重取 prompt/model/stream 开关。
+warm 候选除原 key 外必须匹配捕获的实际 prompt，防止相同 model/direction 却语言不同；
+不匹配只在 query 未发送时回到原冷路径，不增加已提交请求重试。
+`_record_history` 仍在实际写入时检查当前 job、当前 history 开关/上限。
+vision 仍在原 UI 回调写入，结果追加仍不写历史；取消 event、UI session、窗口身份不在快照内。
+
+调用方不得在捕获配置期间并发修改输入；这不是 Windows 全 App cfg 锁或恶意对象沙箱。
+图片文件仍由现有 UUID 临时文件生命周期持有，冻结路径不等于冻结外部文件字节。
+Mac 随包验证共享契约；本切片不增 helper operation、Swift 消息或 GUI，
+下一步才将该依赖接到 Darwin provider 的真实执行链。默认诊断启动零业务 I/O 不变。
+
 已完成的存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
 共享原子 JSON primitive 由 Windows 兼容入口实际使用；Mac 合成临时目录诊断通过 CI 显式调用，

@@ -521,7 +521,21 @@ class TestWindowsResultRuleConsumers(ResultRulesTestCase):
                                 tr.codex_summary_instruction(tr.resolve_target_lang("auto", "zh", text))
                                 if provider == "codex_cli" and summarize else app._system_prompt_for(text)),
                             "cancel_event": app._provider_cancel_event,
+                            "stream_session": None,
                         }
+                        expected["snapshot"] = tr.RequestSnapshot(
+                            request=tr.ProviderRequest(
+                                expected["task"], expected["model"],
+                                expected["system_prompt"], text),
+                            selection=tr.ProviderSelection(provider, expected["model"]),
+                            config=app.cfg, input=text, origin=origin,
+                            content_class=content_class, kind=kind, sig=expected["sig"],
+                            direction="auto", app_language="zh",
+                            target_lang=None if content_class == "code" or tr.is_single_word(text)
+                            else tr.resolve_target_lang("auto", "zh", text),
+                            summarize=summarize, dictionary=tr.is_single_word(text),
+                            stream_enabled=tr.DEFAULT_CONFIG[tr.CFG.CODEX_STREAMING_EXPERIMENTAL],
+                        )
                         self.assertEqual(meta, expected)
                         self.assertEqual(meta["kind"], legacy_history_kind(app))
                         self.assertEqual(history.call_count, 1)
