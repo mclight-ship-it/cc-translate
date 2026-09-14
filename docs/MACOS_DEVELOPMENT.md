@@ -8,7 +8,9 @@ macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Fo
 配置owner现已接入显式私有helper与Swift API，含保存/迁移可读性修复，在同包三系统通过。
 历史现也接入同一业务连接及Swift分页/记录/清空API，含worker未启动确定失败的跨端修复，
 同包三系统90进程/242核心/9Foundation通过。旧89/242/8绿灯未覆盖该review缺陷，不代作修复证据。
-按最新连续授权继续实现完整请求快照，当前已接 Windows 派发/执行并进入联合验证；
+按最新连续授权，完整请求快照已接 Windows 派发/执行并通过同包三系统验证：
+源码 `8797fc7` / [run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)，
+Windows正常完整hook1357；每系统90进程/277核心/9精确Foundation，新35个快照方法逐项执行。
 Mac provider/新翻译 UI 尚未接入。旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
@@ -104,7 +106,8 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 静态文本提示词目录随后抽到 `cc_prompts.py`，12 个赋值（包含 provider/词典补充 revision）
 与旧实现 AST 和规范 UTF-8 快照完全一致。`cc_core` / Windows 主入口 / warm / 结果操作
 继续使用相同对象，不增加 API、预热 turn、重试或账号访问。三份纯模块一起随包验证。
-OCR 专属文案、动态摘要提示词组装、请求快照和平台数据路径仍是另外的边界，不宣称全部 P1 完成。
+OCR 专属文案和动态提示词组装仍由现有调用方负责；后续快照与平台路径检查点见下，
+不把本条纯提示词提取宣称为全部 P1 完成。
 已有 `ProviderRequest` / `ProviderResult` 等数据类和 `ProviderRegistry` 也能在隔离环境直接
 导入；类字段、冻结语义、未知认证状态和 registry 退出错误传播均保持原样。
 这只完成纯契约的初始化边界，不是完整请求快照/配置版本协议或可运行的 Mac provider。
@@ -129,9 +132,9 @@ route/本地词典对象、cfg 默认、i18n fallback 和 provider selection 留
 和独立的取消/stream session 引用；仍复用已有 frozen `ProviderRequest`，不替换 provider 契约。
 Mac 无需导入有 AppData/Tk 副作用的 `cc_core`，只随包验证纯模块；完成证据以 TODO 为准。
 
-### 请求执行快照（2026-09-14，验证中）
+### 请求执行快照（2026-09-14，已验证共享依赖与Windows接线）
 
-`cc_request.RequestSnapshot` 无用户 I/O/环境/platform 依赖，冻结配置映射及嵌套 JSON 集合，
+`cc_request.RequestSnapshot` 无用户 I/O/环境/platform 依赖，配置映射转只读映射，嵌套list/tuple转tuple，
 保留未知字段/顺序与原值，不再次规范化配置；拒绝隐藏可变对象及循环，不回显 caller key。
 既有 `ProviderRequest`/`ProviderSelection` 独立复制，image paths 变为 tuple。
 快照持有执行输入、prompt、所选 profile/执行 model、cache 签名、方向/目标语言/分类/任务；
@@ -149,6 +152,11 @@ vision 仍在原 UI 回调写入，结果追加仍不写历史；取消 event、
 图片文件仍由现有 UUID 临时文件生命周期持有，冻结路径不等于冻结外部文件字节。
 Mac 随包验证共享契约；本切片不增 helper operation、Swift 消息或 GUI，
 下一步才将该依赖接到 Darwin provider 的真实执行链。默认诊断启动零业务 I/O 不变。
+实际源码为 `8797fc7acbc9de9fad05d47f394589c3305da2ba`，不是文档提交的产物。
+同包15.7.9/14.8.9/26.6.2全部关键steps通过；
+新增反例先证明旧warm key会取错prompt，随后修复并通过，不以首次失败作成功。
+完整675库存/65资源/37源码路径及三系统相同archive/tree已核验，
+[精确计数、制品与限制](MACOS_TODO.md#request-snapshot-checkpoint) 以本检查点为准。
 
 已完成的存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。
@@ -199,7 +207,8 @@ Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfigura
 历史失败不删除，不把这次正常成功当作Windows拒绝来源已解决。
 精确源码/制品/hash与失败见[配置业务检查点](MACOS_TODO.md#configuration-ipc-checkpoint)。
 没有设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
-真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、完整请求快照仍未完成；
+真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争仍未完成；
+此配置检查点不覆盖后续请求快照，快照进度见上方独立记录；
 历史业务helper独立切片已完成同包三系统自动化，证据见TODO；本owner不解决整个App的可变状态所有权。
 Windows WinError 5 的已有复核和实际旧 writer 对照均失败，拒绝来源仍未知；
 不以纯规则/旧三系统成功覆盖该阻断，不新增重试或弱化旧测试。最新实际验收见 TODO。

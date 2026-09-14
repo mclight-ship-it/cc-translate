@@ -73,8 +73,17 @@ accepted→failed(seq1)曾被Swift误判为OutcomeUnknown；已仅为精确worke
 均保留并修正精确测试前置，未改生产策略或重试凑绿。全部证据及固定制品/hash见
 [历史业务检查点](MACOS_TODO.md#history-ipc-checkpoint)，不继承旧配置或旧用户包结果。
 旧Windows WinError5已复现但拒绝来源仍未知，当前成功不表示该稳定性风险已解决。
-完整请求快照、用户旧配置文件迁移/全 App 配置线程安全与新翻译 UI 仍待办；
-不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
+完整请求快照依赖现已实接Windows主翻译、vision、词典补充、结果追加的派发和执行：
+共享不可变配置/ProviderRequest与可变取消/UI分离，历史仍用当前开关/limit/job。
+预热必须匹配捕获prompt，原key/cache字节与已提交不新增重试的边界保留。
+源码`8797fc7` / [run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)
+三jobs/33steps成功：正常Windows hook1357通过；同包每系统90进程/277核心/9精确Foundation，
+新增35快照方法在三系统各实际执行一次，675库存/65资源/37源码路径与不可变核验通过。
+全部真实失败、[制品/hash与限制](MACOS_TODO.md#request-snapshot-checkpoint) 持久化，
+源码与后续docs-only身份分离。此处完成的是共享快照依赖与真实Windows消费者，
+尚不是Mac模型执行或完整翻译闭环；下一步按依赖继续Darwin provider执行/streaming/取消，
+然后接原生显式业务UI。用户旧配置迁移/全App配置线程安全仍未完成。
+当前不要求用户重装或登录，不宣称整个P0/P1/P2–P6完成；旧WinError5未知风险继续保留。
 
 ## 术语表 / 风格预设 — 待办，独立于移植
 

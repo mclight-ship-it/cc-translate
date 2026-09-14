@@ -32,7 +32,9 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
-## 当前连续依赖：完整请求快照（2026-09-14，实施中）
+<a id="request-snapshot-checkpoint"></a>
+
+## 当前连续依赖：请求快照检查点已验证（2026-09-14）
 
 基线源码 `4021270362418c0876dfd7aa51c4c697694f3758`、文档 `ae04dc1`；
 历史/config 业务链已验收，不重复旧源码 CI。按用户授权继续到真正人工前置，
@@ -42,18 +44,20 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   cache 签名、方向/任务元数据；实际接 Windows 请求启动与执行消费者。
 - [x] 覆盖主翻译、OCR vision、词典补充和结果追加动作；取消/UI session 独立，
   `_record_history` 仍检查当前 job、当前 history 开关和上限。
-- [ ] 无 I/O 共享契约、嵌套变更隔离、Windows 实际消费者/字节和路由回归；
+- [x] 无 I/O 共享契约、嵌套变更隔离、Windows 实际消费者/字节和路由回归；
   包内同源模块/严格测试发现、正常 hooks、15 producer → 14/26 同包验证。
-- [ ] 源码/最终文档 SHA 分离，精确测试/制品证据；通知协调方做增量审查。
+- [x] 源码与随后 docs-only 验收记录分离，精确测试/制品证据；源码已通知协调方做增量审查。
 - 后续按依赖逐个接 Darwin provider 执行/streaming/取消，再接原生显式翻译交互；
   本检查点不声称已调用官方 CLI/真实模型或实现完整翻译 UI。
 - 旧历史 `WinError5` 拒绝来源仍未知；不加生产重试、不绕过 hook、不以本轮成功掩盖旧失败。
 
-本轮已执行的本地证据（源码提交及 Mac CI 尚待）：
+本轮执行记录（失败保留，不代替后续真实 Mac provider 业务验证）：
 
-- 共享快照初版 30 项、补历史只读元数据后 34 项通过；随后增加错误中不回显 caller key
-  的合成用例，纯契约现为 35 项。导入探针首次误拦截 Python 标准导入目录枚举，修正测试边界，
-  不放行用户目录/写盘/网络/平台依赖（该次准确计数另按原输出记录）。
+- 共享快照初版首次 **30 / 0.122s / 1 failure，0 errors**：
+  导入探针无条件禁止 `os.listdir`，误拦截 Python `_fill_cache` 的导入目录枚举，
+  子进程退出码断言失败。仅修正测试边界，继续禁止用户目录/写盘/网络/平台依赖；
+  随后 **30 / 0.166s，OK**，补历史只读元数据后 **34 / 0.181s，OK**。
+  再增加错误中不回显 caller key 的合成用例，纯契约现为35项。
 - 第一次 Windows 联合 **201 tests / 1.979s / 14 failures + 1 error**：
   旧 metadata 精确期望未含新增 snapshot/独立 stream session，14 个 subtests 不符；
   词典启动 fixture 把 selection mock 成字符串，不能构造真实 ProviderSelection。
@@ -68,6 +72,43 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 - 包含 warm 修复与 Claude vision 新 API 回归的最终针对性联合：
   **360 tests / 12.400s，OK**；35 项纯快照、16 项新 Windows 接线测试，
   既有 routing/stream/one-shot/历史当前策略/结果动作/词典/打包断言均保留。
+- 一次正常源码推送：privacy/逐文件编译通过，完整 hook **1357 tests / 71.305s，OK**，
+  无失败/skip；保留既有 Tk teardown stderr。此次未发生 WinError5，不等于旧拒绝来源已解决。
+
+### 真实源码/同包三系统
+
+源码 **`8797fc7acbc9de9fad05d47f394589c3305da2ba`**；
+[run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)，
+attempt 1，三个 jobs、33 个 steps 全部 success。源码之后的三文档验收提交不更换该制品身份，
+不对仅文档变化重跑相同源码 CI。
+
+| 系统 / harness | 真实 process | 真实 bundled core | 后置 Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 / Swift6.1.2 / SDK15.5 | 90 / 71.373s | 277 / 2.186s | 9 / 17.603s |
+| 14.8.9 / Xcode16.2 / Swift6.0.3 / SDK15.2 | 90 / 67.132s | 277 / 1.821s | 9 / 13.907s |
+| 26.6.2 / Xcode26.6 / Swift6.3.3 / SDK26.5 | 90 / 72.849s | 277 / 2.823s | 9 / 18.658s |
+
+全部 arm64；镜像依次为 `20260907.0337.1`、`20260831.0302.1`、`20260907.0351.1`。
+产品只由15/Xcode16.4构建，另外两系统只编译独立harness，不重建/重签被测App。
+三系统均逐项核对全部35个新增快照方法各执行一次且ok，core/process/后置Foundation零fail/error/skip。
+producer普通portable **465 / 13.639s，OK**；普通Swift **64 = 55 passed + 9 初始无包skip**，
+不能把初始skip当集成通过，后置精确9方法才是包内Foundation证据。
+HTTPS证书验证、SQLite读写、显式临时storage、helper取消/EOF、文件清理和App不可变均通过。
+
+- [App artifact10339228273](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426/artifacts/10339228273)
+- [14报告10338878137](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426/artifacts/10338878137)
+- [26报告10339104167](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426/artifacts/10339104167)
+- 内层zip **18,400,071 bytes**，SHA-256
+  **`836cac429e9f7e1b63fec42e731460d31dd7a8ff0fc63f0067abd8f231fc8ad9`**。
+- 内容/模式/相对链接 tree：
+  **`f0ad33650e18c1ce0a9c225807d7516a51742349ccc7226eebad6e20183806d8`**。
+- 本地只读完整zip审计：**675库存 / 65资源hash / 37源码路径（36唯一Git blob）/ 6 arm64 Mach-O /
+  19 runtime许可**；逐项对固定源码blob与实际Mach-O load commands核验，源码clean/lock匹配。
+  producer本run固定runtime/full-build的605保留文件匹配，包内许可内容/metadata覆盖再核对。
+  两runtime complete/unchanged和同archive/tree成立，临时zip及审计脚本已删除，仅保留去敏小证据。
+- 本包仍为免费开发探针，不是完整翻译产品；不继承旧 `eec92a5` 用户实测，
+  不宣称Finder/TCC/IME/多屏/Intel/正式签名验证。下一依赖为Darwin provider执行/streaming/取消，
+  当前不要求用户重装、安装CLI或登录。
 
 ## P0 — Mac 自动化与首轮正向用户探针已完成；完整首开/TCC 矩阵未通过
 
@@ -216,6 +257,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     旧dc0ba9c绿灯未覆盖worker_start_failed跨端缺陷，不能作为该分支的通过证据。
     不是历史UI、自动模型记录、请求快照或整个P1完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
+  - [x] 完整执行快照共享契约与Windows实际请求入口接线，源码`8797fc7`；
+    同包三系统277核心（新增35）、90进程、9精确Foundation验证，详见本页当前检查点。
+    不代表全部词典格式/平台提示词调用方或Mac provider执行已迁移。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
   - [x] 抽取前后 29 个函数/常量 AST 一致（忽略 docstring），没有更改规则。
