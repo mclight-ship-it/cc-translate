@@ -54,6 +54,24 @@ class TestNativeConfig(unittest.TestCase):
         with self.assertRaises(CodexConfigError):
             integration_overrides({"mcp_servers": []})
 
+    def test_explicit_environment_is_copied_without_ambient_expansion_or_fallback(self):
+        source = {"HOME": str(self.root), "CODEX_HOME": str(self.root / "native"),
+                  "CC_TRANSLATE_CODEX_HOME": str(self.root / "selected"),
+                  "SYNTHETIC_AUTH": "unchanged"}
+        with patch("cc_providers.codex_config.os.environ", {}), \
+                patch("cc_providers.codex_config.os.path.expanduser",
+                      side_effect=AssertionError("ambient expansion")), \
+                patch("cc_providers.codex_config.os.path.expandvars",
+                      side_effect=AssertionError("ambient expansion")):
+            copied = child_environment(environment=source)
+            self.assertEqual(copied, {**source, "CODEX_HOME": source["CC_TRANSLATE_CODEX_HOME"]})
+            self.assertEqual(child_environment(environment={}), {})
+            for field in ("CODEX_HOME", "CC_TRANSLATE_CODEX_HOME"):
+                with self.subTest(field=field), self.assertRaises(CodexConfigError):
+                    child_environment(environment={field: "~/not-an-explicit-path"})
+        copied["SYNTHETIC_AUTH"] = "changed"
+        self.assertEqual(source["SYNTHETIC_AUTH"], "unchanged")
+
     def test_safety_overrides_are_valid_toml_and_do_not_override_routing_or_auth(self):
         config = tomllib.loads("\n".join(CODEX_CONFIG_OVERRIDES))
         for key in ("model_provider", "model", "model_providers",

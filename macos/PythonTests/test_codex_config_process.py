@@ -10,11 +10,13 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from cc_macos.config_fixture import create_cli
 import cc_macos
 from cc_providers.codex_config import CODEX_CONFIG_OVERRIDES, CodexConfigError, read_native_config
 from cc_providers.darwin_process import load_supervision
+from cc_providers import codex_config_darwin
 
 
 if sys.platform != "darwin":
@@ -39,6 +41,17 @@ class TestOwnedNativeConfig(unittest.TestCase):
 
     def test_cancellation_cleans_owned_group_before_return(self):
         self.exercise("timeout", "config_probe_cancelled", cancel=True)
+
+    def test_selector_close_failure_still_drains_cancelled_real_group(self):
+        original = codex_config_darwin.selectors.DefaultSelector
+
+        class CloseFailure(original):
+            def close(self):
+                super().close()
+                raise OSError("SYNTHETIC_PRIVATE_SELECTOR_CLOSE")
+
+        with patch.object(codex_config_darwin.selectors, "DefaultSelector", CloseFailure):
+            self.exercise("timeout", "config_probe_cleanup_failed", cancel=True)
 
     def test_native_error_detail_does_not_escape(self):
         self.exercise("error", "config_invalid")

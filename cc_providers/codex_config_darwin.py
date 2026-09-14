@@ -6,7 +6,7 @@ import selectors
 import time
 
 from .codex_config import CodexConfigError
-from .darwin_process import OwnedProcess, ProcessError
+from .darwin_process import OwnedProcess, ProcessError, close_selector
 
 
 PROBE_TIMEOUT = 8
@@ -26,7 +26,7 @@ class _ConfigSession:
             self.owner = OwnedProcess(args, env, work_dir, rpc=True)
             self.process = self.owner.process
         except ProcessError:
-            self.selector.close()
+            close_selector(self.selector)
             raise
         try:
             os.set_blocking(self.process.stdin.fileno(), False)
@@ -108,8 +108,10 @@ class _ConfigSession:
         if self.closed:
             return
         self.closed = True
-        self.selector.close()
-        self.owner.close()
+        try:
+            close_selector(self.selector)
+        finally:
+            self.owner.close()
 
 
 def read_config(args, env, work_dir, *, cancel_event=None):

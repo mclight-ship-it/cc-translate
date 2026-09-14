@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 import unittest
+from unittest.mock import patch
 
 
 if sys.platform != "darwin":
@@ -115,6 +116,17 @@ class TestOwnedCatalogProcess(unittest.TestCase):
 
     def test_explicit_cancellation_waits_for_actual_descendant_start(self):
         self._exercise_failure("timeout", "catalog_probe_cancelled", cancel=True)
+
+    def test_selector_close_failure_still_drains_cancelled_real_group(self):
+        original = selectors.DefaultSelector
+
+        class CloseFailure(original):
+            def close(self):
+                super().close()
+                raise OSError("SYNTHETIC_PRIVATE_SELECTOR_CLOSE")
+
+        with patch.object(selectors, "DefaultSelector", CloseFailure):
+            self._exercise_failure("timeout", "catalog_probe_cleanup_failed", cancel=True)
 
     def test_precancel_does_not_spawn_or_create_cache(self):
         manager, warnings = self._create_cli()

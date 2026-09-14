@@ -94,6 +94,49 @@ class CatalogStorageTests(unittest.TestCase):
         self.assertFalse(self.manager.cache_dir.exists())
         self.assertEqual(config.read_bytes(), before)
 
+    def test_explicit_user_home_never_resolves_ambient_home_or_scans_above_scope(self):
+        manager = SyntheticCatalog(
+            self.manager.command, {**self.manager.env, "HOME": str(self.root)},
+            self.manager.cache_dir, self.manager.work_dir, log_error=Mock(),
+            user_home=self.root)
+        seen = []
+        original = Path.is_file
+
+        def check(path):
+            if path.name == "config.toml":
+                seen.append(path)
+                self.assertTrue(path.is_relative_to(self.root), path)
+            return original(path)
+
+        with patch("cc_providers.codex_catalog.Path.home", side_effect=AssertionError("ambient home")), \
+                patch.object(Path, "is_file", check):
+            self.assertTrue(manager.overrides())
+        self.assertIn(Path(manager.env["CODEX_HOME"]) / "config.toml", seen)
+        self.assertEqual(len(manager.calls), 3)
+
+    def test_explicit_catalog_paths_reject_missing_or_escaping_identity(self):
+        defaults = {
+            "command": self.manager.command,
+            "env": {**self.manager.env, "HOME": str(self.root)},
+            "cache_dir": self.manager.cache_dir, "work_dir": self.manager.work_dir,
+            "log_error": Mock(), "user_home": self.root,
+        }
+        for changed in (
+                {"user_home": "relative"}, {"work_dir": self.root.parent},
+                {"work_dir": self.root / ".." / "elsewhere"}, {"cache_dir": None},
+                {"cache_dir": "relative"}, {"env": None}, {"env": {}}):
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                    ValueError, "explicit_catalog_home_required"):
+                CodexModelCatalog(**{**defaults, **changed})
+
+    def test_legacy_explicit_codex_home_keeps_lazy_platform_home_lookup(self):
+        manager = CodexModelCatalog(
+            self.manager.command, {"CODEX_HOME": str(self.root / "missing-native")},
+            self.manager.cache_dir, self.manager.work_dir, log_error=Mock())
+        with patch("cc_providers.codex_catalog.Path.home", side_effect=AssertionError("eager home")):
+            self.assertEqual(manager.overrides(), ())
+        self.assertEqual(manager.status, "native")
+
     def test_failed_state_replace_preserves_previous_state_and_cleans_temporary(self):
         self.assertTrue(self.manager.overrides())
         state_path = self.state_path()

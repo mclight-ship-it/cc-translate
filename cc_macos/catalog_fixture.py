@@ -13,8 +13,10 @@ PAYLOAD = {"models": [
 
 
 class SyntheticCatalog(CodexModelCatalog):
-    def __init__(self, command, env, cache_dir, work_dir, *, log_error, mismatch=False):
-        super().__init__(command, env, cache_dir, work_dir, log_error=log_error)
+    def __init__(self, command, env, cache_dir, work_dir, *, log_error, mismatch=False,
+                 user_home=None):
+        super().__init__(command, env, cache_dir, work_dir, log_error=log_error,
+                         user_home=user_home)
         self.calls = []
         self.mismatch = mismatch
 

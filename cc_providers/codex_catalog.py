@@ -64,12 +64,22 @@ def _atomic_write(path, content):
 
 
 class CodexModelCatalog:
-    def __init__(self, command, env=None, cache_dir=None, work_dir=None, *, log_error=None):
+    def __init__(self, command, env=None, cache_dir=None, work_dir=None, *, log_error=None,
+                 user_home=None):
         if log_error is not None and not callable(log_error):
             raise TypeError("log_error must be callable")
         self.command = command
         self.env = env
         self.work_dir = work_dir
+        self._user_home = Path(user_home) if user_home is not None else None
+        if self._user_home is not None:
+            if (not self._user_home.is_absolute() or work_dir is None
+                    or not Path(work_dir).is_absolute()
+                    or ".." in self._user_home.parts or ".." in Path(work_dir).parts
+                    or not Path(work_dir).is_relative_to(self._user_home)
+                    or env is None or Path(env.get("HOME", "")) != self._user_home
+                    or cache_dir is None or not Path(cache_dir).is_absolute()):
+                raise ValueError("explicit_catalog_home_required")
         self.cache_dir = Path(cache_dir or os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "CC Translate", "codex-catalogs"))
@@ -173,7 +183,8 @@ class CodexModelCatalog:
                 return ()
 
     def _resolve(self, model, environment):
-        home = Path(environment.get("CODEX_HOME") or Path.home() / ".codex")
+        home = Path(environment.get("CODEX_HOME") or (
+            self._user_home if self._user_home is not None else Path.home()) / ".codex")
         config_path = home / "config.toml"
         if not config_path.is_file():
             self.status = "native"
@@ -198,7 +209,10 @@ class CodexModelCatalog:
             return ()
         cwd = Path(self.work_dir) if self.work_dir else Path.cwd()
         for directory in (cwd, *cwd.parents):
-            if directory == Path.home():
+            if self._user_home is not None:
+                if directory == self._user_home:
+                    break
+            elif directory == Path.home():
                 continue
             if (directory / ".codex" / "config.toml").is_file():
                 self._warn("project_config_not_managed")

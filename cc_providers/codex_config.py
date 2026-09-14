@@ -80,9 +80,18 @@ CODEX_CONFIG_OVERRIDES = (
 ))
 
 
-def child_environment():
-    env = dict(os.environ)
+def child_environment(*, environment=None):
+    env = dict(os.environ if environment is None else environment)
     value = env.get("CC_TRANSLATE_CODEX_HOME", "").strip()
+    if environment is not None:
+        # Explicit callers resolve home syntax before binding, never against
+        # this process's ambient account or working directory.
+        selected = value or env.get("CODEX_HOME")
+        if selected:
+            if not os.path.isabs(selected):
+                raise CodexConfigError("codex_home_invalid")
+            env["CODEX_HOME"] = os.path.normpath(selected)
+        return env
     if value:
         # Do not silently select another account when an explicit home is bad.
         env["CODEX_HOME"] = os.path.abspath(

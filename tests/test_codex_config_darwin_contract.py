@@ -109,6 +109,40 @@ class TestDarwinConfigContract(unittest.TestCase):
         session.process.stdin.close.assert_called_once()
         session.process.stdout.close.assert_called_once()
 
+    def test_probe_selector_cleanup_failure_still_closes_process_owner(self):
+        owner, selector = Mock(), Mock()
+        owner.finished = False
+        owner.has_exited.return_value = False
+        selector.get_map.return_value = {"synthetic": object()}
+        selector.select.side_effect = OSError("SYNTHETIC_READ_FAILURE")
+        selector.close.side_effect = OSError("SYNTHETIC_CLOSE_FAILURE")
+        with patch.object(owned, "OwnedProcess", return_value=owner), \
+                patch.object(owned.selectors, "DefaultSelector", return_value=selector), \
+                patch.object(owned.os, "set_blocking"):
+            try:
+                with self.assertRaisesRegex(ProcessError, "^probe_cleanup_failed$"):
+                    owned.capture_output(["synthetic"], {}, "unused", cancel_event=None,
+                                         timeout=1, max_bytes=100)
+            finally:
+                owner.close.assert_called_once()
+
+    def test_config_selector_cleanup_failure_still_closes_process_owner(self):
+        for error, expected in ((OSError("SYNTHETIC_CLOSE"), ProcessError),
+                                (RuntimeError("synthetic programming error"), RuntimeError)):
+            with self.subTest(error=type(error).__name__):
+                session = native._ConfigSession.__new__(native._ConfigSession)
+                session.closed = False
+                session.selector = Mock()
+                session.selector.close.side_effect = error
+                session.owner = Mock()
+                try:
+                    with self.assertRaises(expected) as caught:
+                        session.close()
+                finally:
+                    session.owner.close.assert_called_once()
+                if isinstance(error, OSError):
+                    self.assertEqual(str(caught.exception), "probe_cleanup_failed")
+
     def test_lost_child_ownership_never_signals_or_reaps_again(self):
         session, calls = self.session(signal_error=errno.ECHILD)
         with patch.object(native.time, "sleep"):

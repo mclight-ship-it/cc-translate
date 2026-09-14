@@ -14,6 +14,13 @@ class ProcessError(RuntimeError):
     pass
 
 
+def close_selector(selector):
+    try:
+        selector.close()
+    except (OSError, ValueError):
+        raise ProcessError("probe_cleanup_failed") from None
+
+
 def load_supervision():
     core = Path(__file__).resolve().parents[1]
     contents = core.parent.parent
@@ -155,6 +162,8 @@ def capture_output(args, env, work_dir, *, cancel_event, timeout, max_bytes):
     except (OSError, ValueError):
         raise ProcessError("probe_failed") from None
     finally:
-        selector.close()
-        if owner is not None:
-            owner.close()
+        try:
+            close_selector(selector)
+        finally:
+            if owner is not None:
+                owner.close()

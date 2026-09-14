@@ -35,7 +35,10 @@ SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 PROVIDER_CATALOG_FILES = ("codex_catalog.py",)
-PROVIDER_CORE_FILES = PROVIDER_CONTRACT_FILES + PROVIDER_CONFIG_FILES + PROVIDER_CATALOG_FILES
+PROVIDER_NATIVE_FILES = ("codex_cli.py", "codex_jsonl.py", "codex_appserver.py",
+                         "codex_darwin.py", "darwin_rpc.py")
+PROVIDER_CORE_FILES = (PROVIDER_CONTRACT_FILES + PROVIDER_CONFIG_FILES
+                       + PROVIDER_CATALOG_FILES + PROVIDER_NATIVE_FILES)
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")
 MAX_MEMBERS = 30000
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024

@@ -292,12 +292,15 @@ class CodexAppServerTransport:
                 and self._process_running(self._proc)
             )
 
+    def _version_supported(self, cancel_event=None):
+        return _supported_appserver_version(self.command, self.env)
+
     def warm_up(self, request):
         """Initialize and validate a process without starting a model turn."""
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command, self.env):
+        if not self._version_supported(self._prewarm_cancel_event):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -399,17 +402,19 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)),
                 metrics=metrics())
         finally:
-            if reusable and started_process:
-                self._schedule_idle_shutdown(max_seconds=30)
-            elif started_process and proc is not None:
-                self._stop_process(proc)
-            self._stream_lock.release()
+            try:
+                if reusable and started_process:
+                    self._schedule_idle_shutdown(max_seconds=30)
+                elif started_process and proc is not None:
+                    self._stop_process(proc)
+            finally:
+                self._stream_lock.release()
 
     def stream(self, request, on_delta, cancel_event=None):
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command, self.env):
+        if not self._version_supported(cancel_event):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -666,11 +671,13 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)),
                 metrics=metrics())
         finally:
-            if reusable:
-                self._schedule_idle_shutdown()
-            elif proc is not None:
-                self._stop_process(proc)
-            self._stream_lock.release()
+            try:
+                if reusable:
+                    self._schedule_idle_shutdown()
+                elif proc is not None:
+                    self._stop_process(proc)
+            finally:
+                self._stream_lock.release()
 
     def shutdown(self):
         """Terminate the persistent process and reject future requests."""

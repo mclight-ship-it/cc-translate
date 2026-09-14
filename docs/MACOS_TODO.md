@@ -36,6 +36,50 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 ## 当前连续依赖：请求快照检查点已验证（2026-09-14）
 
+下一连续切片：Darwin native Codex 执行链（进行中）。快照源码 `8797fc7` / 文档 `b90cd7e`
+已获独立增量审查接受，不重复该源码 CI，也不等待用户再次授权。
+
+- [ ] 在已有 app-server 协议上接有界 Darwin stdio/自有组监督，覆盖提交前后取消、
+  timeout/EOF/早退/关闭和同组后代清理；不以 `exec` 代称 native app-server。
+- [ ] 显式环境/工作目录/catalog 及生命周期，复用 native config/hook/工具边界；
+  首个 Mac provider 只承诺已有安全 text 能力，未实现能力显式拒绝。
+- [ ] 快照→provider→显式 helper 业务→Swift 调用链，默认诊断启动仍零用户业务 I/O；
+  真实临时 home/synthetic CLI 端到端回归，不只留未调用的传输类。
+- [ ] 正常 hooks、免费同包三系统、精确新增测试/来源/资源/清理和三文档证据。
+- 真人边界仍独立：原P0 Finder/CLI只有候选发现与版本探针；没有官方账号/真实模型验证。
+  新P2 UI/完整首次TCC/IME/多屏尚未验收，旧 `eec92a5` 探针结果不迁移到新包。
+  这些不阻止安全实现和合成回归；实际需要安装/登录/首次权限时集中给最少人工步骤。
+
+本轮开发中事实（尚非新源码验收）：
+
+- 显式 native facade 与有界传输/进程测试正在实现；新增模块尚未取得 Mac CI 结果，
+  helper/Swift 翻译业务接口也尚未接线，不把后端原型称完整翻译。
+- 复用 app-server 协议时发现紧耦合清理锁问题：冻结 `b90cd7e` 的实际
+  `warm_up` / `stream` 方法，注入合成 cleanup 异常后，二者均传播原异常但遗留
+  stream 锁；新 `finally` 回归确认异常仍传播且锁释放。没有执行真实 CLI。
+- 旧共享回归首次 108 / 0.988s 通过；加显式 catalog home 用例后
+  119 / 1.675s 出现 1 error（合成 catalog fixture 尚不接受新可选参数），
+  补透传后 119 / 1.461s 通过；加清理锁回归后 120 / 1.555s 通过。
+  这些不是完整 hook 或 Mac 新执行链证据，也不解决旧 `WinError5`。
+- 再加显式环境不读 ambient/不展开路径的回归后 121 / 1.865s 通过。
+  随后两个清理反例实证旧有界 stdout 探针、native config 探针在
+  selector 关闭异常时跳过 process owner 关闭：分别 1 test / 1 failure /
+  0.022s，以及 1 test / 2 subtest failures / 0.005s。以共享固定错误映射和
+  嵌套 `finally` 修复，未改 C 组监督或 reap 顺序；合并 123 / 1.500s 通过。
+  已加对应两项真实 Mac 合成组故障回归，尚未执行；不能拿 Windows mock 代验。
+- 显式 home 增量曾将 Windows 旧 catalog 的 `Path.home()` 解析提前：
+  新回归 1 / 0.015s / 1 failure 实际捕获此差异，已恢复无新参数时的原惰性求值与
+  祖先扫描语义；仅新 Mac 显式 home 分支在该边界停止扫描。合并 124 / 1.479s 通过。
+- 当前 native 后端库存：56 个有界 RPC portable、67 个 facade portable；
+  36 个 RPC 真进程、35 个 native provider 真进程，加旧探针两项真实清理故障回归。
+  同包 runner 保留全部旧覆盖，下限由 process 90/core 277 提升为 163/403；
+  9 个 Foundation 方法不变，本内部源码检查点不声称已增加翻译 IPC。
+- 主会话最终联合首次 366 / 24.464s / 30 failures / 1 error：
+  打包测试的冻结 provider 文件清单尚未加入五个新源码，导致合成包缺资源并连带触发
+  旧审计负例；补齐原清单及其逐文件不可变断言后，366 / 27.824s 全部通过。
+  其中 smoke 的 `--allow-https` 拒绝提示是既有离线负例，不是实际联网验证。
+  尚需正常完整 hook 和真实同包三系统执行，仍不调用官方 CLI/账号/模型。
+
 基线源码 `4021270362418c0876dfd7aa51c4c697694f3758`、文档 `ae04dc1`；
 历史/config 业务链已验收，不重复旧源码 CI。按用户授权继续到真正人工前置，
 不将付费签名资格或未完成全部真人矩阵当作纯工程开发的停止条件。
