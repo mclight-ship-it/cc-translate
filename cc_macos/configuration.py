@@ -16,6 +16,14 @@ class ConfigurationError(RuntimeError):
         self.code = code
 
 
+def _resolve(path, *, strict):
+    try:
+        return Path(path).resolve(strict=strict)
+    except RuntimeError as error:
+        # Python 3.12 reports symlink loops as RuntimeError, including the private path.
+        raise ConfigurationError("config_unavailable") from error
+
+
 def validate_save(config):
     """Validate both raw transport data and its eventual load view before any write."""
     validate_config(config)
@@ -48,11 +56,11 @@ class ConfigurationSession:
             if sys.platform != "darwin":
                 raise ConfigurationError("config_unavailable")
             paths = macos_user_paths(self.home, self.application_id)
-            home = Path(self.home).resolve(strict=True)
+            home = _resolve(self.home, strict=True)
             if not home.is_dir():
                 raise ConfigurationError("config_unavailable")
             macos_user_paths(home, self.application_id)
-            directory = paths.application_support.resolve(strict=False)
+            directory = _resolve(paths.application_support, strict=False)
             if any(part.lower().endswith(".app") for part in directory.parts):
                 raise ConfigurationError("config_unavailable")
             directory.mkdir(parents=True, exist_ok=True)

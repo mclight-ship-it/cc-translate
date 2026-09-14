@@ -1493,3 +1493,13 @@ Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 r
   产品和包内步骤尚未执行，两个 runtime 未运行，没有此 SHA 的成功 App 制品。
   修复编码前用 `JSONSerialization.isValidJSONObject` 校验（用数组包裹以保留合法 fragment），
   固定抛 Swift invalidJSON；保留原 NaN 断言并扩 Infinity/嵌套/fragment，不 catch NSException 或跳测试。
+- 修复后正常完整 hook **1273 项 / 63.577s / OK**；源码 `9614eaba2975f21913346bab977e4262b210aa7a` /
+  [run 34808290474](https://github.com/mclight-ship-it/cc-translate/actions/runs/34808290474) 三系统通过。
+  该阶段每系统73进程/211核心/4后置Foundation，新增28便携/10真进程逐项核对；完整App审计通过。
+  本地审计首次误用 producer 文件名读取 runtime 小报告，修正为实际 process.json/core.json 后通过，
+  未改变产品或放宽断言；此阶段制品不与下述最终补充源码混用。
+- 收尾补全初始化错误边界：Python3.12 Path.resolve 的符号链接环抛 RuntimeError，
+  原配置 open 只映射 OSError/ValueError/TypeError，可能将私人路径泄漏到 traceback。
+  仅在两处路径 resolve 的共用边界映射固定 config_unavailable，不吞掉其它业务错误；
+  新便携故障用例和真包内自引用 Library 链接验证无 stderr 路径/无配置写入。
+  原覆盖保留，最终门槛增加为74进程/212核心，Foundation仍精确4项。

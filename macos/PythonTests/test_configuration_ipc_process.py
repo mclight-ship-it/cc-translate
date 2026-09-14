@@ -207,6 +207,21 @@ class TestConfigurationIPCProcess(OwnerProcessCase):
         self.assertEqual(self.hello(third)["type"], "ready")
         self.finish_helper(third)
 
+    def test_initialization_symlink_loop_returns_fixed_error_without_stderr_path(self):
+        library = self.home / "Library"
+        library.symlink_to("Library", target_is_directory=True)
+        try:
+            process = self.spawn()
+            failed = self.hello(process)
+            self.assertEqual(failed["type"], "failed")
+            self.assertEqual(failed["payload"], {"code": "config_unavailable"})
+            self.finish_helper(process, code=2)
+            self.assertTrue(library.is_symlink())
+            self.assertEqual(os.readlink(library), "Library")
+        finally:
+            library.unlink()
+        self.assertFalse(self.directory.exists())
+
     def test_cancel_at_fsynced_temp_keeps_write_but_cancels_queued_request(self):
         process = self.start_blocked_write()
         try:

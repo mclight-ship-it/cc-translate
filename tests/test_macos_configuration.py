@@ -216,6 +216,17 @@ class ConfigurationServiceTests(_ConfigurationDirectory):
             self.session.close()
             close.assert_called_once()
 
+    def test_resolution_loop_is_fixed_before_owner_or_directory_creation(self):
+        for outcomes in ([RuntimeError("private home")],
+                         [self.home, RuntimeError("private support directory")]):
+            with self.subTest(resolutions=len(outcomes)):
+                with patch.object(Path, "resolve", side_effect=outcomes):
+                    with self.assertRaisesRegex(configuration.ConfigurationError, "^config_unavailable$"):
+                        self.session.open()
+                self.factory.assert_not_called()
+                self.assertIsNone(self.session._owner)
+                self.assertFalse(self.directory.exists())
+
     def test_default_diagnostic_hello_does_not_initialize_configuration(self):
         wire = encode_frame(message("h", "hello"))
         with patch.object(configuration.ConfigurationSession, "open", side_effect=AssertionError("business I/O")):
