@@ -158,6 +158,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     见[复核与阻断记录](#历史矩阵二十轮复核2026-09-14)，未用重试或削弱断言规避。
     后续[实际旧 writer 对照](#抽取前后实际-writer-有界对照2026-09-14)也复现，不能归因于未关闭 FD，
     但拒绝来源仍未知，不标解决。
+  - [ ] Mac 配置仓库/owner 服务（本轮实施与验证中）：显式 home + 应用身份选择
+    Application Support，严格读取/raw 迁移/独立保存快照；与历史共用稳定侧文件所有权。
+    不接业务 helper/设置 UI，不改变 Windows 配置入口或后台共享 cfg 策略。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1351,3 +1354,40 @@ HTTPS/SQLite/取消/EOF/资源审计及 App 不可变均通过；不把 producer
 Mac 配置 owner/迁移文件服务/全局配置锁、后台 cfg 竞态、业务 helper、完整 RequestSnapshot/provider/UI
 均不在本次内，整个 P0/P1/P2–P6 未完成。当前新包只有自动化证据，旧 `eec92a5` 用户报告不迁移；
 免费分发/零预算及真实 TCC/干净首开/CLI账号/Intel 边界不变，不要求现在重装或登录。
+
+### Mac 配置 owner 服务切片（2026-09-14，实施中）
+
+1. [ ] 从已验证历史 owner 提取稳定侧文件所有权原语，history/config 共用；
+   保持旧历史 API、`.lock` 名称、非阻塞竞争、fork 子不 unlock 父、失败 FD 清理与 close 串行。
+2. [ ] 显式路径配置仓库和 Mac owner：load 的读取/规范化/raw 迁移/原子写入共用同一操作锁；
+   仅确实缺失返回默认且不创建配置文件，其它读取/格式/转换或迁移失败显式，不覆写损坏输入。
+   save 明确写独立 JSON payload，不保存调用者可变引用；load 不泄漏内部状态。
+3. [ ] 真实临时 Application Support/bundle ID fixture，第二进程竞争/替换后稳定 inode/
+   正常退出/崩溃接管、fork/close/故障保护；新增便携与真实进程测试并保留原历史覆盖。
+4. [ ] 正常联合 targeted、一次完整 hooks、免费同包 15/14/26 CI 与资源/许可/不可变核验；
+   WinError5 失败原样记录，不循环凑绿或跳过 hooks。
+
+当前只实现可调用服务依赖，不接 Swift/业务 helper 协议或按钮，不修 Windows 后台共享 cfg 竞态，
+不加全局配置锁/请求快照/provider。调用方必须显式选择路径并管理 owner 生命周期；
+协作式文件锁不等于全 App 状态快照或恶意篡改防护，Windows 拒绝访问根因仍未知。
+
+本轮接口选择：`MacConfigOwner(home, application_id)` 使用显式绝对 home 和调用方给定的
+已验证 bundle ID，通过已有纯路径模块选择 `Library/Application Support/<id>/config.json`。
+应用数据目录由调用方先创建；owner 不自动 mkdir 或查 HOME，也不探测旧 Windows 目录。
+获取 owner 会创建/打开稳定 `config.json.lock`，缺失配置的 load 不创建 `config.json`。
+关闭与操作共用 RLock；fork 子必须在尝试该锁之前拒绝，不 unlock 父的侧文件。
+
+配置转换仍是单份规则：Windows `Config._coerce` 保持旧容错策略；新服务显式采用 strict 模式，
+转换的 TypeError/ValueError/OverflowError 不变成默认配置后落盘。已定义的合法数字/字符串/
+布尔字符串规则不增加范围校验；strict 下无法转换的布尔对象同样拒绝。
+旧 `_coerce` 在测试中按原源码冻结，恢复原类 AST 后仍须匹配原始指纹，再与 Windows 当前类差分；
+不是将新 helper 当旧实现对照。共享转换和原历史 owner 首次针对性验证
+52 项 / 1.294s / OK；此结果不代替新配置服务/真实进程/完整 hooks 或三系统验证。
+
+首次联合 Windows targeted：337 项 / 19.061s，1 failure。
+`test_storage_windows` 中另一个旧 Config AST 检查尚未采用已冻结的原 `_coerce` 重建，
+仍直接比较新委托方法所在的类，因此指纹不同。修复仅复用同一 `legacy_class`；
+原始 hash 不改、不删除断言，真实 Windows 差分继续运行。本次没有观察到 WinError5，
+但旧的拒绝访问失败及未知根因仍保留，不能以本次无复现代替解决。
+修复后仅复跑这个失败 selector：1 项 / 0.045s / OK。其余 336 项已有真实通过结果，
+接下来由一次正常完整 pre-push 联合验证，不为测试断言同步循环重跑故障矩阵。

@@ -15,7 +15,7 @@ from unittest import mock
 
 import cc_storage as storage
 from tests.history_reference import SOURCE as HISTORY_REFERENCE_SOURCE
-from tests.test_config_rules import LEGACY_LOAD_SOURCE, _ast_hash
+from tests.test_config_rules import LEGACY_LOAD_SOURCE, _ast_hash, legacy_class
 import cc_config
 
 
@@ -124,14 +124,14 @@ class TestWindowsStorageExports(unittest.TestCase):
                 return result
 
             before, after = BASELINE_AST_SHA256[filename], definitions(current)
-            # Moved definitions remain AST-identical; the changed loaders have
-            # frozen-oracle differential coverage through the real entry points.
+            # Restore the frozen coercion method for the original class hash;
+            # changed consumers also have real-entry frozen-oracle differentials.
             shared_config = definitions(inspect.getsource(cc_config))
             if filename == "translator.pyw":
                 original_history = definitions(HISTORY_REFERENCE_SOURCE)
                 for name in ("load_history", "add_history", "clear_history", "_HISTORY_LOCK"):
                     after[name] = original_history[name]
-                after["Config"] = shared_config["Config"]
+                after["Config"] = legacy_class(shared_config["Config"])
                 after["load_config"] = definitions(LEGACY_LOAD_SOURCE)["load_config"]
             else:
                 for name in ("CFG", "DEFAULT_CONFIG"):

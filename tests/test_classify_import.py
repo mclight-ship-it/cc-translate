@@ -73,6 +73,11 @@ try:
     assert cfg.font_size == 16 and changed
     assert payload["font_size"] == "16" and payload["future"] == "\u4e2d"
     assert "language" not in cc_config.DEFAULT_CONFIG
+    import cc_config_store
+    import cc_macos.config_owner
+    import cc_macos.config_store_fixture
+    repository = cc_config_store.ConfigRepository(Path(sys.argv[2]) / "absent-config.json")
+    repository.close()
 finally:
     os.environ, os.getenv = original_environment, original_getenv
 import cc_classify

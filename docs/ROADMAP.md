@@ -32,7 +32,9 @@ Windows 原子替换偶发 WinError 5 的二十轮复核及实际旧/新 writer 
 源码 `7770b70` / [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
 同包三系统各147核心（新增19配置规则）/44进程/1强制Foundation通过；正常完整Windows hook1194通过。
 该成功不覆盖此前targeted的WinError5失败，稳定性根因仍待诊断；固定制品/hash和所有失败见TODO。
-完整请求快照、配置 owner/迁移文件服务/线程安全、历史业务 helper 唯一入口与新翻译 UI 仍待办；
+下一配置服务切片正在验证：显式路径的严格仓库、独立 raw 保存快照，以及与历史共用的
+稳定侧文件 owner；仅可调用核心/合成 fixture，不新增业务 IPC 或设置 UI，实际结果见 TODO。
+完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、业务 helper 唯一入口与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 
 ## 术语表 / 风格预设 — 待办，独立于移植

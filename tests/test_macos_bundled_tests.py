@@ -104,15 +104,18 @@ class RuntimeTests(ProjectDirectory):
 class InventoryTests(unittest.TestCase):
     def test_complete_original_suite_inventory_and_test_count_floors(self):
         self.assertEqual(bundled_tests.PROCESS_TEST_MODULES, (
-            "test_codex_config_process", "test_codex_catalog_process", "test_history_owner_process"))
+            "test_codex_config_process", "test_codex_catalog_process", "test_history_owner_process",
+            "test_config_owner_process"))
         self.assertEqual(bundled_tests.CORE_TEST_MODULES, (
             "test_classify", "test_is_single_word", "test_direction", "test_classify_import",
             "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
             "test_catalog_storage_portable", "test_result_rules", "test_storage", "test_history",
-            "test_config_rules"))
+            "test_config_rules", "test_config_store"))
         self.assertEqual(bundled_tests.SUITE_MODULES, {
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 44, "core": 147})
+        self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
+            "process": ("owner_process_support",), "core": ()})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 63, "core": 183})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:
@@ -125,11 +128,13 @@ class InventoryTests(unittest.TestCase):
     def test_original_explicit_core_origin_assertions_are_preserved(self):
         self.assertEqual(bundled_tests.PROCESS_BUNDLE_MODULES, (
             "cc_providers.codex_config", "cc_providers.codex_catalog", "cc_providers.darwin_process",
-            "cc_history", "cc_macos.history_owner", "cc_macos.history_fixture"))
+            "cc_history", "cc_macos.history_owner", "cc_macos.history_fixture",
+            "cc_config", "cc_config_store", "cc_macos.file_owner",
+            "cc_macos.config_owner", "cc_macos.config_store_fixture"))
         self.assertEqual(bundled_tests.CORE_BUNDLE_MODULES, (
             "cc_classify", "cc_direction", "cc_prompts", "cc_providers", "cc_dictionary_store",
             "cc_providers.codex_catalog", "cc_result_rules", "cc_storage", "cc_macos.storage_fixture", "cc_history",
-            "cc_config"))
+            "cc_config", "cc_config_store"))
 
     def test_checkout_is_derived_from_script_not_current_directory_or_latest_bundle(self):
         self.assertEqual(bundled_tests.ROOT, Path(bundled_tests.__file__).resolve().parents[2])
@@ -193,6 +198,7 @@ class SourceTests(ProjectDirectory):
 
     def test_every_requested_test_module_must_have_exact_checkout_origin(self):
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
+            names = (*bundled_tests.TEST_SUPPORT_MODULES[suite_name], *names)
             directory = self.root / ("PythonTests" if suite_name == "process" else "tests")
             modules = {name: self.module(name, directory) for name in names}
             with patch.object(bundled_tests, "test_directory", return_value=directory), \
@@ -220,8 +226,9 @@ class SourceTests(ProjectDirectory):
                 load.assert_called_once_with(names)
                 self.assertEqual([call.args[0] for call in core_import.call_args_list],
                                  list(bundled_tests.BUNDLE_MODULES[suite_name]))
-                self.assertEqual([call.args[0] for call in test_import.call_args_list], list(names))
-                self.assertEqual([call.args[0] for call in source.call_args_list], list(names))
+                expected_imports = [*bundled_tests.TEST_SUPPORT_MODULES[suite_name], *names]
+                self.assertEqual([call.args[0] for call in test_import.call_args_list], expected_imports)
+                self.assertEqual([call.args[0] for call in source.call_args_list], expected_imports)
                 test_sources.assert_called_once_with(suite_name)
                 self.assertEqual(core_sources.call_count, 2)
 
@@ -310,13 +317,14 @@ class ResultTests(ProjectDirectory):
                     self.assertEqual(report["storage_fixture"], "not_run")
 
     def test_failures_errors_and_skips_write_counts_and_never_run_storage(self):
+        count = bundled_tests.MINIMUM_TEST_COUNTS["core"]
         for outcome, field in (("failure", "failures"), ("error", "errors"), ("skip", "skipped")):
             with self.subTest(outcome=outcome):
                 code, report, storage, _ = self.run_main(outcome=outcome)
                 self.assertEqual(code, 1)
                 self.assertEqual(report["status"], "failed")
-                self.assertEqual(report["tests_run"], 147)
-                self.assertEqual(report[field], 147)
+                self.assertEqual(report["tests_run"], count)
+                self.assertEqual(report[field], count)
                 self.assertEqual(report["storage_fixture"], "not_run")
                 storage.assert_not_called()
 
@@ -336,7 +344,7 @@ class ResultTests(ProjectDirectory):
         self.assertEqual(code, 1)
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["storage_fixture"], "failed")
-        self.assertEqual(report["tests_run"], 147)
+        self.assertEqual(report["tests_run"], bundled_tests.MINIMUM_TEST_COUNTS["core"])
         self.assertEqual(report["errors"], 1)
 
     def test_invalid_interpreter_writes_failed_report_without_loading_suite(self):
@@ -404,7 +412,8 @@ class ResultTests(ProjectDirectory):
 
     def test_unsuccessful_result_without_failure_list_cannot_pass(self):
         result = SimpleNamespace(
-            testsRun=147, failures=[], errors=[], skipped=[], wasSuccessful=lambda: False)
+            testsRun=bundled_tests.MINIMUM_TEST_COUNTS["core"],
+            failures=[], errors=[], skipped=[], wasSuccessful=lambda: False)
         with patch.object(unittest.TextTestRunner, "run", return_value=result):
             code, report, storage, _ = self.run_main()
         self.assertEqual(code, 1)
@@ -413,15 +422,16 @@ class ResultTests(ProjectDirectory):
 
     def test_late_source_mismatch_keeps_actual_test_counts_and_fails(self):
         error = bundled_tests.BundledTestsError("late module mismatch")
+        count = bundled_tests.MINIMUM_TEST_COUNTS["process"]
         with patch.object(bundled_tests, "validate_runtime", return_value=self.core), \
                 patch.object(bundled_tests, "load_suite",
-                             return_value=Mock(countTestCases=Mock(return_value=44))), \
+                             return_value=Mock(countTestCases=Mock(return_value=count))), \
                 patch.object(unittest.TextTestRunner, "run", return_value=SimpleNamespace(
-                    testsRun=44, failures=[], errors=[], skipped=[], wasSuccessful=lambda: True)), \
+                    testsRun=count, failures=[], errors=[], skipped=[], wasSuccessful=lambda: True)), \
                 patch.object(bundled_tests, "verify_test_sources", side_effect=error), \
                 redirect_stderr(io.StringIO()):
             report = bundled_tests.run_suite(self.app, "process")
-        self.assertEqual((report["status"], report["tests_run"], report["errors"]), ("failed", 44, 1))
+        self.assertEqual((report["status"], report["tests_run"], report["errors"]), ("failed", count, 1))
 
     def test_report_write_failure_returns_nonzero(self):
         with patch.object(Path, "write_text", side_effect=OSError), \

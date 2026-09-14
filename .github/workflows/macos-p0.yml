@@ -46,13 +46,13 @@ jobs:
           tests.test_codex_config_darwin_contract tests.test_codex_catalog_darwin_contract
           tests.test_result_rules tests.test_storage
           tests.test_history tests.test_history_owner_contract
-          tests.test_config_rules
+          tests.test_config_rules tests.test_config_store tests.test_config_owner_contract
           tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
-      - name: Native config and catalog process lifecycle with bundled Python (synthetic only)
+      - name: Native provider and repository owner lifecycle with bundled Python (synthetic only)
         run: >-
           tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
           tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app

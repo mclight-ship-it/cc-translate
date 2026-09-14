@@ -17,6 +17,21 @@ import cc_history
 from cc_macos import history_fixture, history_owner as native
 
 
+@contextmanager
+def darwin_owner(module):
+    fake_os = SimpleNamespace(
+        O_CREAT=os.O_CREAT, O_RDWR=os.O_RDWR, O_CLOEXEC=0x100000,
+        O_NOFOLLOW=0x200000, getpid=Mock(return_value=os.getpid()),
+        open=Mock(return_value=701), close=Mock(),
+        fstat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600)),
+    )
+    flock = SimpleNamespace(LOCK_EX=2, LOCK_NB=4, LOCK_UN=8, flock=Mock())
+    with patch.object(module, "sys", SimpleNamespace(platform="darwin")), \
+            patch.object(module, "os", fake_os), \
+            patch.dict(sys.modules, {"fcntl": flock}):
+        yield fake_os, flock
+
+
 class TestHistoryOwnerContract(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix=".cc-history-contract-", dir=Path.cwd())
@@ -24,19 +39,8 @@ class TestHistoryOwnerContract(unittest.TestCase):
         self.root = Path(directory.name).resolve()
         self.path = self.root / "history \u4e2d # %.json"
 
-    @contextmanager
     def darwin(self):
-        fake_os = SimpleNamespace(
-            O_CREAT=os.O_CREAT, O_RDWR=os.O_RDWR, O_CLOEXEC=0x100000,
-            O_NOFOLLOW=0x200000, getpid=Mock(return_value=os.getpid()),
-            open=Mock(return_value=701), close=Mock(),
-            fstat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600)),
-        )
-        flock = SimpleNamespace(LOCK_EX=2, LOCK_NB=4, LOCK_UN=8, flock=Mock())
-        with patch.object(native, "sys", SimpleNamespace(platform="darwin")), \
-                patch.object(native, "os", fake_os), \
-                patch.dict(sys.modules, {"fcntl": flock}):
-            yield fake_os, flock
+        return darwin_owner(native)
 
     def test_import_does_not_load_platform_ui_providers_or_touch_home(self):
         sources = [compile(Path(module.__file__).read_text(encoding="utf-8"),

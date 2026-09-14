@@ -72,6 +72,37 @@ DEFAULT_CONFIG = {
 }
 
 
+def coerce_config(config, *, strict=False):
+    """Apply the shared field conversions; explicit strict callers reject failed conversions."""
+    for key, default in DEFAULT_CONFIG.items():
+        if key not in config:
+            config[key] = default
+            continue
+        value = config[key]
+        try:
+            if isinstance(default, bool):
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    config[key] = bool(value)
+                elif isinstance(value, str):
+                    config[key] = value.strip().lower() in ("1", "true", "yes", "on")
+                elif strict:
+                    raise TypeError("config_boolean_value_required: " + key)
+                else:
+                    config[key] = default
+            elif isinstance(default, int):
+                config[key] = int(value)
+            elif isinstance(default, float):
+                config[key] = float(value)
+            elif isinstance(default, str):
+                config[key] = value if isinstance(value, str) else str(value)
+        except (TypeError, ValueError):
+            if strict:
+                raise
+            config[key] = default
+
+
 class Config(dict):
     """Typed, self-validating view over the user config.
 
@@ -132,30 +163,7 @@ class Config(dict):
         """Force every known key to the type of its default; on mismatch that
         can't be coerced, fall back to the default rather than keep a value
         that would break a downstream widget."""
-        for key, default in DEFAULT_CONFIG.items():
-            if key not in self:
-                self[key] = default
-                continue
-            value = self[key]
-            try:
-                if isinstance(default, bool):
-                    # bool is a subclass of int, so test it before int.
-                    if isinstance(value, bool):
-                        continue
-                    if isinstance(value, (int, float)):
-                        self[key] = bool(value)
-                    elif isinstance(value, str):
-                        self[key] = value.strip().lower() in ("1", "true", "yes", "on")
-                    else:
-                        self[key] = default
-                elif isinstance(default, int):
-                    self[key] = int(value)
-                elif isinstance(default, float):
-                    self[key] = float(value)
-                elif isinstance(default, str):
-                    self[key] = value if isinstance(value, str) else str(value)
-            except (TypeError, ValueError):
-                self[key] = default
+        coerce_config(self)
 
     # ---- Typed accessors (optional convenience; the dict API still works) ----
     @property

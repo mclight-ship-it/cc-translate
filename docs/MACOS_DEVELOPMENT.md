@@ -54,6 +54,9 @@ cc_result_rules.py           P1 缓存签名/history-kind；只接 caller-resolv
 cc_storage.py                P1 显式 Mac 路径与单文件原子 JSON；不选默认 home，不是唯一 writer
 cc_history.py                P1 共享历史仓库；Windows 原入口复用，单进程统一操作锁与严格默认读取
 cc_config.py                 P1 无 I/O 的单一默认/Config/迁移计划；不提供配置 owner/磁盘迁移服务
+cc_config_store.py           P1 显式配置仓库；严格 load/raw 迁移/独立 save 快照，共用操作锁
+cc_macos/file_owner.py       P1 history/config 共用稳定侧文件锁、fork guard 和显式 close
+cc_macos/config_owner.py     P1 显式 home + bundle ID 的 Mac 配置 owner；不创建数据目录
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -133,16 +136,33 @@ Mac 必须显式构造 `MacHistoryOwner`，在 caller-owned 目录对稳定 `.lo
 JSON replace/clear 不替换或删除侧文件，close 与操作互斥，close 后拒绝写入，fork 继承对象拒绝操作。
 只在显式 Darwin 构造时导入 fcntl；损坏/读取错误直接传播，不当空历史覆盖。异常/崩溃接管已用真实
 包内合成进程验证，但锁是协作式，不是抵御恶意目录替换的权限系统。单进程仓库本身不是跨进程锁。
-现有 helper 的业务历史接线、配置唯一 writer/迁移仍未实现；新 history fixture 由 CI 单独显式调用，
+现有 helper 的业务历史接线仍未实现；history fixture 由 CI 单独显式调用，
 Foundation 集成继续验证原 helper 通道，不宣称已有新的历史 IPC 或用户数据服务。
-无 I/O 配置规则现移到 `cc_config`：CFG、DEFAULT_CONFIG 与整个 Config 类保留抽取前 AST，
-Windows 导出同一常量/默认 dict/Config 对象，`_coerce` 和 typed accessors 保留；
+无 I/O 配置规则已移到 `cc_config`，原始抽取时类/常量 AST 一致。本轮仅将 `_coerce` 循环提取为
+单一 `coerce_config`；冻结旧方法恢复原类后仍核对原指纹，并继续真实 Windows 差分。
+Windows 导出同一常量/默认 dict/Config 对象，`_coerce` 默认容错策略和 typed accessors 保留；
 未知键与嵌套对象身份、字段顺序、缺省语言键和原转换异常范围不改。
 `load_config` 仍在原 Windows 路径读取和记录错误，但实际调用共享 `plan_config_migration(raw, cfg)`。
 计划只补原 raw 副本的 UI/Labs 标记和 streaming 字段，并按旧逻辑升级显式 cfg 的 streaming 开关；
 不会把全部归一化字段写盘，最多原 save 入口一次，保存失败仍保留旧盘/返回已迁移内存。
-这是规则共享，不是 Mac 配置持久化或线程安全保证；真实用户文件选择、迁移文件服务、
-配置 owner、后台共享 cfg 与 UI 保存竞争、唯一业务 helper 接线均未在本切片实现。
+新 `ConfigRepository` 将读取、严格规范化、raw 迁移计划和必要原子写入放在同一操作锁内，
+只有打开时明确缺失返回默认且不写配置文件；损坏 JSON、非 dict、编码/权限/转换/迁移写失败原样抛出。
+新服务用同一转换循环的 strict 模式，TypeError/ValueError 不回退后写盘；Windows 默认模式不变。
+`load()` 返回新 Config 派生视图，不缓存内部可变 cfg；`save(dict)` 返回 None，写独立 JSON 快照，
+不把 normalized Config 或迁移标记自动混入显式保存。快照采用 Python JSON 往返：
+tuple/可序列化键按 JSON 规则转换，非有限数沿用既有 writer 语义；非法业务字段可原样保存，
+但后续严格 load 会显式拒绝。调用方不得在创建快照过程中并发修改输入。
+
+Mac 的 `MacConfigOwner(home, application_id)` 用显式绝对 home/已验证应用身份选择
+Application Support 下的 `config.json`，调用方先创建目录并用 context/close 管理生命周期。
+不读取默认 HOME、不扫描/迁移旧 Windows 文件，不在失败后转写 bundle 或仓库。
+history/config 共用稳定侧文件所有权原语；config 的 `config.json.lock` 不随 replace 删除，
+第二 owner 非阻塞拒绝，close 与整个操作互斥，关闭后拒绝操作，fork 子不 unlock 父。
+获取 owner 可创建侧文件，但缺失配置的 load 不创建 JSON；协作式锁不是恶意篡改权限沙箱。
+本轮服务验证以 TODO 为准；只在包内临时 home + 实际 Info.plist 身份的合成 fixture/测试调用，
+未接业务 helper 协议/设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
+真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、唯一业务 helper 接线/
+完整请求快照仍未完成；本 owner 不解决整个 App 的可变状态所有权。
 Windows WinError 5 的已有复核和实际旧 writer 对照均失败，拒绝来源仍未知；
 不以纯规则/旧三系统成功覆盖该阻断，不新增重试或弱化旧测试。最新实际验收见 TODO。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，

@@ -1,6 +1,7 @@
 """Portable configuration contracts, including the frozen pre-extraction load plan."""
 
 import ast
+import copy
 import hashlib
 import inspect
 import io
@@ -13,8 +14,38 @@ from unittest import mock
 import cc_config as rules
 
 
-# The moved class/constants are checked against the existing pre-extraction AST
-# fingerprints. This old loader remains independent of the new plan function.
+# Restore only the extracted coercion method, then verify the unchanged original
+# class fingerprint. The old class/loader never call the new conversion helper.
+LEGACY_COERCE_SOURCE = '''
+def _coerce(self):
+    """Force every known key to the type of its default; on mismatch that
+        can't be coerced, fall back to the default rather than keep a value
+        that would break a downstream widget."""
+    for key, default in DEFAULT_CONFIG.items():
+        if key not in self:
+            self[key] = default
+            continue
+        value = self[key]
+        try:
+            if isinstance(default, bool):
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    self[key] = bool(value)
+                elif isinstance(value, str):
+                    self[key] = value.strip().lower() in ("1", "true", "yes", "on")
+                else:
+                    self[key] = default
+            elif isinstance(default, int):
+                self[key] = int(value)
+            elif isinstance(default, float):
+                self[key] = float(value)
+            elif isinstance(default, str):
+                self[key] = value if isinstance(value, str) else str(value)
+        except (TypeError, ValueError):
+            self[key] = default
+'''
+
 LEGACY_LOAD_SOURCE = '''
 def load_config() -> "Config":
     cfg = Config()
@@ -73,11 +104,21 @@ def _ast_hash(node):
     return hashlib.sha256(serialized.encode("ascii")).hexdigest()
 
 
+def legacy_class(node):
+    restored = copy.deepcopy(node)
+    old_method = ast.parse(LEGACY_COERCE_SOURCE).body[0]
+    restored.body = [old_method if isinstance(method, ast.FunctionDef) and method.name == "_coerce"
+                     else method for method in restored.body]
+    assert _ast_hash(restored) == BASELINE_CONFIG_AST["Config"]
+    return restored
+
+
 def legacy_namespace(**overrides):
-    source = inspect.getsource(rules.Config)
-    assert _ast_hash(ast.parse(source).body[0]) == BASELINE_CONFIG_AST["Config"]
+    tree = ast.parse(inspect.getsource(rules.Config))
+    tree.body[0] = legacy_class(tree.body[0])
+    tree.body.extend(ast.parse(LEGACY_LOAD_SOURCE).body)
     values = {"CFG": rules.CFG, "DEFAULT_CONFIG": rules.DEFAULT_CONFIG, "json": json}
-    exec(compile(source + "\n" + LEGACY_LOAD_SOURCE, "<frozen-config-reference>", "exec"), values)
+    exec(compile(ast.fix_missing_locations(tree), "<frozen-config-reference>", "exec"), values)
     values.update(overrides)
     return values
 
@@ -107,6 +148,8 @@ class ConfigRuleTests(unittest.TestCase):
                 name = node.targets[0].id
             if name in BASELINE_CONFIG_AST:
                 with self.subTest(name=name):
+                    if name == "Config":
+                        node = legacy_class(node)
                     self.assertEqual(_ast_hash(node), BASELINE_CONFIG_AST[name])
 
     def test_plan_statements_are_the_old_loader_statements(self):

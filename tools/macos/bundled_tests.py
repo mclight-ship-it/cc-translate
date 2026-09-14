@@ -19,6 +19,7 @@ PROCESS_TEST_MODULES = (
     "test_codex_config_process",
     "test_codex_catalog_process",
     "test_history_owner_process",
+    "test_config_owner_process",
 )
 CORE_TEST_MODULES = (
     "test_classify",
@@ -33,9 +34,11 @@ CORE_TEST_MODULES = (
     "test_storage",
     "test_history",
     "test_config_rules",
+    "test_config_store",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
-MINIMUM_TEST_COUNTS = {"process": 44, "core": 147}
+TEST_SUPPORT_MODULES = {"process": ("owner_process_support",), "core": ()}
+MINIMUM_TEST_COUNTS = {"process": 63, "core": 183}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
@@ -43,6 +46,11 @@ PROCESS_BUNDLE_MODULES = (
     "cc_history",
     "cc_macos.history_owner",
     "cc_macos.history_fixture",
+    "cc_config",
+    "cc_config_store",
+    "cc_macos.file_owner",
+    "cc_macos.config_owner",
+    "cc_macos.config_store_fixture",
 )
 CORE_BUNDLE_MODULES = (
     "cc_classify",
@@ -56,6 +64,7 @@ CORE_BUNDLE_MODULES = (
     "cc_macos.storage_fixture",
     "cc_history",
     "cc_config",
+    "cc_config_store",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 
@@ -120,7 +129,7 @@ def test_directory(suite_name):
 
 def verify_test_sources(suite_name):
     directory = test_directory(suite_name)
-    for name in SUITE_MODULES[suite_name]:
+    for name in (*TEST_SUPPORT_MODULES[suite_name], *SUITE_MODULES[suite_name]):
         verify_module_source(name, sys.modules.get(name), directory)
 
 
@@ -128,7 +137,7 @@ def load_suite(suite_name, core):
     verify_core_sources(core)
     for name in BUNDLE_MODULES[suite_name]:
         import_core_module(name, core)
-    for name in SUITE_MODULES[suite_name]:
+    for name in (*TEST_SUPPORT_MODULES[suite_name], *SUITE_MODULES[suite_name]):
         module = importlib.import_module(name)
         verify_module_source(name, module, test_directory(suite_name))
     suite = unittest.defaultTestLoader.loadTestsFromNames(SUITE_MODULES[suite_name])
