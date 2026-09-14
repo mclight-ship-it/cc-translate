@@ -9,6 +9,7 @@ final class HelperIntegrationTests: XCTestCase {
         private(set) var events: [ServerEvent] = []
         private(set) var failures: [ProbeError] = []
         private var terminals: [String: XCTestExpectation] = [:]
+        private var starts: [String: XCTestExpectation] = [:]
         private(set) var connection: HelperConnection!
 
         init() {
@@ -19,6 +20,7 @@ final class HelperIntegrationTests: XCTestCase {
                     case .event(let event):
                         self.events.append(event)
                         if event.type == "ready" { self.ready.fulfill() }
+                        if event.type == "started" { self.starts[event.id]?.fulfill() }
                         if event.isTerminal { self.terminals[event.id]?.fulfill() }
                     case .failure(let error): self.failures.append(error)
                     case .stopped: self.stopped.fulfill()
@@ -30,6 +32,12 @@ final class HelperIntegrationTests: XCTestCase {
         func terminal(_ id: String) -> XCTestExpectation {
             let expectation = XCTestExpectation(description: "configuration request terminal")
             terminals[id] = expectation
+            return expectation
+        }
+
+        func started(_ id: String) -> XCTestExpectation {
+            let expectation = XCTestExpectation(description: "business request started")
+            starts[id] = expectation
             return expectation
         }
 
@@ -642,14 +650,30 @@ final class HelperIntegrationTests: XCTestCase {
         successor.assertOperation("history")
         XCTAssertEqual(successor.result("config")?.payload["config"]?.object?["font_size"], .integer(21))
         XCTAssertEqual(try successor.historyEntries("history"), try owner.historyEntries("live"))
+        let clearStarted = successor.started("clear")
         let cleared = successor.terminal("clear")
         successor.connection.clearHistory(id: "clear")
+        await fulfillment(of: [clearStarted], timeout: 10)
         successor.connection.stop()
         await fulfillment(of: [cleared, successor.stopped], timeout: 10, enforceOrder: true)
         successor.assertOperation("clear")
         XCTAssertEqual(successor.events.last?.type, "completed")
         XCTAssertTrue(successor.events.last?.payload.isEmpty == true)
-        XCTAssertTrue(successor.failures.isEmpty, "Normal stop must drain the pending history write")
+        XCTAssertTrue(successor.failures.isEmpty, "Normal stop must drain the started history write")
+        let historyFile = context.config.deletingLastPathComponent().appendingPathComponent("history.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: historyFile.path))
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        reopened.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let empty = reopened.terminal("empty")
+        reopened.connection.loadHistory(id: "empty")
+        await fulfillment(of: [empty], timeout: 10)
+        reopened.assertOperation("empty")
+        XCTAssertEqual(try reopened.historyEntries("empty"), [])
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty)
     }
 
     @MainActor

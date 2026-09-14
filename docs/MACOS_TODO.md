@@ -1700,3 +1700,10 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
   原配置IPC的目录库存仍只期待config两个文件，未同步业务连接现在持有的`history.json.lock`。
   新13项history真进程均通过；不把后置Foundation/core/smoke或未运行的14/26填成成功。
   修正为精确三文件集合并额外断言未创建history.json，不删除/放松库存保护、不删除稳定侧文件。
+- 库存修复`7a8250d`的针对性清单33项 / 0.852s及正常完整Windows hook
+  **1306项 / 76.357s，OK**。随后[run34814743999](https://github.com/mclight-ship-it/cc-translate/actions/runs/34814743999)
+  包内89进程全部通过，8项强制Foundation实际运行，其中历史竞争方法有2条关联断言失败：
+  测试在clear尚未started时立即stop，却假设一定completed；实际accepted/cancelled是既定queued取消合同。
+  修正测试为先观察真实started事件再stop，仍严格要求accepted/started/completed及0/1/2；
+  新增清空后文件不存在、再次连接取得双owner并读到空历史。没有把两种终态都放行或改生产取消策略。
+  受控进行中fsync/EOF/shutdown的强并发证明仍由真实进程屏障用例覆盖，不用事件观察冒充文件操作屏障。
