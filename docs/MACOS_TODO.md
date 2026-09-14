@@ -152,6 +152,8 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [ ] Windows 历史矩阵偶发原子替换拒绝访问的根因：2026-09-14 二十轮复核已复现，
     不是全部通过；新旧历史路径的单次 `os.replace` 均观察到 WinError 5。
     见[复核与阻断记录](#历史矩阵二十轮复核2026-09-14)，未用重试或削弱断言规避。
+    后续[实际旧 writer 对照](#抽取前后实际-writer-有界对照2026-09-14)也复现，不能归因于未关闭 FD，
+    但拒绝来源仍未知，不标解决。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1184,6 +1186,54 @@ python -B -m unittest -v tests.test_history tests.test_history_windows tests.tes
   本次仅文档收尾，正常 privacy/docs-only hooks 提交/push；不重跑不变源码三系统 CI，
   不以旧绿色 [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072)
   抹掉本次 Windows 失败，也不将旧 `eec92a5` 用户实测赋给新包。
+
+### 抽取前后实际 writer 有界对照（2026-09-14）
+
+补足上次“旧 history 仍使用当前共享 writer”的证据缺口，只做本地合成诊断，不改变生产或原矩阵。
+
+- 测试 HEAD **242e29103903f27587825e3b6287e36178c749e2**，当前 `cc_storage.py` blob
+  `266c1d0100cdb4f779a9586aedec01b9dad3e398`。
+  从 **84ab360^ = 5ecc98770742b7f387e9dfa9d8e341ef153407e9** 的 `translator.pyw`
+  （blob `b841723087550b3a6a977883bdd302299e084d6e`）仅提取实际 `_atomic_write_json` FunctionDef，
+  原 AST 编译执行，注入其原有 os/tempfile/json/Any 依赖；不导入旧 UI/`cc_core`，不改函数体或 FD 流程。
+  冻结函数源码 SHA-256 `2b131f241c48e46d6a6b2d4917850ebbc6ec334779846b472c9707dd66968b4c`，
+  无位置属性 AST SHA-256 `5edf01d6bc590e474b71fb66566d074d3aa8ee9a4f56f5c0f49718970a605c1b`。
+- 继续用现有 Python **3.12.10 / AMD64 unittest runner**，会话外诊断 TestCase；
+  复用原矩阵 224 组合的循环规模，但每次都传**同一个固定合成 payload**（719 字节、含 Unicode/换行）。
+  每轮两个 writer 共享同一临时目录内同一个 `history.json`，每对交错旧→新/新→旧顺序，
+  各自仍创建自己的唯一临时 JSON。20 轮都完整执行，失败后不提前结束或重试。
+  payload 字节 SHA-256 `488e56ae347a4ec6f662c921fffe1ef74e3f6b2ac17326f5880b0095a9ee0089`。
+  这是专门的 writer 对照，不将它冒称原 89 项套件再次通过。
+
+| 实际执行 | 旧 `_atomic_write_json` | 当前 `cc_storage.atomic_write_json` |
+|---|---|---|
+| 轮次 / 真 writer 调用 / 真 `os.replace` 调用 | 20 / 4,480 / 4,480 | 20 / 4,480 / 4,480 |
+| 实际 `PermissionError` / errno 13 / WinError 5 | 1 次：round 4 / pair 53 | 2 次：round 6 / pair 146、round 19 / pair 43 |
+| replace 前 stream.closed / 原 FD 的 fstat | 全部 true / EBADF(9) | 全部 true / EBADF(9) |
+| 清理及目标字节检查 | 全部通过 | 全部通过 |
+
+- unittest 总计 **20 tests / 49.992s，3 failures，0 errors/skip，exit 1**；
+  总计 **8,960 次**实际调用和逐次轨迹，不是 8,960 个 unittest。
+  在此之前仅做旧/新各一次成功的合成 profile 能力探针，不计入以上固定轮次。
+- 不 mock/wrap `os.replace`，不替换 os.close/fdopen；通过 `sys.setprofile` 观察原 C 调用/返回。
+  旧路径实际顺序：flush → fsync → `__exit__` 返回 → replace；
+  当前路径：flush → fsync → `__exit__` 返回 → 显式 os.close 返回 → replace。
+  每次 replace 入口只调用 fstat 观察原 fd，得到 EBADF，未替它打开/关闭描述符；
+  三次失败也具有该完整证据，**不是“新 writer 到 replace 时尚未 close”**。
+  profile 有观察开销，不能用这些少量错误数量推断哪种实现更可靠或故障发生率。
+- 两实现成功后与失败后目标都仍等于固定 payload、无本操作临时文件残留；
+  因前后 payload 相同，这只说明目标完整且错误后的清理符合观察，
+  **不能把失败写入算成功，也不据此判定该次 replace 已提交**。所有真实异常均作为失败保留。
+- **结论仅为：此现象可跨 84ab360 的 writer 抽取重现。** 旧函数原样执行也失败，
+  目前没有确定的项目 FD/生命周期缺陷可修；不推断系统/杀毒软件根因，不排除尚未定位的问题，
+  不删除或改绿前一轮失败。拒绝来源仍未定位，根因待办继续未完成。
+  本次到非侵入式合成进程观察边界为止；不安装主机监控工具、不提权、不采集全机路径，
+  不开展未经授权的进一步监控，也不新增生产重试、配置代码或其它功能。
+- 固定源码/AST、payload/hash、20 份逐调用 JSONL、完整 runner 日志、三次异常栈和汇总保留在本地会话证据；
+  测试临时目录及执行脚本清理，公开文档不带原始主机路径或用户数据。
+  本次只文档正常 hooks 提交/push，源码不变，不新增 Mac CI 或制品；
+  三系统源码仍为 `c78d8ee` / [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072)，
+  旧绿色工程证据不覆盖本次 Windows 失败。
 
 ### 下一配置持久化候选（只读调查，尚未开放实施）
 
