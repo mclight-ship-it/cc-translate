@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 历史owner已验，无I/O配置规则共享推进中，完整平台验收待办
+## macOS 原生移植 — 无I/O配置规则已共享并经三系统验证，Windows写入阻断保留
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -27,8 +27,11 @@ Mac 显式 owner 使用稳定侧文件协作锁，真实包内竞争、replace/c
 Mac 坏文件/读取错误不当空历史覆盖。没有新增历史业务 IPC 或按钮，也未接触真实用户数据。
 Windows 原子替换偶发 WinError 5 的二十轮复核及实际旧/新 writer 对照已复现，拒绝来源仍未知；
 错误与根因阻断保留，不加生产重试，不将旧成功证据等同于当前稳定性已解决。
-当前单一切片把默认/Config 规范化与迁移计划移到无 I/O 共享模块，实际接 Windows Config/load_config，
+当前单一切片已把默认/Config 规范化与迁移计划移到无 I/O 共享模块，实际接 Windows Config/load_config，
 保持原类型/未知字段/磁盘 payload，只随包合成验证，不新增用户文件/配置 UI。
+源码 `7770b70` / [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
+同包三系统各147核心（新增19配置规则）/44进程/1强制Foundation通过；正常完整Windows hook1194通过。
+该成功不覆盖此前targeted的WinError5失败，稳定性根因仍待诊断；固定制品/hash和所有失败见TODO。
 完整请求快照、配置 owner/迁移文件服务/线程安全、历史业务 helper 唯一入口与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 

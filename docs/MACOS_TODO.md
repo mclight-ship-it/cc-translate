@@ -149,6 +149,10 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 共享历史仓库与 Windows 兼容入口、add/clear 统一锁、Mac 显式跨进程 owner；
     源码 `c78d8ee` / [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072) 三系统通过，
     详见末尾历史仓库证据。仅历史 I/O，不等于整个配置/历史服务或业务 helper 接线。
+  - [x] 无 I/O 配置默认/Config 与 raw 迁移计划共享，Windows 真实入口接线；
+    源码 `7770b70` / [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
+    同包三系统通过，正常完整 Windows hook 1194 项通过，见[配置规则证据](#配置规则自动化检查点)。
+    针对性运行仍出现 WinError 5，失败保留；仅规则依赖完成，不是配置 owner/持久化或线程安全完成。
   - [ ] Windows 历史矩阵偶发原子替换拒绝访问的根因：2026-09-14 二十轮复核已复现，
     不是全部通过；新旧历史路径的单次 `os.replace` 均观察到 WinError 5。
     见[复核与阻断记录](#历史矩阵二十轮复核2026-09-14)，未用重试或削弱断言规避。
@@ -1266,13 +1270,13 @@ python -B -m unittest -v tests.test_history tests.test_history_windows tests.tes
    启动后台任务与 UI 保存所有权和 Mac 合成入口。完整服务、RequestSnapshot/provider/UI 不在本次内，
    此建议未执行，也不因付费签名成为不可独立推进项。
 
-### 无 I/O 配置规则切片（2026-09-14，实施中）
+### 无 I/O 配置规则切片（2026-09-14）
 
-1. [ ] 单一 `cc_config` 常量/Config/迁移计划来源，Windows 真实 Config/load_config 接线，
+1. [x] 单一 `cc_config` 常量/Config/迁移计划来源，Windows 真实 Config/load_config 接线，
    保留 dict 子类、字段/对象身份、原异常范围、内存与 raw 磁盘写回区别和最多一次 save。
-2. [ ] 冻结旧实现/AST 差分、类型/边界/marker/未知键/失败及真实 Windows 消费者回归；
+2. [x] 冻结旧实现/AST 差分、类型/边界/marker/未知键/失败及真实 Windows 消费者回归已接入并实际执行；
    同源模块与测试进入包内 isolated Python，验证零环境/用户文件/平台导入副作用。
-3. [ ] 正常针对性/完整 hooks、免费同包 15/14/26 CI，记录新测试真实发现、资源审计与固定 SHA。
+3. [x] 正常针对性/完整 hooks、免费同包 15/14/26 CI 已执行；以下分别记录失败与成功，不混称全绿。
 
 WinError 5 拒绝来源仍未定位，前述原 writer 对照失败保留；不加生产重试或改绿旧矩阵。
 仅纯规则可以继续独立验证，不等于配置持久化、线程安全、Mac config owner 或业务 helper 已完成；
@@ -1287,3 +1291,63 @@ WinError 5 拒绝来源仍未定位，前述原 writer 对照失败保留；不�
   本次不是“targeted 全绿”，拒绝来源仍未知，不猜测与旧现象具有同一个外部原因。
   已保留完整日志，不换目录、不清日志规避、不削弱断言或重复运行直到成功。
   新纯规则及修正后的 runner 负例执行正常；后续仅按原授权尝试正常完整 hooks，结果另记。
+
+### 配置规则自动化检查点
+
+- 源码 **7770b704f05890b60b734a3dc0652f674847c960**。原 `CFG`、`DEFAULT_CONFIG`、整个
+  `Config` 类（包括 `_coerce`、typed accessors）与抽取前 AST 相同；不是复制两份默认目录。
+  Windows `cc_core`/入口导出相同对象，公开 Config factory/save/日志/atomic writer seam 保留。
+  迁移计划显式收 raw 与已构造 cfg，只进行原五段迁移语句，最多写一次 raw 副本；
+  缺失语言键、字段顺序/未知嵌套对象身份、marker“缺失”而非真假判断、旧 model/provider 同步、
+  mini→auto-fast、原 TypeError/ValueError 捕获与 OverflowError 传播不变。
+- 新纯规则 **19 项**，包含 **468 组**类型差分与 **99 组**内存/raw 计划对照；
+  原 class/constants AST 固定指纹、冻结旧 load 函数、计划语句 AST 同步验证。
+  新 Windows **10 项**真实入口/字节/写入次数/失败/patch seam 回归；
+  零副作用测试在 isolated 子进程禁止环境访问、平台/provider 导入、用户文件访问和写入。
+  共享模块仅增加一个必需资源，不增加 IPC/runtime JSON、文件 owner 或用户操作。
+- 上述两次 targeted 失败完整保留；之后**仅一次正常完整 pre-push**，
+  privacy/编译及 **1194 tests，OK，67.382s**，无 failure/skip，正常允许 push。
+  包含新 29 项、原 ConfigPersistence/ConfigWrapper/AtomicWrites/存储/历史/全 Windows 消费者。
+  这不是重复 targeted 直到通过，也不能将该次完整成功解释为 WinError 5 根因已解决。
+- [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
+  **attempt 1，success**，三 jobs 的全部 steps success；未重跑等价源码。
+
+| 实际 job / 工具链 | 便携/普通 Swift | 包内进程 | 包内核心 | 强制 Foundation 集成 |
+|---|---|---|---|---|
+| [producer 103845130717](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/job/103845130717)，15.7.9 / 24G830 arm64，Xcode16.4 / 16F6，SDK15.5 | **318 / 6.953s**；Swift **35总数=34pass+初次skip1 / 9.316s** | **44 / 57.171s** | **147 / 1.095s** | **1 / 2.653s** |
+| [runtime 103845610219](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/job/103845610219)，14.8.9 / 23J631 arm64，harness Xcode16.2 / 16C5032a，SDK15.2 | 不重建产品 | **44 / 57.712s** | **147 / 1.374s** | **1 / 3.120s** |
+| [runtime 103845610264](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/job/103845610264)，26.6.2 / 25G83 arm64，harness Xcode26.6 / 17F113，SDK26.5 | 不重建产品 | **44 / 53.502s** | **147 / 0.955s** | **1 / 2.428s** |
+
+producer/runtime26 image `20260907.0337.1` / `20260907.0351.1`，runtime14 image `20260831.0302.1`。
+三系统日志中新增 **19 项 ConfigRuleTests** 均逐项 `ok`，名称集合一致，非空发现且全部实际执行；
+包内/后置均 **0 failures/errors/skips**。原 44 项 synthetic 进程、历史/存储显式临时入口、
+HTTPS/SQLite/取消/EOF/资源审计及 App 不可变均通过；不把 producer 初次集成 skip 算通过。
+
+#### 配置规则制品与限制
+
+- [唯一 App artifact 10331488395](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/artifacts/10331488395)，
+  API 核验有效，到期 **2026-09-21T03:11:31Z**。内层 `CCTranslateMac-P0.zip`
+  **18,366,347 字节**，SHA-256
+  **d92109ec4d51d90590294034474bdd775099b5cf59ad9b7caeae7b4ebd2a6fc9**。
+  外层 artifact digest `ccb3078f78070f2a34d06535a9fbe4479ac4f83047ce94b2632a3ba4a30b4094`
+  与内层 zip hash 分开，不混用。
+- 小报告 [Mac14 10331103518](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/artifacts/10331103518)
+  **2,393 字节**，到期 2026-09-21T03:13:47Z；
+  [Mac26 10331965382](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838/artifacts/10331965382)
+  **2,395 字节**，到期 2026-09-21T03:13:34Z。同 run/commit 的精确 producer 制品，
+  runtime 不重建/重签、不回退宿主 Python；没有重复上传整份 App。
+- 独立下载核验 **668 库存 / 58 资源 hash / 30 同源 Git blobs / 6 arm64 Mach-O / 19 runtime 许可证**，
+  新 `cc_config.py` 与固定源码及 manifest 必需资源一致；许可锁的必需子集为 10，实际保留 19 份，
+  原 full-build **605 文件**覆盖记录不变。应用自身许可仍沿用 manifest 的
+  `requires separate confirmation`，不把第三方许可等同项目授权或正式发布通过。
+  ZIP CRC/0755/所有相对链接、字节和清单审计通过；三系统及下载归档摘要均为
+  **e0598c8a65ed70ffa96cd310a36d104f8e2d4b0fc06f3ecc73b40fd6bc5cb529**。
+- 本地保留逐项日志、三个系统 JSON 和独立审计；下载 zip/临时审计脚本清理。
+  最终三份文档用 docs-only 正常 hooks 提交/push，最终文档 HEAD 与上述源码 SHA 分开报告，
+  不因文档重新运行未变源码 CI。
+
+**仅无 I/O 配置规则依赖完成。** Windows 写入偶发拒绝访问仍为显著未解决项，
+本轮 targeted 的失败没有删除或改绿；完整 hook/三系统通过也不保证下一次写入不会失败。
+Mac 配置 owner/迁移文件服务/全局配置锁、后台 cfg 竞态、业务 helper、完整 RequestSnapshot/provider/UI
+均不在本次内，整个 P0/P1/P2–P6 未完成。当前新包只有自动化证据，旧 `eec92a5` 用户报告不迁移；
+免费分发/零预算及真实 TCC/干净首开/CLI账号/Intel 边界不变，不要求现在重装或登录。
