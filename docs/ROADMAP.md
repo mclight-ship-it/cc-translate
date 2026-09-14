@@ -81,8 +81,16 @@ accepted→failed(seq1)曾被Swift误判为OutcomeUnknown；已仅为精确worke
 新增35快照方法在三系统各实际执行一次，675库存/65资源/37源码路径与不可变核验通过。
 全部真实失败、[制品/hash与限制](MACOS_TODO.md#request-snapshot-checkpoint) 持久化，
 源码与后续docs-only身份分离。此处完成的是共享快照依赖与真实Windows消费者，
-尚不是Mac模型执行或完整翻译闭环；下一步按依赖继续Darwin provider执行/streaming/取消，
-然后接原生显式业务UI。用户旧配置迁移/全App配置线程安全仍未完成。
+该快照切片本身尚不是Mac模型执行或完整翻译闭环。
+随后 Darwin native Codex 内部后端已完成自动化：源码`13b6543` /
+[run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)，
+正常Windows hook1487通过；同包15.7.9/14.8.9/26.6.2每系统165进程/403核心/9精确Foundation，
+新增201方法逐名各执行一次，681库存/71资源/43源码路径及6实际Mach-O独立核验。
+复用native app-server而非exec fallback，显式环境/catalog、自有组、流式/取消/timeout/EOF
+已用真实合成CLI验证；[两次真实失败、修复和制品证据](MACOS_TODO.md#darwin-native-checkpoint)
+均保留。**翻译helper/Swift API与新翻译UI尚未接入，官方CLI账号/模型未运行**；
+下一步继续这条业务接线，再接原生显式交互，不等待用户重复授权。
+用户旧配置迁移/全App配置线程安全仍未完成。
 当前不要求用户重装或登录，不宣称整个P0/P1/P2–P6完成；旧WinError5未知风险继续保留。
 
 ## 术语表 / 风格预设 — 待办，独立于移植

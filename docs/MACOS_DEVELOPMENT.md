@@ -11,7 +11,12 @@ macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Fo
 按最新连续授权，完整请求快照已接 Windows 派发/执行并通过同包三系统验证：
 源码 `8797fc7` / [run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)，
 Windows正常完整hook1357；每系统90进程/277核心/9精确Foundation，新35个快照方法逐项执行。
-Mac provider/新翻译 UI 尚未接入。旧Windows WinError5拒绝来源仍未知。
+Darwin native Codex 后端随后已通过同包三系统：
+源码 `13b6543` / [run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)，
+正常Windows完整hook1487；每系统165进程/403核心/9精确Foundation，
+新增201个进程/核心方法逐名各执行一次。**这是内部native后端，翻译helper/Swift API和新翻译UI
+尚未接入；未调用官方CLI/账号/真实模型。** 下一步继续显式翻译业务接线，不等待用户重新授权。
+旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -67,6 +72,8 @@ cc_macos/config_owner.py     P1 显式 home + bundle ID 的 Mac 配置 owner；�
 cc_macos/configuration.py    P1 显式配置/历史双owner连接生命周期、严格业务边界和固定错误码
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
+cc_providers/darwin_rpc.py   有界同步stdio；自有进程组、取消/deadline/EOF/FD生命周期
+cc_providers/codex_darwin.py 显式native Codex后端；复用app-server协议，无exec fallback
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
 tools/macos/                锁定运行时、组装 .app、静态制品检查及 smoke
 tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模块
@@ -83,11 +90,14 @@ tests/test_macos_*.py       使用仓库现有 unittest，直接导入便携模�
   不能创建/迁移 AppData。`cc_providers` 现在只直接导入纯 base/registry；
   CLI 后端导出在显式访问时才加载，Windows 仍获得原类/函数对象，导入失败原样传播。
   Mac 开发包保留 `__init__.py` / `base.py` / `registry.py` 及 native config reader、
-  Darwin 监督适配、原 instructions 资源及 catalog 实现，不携带旧 exec/app-server/Claude 后端。
+  Darwin 监督适配、原 instructions 资源及 catalog 实现。最新内部后端还携带原 Codex
+  CLI/JSONL/app-server 模块以复用协议和类定义；Darwin facade 只走 native app-server，
+  不执行旧 exec 路径、不 fallback，也不携带 Claude 后端。
   旧 storage fixture 仍以 `cli_simulated=true` 标明替代 CLI 输出、实际写入/重开临时缓存。
   新 `catalog_process_fixture` 则用包内 Python 真正运行合成 CLI 的 version/debug-models，
   经原 catalog 调用链验证冷缓存与重开；这不是运行用户官方 CLI，也不是放行真实用户 provider。
-  原 Windows Codex/Claude 后端的完整 POSIX 生命周期、用户官方 CLI/native 配置/账号兼容仍待验证。
+  新 native provider fixture 已通过真实合成 app-server 的初始化、无文本预热、
+  流式/非流式、提交前后取消/超时/EOF与后代清理；用户官方 CLI/账号兼容、Claude Darwin执行仍待验证。
   每次抽取保留兼容导出并跑 Windows 回归，不能据合成进程通过宣称完整 Mac provider 可用。
 - SwiftPM 是 P0 最小可重复编译入口，不引入工程生成器。发行 Bundle/资源由独立脚本组装；
   后续需要 XCUITest 时可增加 Xcode 测试宿主，不以未经编译的大量 UI 替代平台探针。
@@ -157,6 +167,30 @@ Mac 随包验证共享契约；本切片不增 helper operation、Swift 消息�
 新增反例先证明旧warm key会取错prompt，随后修复并通过，不以首次失败作成功。
 完整675库存/65资源/37源码路径及三系统相同archive/tree已核验，
 [精确计数、制品与限制](MACOS_TODO.md#request-snapshot-checkpoint) 以本检查点为准。
+
+### Darwin native Codex 内部执行边界
+
+`DarwinCodexProvider` 必须显式提供绝对 CLI/work/cache 路径、含绝对 HOME 的独立环境与日志接收器。
+构造不启动进程；工作目录在显式 home 内，catalog 扫描在该 home 停止，
+不从 ambient 环境补 CLI 配置。原 Windows 无新参数路径仍保持惰性 home、配置和日志语义。
+当前仅 text/translation_summary，无图像能力；不支持的任务明确拒绝且未提交。
+`complete` 也走 native app-server，不冒充 exec 兼容。固定0.146.0协议、原安全override/catalog、
+prompt/thread/turn/item身份严格检查；Mac拒绝全部已启用hook及工具/server request，不沿用Windows例外。
+
+RPC使用同步selector和nonblocking管道，8MiB每operation累计预算包含空行和已消费行；
+写时先排stdout以避免双向背压，每次有界检查取消/deadline。leader未reap时先清自有组再wait，
+不按进程名或裸PID事后补杀；stderr不存原文。未知callback/编程错误仍传播，
+已知I/O只输出固定码；selector异常也必须释放process owner，cleanup失败sticky且禁止再启动。
+前台/warm/关闭串行，前台可中断预热；预热不发query/turn，也不证明已认证。
+首次实际写turn字节即保守标记submitted，部分写入/丢响应不能假称未执行或自动重放。
+同线程重入明确拒绝；取消/超时不跳过真实后代清理。冻结快照用于实际后端测试，不含取消/UI对象。
+
+源码 `13b65433f9228175e6c49141ddbf7aa8d965d58a` 的同包三系统及
+[完整制品/hash/两次失败与修复](MACOS_TODO.md#darwin-native-checkpoint) 已记录。
+原9项Foundation仍覆盖诊断/config/history，**此后端检查点未增加翻译IPC或UI**。
+下一步将同一后端接显式业务连接与Swift API；普通启动、hello及诊断/config-only不自动运行CLI。
+合成测试与官方CLI安装/账号/真实模型、Finder/TCC/IME/多屏验收始终分开。
+当前不要求用户操作，不因付费签名资格冻结安全工程开发；旧WinError5未知风险不变。
 
 已完成的存储基础层用显式 home/应用身份分离 Application Support 与 Caches，
 路径解析不创建/迁移目录。身份沿用已校验 Info.plist，由调用方提供，不读取用户业务配置。

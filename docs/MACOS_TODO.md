@@ -32,25 +32,31 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
-<a id="request-snapshot-checkpoint"></a>
+<a id="darwin-native-checkpoint"></a>
 
-## 当前连续依赖：请求快照检查点已验证（2026-09-14）
+## 当前连续依赖：Darwin native 后端已完成自动化（2026-09-14）
 
-下一连续切片：Darwin native Codex 执行链（进行中）。快照源码 `8797fc7` / 文档 `b90cd7e`
+源码 **`13b65433f9228175e6c49141ddbf7aa8d965d58a`** /
+[run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)
+三个 jobs、33 个 steps 全部 success，attempt 1。**当前完成可调用 native 后端及真实合成
+进程验证，翻译 helper/Swift API 与原生翻译 UI 尚未接入，官方 CLI/账号/模型未运行。**
+下一连续切片是快照到该后端的显式翻译业务 IPC；不等待用户重新授权。
+前置快照源码 `8797fc7` / 文档 `b90cd7e`
 已获独立增量审查接受，不重复该源码 CI，也不等待用户再次授权。
 
-- [ ] 在已有 app-server 协议上接有界 Darwin stdio/自有组监督，覆盖提交前后取消、
+- [x] 在已有 app-server 协议上接有界 Darwin stdio/自有组监督，覆盖提交前后取消、
   timeout/EOF/早退/关闭和同组后代清理；不以 `exec` 代称 native app-server。
-- [ ] 显式环境/工作目录/catalog 及生命周期，复用 native config/hook/工具边界；
+- [x] 显式环境/工作目录/catalog 及生命周期，复用 native config/hook/工具边界；
   首个 Mac provider 只承诺已有安全 text 能力，未实现能力显式拒绝。
 - [ ] 快照→provider→显式 helper 业务→Swift 调用链，默认诊断启动仍零用户业务 I/O；
   真实临时 home/synthetic CLI 端到端回归，不只留未调用的传输类。
-- [ ] 正常 hooks、免费同包三系统、精确新增测试/来源/资源/清理和三文档证据。
+- [x] 本内部后端检查点的正常 hooks、免费同包三系统、精确新增测试/来源/资源/清理；
+  后续翻译 IPC 仍需独立源码、真实 Foundation 新方法及同包验证。
 - 真人边界仍独立：原P0 Finder/CLI只有候选发现与版本探针；没有官方账号/真实模型验证。
   新P2 UI/完整首次TCC/IME/多屏尚未验收，旧 `eec92a5` 探针结果不迁移到新包。
   这些不阻止安全实现和合成回归；实际需要安装/登录/首次权限时集中给最少人工步骤。
 
-本轮开发中事实（尚非新源码验收）：
+以下为开发时记录，保留当时未执行/失败状态，不代替末尾第三轮真实成功证据：
 
 - 显式 native facade 与有界传输/进程测试正在实现；新增模块尚未取得 Mac CI 结果，
   helper/Swift 翻译业务接口也尚未接线，不把后端原型称完整翻译。
@@ -113,6 +119,56 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   再计量前台调用；另加真实冷 version 超时必须不提交的独立反例。
   没有改生产 timeout、增加重试、伪造 submitted 或把旧失败改绿。
   新 process 下限 **165**，core **403**；仍须下一真实三系统执行。
+
+### 第三轮真实源码与独立完整 App 核验
+
+- 源码 **`13b65433f9228175e6c49141ddbf7aa8d965d58a`**，生产 native 后端仍同
+  `9ef1bb3`；后两次提交修正测试证明方式并增加真实冷预检超时反例，没有增加生产重试。
+- 最终 Windows 相关联合 **143 / 10.006s OK**；正常 privacy/编译/完整 pre-push
+  **1487 / 69.755s OK**，无失败/skip，保留既有 Tk teardown stderr。
+  前两次正常 hook 的 1487 / 75.891s 和 1487 / 71.823s 不混作此次计数。
+- [run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)
+  已实际等待并核对 API 全部成功；前两轮失败不改写为通过。
+
+| 系统 / harness | 真实 process | 真实 bundled core | 后置 Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 / Swift6.1.2 / SDK15.5 | 165 / 208.235s | 403 / 2.740s | 9 / 20.595s |
+| 14.8.9 / Xcode16.2 / Swift6.0.3 | 165 / 196.592s | 403 / 2.452s | 9 / 16.305s |
+| 26.6.2 / Xcode26.6 / Swift6.3.3 | 165 / 227.985s | 403 / 2.609s | 9 / 14.952s |
+
+三系统后置测试没有 failures/errors/skips。producer 离线契约 **593 / 9.383s OK**；
+打包前 Swift 共64项，其中9项因尚无 App 按原约定 skip，不能拿来替代打包后实际执行的9项。
+按 `b90cd7e` 与此次源码的测试 AST 差分逐名核对真实日志：
+新增 **75 process + 126 core = 201 方法**在每个系统各执行一次并通过。
+其中 RPC 真进程37、native facade真进程36、两项旧探针 cleanup 故障回归全部实际执行；
+core 新增 RPC56、facade67、catalog3。活 writer/EAGAIN 与关闭/EOF 正反、冷 timeout 未提交、
+prewarm 后 turn timeout 已提交均有真实进程证据，三系统 late-selector 观测均为 False。
+9个原有 Foundation 方法保持精确集合，尚无翻译 IPC Foundation 方法。
+
+- 完整 App：
+  [artifact10343201974](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738/artifacts/10343201974)。
+  仅开发测试，不是 Release。内层 `CCTranslateMac-P0.zip` **18,426,899 字节**，
+  SHA-256 **`c3dc949f980c3dcd17b84818fe11e8d9a29b7a02b4bc89b619e0f84e42c27c78`**；
+  App tree **`3ea09e79056c6a6e5c7bc908524d0976a2e27a197331865dffdcfcaf4620a262`**。
+- 同一 producer archive 供14/26运行，不重建/重签；小报告分别
+  [10343047142](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738/artifacts/10343047142) /
+  [10343815837](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738/artifacts/10343815837)。
+  实际 producer 为15.7.9 build24G830、arm64、Xcode16.4 build16F6。
+- 独立读取完整 zip：CRC、**681库存/71资源/43源码路径（42唯一Git路径）**的字节、
+  模式/链接/tree、19份runtime许可及metadata覆盖均核对；实际解析6个Mach-O的架构、
+  最低系统/依赖/rpath，不仅相信审计报告。605个保留runtime文件匹配完整build的证据
+  来自固定 producer 构建检查，本轮未重复下载原始完整运行时归档。
+- 会话临时审计器首次把许可覆盖复算子集与含额外605计数字段的报告整对象比较而失败；
+  按真实 schema 分别保留子集相等及605精确断言后通过，不改产品制品或降低产品审计。
+  已删除具体临时 App zip/审计脚本，仅保留小JSON与真实日志；未运行 Mac 二进制于 Windows。
+- 源码和后续三文档 docs-only 提交身份分离，文档提交不触发等价源码 CI。
+  **旧 Windows WinError5 拒绝来源仍未知；当前绿色不表示已解决。**
+  合成 CLI 证明协议/自有进程/安全参数与清理，不证明官方账号或真实模型可用，
+  也不继承旧 `eec92a5` 的用户首测结果。当前不要求用户重装、安装 CLI 或登录。
+
+<a id="request-snapshot-checkpoint"></a>
+
+## 请求快照检查点已验证（2026-09-14）
 
 基线源码 `4021270362418c0876dfd7aa51c4c697694f3758`、文档 `ae04dc1`；
 历史/config 业务链已验收，不重复旧源码 CI。按用户授权继续到真正人工前置，
