@@ -216,8 +216,14 @@ final class ProtocolTests: XCTestCase {
         XCTAssertNoThrow(try valid.encoded())
         XCTAssertThrowsError(try ClientMessage(id: "r", type: "request",
                                               payload: ["value": .array([nested])]).encoded())
-        XCTAssertThrowsError(try ClientMessage(id: "r", type: "request",
-                                              payload: ["value": .number(.nan)]).encoded())
+        for invalid in [Double.nan, .infinity, -.infinity] {
+            XCTAssertThrowsError(try ClientMessage(id: "r", type: "request",
+                                                  payload: ["value": .number(invalid)]).encoded())
+            XCTAssertThrowsError(try JSONValue.array([.number(invalid)]).encoded())
+            XCTAssertThrowsError(try JSONValue.number(invalid).encoded())
+        }
+        XCTAssertNoThrow(try JSONValue.number(0.125).encoded())
+        XCTAssertNoThrow(try JSONValue.bool(true).encoded())
         let empty = ClientMessage(id: "r", type: "request", payload: ["value": .string("")])
         let overhead = try empty.encoded().count
         XCTAssertEqual(try ClientMessage(id: "r", type: "request", payload: [

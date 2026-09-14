@@ -74,8 +74,11 @@ public enum JSONValue: Equatable {
     }
 
     public func encoded() throws -> Data {
-        try JSONSerialization.data(withJSONObject: foundation,
-                                   options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
+        let value = foundation
+        // Foundation can raise an Objective-C exception for NaN instead of a Swift error.
+        guard JSONSerialization.isValidJSONObject([value]) else { throw ProbeError.invalidJSON }
+        return try JSONSerialization.data(withJSONObject: value,
+                                          options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
     }
 
     public static func parse(_ data: Data) throws -> JSONValue {

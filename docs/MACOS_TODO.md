@@ -1484,4 +1484,12 @@ Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 r
 - 首次 backend 命令在新测试 bytes literal 引号处 SyntaxError，**0 tests 执行**；已修正字面量。
 - 修正后 backend 联合 **152 项 / 23.922s / OK**；当时尚无全部最终门槛改动。
 - 最新联合协议/配置/Windows真实兼容/隔离/打包/harness 回归 **294 项 / 32.131s / OK**。
-  本轮未观察到自然 WinError5，不表示旧拒绝来源已解决；尚待正常完整 hook 与真实 Mac 运行。
+  本轮未观察到自然 WinError5，不表示旧拒绝来源已解决。
+- 第一次正常完整 pre-push：**1273 项 / 68.709s / OK**，privacy/compile 通过；保留既有 Tk teardown stderr。
+- 首个源码 `3ca013f516d3bd6982e89a18fb8d273d0aa69c1f` /
+  [run 34808053099](https://github.com/mclight-ship-it/cc-translate/actions/runs/34808053099) 失败：
+  Swift 已编译，49 tests / 4 初次无包 skip / **1 failure** / 9.831s。
+  新编码负例证明 Foundation 对 NaN 抛 Objective-C exception，不能被 Swift throws 捕获；
+  产品和包内步骤尚未执行，两个 runtime 未运行，没有此 SHA 的成功 App 制品。
+  修复编码前用 `JSONSerialization.isValidJSONObject` 校验（用数组包裹以保留合法 fragment），
+  固定抛 Swift invalidJSON；保留原 NaN 断言并扩 Infinity/嵌套/fragment，不 catch NSException 或跳测试。
