@@ -61,9 +61,6 @@ extension HelperIntegrationTests {
     }
 
     private func translationContext(scenario: String = "normal") throws -> TranslationContext {
-        guard let app = ProcessInfo.processInfo.environment["CC_TRANSLATE_APP"], !app.isEmpty else {
-            throw ProbeError.bundleMissing
-        }
         let base = try configurationContext()
         do {
             let identifier = try base.runtime.configurationApplicationIdentifier()

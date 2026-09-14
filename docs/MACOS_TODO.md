@@ -75,6 +75,11 @@ Finder/TCC/IME/多屏验收。旧Windows WinError5来源未知继续保留。
   不承诺SIGKILL、崩溃或恶意脱离进程组的后代安全，也不声称强退回滚。
 - 本轮测试遵守已有load强制streaming迁移：false磁盘配置会规范化/迁移为true；
   场景改名streaming-migration并检查真实迁移及delta，不误报为非流式业务执行。
+- 首源码1562a79正常privacy/compile/full hook 1542/74.563s通过并推送，run34846653756
+  实际失败于构建App之前的Swift测试：新增4个Foundation上下文先抛bundleMissing，
+  没有复用原配置上下文的“未提供App则前置可选”逻辑。移除重复guard，统一复用原上下文；
+  App后置仍要求CC_TRANSLATE_APP及13精确方法实际passed、零skip，没有放宽后置门槛。
+  首轮原生代码已编译，31个新增Swift协议/合成连接测试实际通过；完整App/真实业务集成未运行。
 
 <a id="darwin-native-checkpoint"></a>
 
