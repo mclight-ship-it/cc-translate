@@ -1,4 +1,4 @@
-"""Explicit connection-owned configuration service; never initialized by diagnostic hello."""
+"""Explicit config/history connection ownership; never initialized by diagnostic hello."""
 
 from pathlib import Path
 import json
@@ -8,6 +8,7 @@ import sys
 from cc_config import plan_config_migration
 from cc_config_store import normalize_config
 from cc_macos.config_owner import ConfigForkError, ConfigInUseError, MacConfigOwner
+from cc_macos.history import HistoryError, HistoryService
 from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, decode_frame, validate_config
 from cc_storage import macos_user_paths
 
@@ -62,11 +63,13 @@ class ConfigurationSession:
         self.home = home
         self.application_id = application_id
         self._owner = None
+        self._history = None
         self._closed = False
 
     def open(self):
         if self._closed or self._owner is not None:
             raise ConfigurationError("config_unavailable")
+        opened = False
         try:
             if sys.platform != "darwin":
                 raise ConfigurationError("config_unavailable")
@@ -80,10 +83,28 @@ class ConfigurationSession:
                 raise ConfigurationError("config_unavailable")
             directory.mkdir(parents=True, exist_ok=True)
             self._owner = MacConfigOwner(self.home, self.application_id)
+            self._history = HistoryService(directory)
+            opened = True
         except ConfigInUseError as error:
             raise ConfigurationError("config_in_use") from error
+        except HistoryError as error:
+            raise ConfigurationError(error.code) from error
         except (OSError, ValueError, TypeError) as error:
             raise ConfigurationError("config_unavailable") from error
+        finally:
+            if not opened:
+                try:
+                    self.close()
+                except OSError as error:
+                    raise ConfigurationError("state_io_failed") from error
+
+    def perform_history(self, payload, request_id, sequence):
+        if self._closed or self._history is None:
+            raise ConfigurationError("history_unavailable")
+        try:
+            return self._history.perform(payload, request_id, sequence)
+        except HistoryError as error:
+            raise ConfigurationError(error.code) from error
 
     def perform(self, payload):
         if self._closed or self._owner is None:
@@ -108,8 +129,13 @@ class ConfigurationSession:
     def close(self):
         self._closed = True
         owner, self._owner = self._owner, None
-        if owner is not None:
-            owner.close()
+        history, self._history = self._history, None
+        try:
+            if history is not None:
+                history.close()
+        finally:
+            if owner is not None:
+                owner.close()
 
 
 def startup_configuration(arguments):

@@ -77,7 +77,11 @@ try:
     import cc_macos.config_owner
     import cc_macos.config_store_fixture
     import cc_macos.configuration
+    import cc_macos.history
     assert cc_macos.configuration.startup_configuration([]) is None
+    cc_macos.history.validate_history_request({"operation": "history_load", "page_size": 1, "cursor": None})
+    history = cc_macos.history._BoundedHistoryRepository(Path(sys.argv[2]) / "absent-history.json")
+    history.close()
     repository = cc_config_store.ConfigRepository(Path(sys.argv[2]) / "absent-config.json")
     repository.close()
 finally:

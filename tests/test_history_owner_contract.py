@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import cc_history
-from cc_macos import history_fixture, history_owner as native
+from cc_macos import history as business, history_fixture, history_owner as native
 
 
 @contextmanager
@@ -77,6 +77,33 @@ class TestHistoryOwnerContract(unittest.TestCase):
             with self.subTest(option=option), self.assertRaises(TypeError):
                 native.MacHistoryOwner(self.path, **{option: Mock()})
         self.assertTrue(issubclass(native.MacHistoryOwner, cc_history.HistoryRepository))
+
+    def test_business_adapter_uses_same_owner_and_fixed_bounded_repository(self):
+        with self.darwin() as (calls, flock):
+            with business._BusinessHistoryOwner(self.path) as owner:
+                self.assertIsInstance(owner, native.MacHistoryOwner)
+                self.assertEqual(owner.load(), [])
+                self.assertFalse(self.path.exists())
+                owner.add("synthetic", "out", False, 2, sig="unchanged|signature")
+                self.assertEqual(owner.load()[0]["sig"], "unchanged|signature")
+                before = self.path.read_bytes()
+                with patch.object(business, "MAX_HISTORY_FILE_BYTES", len(before) - 1):
+                    with self.assertRaisesRegex(business.HistoryError, "^history_too_large$"):
+                        owner.load()
+                self.assertEqual(self.path.read_bytes(), before)
+            calls.close.assert_called_once_with(701)
+            self.assertEqual([call.args for call in flock.flock.call_args_list], [(701, 6), (701, 8)])
+        for option in ("reader", "writer", "lock"):
+            with self.subTest(option=option), self.assertRaises(TypeError):
+                business._BusinessHistoryOwner(self.path, **{option: Mock()})
+
+    def test_parent_resolution_loop_is_fixed_before_open(self):
+        with self.darwin() as (calls, _), \
+                patch.object(Path, "resolve", side_effect=RuntimeError("synthetic private path loop")):
+            with self.assertRaisesRegex(ValueError, "^history_invalid_parent$"):
+                native.MacHistoryOwner(self.path)
+            calls.open.assert_not_called()
+            calls.close.assert_not_called()
 
     def test_relative_and_parent_traversal_are_rejected_before_open(self):
         with self.darwin() as (calls, _):

@@ -31,6 +31,9 @@ INTEGRATION_TESTS = (
     "testBundledConfigurationCorruptFileFailsWithoutChangingBytes",
     "testBundledConfigurationCompetingHelperFailsThenTakesReleasedOwnership",
     "testBundledConfigurationWriteAndMigrationBudgetsPreserveReadableData",
+    "testBundledHistoryLifecyclePaginationUnicodeAndConfigurationCoexistence",
+    "testBundledHistoryCorruptOversizedAndRejectedAddsPreserveBytes",
+    "testBundledHistoryCompetingHelpersReleaseBothOwners",
 )
 
 

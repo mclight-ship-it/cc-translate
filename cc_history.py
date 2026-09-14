@@ -18,6 +18,11 @@ def read_history(path, *, strict=True):
             entries = json.load(stream)
     except FileNotFoundError:
         return []
+    return validate_history_entries(entries, strict=strict)
+
+
+def validate_history_entries(entries, *, strict=True):
+    """Validate the existing array schema without selecting a path or changing values."""
     if not isinstance(entries, list):
         if not strict:
             return []

@@ -11,6 +11,7 @@ from typing import BinaryIO, TextIO
 
 from .probes import ProbeCancelled, ProbeError, runtime_probe
 from .configuration import ConfigurationError, startup_configuration, validate_save
+from .history import HISTORY_OPERATIONS, validate_history_request
 from .protocol import (
     MAX_FRAME_BYTES, MAX_IDS, MAX_TEXT_BYTES, RESERVED_ID, VERSION,
     PipeFrameReader, ProtocolError, encode_frame, read_frame, valid_id, validate_client,
@@ -115,7 +116,10 @@ class Server:
                             continue
                         request.started = True
                         self._send(request, "started", {"operation": payload["operation"]})
-                    result = self._configuration.perform(payload)
+                    if payload["operation"] in HISTORY_OPERATIONS:
+                        result = self._configuration.perform_history(payload, request.id, request.seq)
+                    else:
+                        result = self._configuration.perform(payload)
                     self._send(request, "completed", result)
                 except ConfigurationError as error:
                     self._send(request, "failed", {"code": error.code})
@@ -188,6 +192,12 @@ class Server:
                 except ProtocolError as error:
                     return error.code
                 return None
+            if operation in HISTORY_OPERATIONS:
+                try:
+                    validate_history_request(payload)
+                except ProtocolError as error:
+                    return error.code
+                return None
             return "unsupported_operation"
         if operation == "fixture":
             if set(payload) - {"operation", "text", "delay_ms"}:
@@ -226,7 +236,7 @@ class Server:
                     return False
             self._ready = True
             capabilities = (["fixture", "runtime_probe"] if self._configuration is None
-                            else ["config_load", "config_save"])
+                            else ["config_load", "config_save", *HISTORY_OPERATIONS])
             self._send(control, "ready", {
                 "protocol": VERSION, "capabilities": capabilities,
                 "max_frame_bytes": MAX_FRAME_BYTES, "fixture": self._configuration is None,
@@ -306,9 +316,9 @@ class Server:
                     self._configuration.close()
                 except OSError:
                     result = 2
-                    self._log("config_io_failed")
+                    self._log("state_io_failed")
                     if self._shutdown is not None:
-                        self._send(self._shutdown, "failed", {"code": "config_io_failed"})
+                        self._send(self._shutdown, "failed", {"code": "state_io_failed"})
                 else:
                     if self._shutdown is not None:
                         self._send(self._shutdown, "completed", {})

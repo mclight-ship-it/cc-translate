@@ -87,6 +87,10 @@ public final class HelperConnection {
         start(runtime: runtime, configurationHome: home)
     }
 
+    public func startBusiness(runtime: BundleRuntime, home: URL) {
+        startConfiguration(runtime: runtime, home: home)
+    }
+
     private func start(runtime: BundleRuntime, configurationHome: URL?) {
         queue.async {
             guard !self.started, !self.stopping else { return }
@@ -176,6 +180,34 @@ public final class HelperConnection {
         return id
     }
 
+    @discardableResult
+    public func loadHistory(pageSize: Int = 100, cursor: JSONValue = .null,
+                            id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("history_load"), "page_size": .integer(Int64(pageSize)), "cursor": cursor
+        ]), timeout: timeout)
+        return id
+    }
+
+    @discardableResult
+    public func addHistory(input: String, output: String, isDict: Bool, isCode: Bool,
+                           kind: String, sig: String, limit: Int,
+                           id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("history_add"), "input": .string(input), "output": .string(output),
+            "is_dict": .bool(isDict), "is_code": .bool(isCode), "kind": .string(kind),
+            "sig": .string(sig), "limit": .integer(Int64(limit))
+        ]), timeout: timeout)
+        return id
+    }
+
+    @discardableResult
+    public func clearHistory(id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
+        send(ClientMessage(id: id, type: "request", payload: ["operation": .string("history_clear")]),
+             timeout: timeout)
+        return id
+    }
+
     public func stop() {
         queue.async {
             guard !self.stopping else { return }
@@ -196,7 +228,7 @@ public final class HelperConnection {
     public func forceStop() {
         queue.async {
             guard !self.didFinish else { return }
-            if self.state.hasPendingConfiguration { self.fail(.configurationOutcomeUnknown) }
+            if let unknown = self.state.pendingOutcomeUnknown { self.fail(unknown) }
             self.stopping = true
             self.cancelDeadlines()
             self.closeInput()
@@ -329,7 +361,7 @@ public final class HelperConnection {
     private func fail(_ error: ProbeError) {
         guard !failed, !didFinish else { return }
         failed = true
-        emit(.failure(state.hasPendingConfiguration ? .configurationOutcomeUnknown : error))
+        emit(.failure(state.pendingOutcomeUnknown ?? error))
         cancelDeadlines()
         stopping = true
         closeInput()
@@ -388,15 +420,14 @@ public final class HelperConnection {
             guard self.process.isRunning else { return }
             // Only the still-owned helper PID; its CLI groups have separate core supervision.
             if Darwin.kill(self.process.processIdentifier, SIGKILL) != 0, errno != ESRCH {
-                self.emit(.failure(self.state.hasPendingConfiguration ?
-                    .configurationOutcomeUnknown : .helperExited))
+                self.emit(.failure(self.state.pendingOutcomeUnknown ?? .helperExited))
             }
         }
     }
 
     private func finishIfDrained() {
         guard !didFinish, stdoutEnded, stderrEnded, let status = exitStatus else { return }
-        if !failed, state.hasPendingConfiguration { fail(.configurationOutcomeUnknown) }
+        if !failed, let unknown = state.pendingOutcomeUnknown { fail(unknown) }
         if status != 0, !failed { emit(.failure(.helperExited)) }
         didFinish = true
         cancelDeadlines()

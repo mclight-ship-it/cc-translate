@@ -19,7 +19,10 @@ class MacFileOwner:
         if not path.is_absolute() or ".." in path.parts:
             raise ValueError(kind + "_absolute_path_required")
         _outside_bundle(path, kind)
-        parent = path.parent.resolve(strict=True)
+        try:
+            parent = path.parent.resolve(strict=True)
+        except RuntimeError as error:
+            raise ValueError(kind + "_invalid_parent") from error
         path = parent / path.name
         _outside_bundle(path, kind)
         if not parent.is_dir():

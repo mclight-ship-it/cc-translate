@@ -1,7 +1,7 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-13。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-14。
 **当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
 Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
@@ -170,7 +170,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     同包三系统76进程/218核心/5Foundation通过，正常Windows hook1280通过，
     见[业务 IPC 证据与历史失败](#configuration-ipc-checkpoint)。
     旧9614eab绿色未覆盖完整性缺陷；4d769e7的历史WinError5推送失败仍保留，不称拒绝来源已解决。
-    不接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
+    该配置检查点未接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
+  - [ ] 历史业务私有 helper/Swift API（本轮实施和验证中）：同一显式连接持有双owner，
+    有界revision分页/记录/清空，保留配置与默认诊断；见[本轮依赖与证据](#history-ipc-checkpoint)。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1639,3 +1641,56 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
 用户路径选择UI、旧配置文件迁移服务、全App共享cfg/完整RequestSnapshot、历史业务IPC/provider仍未做。
 旧eec92a5用户实测不迁移到本包，TCC/干净首开/用户官方CLI/账号/Intel仍单列待验；
 免费GitHub/零预算不变，不要求用户现在重装、安装CLI或登录。
+
+<a id="history-ipc-checkpoint"></a>
+### 历史业务私有 IPC 切片（2026-09-14，实施中）
+
+1. [x] 现有显式配置连接提升为config/history业务连接；保留旧启动参数和配置API，
+   首次有效hello同时持有config.json.lock/history.json.lock，部分初始化失败释放已取得owner。
+   普通诊断/模块导入/原生启动仍不读取或创建用户配置/历史。
+2. [x] 同一Server/FIFO接history_load、history_add、history_clear，Swift同协议可调用API；
+   路径只由连接home/实际Info.plist ID确定，复用HistoryRepository及原缩进writer/时间/字段顺序。
+3. [x] 分页按实际完成帧（ID/seq/metadata/LF均计入）取最大可放前缀，不丢条目；
+   cursor包含revision与offset，revision绑定连接随机代次、成功mutation计数与文件原字节hash。
+   追加/clear、外部内容变化或新连接使旧cursor明确过期，不混页，不静默当空历史。
+4. [x] 新add字段严格有界，实际未来文件及每条最坏分页envelope在写前验证；
+   单条legacy无法入帧报固定错误，不写/删旧数据。配置16KiB预算不用于历史页。
+5. [ ] 真实并发/取消/EOF/shutdown/pipe失败释放两个owner，started mutation不冒称撤销；
+   Windows兼容/新便携、包内真进程与Foundation、同包三系统及制品审计后正常3docs收尾。
+
+本轮协议选择（版本仍v1，capabilities区分，默认诊断不变）：
+- 业务ready fixture=false，能力精确为config_load/config_save/history_load/history_add/history_clear。
+- history_load请求含operation/page_size(1..100)/cursor(null或{revision,offset})；
+  完成为{entries,revision,total,next_cursor}。revision是64小写hex，offset正整数不超过10000；
+  分页按原数组顺序，空数据只在明确文件缺失或合法空数组时返回。
+- history_add含operation/input/output/is_dict/is_code/kind/sig/limit；无路径或客户端timestamp。
+  input/output各最多24000 UTF-8字节，sig最多4096字节，kind严格text/dict/code/ocr，
+  flags严格bool，limit严格1..10000整数，完成{recorded:true,revision}。不查询模型或自动记录翻译。
+- history_clear只含operation，完成{cleared:true,revision}，包括空库clear也推进mutation代次。
+  显式clear可清除坏文件；load/add的读取/格式/预算失败绝不以空数据覆盖。
+- 文件读/写预算8MiB、最多10000条；legacy未知字段保留，但必须是安全可编码JSON，
+  entry最多相对13层、有限数且abs<=2^53-1，已有字符串/null及bool字段规则沿用。
+  新写入每条按最长合法ID、seq2、完整最坏分页metadata预检；实际页仍严格64KiB含LF。
+- 固定错误包括history_in_use/history_unavailable/history_io_failed/invalid_history、
+  history_too_large/history_entry_too_large/invalid_history_record/invalid_history_cursor/
+  history_cursor_expired；连接资源关闭失败用state_io_failed，不输出文本/路径或异常原文。
+
+这些是有界业务API限制，不改Windows泛型仓库/default/schema/缓存或上层history开关策略。
+没有历史UI、请求快照、provider或真实用户数据操作；旧WinError5未知风险继续保留。
+
+#### 本轮实施中已运行的验证（不替代尚未执行的Mac新CI）
+
+- 第一轮Windows联合155项 / 20.337s：2 errors，旧owner合同明确禁止caller注入reader/writer；
+  初版扩构造参数违反该既有合同。已恢复MacHistoryOwner的path-only公开API，不削弱负例，
+  业务层改用固定有界仓库策略的内部适配，继续同一Mac owner/稳定侧文件锁。
+  对应104项 / 1.315s通过。
+- Windows真实消费者/新业务/配置/协议/存储/owner/打包/清单联合338项 / 33.797s通过。
+- 另先证明尾页预算非单调边界：1项中1 error + 1 failure；
+  中间前缀含next_cursor会超帧，但加上末尾空legacy条目后cursor消失，完整尾页反而恰好64KiB。
+  已在首个超限处检查合法完整尾页，而不是错误报单条过大或返回非最大前缀；
+  保留原断言并增加真包内反例。修复后新业务/严格清单57项 / 1.722s通过。
+- 当前新核心24项、history真进程13项已接严格runner清单与同源support校验，
+  门槛提高为242核心/89进程，旧218/76覆盖保留。此处是实际发现要求，尚不是Mac执行结果。
+- Windows固定业务适配MRO/旧path-only API/FD与路径环合同35项 / 0.201s通过；
+  最终Windows联合355项 / 33.022s通过。Swift新增9项协议负例及3项Foundation历史方法，
+  原5项保留、强制精确集合提高为8项；本轮Swift尚待真实Mac编译/运行，不以静态差异检查替代。

@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import cc_config_store
 from cc_macos import configuration
+from cc_macos import history as history_service
 from cc_macos.config_owner import ConfigInUseError
 from cc_macos.protocol import (
     MAX_CONFIG_BYTES, MAX_CONFIG_DEPTH, MAX_CONFIG_NUMBER, MAX_FRAME_BYTES,
@@ -139,6 +140,10 @@ class _ConfigurationDirectory(unittest.TestCase):
                                    macos_user_paths(home, identity).application_support / "config.json"))
         self.factory = factory.start()
         self.addCleanup(factory.stop)
+        history_factory = patch.object(history_service, "_BusinessHistoryOwner",
+                                       side_effect=history_service._BoundedHistoryRepository)
+        history_factory.start()
+        self.addCleanup(history_factory.stop)
         self.session = configuration.ConfigurationSession(self.home, self.identity)
         self.addCleanup(self.session.close)
 
@@ -312,6 +317,8 @@ class ConfigurationServiceTests(_ConfigurationDirectory):
         for outcomes in ([RuntimeError("private home")],
                          [self.home, RuntimeError("private support directory")]):
             with self.subTest(resolutions=len(outcomes)):
+                self.session = configuration.ConfigurationSession(self.home, self.identity)
+                self.addCleanup(self.session.close)
                 with patch.object(Path, "resolve", side_effect=outcomes):
                     with self.assertRaisesRegex(configuration.ConfigurationError, "^config_unavailable$"):
                         self.session.open()
@@ -351,7 +358,8 @@ class ConfigurationSchedulingTests(_ConfigurationDirectory):
     def test_business_ready_and_operations_are_mode_specific(self):
         server, output, _ = self.server()
         ready = self.events(output)[0]
-        self.assertEqual(ready["payload"]["capabilities"], ["config_load", "config_save"])
+        self.assertEqual(ready["payload"]["capabilities"],
+                         ["config_load", "config_save", "history_load", "history_add", "history_clear"])
         self.assertIs(ready["payload"]["fixture"], False)
         for id_, payload in (("fixture", {"operation": "fixture", "text": "no"}),
                              ("path", {"operation": "config_load", "path": "private"}),
@@ -591,8 +599,8 @@ class ConfigurationExitTests(_ConfigurationDirectory):
             self.assertFalse(thread.is_alive())
             close.assert_called_once()
         self.assertEqual(result, [2])
-        self.assertEqual(errors.getvalue(), "cc_macos:config_io_failed\n")
+        self.assertEqual(errors.getvalue(), "cc_macos:state_io_failed\n")
         events = [decode_frame(raw + b"\n") for raw in output.getvalue().splitlines()]
-        self.assertEqual(events[-1]["payload"], {"code": "config_io_failed"})
+        self.assertEqual(events[-1]["payload"], {"code": "state_io_failed"})
         self.assertEqual(events[-1]["type"], "failed")
         self.assertIsNone(self.session._owner)

@@ -31,7 +31,10 @@ final class ProtocolTests: XCTestCase {
     private var configurationReady: [String: JSONValue] {
         [
             "protocol": .integer(1),
-            "capabilities": .array([.string("config_load"), .string("config_save")]),
+            "capabilities": .array([
+                .string("config_load"), .string("config_save"), .string("history_load"),
+                .string("history_add"), .string("history_clear")
+            ]),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(false)
         ]
     }
@@ -340,6 +343,421 @@ final class ProtocolTests: XCTestCase {
         XCTAssertThrowsError(try state.receive(event("load", 3, "failed", ["code": .string("config_io_failed")])))
         _ = try state.receive(event("shutdown", 0, "completed"))
         XCTAssertFalse(state.hasPendingResponses)
+    }
+
+    private let historyRevision = String(repeating: "a", count: 64)
+
+    private func historyCursor(_ offset: Int64, revision: String? = nil) -> JSONValue {
+        .object(["revision": .string(revision ?? historyRevision), "offset": .integer(offset)])
+    }
+
+    private func historyLoad(_ id: String, pageSize: Int64 = 2, cursor: JSONValue = .null) -> ClientMessage {
+        ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("history_load"), "page_size": .integer(pageSize), "cursor": cursor
+        ])
+    }
+
+    private func historyAdd(_ id: String) -> ClientMessage {
+        ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("history_add"), "input": .string("synthetic input"),
+            "output": .string("synthetic output"), "is_dict": .bool(false), "is_code": .bool(false),
+            "kind": .string("text"), "sig": .string("synthetic-sig"), "limit": .integer(100)
+        ])
+    }
+
+    private func historyPage(_ entries: [JSONValue] = [], total: Int64 = 0,
+                             next: JSONValue = .null) -> [String: JSONValue] {
+        ["entries": .array(entries), "revision": .string(historyRevision),
+         "total": .integer(total), "next_cursor": next]
+    }
+
+    private func startOperation(_ message: ClientMessage, state: inout ProtocolState) throws {
+        try state.register(message)
+        let operation = ["operation": try XCTUnwrap(message.payload["operation"])]
+        _ = try state.receive(event(message.id, 0, "accepted", operation))
+        _ = try state.receive(event(message.id, 1, "started", operation))
+    }
+
+    func testHistoryRequiresReadyAndExactlyFiveBusinessCapabilities() throws {
+        var starting = ProtocolState(mode: .configuration)
+        XCTAssertThrowsError(try starting.register(historyLoad("before_hello")))
+        try starting.register(ClientMessage(id: "hello", type: "hello"))
+        XCTAssertThrowsError(try starting.register(historyLoad("before_ready")))
+        let capabilities = [
+            "config_load", "config_save", "history_load", "history_add", "history_clear"
+        ].map(JSONValue.string)
+        for invalid in [
+            Array(capabilities.prefix(2)), Array(capabilities.dropLast()),
+            capabilities + [.string("fixture")],
+            Array(capabilities.dropLast()) + [.string("history_add")],
+            Array(capabilities.dropLast()) + [.integer(1)]
+        ] {
+            var payload = configurationReady
+            payload["capabilities"] = .array(invalid)
+            XCTAssertThrowsError(try starting.receive(event("hello", 0, "ready", payload)))
+        }
+        _ = try starting.receive(event("hello", 0, "ready", configurationReady))
+        let clear = ClientMessage(id: "clear", type: "request", payload: ["operation": .string("history_clear")])
+        var diagnostic = try connected()
+        for message in [historyLoad("load"), historyAdd("add"), clear] {
+            XCTAssertThrowsError(try diagnostic.register(message))
+            XCTAssertNoThrow(try starting.register(message))
+        }
+        XCTAssertTrue(starting.hasPendingHistory)
+        XCTAssertFalse(starting.hasPendingConfiguration)
+        XCTAssertEqual(starting.pendingOutcomeUnknown, .historyOutcomeUnknown)
+    }
+
+    func testHistoryLoadRequestsRequireExactCursorAndStrictIntegers() throws {
+        var state = try configurationConnected()
+        let valid = historyLoad("invalid").payload
+        var invalid: [[String: JSONValue]] = []
+        for key in valid.keys {
+            var payload = valid
+            payload.removeValue(forKey: key)
+            invalid.append(payload)
+        }
+        for size in [JSONValue.integer(0), .integer(101), .integer(-1), .number(1),
+                     .bool(true), .string("1"), .null] {
+            var payload = valid
+            payload["page_size"] = size
+            invalid.append(payload)
+        }
+        let badCursors: [JSONValue] = [
+            .array([]), .bool(false), .string("cursor"), .object([:]),
+            .object(["offset": .integer(1)]), .object(["revision": .string(historyRevision)]),
+            .object(["revision": .string(historyRevision), "offset": .integer(1), "extra": .null]),
+            historyCursor(0), historyCursor(-1), historyCursor(10_001),
+            historyCursor(1, revision: String(repeating: "A", count: 64)),
+            historyCursor(1, revision: String(repeating: "g", count: 64)),
+            historyCursor(1, revision: String(repeating: "a", count: 63)),
+            historyCursor(1, revision: String(repeating: "a", count: 65)),
+            .object(["revision": .null, "offset": .integer(1)]),
+            .object(["revision": .string(historyRevision), "offset": .number(1)]),
+            .object(["revision": .string(historyRevision), "offset": .bool(true)])
+        ]
+        for cursor in badCursors {
+            var payload = valid
+            payload["cursor"] = cursor
+            invalid.append(payload)
+        }
+        var extra = valid
+        extra["path"] = .string("synthetic")
+        invalid.append(extra)
+        for payload in invalid {
+            let message = ClientMessage(id: "invalid", type: "request", payload: payload)
+            XCTAssertThrowsError(try state.register(message))
+            if payload["operation"] != nil { XCTAssertThrowsError(try message.encoded()) }
+        }
+        for (id, size, cursor) in [
+            ("first", Int64(1), JSONValue.null), ("last", 100, historyCursor(10_000))
+        ] {
+            XCTAssertNoThrow(try state.register(historyLoad(id, pageSize: size, cursor: cursor)))
+        }
+    }
+
+    func testHistoryAddAndClearValidateFieldsUTF8AndFullFrameBudget() throws {
+        var state = try configurationConnected()
+        let valid = historyAdd("invalid").payload
+        var invalid: [[String: JSONValue]] = []
+        for key in valid.keys {
+            var payload = valid
+            payload.removeValue(forKey: key)
+            invalid.append(payload)
+        }
+        for key in ["timestamp", "ts", "path", "revision", "extra"] {
+            var payload = valid
+            payload[key] = .null
+            invalid.append(payload)
+        }
+        for key in ["input", "output", "sig", "kind"] {
+            for value in [JSONValue.null, .integer(1), .bool(true), .array([])] {
+                var payload = valid
+                payload[key] = value
+                invalid.append(payload)
+            }
+        }
+        for key in ["is_dict", "is_code"] {
+            for value in [JSONValue.integer(0), .integer(1), .number(1), .null, .string("true")] {
+                var payload = valid
+                payload[key] = value
+                invalid.append(payload)
+            }
+        }
+        for value in [JSONValue.integer(0), .integer(10_001), .integer(-1), .number(1), .bool(true), .null] {
+            var payload = valid
+            payload["limit"] = value
+            invalid.append(payload)
+        }
+        for kind in ["", "legacy-kind", "TEXT"] {
+            var payload = valid
+            payload["kind"] = .string(kind)
+            invalid.append(payload)
+        }
+        for (key, count) in [("input", 6001), ("output", 6001), ("sig", 1025)] {
+            var payload = valid
+            payload[key] = .string(String(repeating: "\u{1f600}", count: count))
+            invalid.append(payload)
+        }
+        for payload in invalid {
+            let message = ClientMessage(id: "invalid", type: "request", payload: payload)
+            XCTAssertThrowsError(try state.register(message))
+            if payload["operation"] != nil { XCTAssertThrowsError(try message.encoded()) }
+        }
+        for (index, kind) in ["text", "dict", "code", "ocr"].enumerated() {
+            var payload = valid
+            payload["kind"] = .string(kind)
+            payload["input"] = .string(String(repeating: "\u{1f600}", count: 6000))
+            payload["output"] = .string(String(repeating: "\u{4e2d}", count: 8000))
+            payload["sig"] = .string(String(repeating: "\u{00e9}", count: 2048))
+            payload["limit"] = .integer(index == 0 ? 1 : 10_000)
+            XCTAssertNoThrow(try state.register(ClientMessage(id: "valid\(index)", type: "request", payload: payload)))
+        }
+        var boundary = valid
+        boundary["input"] = .string(String(repeating: "\u{0}", count: 10_000))
+        boundary["output"] = .string("")
+        let overhead = try ClientMessage(id: "boundary", type: "request", payload: boundary).encoded().count
+        boundary["output"] = .string(String(repeating: "a", count: 65_536 - overhead))
+        let exact = ClientMessage(id: "boundary", type: "request", payload: boundary)
+        XCTAssertEqual(try exact.encoded().count, 65_536)
+        XCTAssertNoThrow(try state.register(exact))
+        boundary["output"] = .string(String(repeating: "a", count: 65_537 - overhead))
+        let oversized = ClientMessage(id: "overflow", type: "request", payload: boundary)
+        XCTAssertThrowsError(try oversized.encoded()) { XCTAssertEqual($0 as? ProbeError, .frameTooLarge) }
+        XCTAssertThrowsError(try state.register(oversized))
+        XCTAssertThrowsError(try state.register(ClientMessage(id: "clear", type: "request", payload: [
+            "operation": .string("history_clear"), "revision": .string(historyRevision)
+        ])))
+        XCTAssertNoThrow(try state.register(ClientMessage(id: "clear", type: "request",
+                                                         payload: ["operation": .string("history_clear")])))
+    }
+
+    func testHistoryPagesValidateTotalsOffsetsAndRequestedRevision() throws {
+        var state = try configurationConnected()
+        try startOperation(historyLoad("page", cursor: historyCursor(2)), state: &state)
+        let valid = historyPage([.object([:]), .object([:])], total: 5, next: historyCursor(4))
+        var invalid: [[String: JSONValue]] = []
+        for key in valid.keys {
+            var payload = valid
+            payload.removeValue(forKey: key)
+            invalid.append(payload)
+        }
+        let replacements: [(String, JSONValue)] = [
+            ("entries", .object([:])), ("entries", .array([])),
+            ("entries", .array([.object([:]), .object([:]), .object([:])])),
+            ("entries", .array([.null])), ("revision", .string(String(repeating: "b", count: 64))),
+            ("revision", .string(String(repeating: "A", count: 64))),
+            ("total", .integer(-1)), ("total", .integer(10_001)), ("total", .bool(true)),
+            ("total", .string("5")), ("total", .integer(3)), ("total", .integer(4)),
+            ("next_cursor", .null), ("next_cursor", historyCursor(3)), ("next_cursor", historyCursor(5)),
+            ("next_cursor", historyCursor(4, revision: String(repeating: "b", count: 64))),
+            ("next_cursor", .object(["revision": .string(historyRevision), "offset": .bool(true)])),
+            ("next_cursor", .object(["revision": .string(historyRevision), "offset": .integer(4), "x": .null])),
+            ("fixture", .bool(false))
+        ]
+        for (key, value) in replacements {
+            var payload = valid
+            payload[key] = value
+            invalid.append(payload)
+        }
+        for payload in invalid { XCTAssertThrowsError(try state.receive(event("page", 2, "completed", payload))) }
+        let wire = String(decoding: try event("page", 2, "completed", valid), as: UTF8.self)
+        for (integer, decimal) in [("\"total\":5", "\"total\":5.0"), ("\"offset\":4", "\"offset\":4.0")] {
+            XCTAssertThrowsError(try state.receive(Data(wire.replacingOccurrences(of: integer, with: decimal).utf8)))
+        }
+        _ = try state.receive(event("page", 2, "completed", valid))
+        try startOperation(historyLoad("tail", cursor: historyCursor(4)), state: &state)
+        XCTAssertThrowsError(try state.receive(event("tail", 2, "completed", historyPage([.object([:])], total: 6))))
+        _ = try state.receive(event("tail", 2, "completed", historyPage([.object([:])], total: 5)))
+        try startOperation(historyLoad("empty"), state: &state)
+        XCTAssertThrowsError(try state.receive(event("empty", 2, "completed", historyPage([], total: 1))))
+        _ = try state.receive(event("empty", 2, "completed", historyPage()))
+        XCTAssertFalse(state.hasPendingHistory)
+    }
+
+    func testHistoryLegacyEntriesPreserveUnknownKeysAndEnforceJSONBounds() throws {
+        let legacy: JSONValue = .object([
+            "ts": .null, "input": .null, "output": .string("\u{4e2d}/\u{1f600}"),
+            "kind": .string("old-custom-kind"), "sig": .null,
+            "is_dict": .bool(true), "is_code": .bool(false),
+            "future": .object(["values": .array([.null, .bool(true), .number(0.125), .integer(9_007_199_254_740_991)])])
+        ])
+        XCTAssertNoThrow(try HistoryDocument.validateEntry(legacy))
+        for key in ["ts", "input", "output", "kind", "sig"] {
+            for value in [JSONValue.integer(1), .number(0.5), .bool(true), .object([:]), .array([])] {
+                XCTAssertThrowsError(try HistoryDocument.validateEntry(.object([key: value])))
+            }
+        }
+        for key in ["is_dict", "is_code"] {
+            for value in [JSONValue.null, .integer(0), .number(1), .string("false")] {
+                XCTAssertThrowsError(try HistoryDocument.validateEntry(.object([key: value])))
+            }
+        }
+        for invalid in [
+            JSONValue.integer(9_007_199_254_740_992), .integer(-9_007_199_254_740_992),
+            .integer(Int64.min), .integer(Int64.max), .number(.nan), .number(.infinity),
+            .number(-.infinity), .number(9_007_199_254_740_992)
+        ] { XCTAssertThrowsError(try HistoryDocument.validateEntry(.object(["unknown": .array([invalid])]))) }
+        var nested = JSONValue.null
+        for _ in 0..<11 { nested = .array([nested]) }
+        let deepest = JSONValue.object(["unknown": nested])
+        XCTAssertNoThrow(try HistoryDocument.validateEntry(deepest))
+        XCTAssertThrowsError(try HistoryDocument.validateEntry(.object(["unknown": .array([nested])])))
+        var state = try configurationConnected()
+        try startOperation(historyLoad("legacy"), state: &state)
+        let payload = historyPage([legacy, deepest], total: 2)
+        let wire = try event("legacy", 2, "completed", payload)
+        let duplicate = String(decoding: wire, as: UTF8.self)
+            .replacingOccurrences(of: "\"ts\":null", with: "\"ts\":null,\"ts\":null")
+        XCTAssertThrowsError(try state.receive(Data(duplicate.utf8)))
+        var badEntry = payload
+        badEntry["entries"] = .array([.object(["is_code": .integer(1)])])
+        badEntry["total"] = .integer(1)
+        XCTAssertThrowsError(try state.receive(event("legacy", 2, "completed", badEntry)))
+        let result = try state.receive(wire)
+        XCTAssertEqual(result.payload, payload)
+    }
+
+    func testHistoryPageUsesFullFrameRatherThanConfigurationBudget() throws {
+        let base = historyPage([.object(["legacy": .string("")])], total: 1)
+        let overhead = try event("page", 2, "completed", base).count + 1
+        var payload = base
+        payload["entries"] = .array([.object(["legacy": .string(String(repeating: "a", count: 65_536 - overhead))])])
+        let frame = try event("page", 2, "completed", payload)
+        XCTAssertEqual(frame.count + 1, 65_536)
+        var state = try configurationConnected()
+        try startOperation(historyLoad("page"), state: &state)
+        var framer = LineFramer()
+        let framed = try XCTUnwrap(framer.append(frame + Data([10])).first)
+        XCTAssertNoThrow(try state.receive(framed))
+        try framer.finish()
+        payload["entries"] = .array([.object(["legacy": .string(String(repeating: "a", count: 65_537 - overhead))])])
+        let oversized = try event("page", 2, "completed", payload)
+        var another = LineFramer()
+        XCTAssertThrowsError(try another.append(oversized + Data([10])))
+        var fresh = try configurationConnected()
+        try startOperation(historyLoad("page"), state: &fresh)
+        XCTAssertThrowsError(try fresh.receive(oversized))
+
+        let tailID = String(repeating: "t", count: 64)
+        let tailBase = historyPage([.object(["input": .string("")]), .object([:])], total: 2)
+        let tailOverhead = try event(tailID, 2, "completed", tailBase).count + 1
+        let largeLegacy = JSONValue.object(["input": .string(String(repeating: "a", count: 65_536 - tailOverhead))])
+        let tail = historyPage([largeLegacy, .object([:])], total: 2)
+        let prefix = historyPage([largeLegacy], total: 2, next: historyCursor(1))
+        XCTAssertGreaterThan(try event(tailID, 2, "completed", prefix).count + 1, 65_536)
+        let tailFrame = try event(tailID, 2, "completed", tail)
+        XCTAssertEqual(tailFrame.count + 1, 65_536)
+        var tailState = try configurationConnected()
+        try startOperation(historyLoad(tailID), state: &tailState)
+        var tailFramer = LineFramer()
+        let completeTail = try XCTUnwrap(tailFramer.append(tailFrame + Data([10])).first)
+        XCTAssertNoThrow(try tailState.receive(completeTail))
+        try tailFramer.finish()
+    }
+
+    func testHistoryMutationTerminalsAreStrictAndCannotRepeat() throws {
+        for operation in ["history_add", "history_clear"] {
+            var state = try configurationConnected()
+            let message = operation == "history_add" ? historyAdd("mutation") :
+                ClientMessage(id: "mutation", type: "request", payload: ["operation": .string(operation)])
+            let field = operation == "history_add" ? "recorded" : "cleared"
+            let valid: [String: JSONValue] = [field: .bool(true), "revision": .string(historyRevision)]
+            try state.register(message)
+            XCTAssertThrowsError(try state.receive(event("mutation", 0, "completed", valid)))
+            _ = try state.receive(event("mutation", 0, "accepted", ["operation": .string(operation)]))
+            XCTAssertThrowsError(try state.receive(event("mutation", 1, "completed", valid)))
+            XCTAssertThrowsError(try state.receive(event("mutation", 1, "failed", ["code": .string("history_io_failed")])))
+            _ = try state.receive(event("mutation", 1, "started", ["operation": .string(operation)]))
+            for value in [JSONValue.bool(false), .integer(1), .string("true"), .null] {
+                XCTAssertThrowsError(try state.receive(event("mutation", 2, "completed", [
+                    field: value, "revision": .string(historyRevision)
+                ])))
+            }
+            for revision in [JSONValue.null, .string(""), .string(String(repeating: "A", count: 64))] {
+                XCTAssertThrowsError(try state.receive(event("mutation", 2, "completed", [field: .bool(true), "revision": revision])))
+            }
+            for payload in [[field: JSONValue.bool(true)], ["revision": .string(historyRevision)],
+                            valid.merging(["fixture": .bool(false)]) { _, new in new }] {
+                XCTAssertThrowsError(try state.receive(event("mutation", 2, "completed", payload)))
+            }
+            _ = try state.receive(event("mutation", 2, "completed", valid))
+            XCTAssertThrowsError(try state.receive(event("mutation", 2, "completed", valid)))
+            XCTAssertThrowsError(try state.receive(event("mutation", 3, "completed", valid)))
+            XCTAssertThrowsError(try state.receive(event("mutation", 3, "failed", ["code": .string("history_io_failed")])))
+            XCTAssertThrowsError(try state.register(message))
+            XCTAssertNil(state.pendingOutcomeUnknown)
+        }
+    }
+
+    func testHistorySharesFIFOAndStartedWritesCannotBeCancelledOrForgotten() throws {
+        var state = try configurationConnected()
+        try startOperation(configurationRequest("config"), state: &state)
+        try state.register(historyAdd("write"))
+        let operation: [String: JSONValue] = ["operation": .string("history_add")]
+        _ = try state.receive(event("write", 0, "accepted", operation))
+        XCTAssertThrowsError(try state.receive(event("write", 1, "started", operation)))
+        XCTAssertEqual(state.pendingOutcomeUnknown, .configurationOutcomeUnknown)
+        _ = try state.receive(event("config", 2, "completed", ["config": .object([:])]))
+        XCTAssertEqual(state.pendingOutcomeUnknown, .historyOutcomeUnknown)
+        try state.register(ClientMessage(id: "race", type: "cancel", payload: ["request_id": .string("write")]))
+        _ = try state.receive(event("write", 1, "started", operation))
+        XCTAssertThrowsError(try state.receive(event("race", 0, "completed", ["cancel_requested": .bool(true)])))
+        _ = try state.receive(event("race", 0, "completed", ["cancel_requested": .bool(false)]))
+        XCTAssertThrowsError(try state.receive(event("write", 2, "cancelled")))
+        XCTAssertThrowsError(try state.receive(event("write", 3, "completed", [
+            "recorded": .bool(true), "revision": .string(historyRevision)
+        ])))
+        XCTAssertEqual(state.pendingOutcomeUnknown, .historyOutcomeUnknown)
+        try state.register(historyLoad("queued"))
+        _ = try state.receive(event("queued", 0, "accepted", ["operation": .string("history_load")]))
+        try state.register(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("queued")]))
+        _ = try state.receive(event("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        XCTAssertThrowsError(try state.receive(event("queued", 1, "started", ["operation": .string("history_load")])))
+        _ = try state.receive(event("queued", 1, "cancelled"))
+        try state.register(ClientMessage(id: "shutdown", type: "shutdown"))
+        XCTAssertThrowsError(try state.receive(event("shutdown", 0, "completed")))
+        XCTAssertThrowsError(try state.register(historyLoad("after_shutdown")))
+        _ = try state.receive(event("write", 2, "failed", ["code": .string("history_io_failed")]))
+        _ = try state.receive(event("shutdown", 0, "completed"))
+        XCTAssertFalse(state.hasPendingHistory)
+        XCTAssertFalse(state.hasPendingResponses)
+        XCTAssertNil(state.pendingOutcomeUnknown)
+    }
+
+    func testHistoryFailureWhitelistAndBusinessBootstrapAreObservable() throws {
+        let bootstrapCodes = [
+            "config_in_use", "config_unavailable", "history_in_use", "history_unavailable", "state_io_failed"
+        ]
+        for code in bootstrapCodes {
+            var state = ProtocolState(mode: .configuration)
+            try state.register(ClientMessage(id: "hello", type: "hello"))
+            for invalid in ["invalid_history", "history_io_failed", "history_cursor_expired", "private_user_value"] {
+                XCTAssertThrowsError(try state.receive(event("hello", 0, "failed", ["code": .string(invalid)])))
+            }
+            let result = try state.receive(event("hello", 0, "failed", ["code": .string(code)]))
+            XCTAssertEqual(result.safeFailureCode, code)
+            XCTAssertNotNil(ProbeError(rawValue: result.safeFailureCode))
+            XCTAssertFalse(state.ready)
+        }
+        var state = try configurationConnected()
+        for code in [
+            "history_in_use", "history_unavailable", "history_io_failed", "invalid_history", "history_too_large",
+            "history_entry_too_large", "invalid_history_record", "invalid_history_cursor", "history_cursor_expired",
+            "state_io_failed"
+        ] {
+            try startOperation(historyLoad(code), state: &state)
+            for invalid in [
+                ["code": JSONValue.string("private_user_value")], ["code": .bool(true)],
+                ["code": .string(code), "path": .string("synthetic")], ["code": .string("contains space")]
+            ] { XCTAssertThrowsError(try state.receive(event(code, 2, "failed", invalid))) }
+            XCTAssertEqual(try state.receive(event(code, 2, "failed", ["code": .string(code)])).safeFailureCode, code)
+        }
+        try state.register(historyAdd("preflight"))
+        XCTAssertEqual(try state.receive(event("preflight", 0, "failed", [
+            "code": .string("history_entry_too_large")
+        ])).sequence, 0)
+        XCTAssertFalse(state.hasPendingHistory)
     }
 
     private func runtimeReport(https: Bool = false) -> [String: JSONValue] {

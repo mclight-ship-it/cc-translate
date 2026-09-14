@@ -43,6 +43,22 @@ final class HelperIntegrationTests: XCTestCase {
             XCTAssertEqual(operation.map(\.sequence), [0, 1, 2], file: file, line: line)
             XCTAssertTrue(operation.allSatisfy { $0.payload["fixture"] == nil }, file: file, line: line)
         }
+
+        func assertHistoryFailure(_ id: String, code: String,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+            let operation = events.filter { $0.id == id }
+            XCTAssertEqual(operation.map(\.type), ["accepted", "started", "failed"], file: file, line: line)
+            XCTAssertEqual(operation.map(\.sequence), [0, 1, 2], file: file, line: line)
+            XCTAssertEqual(result(id)?.safeFailureCode, code, file: file, line: line)
+        }
+
+        func historyEntries(_ id: String) throws -> [[String: JSONValue]] {
+            guard case let .array(entries)? = result(id)?.payload["entries"] else {
+                XCTFail("History completion must contain an entries array")
+                throw ProbeError.invalidPayload
+            }
+            return try entries.map { try XCTUnwrap($0.object) }
+        }
     }
 
     private func configurationIO<T>(_ operation: () throws -> T) throws -> T {
@@ -291,6 +307,349 @@ final class HelperIntegrationTests: XCTestCase {
         successor.connection.stop()
         await fulfillment(of: [successor.stopped], timeout: 10)
         XCTAssertTrue(successor.failures.isEmpty, "Released ownership must be available to a new connection")
+    }
+
+    @MainActor
+    func testBundledHistoryLifecyclePaginationUnicodeAndConfigurationCoexistence() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        let history = context.config.deletingLastPathComponent().appendingPathComponent("history.json")
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        session.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [session.ready], timeout: 10)
+        XCTAssertEqual(session.events.first?.payload["fixture"], .bool(false))
+        guard case let .array(capabilities)? = session.events.first?.payload["capabilities"] else {
+            return XCTFail("Business readiness must expose all five capabilities")
+        }
+        XCTAssertEqual(Set(capabilities.compactMap(\.string)),
+                       ["config_load", "config_save", "history_load", "history_add", "history_clear"])
+        XCTAssertEqual(capabilities.count, 5)
+        let missing = session.terminal("missing_history")
+        session.connection.loadHistory(id: "missing_history")
+        await fulfillment(of: [missing], timeout: 10)
+        session.assertOperation("missing_history")
+        XCTAssertEqual(try session.historyEntries("missing_history"), [])
+        XCTAssertEqual(session.result("missing_history")?.payload["total"], .integer(0))
+        XCTAssertEqual(session.result("missing_history")?.payload["next_cursor"], .null)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.config.path))
+
+        let unicodeInput = String(repeating: "\u{4e2d}/", count: 4500)
+        let unicodeOutput = String(repeating: "\u{1f600}", count: 3000)
+        let records: [(input: String, output: String, isDict: Bool, isCode: Bool, kind: String, sig: String)] = [
+            ("synthetic-dict", "definition", true, false, "dict", "dict-sig"),
+            ("synthetic-code", "print(1)", false, true, "code", "code-sig"),
+            (unicodeInput, unicodeOutput, false, false, "ocr", "\u{4e2d}-ocr-sig")
+        ]
+        let saved = session.terminal("config_save")
+        let added = records.indices.map { session.terminal("add\($0)") }
+        session.connection.saveConfiguration(["font_size": .integer(23)], id: "config_save")
+        for (index, record) in records.enumerated() {
+            session.connection.addHistory(input: record.input, output: record.output, isDict: record.isDict,
+                                          isCode: record.isCode, kind: record.kind, sig: record.sig,
+                                          limit: 3, id: "add\(index)")
+        }
+        await fulfillment(of: [saved] + added, timeout: 20, enforceOrder: true)
+        for id in ["config_save", "add0", "add1", "add2"] { session.assertOperation(id) }
+        XCTAssertEqual(session.events.filter { $0.type == "started" && $0.id != "missing_history" }.map(\.id),
+                       ["config_save", "add0", "add1", "add2"])
+        for index in records.indices {
+            XCTAssertEqual(session.result("add\(index)")?.payload["recorded"], .bool(true))
+            XCTAssertTrue(HistoryDocument.validRevision(session.result("add\(index)")?.payload["revision"]))
+        }
+        let all = session.terminal("all")
+        session.connection.loadHistory(id: "all")
+        await fulfillment(of: [all], timeout: 10)
+        session.assertOperation("all")
+        let entries = try session.historyEntries("all")
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertGreaterThan(try JSONValue.object(try XCTUnwrap(session.result("all")?.payload)).encoded().count,
+                             ConfigurationDocument.maxBytes)
+        for record in records {
+            let entry = try XCTUnwrap(entries.first { $0["input"] == .string(record.input) })
+            XCTAssertEqual(entry["output"], .string(record.output))
+            XCTAssertEqual(entry["is_dict"], .bool(record.isDict))
+            XCTAssertEqual(entry["is_code"], .bool(record.isCode))
+            XCTAssertEqual(entry["kind"], .string(record.kind))
+            XCTAssertEqual(entry["sig"], .string(record.sig))
+            XCTAssertFalse(try XCTUnwrap(entry["ts"]?.string).isEmpty)
+        }
+        let first = session.terminal("first")
+        session.connection.loadHistory(pageSize: 1, id: "first")
+        await fulfillment(of: [first], timeout: 10)
+        let cursor = try XCTUnwrap(session.result("first")?.payload["next_cursor"])
+        XCTAssertNotEqual(cursor, .null)
+        let rest = session.terminal("rest")
+        session.connection.loadHistory(pageSize: 2, cursor: cursor, id: "rest")
+        await fulfillment(of: [rest], timeout: 10)
+        session.assertOperation("first")
+        session.assertOperation("rest")
+        XCTAssertEqual(try session.historyEntries("first") + session.historyEntries("rest"), entries)
+        XCTAssertEqual(session.result("first")?.payload["revision"], session.result("all")?.payload["revision"])
+        XCTAssertEqual(session.result("rest")?.payload["next_cursor"], .null)
+        let stored = try Data(contentsOf: history)
+        XCTAssertEqual(try JSONValue.parse(stored), .array(entries.map(JSONValue.object)))
+
+        let limited = session.terminal("limited")
+        session.connection.addHistory(input: "synthetic-text", output: "translated", isDict: false,
+                                      isCode: false, kind: "text", sig: "text-sig", limit: 2, id: "limited")
+        await fulfillment(of: [limited], timeout: 10)
+        session.assertOperation("limited")
+        XCTAssertNotEqual(session.result("limited")?.payload["revision"], session.result("all")?.payload["revision"])
+        let expired = session.terminal("after_add")
+        session.connection.loadHistory(pageSize: 1, cursor: cursor, id: "after_add")
+        await fulfillment(of: [expired], timeout: 10)
+        session.assertHistoryFailure("after_add", code: "history_cursor_expired")
+        let limitedPage = session.terminal("limited_page")
+        session.connection.loadHistory(pageSize: 1, id: "limited_page")
+        await fulfillment(of: [limitedPage], timeout: 10)
+        XCTAssertEqual(session.result("limited_page")?.payload["total"], .integer(2))
+        let reconnectCursor = try XCTUnwrap(session.result("limited_page")?.payload["next_cursor"])
+        XCTAssertNotEqual(reconnectCursor, .null)
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        reopened.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let generation = reopened.terminal("old_generation")
+        reopened.connection.loadHistory(cursor: reconnectCursor, id: "old_generation")
+        await fulfillment(of: [generation], timeout: 10)
+        reopened.assertHistoryFailure("old_generation", code: "history_cursor_expired")
+        let reload = reopened.terminal("reload")
+        reopened.connection.loadHistory(id: "reload")
+        await fulfillment(of: [reload], timeout: 10)
+        let remaining = try reopened.historyEntries("reload")
+        XCTAssertEqual(remaining.count, 2)
+        XCTAssertTrue(remaining.contains { $0["input"] == .string(unicodeInput) })
+        XCTAssertTrue(remaining.contains { $0["input"] == .string("synthetic-text") })
+        let beforeClear = reopened.terminal("before_clear")
+        reopened.connection.loadHistory(pageSize: 1, id: "before_clear")
+        await fulfillment(of: [beforeClear], timeout: 10)
+        let clearCursor = try XCTUnwrap(reopened.result("before_clear")?.payload["next_cursor"])
+        let cleared = reopened.terminal("clear")
+        reopened.connection.clearHistory(id: "clear")
+        await fulfillment(of: [cleared], timeout: 10)
+        reopened.assertOperation("clear")
+        XCTAssertEqual(reopened.result("clear")?.payload["cleared"], .bool(true))
+        let afterClear = reopened.terminal("after_clear")
+        reopened.connection.loadHistory(cursor: clearCursor, id: "after_clear")
+        await fulfillment(of: [afterClear], timeout: 10)
+        reopened.assertHistoryFailure("after_clear", code: "history_cursor_expired")
+        let config = reopened.terminal("config")
+        reopened.connection.loadConfiguration(id: "config")
+        await fulfillment(of: [config], timeout: 10)
+        reopened.assertOperation("config")
+        XCTAssertEqual(reopened.result("config")?.payload["config"]?.object?["font_size"], .integer(23))
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty)
+
+        let final = ConfigurationNotices()
+        defer { final.connection.forceStop() }
+        final.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [final.ready], timeout: 10)
+        let empty = final.terminal("empty")
+        final.connection.loadHistory(id: "empty")
+        await fulfillment(of: [empty], timeout: 10)
+        XCTAssertEqual(try final.historyEntries("empty"), [])
+        let newAdd = final.terminal("new_add")
+        final.connection.addHistory(input: "synthetic-after-clear", output: "new", isDict: false,
+                                    isCode: false, kind: "text", sig: "", limit: 1, id: "new_add")
+        await fulfillment(of: [newAdd], timeout: 10)
+        final.assertOperation("new_add")
+        let newLoad = final.terminal("new_load")
+        final.connection.loadHistory(id: "new_load")
+        await fulfillment(of: [newLoad], timeout: 10)
+        XCTAssertEqual(try final.historyEntries("new_load").map { $0["input"] }, [.string("synthetic-after-clear")])
+        final.connection.stop()
+        await fulfillment(of: [final.stopped], timeout: 10)
+        XCTAssertTrue(final.failures.isEmpty)
+    }
+
+    @MainActor
+    func testBundledHistoryCorruptOversizedAndRejectedAddsPreserveBytes() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        let history = context.config.deletingLastPathComponent().appendingPathComponent("history.json")
+        try FileManager.default.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let corrupt = Data("[{\"input\":\"synthetic\",\"input\":\"duplicate\"}]".utf8)
+        try corrupt.write(to: history)
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        session.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [session.ready], timeout: 10)
+        for id in ["corrupt", "corrupt_again"] {
+            let terminal = session.terminal(id)
+            session.connection.loadHistory(id: id)
+            await fulfillment(of: [terminal], timeout: 10)
+            session.assertHistoryFailure(id, code: "invalid_history")
+            XCTAssertEqual(try Data(contentsOf: history), corrupt)
+        }
+
+        let tailID = String(repeating: "t", count: 64)
+        func completionFrame(_ payload: [String: JSONValue]) throws -> Data {
+            try JSONValue.object([
+                "v": .integer(1), "id": .string(tailID), "seq": .integer(2),
+                "type": .string("completed"), "payload": .object(payload)
+            ]).encoded()
+        }
+        let revision = JSONValue.string(String(repeating: "a", count: 64))
+        var tailPayload: [String: JSONValue] = [
+            "entries": .array([.object(["input": .string("")]), .object([:])]),
+            "revision": revision, "total": .integer(2), "next_cursor": .null
+        ]
+        let tailOverhead = try completionFrame(tailPayload).count + 1
+        let largeLegacy = JSONValue.object(["input": .string(String(repeating: "a", count: 65_536 - tailOverhead))])
+        let tailEntries = JSONValue.array([largeLegacy, .object([:])])
+        tailPayload["entries"] = tailEntries
+        XCTAssertEqual(try completionFrame(tailPayload).count + 1, 65_536)
+        var prefix = tailPayload
+        prefix["entries"] = .array([largeLegacy])
+        prefix["next_cursor"] = .object(["revision": revision, "offset": .integer(1)])
+        XCTAssertGreaterThan(try completionFrame(prefix).count + 1, 65_536)
+        let tailBytes = try tailEntries.encoded()
+        try tailBytes.write(to: history)
+        let tail = session.terminal(tailID)
+        session.connection.loadHistory(pageSize: 2, id: tailID)
+        await fulfillment(of: [tail], timeout: 10)
+        session.assertOperation(tailID)
+        let receivedTail = try XCTUnwrap(session.result(tailID)?.payload)
+        XCTAssertTrue(receivedTail["entries"] == tailEntries)
+        XCTAssertEqual(receivedTail["next_cursor"], .null)
+        XCTAssertEqual(try completionFrame(receivedTail).count + 1, 65_536)
+        XCTAssertTrue(try Data(contentsOf: history) == tailBytes, "Legacy reads must not rewrite the file")
+
+        let oversizedEntry = try JSONValue.array([.object([
+            "input": .string(String(repeating: "a", count: 65_536))
+        ])]).encoded()
+        try oversizedEntry.write(to: history)
+        let oversizedRead = session.terminal("oversized_read")
+        session.connection.loadHistory(pageSize: 1, id: "oversized_read")
+        await fulfillment(of: [oversizedRead], timeout: 10)
+        session.assertHistoryFailure("oversized_read", code: "history_entry_too_large")
+        XCTAssertEqual(try Data(contentsOf: history), oversizedEntry)
+
+        let legacy = JSONValue.object([
+            "input": .string("synthetic-preserved"), "output": .null, "kind": .string("legacy-kind"),
+            "ts": .null, "sig": .null, "future": .object(["x": .array([.bool(true), .integer(1)])])
+        ])
+        let before = try JSONValue.array([legacy]).encoded()
+        try before.write(to: history)
+        let validRead = session.terminal("valid_read")
+        session.connection.loadHistory(id: "valid_read")
+        await fulfillment(of: [validRead], timeout: 10)
+        session.assertOperation("valid_read")
+        XCTAssertEqual(try session.historyEntries("valid_read").map(JSONValue.object), [legacy])
+        var payload: [String: JSONValue] = [
+            "operation": .string("history_add"), "input": .string(String(repeating: "\u{0}", count: 10_000)),
+            "output": .string(""), "is_dict": .bool(false), "is_code": .bool(false),
+            "kind": .string("text"), "sig": .string(""), "limit": .integer(10)
+        ]
+        let overhead = try ClientMessage(id: "oversize", type: "request", payload: payload).encoded().count
+        payload["output"] = .string(String(repeating: "a", count: 65_536 - overhead))
+        let admissible = ClientMessage(id: "oversize", type: "request", payload: payload)
+        XCTAssertEqual(try admissible.encoded().count, 65_536)
+        let rejected = session.terminal("oversize")
+        session.connection.send(admissible)
+        await fulfillment(of: [rejected], timeout: 10)
+        XCTAssertEqual(session.result("oversize")?.type, "failed")
+        XCTAssertEqual(session.result("oversize")?.safeFailureCode, "history_entry_too_large")
+        XCTAssertEqual(try Data(contentsOf: history), before)
+        let unchanged = session.terminal("unchanged")
+        session.connection.loadHistory(id: "unchanged")
+        await fulfillment(of: [unchanged], timeout: 10)
+        XCTAssertEqual(try session.historyEntries("unchanged").map(JSONValue.object), [legacy])
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+
+        for invalidField in [
+            ["kind": JSONValue.string("legacy-kind")],
+            ["is_dict": .integer(1)],
+            ["input": .string(String(repeating: "\u{1f600}", count: 6001))],
+            ["input": .string(String(repeating: "\u{0}", count: 24_000))]
+        ] {
+            let invalid = ConfigurationNotices()
+            defer { invalid.connection.forceStop() }
+            invalid.connection.startBusiness(runtime: context.runtime, home: context.home)
+            await fulfillment(of: [invalid.ready], timeout: 10)
+            var request: [String: JSONValue] = [
+                "operation": .string("history_add"), "input": .string("synthetic"), "output": .string("value"),
+                "is_dict": .bool(false), "is_code": .bool(false), "kind": .string("text"),
+                "sig": .string("sig"), "limit": .integer(1)
+            ]
+            request.merge(invalidField) { _, new in new }
+            invalid.connection.send(ClientMessage(id: "invalid", type: "request", payload: request))
+            await fulfillment(of: [invalid.stopped], timeout: 10)
+            XCTAssertTrue(invalid.events.allSatisfy { $0.id != "invalid" })
+            let expected: ProbeError = invalidField["input"] == .string(String(repeating: "\u{0}", count: 24_000)) ?
+                .frameTooLarge : .invalidPayload
+            XCTAssertEqual(invalid.failures, [expected])
+            XCTAssertEqual(try Data(contentsOf: history), before)
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: history.deletingLastPathComponent().path)
+        XCTAssertFalse(names.contains { $0.hasPrefix(".tmp_") })
+    }
+
+    @MainActor
+    func testBundledHistoryCompetingHelpersReleaseBothOwners() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        let owner = ConfigurationNotices()
+        defer { owner.connection.forceStop() }
+        owner.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [owner.ready], timeout: 10)
+        let saved = owner.terminal("config_save")
+        let added = owner.terminal("history_add")
+        owner.connection.saveConfiguration(["font_size": .integer(21)], id: "config_save")
+        owner.connection.addHistory(input: "synthetic-owner", output: "kept", isDict: false,
+                                    isCode: false, kind: "text", sig: "owner-sig", limit: 10, id: "history_add")
+        await fulfillment(of: [saved, added], timeout: 10, enforceOrder: true)
+        owner.assertOperation("config_save")
+        owner.assertOperation("history_add")
+
+        let competitor = ConfigurationNotices()
+        defer { competitor.connection.forceStop() }
+        let bootstrap = competitor.terminal("hello")
+        competitor.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [bootstrap, competitor.stopped], timeout: 10, enforceOrder: true)
+        XCTAssertEqual(competitor.events.map(\.type), ["failed"])
+        XCTAssertEqual(competitor.result("hello")?.safeFailureCode, "config_in_use")
+        XCTAssertEqual(competitor.failures, [.configInUse])
+        let live = owner.terminal("live")
+        owner.connection.loadHistory(id: "live")
+        await fulfillment(of: [live], timeout: 10)
+        owner.assertOperation("live")
+        XCTAssertEqual(try owner.historyEntries("live").first?["input"], .string("synthetic-owner"))
+        owner.connection.stop()
+        await fulfillment(of: [owner.stopped], timeout: 10)
+        XCTAssertTrue(owner.failures.isEmpty)
+
+        let successor = ConfigurationNotices()
+        defer { successor.connection.forceStop() }
+        successor.connection.startBusiness(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [successor.ready], timeout: 10)
+        let config = successor.terminal("config")
+        let history = successor.terminal("history")
+        successor.connection.loadConfiguration(id: "config")
+        successor.connection.loadHistory(id: "history")
+        await fulfillment(of: [config, history], timeout: 10, enforceOrder: true)
+        successor.assertOperation("config")
+        successor.assertOperation("history")
+        XCTAssertEqual(successor.result("config")?.payload["config"]?.object?["font_size"], .integer(21))
+        XCTAssertEqual(try successor.historyEntries("history"), try owner.historyEntries("live"))
+        let cleared = successor.terminal("clear")
+        successor.connection.clearHistory(id: "clear")
+        successor.connection.stop()
+        await fulfillment(of: [cleared, successor.stopped], timeout: 10, enforceOrder: true)
+        successor.assertOperation("clear")
+        XCTAssertEqual(successor.events.last?.type, "completed")
+        XCTAssertTrue(successor.events.last?.payload.isEmpty == true)
+        XCTAssertTrue(successor.failures.isEmpty, "Normal stop must drain the pending history write")
     }
 
     @MainActor

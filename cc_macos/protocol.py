@@ -49,6 +49,11 @@ def decode_frame(raw: bytes) -> dict:
         raise ProtocolError("frame_too_large")
     if not raw.endswith(b"\n"):
         raise ProtocolError("truncated_frame")
+    return decode_json_document(raw, object_required=True)
+
+
+def decode_json_document(raw: bytes, *, max_depth=MAX_DEPTH, object_required=False):
+    """Strict JSON shared by bounded wire and file readers; callers bound the input bytes."""
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_object,
                            parse_constant=_nonfinite)
@@ -56,12 +61,12 @@ def decode_frame(raw: bytes) -> dict:
         if isinstance(exc, ProtocolError):
             raise
         raise ProtocolError("invalid_json") from exc
-    if not isinstance(value, dict):
+    if object_required and not isinstance(value, dict):
         raise ProtocolError("invalid_envelope")
     pending = [(value, 1)]
     while pending:
         item, depth = pending.pop()
-        if depth > MAX_DEPTH:
+        if depth > max_depth:
             raise ProtocolError("message_too_deep")
         if isinstance(item, dict):
             pending.extend((key, depth + 1) for key in item)
@@ -110,29 +115,39 @@ def encode_frame(message: dict) -> bytes:
 def validate_config(config: object) -> None:
     if not isinstance(config, dict):
         raise ProtocolError("invalid_config")
-    pending = [(config, 1)]
-    while pending:
-        value, depth = pending.pop()
-        if depth > MAX_CONFIG_DEPTH:
-            raise ProtocolError("invalid_config")
-        if isinstance(value, dict):
-            if any(not isinstance(key, str) for key in value):
-                raise ProtocolError("invalid_config")
-            pending.extend((child, depth + 1) for child in value)
-            pending.extend((child, depth + 1) for child in value.values())
-        elif isinstance(value, list):
-            pending.extend((child, depth + 1) for child in value)
-        elif type(value) in (int, float):
-            if abs(value) > MAX_CONFIG_NUMBER or (type(value) is float and not math.isfinite(value)):
-                raise ProtocolError("invalid_config")
-        elif not (value is None or type(value) is bool or isinstance(value, str)):
-            raise ProtocolError("invalid_config")
+    validate_json_value(config, max_depth=MAX_CONFIG_DEPTH, code="invalid_config")
     try:
         data = json.dumps(config, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
     except (ValueError, TypeError, UnicodeError, RecursionError) as error:
         raise ProtocolError("invalid_config") from error
     if len(data) > MAX_CONFIG_BYTES:
         raise ProtocolError("invalid_config")
+
+
+def validate_json_value(document, *, max_depth, code):
+    """Validate the common lossless JSON subset without applying a document byte budget."""
+    pending = [(document, 1)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > max_depth:
+            raise ProtocolError(code)
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise ProtocolError(code)
+            pending.extend((child, depth + 1) for child in value)
+            pending.extend((child, depth + 1) for child in value.values())
+        elif isinstance(value, list):
+            pending.extend((child, depth + 1) for child in value)
+        elif type(value) in (int, float):
+            if abs(value) > MAX_CONFIG_NUMBER or (type(value) is float and not math.isfinite(value)):
+                raise ProtocolError(code)
+        elif isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeError as error:
+                raise ProtocolError(code) from error
+        elif not (value is None or type(value) is bool):
+            raise ProtocolError(code)
 
 
 class PipeFrameReader:
