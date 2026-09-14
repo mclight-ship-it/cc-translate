@@ -12,13 +12,13 @@ macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Fo
 源码 `8797fc7` / [run34823367426](https://github.com/mclight-ship-it/cc-translate/actions/runs/34823367426)，
 Windows正常完整hook1357；每系统90进程/277核心/9精确Foundation，新35个快照方法逐项执行。
 Darwin native Codex 后端随后已通过同包三系统：
-源码 `13b6543` / [run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)，
-正常Windows完整hook1487；每系统165进程/403核心/9精确Foundation，
-新增201个进程/核心方法逐名各执行一次。**这是内部native后端，翻译helper/Swift API和新翻译UI
+最新修复源码 `6d029d1` / [run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)，
+正常Windows完整hook1494；每系统172进程/410核心/9精确Foundation，
+本次新增14个进程/核心方法逐名各执行一次。**这是内部native后端，翻译helper/Swift API和新翻译UI
 尚未接入；未调用官方CLI/账号/真实模型。**
-后续独立审查发现idle回收责任、item终态及非法item类型三项生产缺陷；现已实证并修复，
-正常联合300项通过，仍需新源码完整hook及172进程/410核心/原9Foundation三系统验证。
-旧13b6543绿灯不代表这些修复已验收；通过后再继续显式翻译业务接线，无需用户重新授权。
+此前独立审查发现idle回收责任、item终态及非法item类型三项生产缺陷；现已实证并修复，
+正常联合300项、完整hook和同包三系统均通过；旧13b6543绿灯不代作这三项修复证据。
+接下来继续显式翻译业务接线，无需用户重新授权。
 旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
@@ -192,8 +192,9 @@ RPC使用同步selector和nonblocking管道，8MiB每operation累计预算包含
 native按operation隔离item终态，拒绝完成后重复/迟到事件，同时保留不同item及进程复用；
 传入共享parser前明确校验item类型和agent text/phase，不扩大异常捕获。
 
-源码 `13b65433f9228175e6c49141ddbf7aa8d965d58a` 的同包三系统及
-[完整制品/hash/两次失败与修复](MACOS_TODO.md#darwin-native-checkpoint) 已记录。
+修复源码 `6d029d1b7418be2c6d7ae47c1babab550ac441b3` 的同包三系统及
+[完整制品/hash/旧反例/修复中失败](MACOS_TODO.md#darwin-native-checkpoint) 已记录；
+完整681库存/71资源/43源码路径和6实际Mach-O核验完成，临时归档已清理。
 原9项Foundation仍覆盖诊断/config/history，**此后端检查点未增加翻译IPC或UI**。
 下一步将同一后端接显式业务连接与Swift API；普通启动、hello及诊断/config-only不自动运行CLI。
 合成测试与官方CLI安装/账号/真实模型、Finder/TCC/IME/多屏验收始终分开。

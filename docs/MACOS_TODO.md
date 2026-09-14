@@ -34,10 +34,13 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 <a id="darwin-native-checkpoint"></a>
 
-## 当前连续依赖：Darwin native 审查修复待新源码验证（2026-09-14）
+## 当前连续依赖：Darwin native 三项审查修复已通过同包验证（2026-09-14）
 
 `e525c97` 文档检查点之后，独立审查发现三项确定生产缺陷；下述
-`13b6543` / run34832960738 的绿色**不代表这些缺陷已修复**，暂不进入翻译 IPC。
+`13b6543` / run34832960738 的绿色**不代表这些缺陷已修复**。
+真正修复源码为 **`6d029d1b7418be2c6d7ae47c1babab550ac441b3`** /
+[run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)；
+正常完整hook及同包三系统均通过。翻译IPC/UI仍未接入，下一步继续该显式业务链。
 
 - [x] 未改生产前，三个反例实际得到 **3 tests / 0.032s / 13 failures / 4 errors**：
   空闲timer撞同模型warm版本探测后未重排；同item重复完成/终态后delta或start被接受；
@@ -55,12 +58,53 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   不嵌套取锁、不改为全局RLock；正常联合 **300 / 12.357s OK**。
 - [x] 冻结后代理迟到加入的31行constructor cleanup回归已保留并纳入此次联合验证，
   不冒称包含在旧67项facade或旧403项core结果中。代理均已停止写入。
-- [ ] 新源码正常完整hook及同一App的15/14/26验证：保留全部旧覆盖，
+- [x] 新源码正常完整hook及同一App的15/14/26验证：保留全部旧覆盖，
   门槛提升到 **172 process / 410 core / 原9 Foundation**；
-  新真实timer与版本探测屏障、原组/后代清理、item反例及不同item/reuse路径尚待执行。
+  新真实timer与版本探测屏障、原组/后代清理、item反例及不同item/reuse路径均实际执行通过。
 - 原第二轮timeout阶段问题已在`13b6543`用冷预检未提交和真实预热后已提交两个回归修正；
   此次保留原3秒预算与提交/清理断言，不重复不变旧源码、不增加生产timeout或retry。
 - 旧Windows `WinError5`来源未知继续保留；没有官方账号/真实模型或新的用户实机结论。
+
+### 修复源码、完整hook与新同包制品
+
+修复源码 **`6d029d1b7418be2c6d7ae47c1babab550ac441b3`** 已正常提交/推送；
+一次正常privacy/逐文件编译/完整pre-push **1494 / 72.376s OK**，无失败或skip。
+保留既有Tk teardown stderr与离线smoke拒绝负例，不混入旧1487计数；
+此次没有复现WinError5，不表示旧未知拒绝来源已解决。
+
+[run34836719504](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504)
+已实际watch到exit0并逐job/step核对：attempt1，3 jobs/33 steps全部success。
+同一个15.7.9/Xcode16.4/Swift6.1.2/SDK15.5 arm64制品交给14/26，不重建或重签。
+
+| 系统 / harness | 真实 process | 真实 bundled core | 后置 Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 | 172 / 233.252s | 410 / 2.418s | 9 / 14.357s |
+| 14.8.9 / Xcode16.2 | 172 / 252.654s | 410 / 2.622s | 9 / 13.855s |
+| 26.6.2 / Xcode26.6 | 172 / 257.328s | 410 / 2.639s | 9 / 16.501s |
+
+全部后置测试无failures/errors/skips。producer离线契约 **600 / 10.391s OK**；
+打包前Swift共64项、其中9项尚无App按原约定skip，和打包后9项真实执行严格分开。
+相对`13b6543`，新增7 process与7 core方法（含冻结后迟到的constructor回归）
+按AST差分与实际日志逐名核对，每系统各执行一次；原9个Foundation方法也逐名各一次。
+真实timer先撞正在进行的同模型版本预检，warm快速返回后不再发请求，
+进程与同组后代已由idle回收并在显式shutdown之前验证消亡；不是靠最后清理凑绿。
+item重复终态/迟到、非法type/phase、不同item和进程复用正向路径均由包内CLI实际执行。
+
+- App：
+  [artifact10343918198](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504/artifacts/10343918198)；
+  内层zip **18,427,383字节**，
+  SHA-256 **`e48c1431a51f2a4df503cbe73d000198149e0555cb3749f75d8b8c8e092f8161`**，
+  tree **`534a067a96eb03ec6f14a7980502d70ec32d9f2b93be234017aeed9d88f476c2`**。
+- 同包runtime小报告：
+  [14/10344359174](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504/artifacts/10344359174) /
+  [26/10344552441](https://github.com/mclight-ship-it/cc-translate/actions/runs/34836719504/artifacts/10344552441)。
+- 独立核验完整zip的CRC、681库存/71资源/43源码路径（42唯一Git路径）、
+  字节/模式/链接/tree、19份许可及metadata覆盖；实际解析6个Mach-O架构、minimum、
+  依赖/rpath与报告逐项一致。固定producer的605保留runtime文件检查证据未冒称为本地重下载验证。
+  具体临时App zip/审计脚本已删除，小JSON与真实日志保留。
+- 后续仅三文档docs-only提交不替代该源码SHA、不重跑不变源码CI。
+  本检查点不新增翻译helper/Swift调用、GUI或真实官方CLI账号结果；
+  旧用户包`eec92a5`的实机结论不转嫁，用户当前无需重装、安装CLI或登录。
 
 ### 前一源码自动化检查点（保留，不作为上述审查修复证据）
 
