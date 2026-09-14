@@ -110,6 +110,7 @@ class TestDarwinCodexProvider(unittest.TestCase):
             "cc_providers.codex_catalog.CodexModelCatalog.overrides",
             return_value=('model_catalog_json="synthetic-catalog"',)))
         self.makedirs = self.stack.enter_context(patch.object(native.os, "makedirs"))
+        self.real_schedule = codex_appserver.CodexAppServerTransport._schedule_idle_shutdown
         self.schedule = self.stack.enter_context(patch(
             "cc_providers.codex_appserver.CodexAppServerTransport._schedule_idle_shutdown"))
         self.popen = self.stack.enter_context(patch(
@@ -628,6 +629,92 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.responses = responses
         self.assert_failure(self.provider().complete(self.request()), "invalid_appserver_message", True)
 
+    def test_completed_item_rejects_duplicate_completion_late_delta_and_restart(self):
+        for method in ("item/completed", "item/agentMessage/delta", "item/started"):
+            for streaming in (False, True):
+                with self.subTest(method=method, streaming=streaming):
+                    def responses(proc, request):
+                        replies = reply_messages(request, proc.cwd)
+                        if request["method"] == "turn/start":
+                            late = json.loads(json.dumps(
+                                replies[1] if method.endswith("/delta") else replies[2]))
+                            late["method"] = method
+                            if method == "item/completed":
+                                late["params"]["item"]["text"] = "SYNTHETIC_PRIVATE_REPLACEMENT"
+                            replies = [replies[0], replies[2], late, replies[-1]]
+                        return replies
+                    self.responses = responses
+                    provider, deltas = self.provider(), []
+                    result = (provider.stream(self.request(), deltas.append) if streaming
+                              else provider.complete(self.request()))
+                    self.assert_failure(result, "invalid_appserver_message", True)
+                    self.assertEqual(deltas, [])
+                    self.assertEqual(self.processes[-1].close_count, 1)
+                    self.assertEqual(self.methods(self.processes[-1]).count("turn/start"), 1)
+
+    def test_invalid_item_type_returns_fixed_failure_in_complete_and_stream(self):
+        for value in ([], {}, None, True, 1):
+            for streaming in (False, True):
+                with self.subTest(value=value, streaming=streaming):
+                    def responses(proc, request):
+                        replies = reply_messages(request, proc.cwd)
+                        if request["method"] == "turn/start":
+                            replies[2]["params"]["item"]["type"] = value
+                            replies = [replies[0], replies[2], replies[-1]]
+                        return replies
+                    self.responses = responses
+                    provider, deltas = self.provider(), []
+                    result = (provider.stream(self.request(), deltas.append) if streaming
+                              else provider.complete(self.request()))
+                    self.assert_failure(result, "invalid_appserver_message", True)
+                    self.assertEqual(deltas, [])
+                    self.assertEqual(self.processes[-1].close_count, 1)
+
+    def test_agent_item_fields_are_validated_before_the_shared_parser(self):
+        fields = (("type", []), ("type", {}), ("type", False), ("text", []),
+                  ("text", None), ("text", False), ("phase", []), ("phase", {}),
+                  ("phase", False), ("phase", 1), ("phase", "SYNTHETIC_PRIVATE_PHASE"))
+        for method in ("item/started", "item/completed"):
+            for key, value in fields:
+                with self.subTest(method=method, key=key, value=value):
+                    def responses(proc, request):
+                        replies = reply_messages(request, proc.cwd)
+                        if request["method"] == "turn/start":
+                            replies[2]["method"] = method
+                            replies[2]["params"]["item"][key] = value
+                            replies = [replies[0], replies[2], replies[-1]]
+                        return replies
+                    self.responses = responses
+                    deltas = []
+                    result = self.provider().stream(self.request(), deltas.append)
+                    self.assert_failure(result, "invalid_appserver_message", True)
+                    self.assertEqual(deltas, [])
+                    self.assertEqual(self.processes[-1].close_count, 1)
+
+    def test_distinct_items_remain_valid_and_item_state_resets_on_reuse(self):
+        def responses(proc, request):
+            replies = reply_messages(request, proc.cwd)
+            if request["method"] == "turn/start":
+                started = json.loads(json.dumps(replies[2]))
+                started["method"] = "item/started"
+                started["params"]["item"].update(text="", phase=None)
+                delta = json.loads(json.dumps(replies[1]))
+                delta["params"].update(itemId="synthetic-second", delta="Synthetic second")
+                final = json.loads(json.dumps(replies[2]))
+                final["params"]["item"].update(id="synthetic-second", text="Synthetic second")
+                replies = [replies[0], started, *replies[1:3], delta, final, replies[-1]]
+            return replies
+        self.responses = responses
+        provider = self.provider()
+        for _ in range(2):
+            deltas = []
+            result = provider.stream(self.request(), deltas.append)
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual(result.text, "Synthetic second")
+            self.assertEqual(deltas, [TEXT, "Synthetic second"])
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(self.processes[0]).count("turn/start"), 2)
+
     def test_late_previous_turn_notification_cannot_satisfy_next_operation(self):
         provider = self.provider()
         self.assertTrue(provider.complete(self.request()).ok)
@@ -762,6 +849,37 @@ class TestDarwinCodexProvider(unittest.TestCase):
                 self.assertTrue(provider._transport._stream_lock.acquire(blocking=False))
                 provider._transport._stream_lock.release()
         self.rpc.assert_not_called()
+
+    def test_rpc_constructor_cleanup_failure_is_sticky_before_process_assignment(self):
+        for initial in ("complete", "warm_up"):
+            with self.subTest(initial=initial):
+                error = RpcError("rpc_cleanup_failed")
+                error.__cause__ = RuntimeError("SYNTHETIC_PRIVATE_CONSTRUCTOR_CLEANUP")
+                self.rpc.side_effect = error
+                before = self.rpc.call_count
+                provider = self.provider()
+                result = (provider.complete(self.request()) if initial == "complete" else
+                          provider.warm_up("synthetic"))
+                self.assert_failure(result, "provider_cleanup_failed")
+                self.assertEqual(self.rpc.call_count, before + 1)
+                self.assertEqual(self.processes, [])
+                self.assertIsNone(provider._transport._proc)
+                self.assertEqual(provider._fatal, "provider_cleanup_failed")
+                counts = (self.capture.call_count, self.config.call_count,
+                          self.catalog.call_count, self.rpc.call_count)
+                self.assert_failure(provider.complete(self.request()), "provider_cleanup_failed")
+                self.assert_failure(provider.warm_up("synthetic"), "provider_cleanup_failed")
+                self.assertEqual((self.capture.call_count, self.config.call_count,
+                                  self.catalog.call_count, self.rpc.call_count), counts)
+
+                def locks_available():
+                    for lock in (provider._operation_lock, provider._transport._stream_lock):
+                        if not lock.acquire(timeout=0.25):
+                            return False
+                        lock.release()
+                    return True
+
+                self.assertTrue(self.finish(self.start(locks_available)))
 
     def test_zero_and_partial_turn_writes_have_conservative_submission_metrics(self):
         for partial in (False, True):
@@ -979,6 +1097,78 @@ class TestDarwinCodexProvider(unittest.TestCase):
             provider._operation_lock.release()
         self.assertTrue(provider.complete(self.request()).ok)
         self.assertEqual(len(self.processes), 1)
+
+    def test_idle_expiry_during_same_model_warm_fast_path_retains_cleanup(self):
+        timers = []
+        class ControlledTimer:
+            def __init__(self, interval, function, args):
+                self.interval, self.function, self.args = interval, function, args
+                self.cancelled = False
+                timers.append(self)
+            def start(self):
+                pass
+            def cancel(self):
+                self.cancelled = True
+            def fire(self):
+                self.function(*self.args)
+
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        transport, proc = provider._transport, self.processes[0]
+        entered, release = threading.Event(), threading.Event()
+        def version_probe(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError("Synthetic version gate was not released.")
+            return b"codex-cli 0.146.0\n"
+        self.capture.side_effect = version_probe
+        with patch.object(transport, "_schedule_idle_shutdown", self.real_schedule.__get__(transport)), \
+                patch.object(codex_appserver.threading, "Timer", ControlledTimer):
+            transport._schedule_idle_shutdown()
+            expired = timers[0]
+            warm = self.start(lambda: provider.warm_up("synthetic"))
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertIsNone(self.finish(self.start(expired.fire)))
+                self.assertEqual(proc.close_count, 0)
+            finally:
+                release.set()
+                result = self.finish(warm)
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual(len(timers), 2, "Idle expiry lost its cleanup responsibility.")
+            self.assertGreater(transport._idle_generation, expired.args[0])
+            self.assertTrue(expired.cancelled)
+            timers[-1].fire()
+            self.assertEqual(proc.close_count, 1)
+            self.assertIsNone(transport._proc)
+            self.assertEqual(self.methods(proc), ["initialize", "initialized", "hooks/list"])
+            self.assertEqual(len(self.processes), 1)
+
+    def test_stale_idle_generation_cannot_rearm_or_close_after_replacement_or_shutdown(self):
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        transport, proc = provider._transport, self.processes[0]
+        generation = transport._idle_generation
+        transport._cancel_idle_timer()
+        with patch.object(transport, "_schedule_idle_shutdown", self.real_schedule.__get__(transport)), \
+                patch.object(codex_appserver.threading, "Timer") as timer:
+            provider._operation_lock.acquire()
+            try:
+                self.assertIsNone(self.finish(self.start(lambda: transport._expire_idle_process(generation))))
+            finally:
+                provider._operation_lock.release()
+            transport._expire_idle_process(generation)
+            self.assertEqual(proc.close_count, 0)
+            timer.assert_not_called()
+            provider.shutdown()
+            generation = transport._idle_generation
+            provider._operation_lock.acquire()
+            try:
+                self.assertIsNone(self.finish(self.start(lambda: transport._expire_idle_process(generation))))
+            finally:
+                provider._operation_lock.release()
+            timer.assert_not_called()
+            self.assertEqual(proc.close_count, 1)
 
     def test_shutdown_waits_for_idle_cleanup_even_after_transport_detaches_process(self):
         provider = self.provider()

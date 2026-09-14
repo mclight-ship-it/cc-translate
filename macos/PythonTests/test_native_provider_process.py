@@ -317,6 +317,96 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertEqual(len(self.read_lines(self.root / "calls.jsonl")), 3)
         self.assert_finished()
 
+    def test_idle_timer_during_same_model_warm_reclaims_real_group_without_another_request(self):
+        provider = self.create("descendant")
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        transport, proc = provider._transport, provider._transport._proc
+        transport._cancel_idle_timer()
+        entered, release = threading.Event(), threading.Event()
+        expired, closed = threading.Event(), threading.Event()
+        results, errors, closes = [], [], []
+        real_version, real_expire, real_close = (
+            transport._version_supported, transport._expire_idle_process, proc.close)
+
+        def version_after_gate(cancel_event=None):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("Synthetic version synchronization was not released.")
+            return real_version(cancel_event)
+
+        def expire(generation):
+            try:
+                real_expire(generation)
+            finally:
+                expired.set()
+
+        def close():
+            real_close()
+            closes.append(True)
+            closed.set()
+
+        def warm():
+            try:
+                results.append(provider.warm_up("synthetic"))
+            except BaseException as error:
+                errors.append(error)
+
+        transport._version_supported = version_after_gate
+        transport._expire_idle_process = expire
+        proc.close = close
+        worker = threading.Thread(target=warm, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            transport._schedule_idle_shutdown(max_seconds=0.01)
+            self.assertTrue(expired.wait(2), "Idle timer did not collide with the owned operation.")
+            self.assertFalse(closed.is_set())
+            release.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 1)
+            self.assertTrue(results[0].ok, results[0].error_code)
+            self.assertTrue(closed.wait(3), "Warm fast return lost the idle cleanup responsibility.")
+            self.assertEqual(closes, [True])
+            self.assertIsNone(transport._proc)
+            self.assertEqual(self.methods(), ["initialize", "initialized", "hooks/list"])
+            self._cleanup_owned()
+        finally:
+            release.set()
+            worker.join(5)
+            transport._version_supported = real_version
+            transport._expire_idle_process = real_expire
+            proc.close = real_close
+        self.assert_finished(descendant=True)
+
+    def test_duplicate_item_completion_is_rejected_without_replay(self):
+        self.exercise_failure("duplicate_item", "invalid_appserver_message", submitted=True)
+
+    def test_delta_after_item_completion_is_rejected_without_replay(self):
+        self.exercise_failure("late_item_delta", "invalid_appserver_message", submitted=True)
+
+    def test_restart_after_item_completion_is_rejected_without_replay(self):
+        self.exercise_failure("restarted_item", "invalid_appserver_message", submitted=True)
+
+    def test_unhashable_item_type_returns_fixed_protocol_failure(self):
+        self.exercise_failure("invalid_item_type", "invalid_appserver_message", submitted=True)
+
+    def test_invalid_agent_phase_returns_fixed_protocol_failure(self):
+        self.exercise_failure("invalid_item_phase", "invalid_appserver_message", submitted=True)
+
+    def test_multiple_items_and_reused_process_preserve_valid_results(self):
+        provider = self.create("multiple_items")
+        for _ in range(2):
+            deltas = []
+            result = provider.stream(self.request(), deltas.append)
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual(result.text, "Synthetic second")
+            self.assertEqual(deltas, [native_provider_fixture.TEXT, "Synthetic second"])
+        self.assertEqual(self.methods().count("initialize"), 1)
+        self.assertEqual(self.methods().count("turn/start"), 2)
+        self.assert_finished()
+
     def exercise_failure(self, mode, code, *, submitted=False, descendant=False, timeout=8,
                          prewarm=False):
         provider = self.create(mode)

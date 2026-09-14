@@ -15,7 +15,10 @@ Darwin native Codex 后端随后已通过同包三系统：
 源码 `13b6543` / [run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)，
 正常Windows完整hook1487；每系统165进程/403核心/9精确Foundation，
 新增201个进程/核心方法逐名各执行一次。**这是内部native后端，翻译helper/Swift API和新翻译UI
-尚未接入；未调用官方CLI/账号/真实模型。** 下一步继续显式翻译业务接线，不等待用户重新授权。
+尚未接入；未调用官方CLI/账号/真实模型。**
+后续独立审查发现idle回收责任、item终态及非法item类型三项生产缺陷；现已实证并修复，
+正常联合300项通过，仍需新源码完整hook及172进程/410核心/原9Foundation三系统验证。
+旧13b6543绿灯不代表这些修复已验收；通过后再继续显式翻译业务接线，无需用户重新授权。
 旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
@@ -184,6 +187,10 @@ RPC使用同步selector和nonblocking管道，8MiB每operation累计预算包含
 前台/warm/关闭串行，前台可中断预热；预热不发query/turn，也不证明已认证。
 首次实际写turn字节即保守标记submitted，部分写入/丢响应不能假称未执行或自动重放。
 同线程重入明确拒绝；取消/超时不跳过真实后代清理。冻结快照用于实际后端测试，不含取消/UI对象。
+审查修复为原idle scheduler增加原子generation条件：操作锁忙时保留回收责任，
+旧generation/关闭不重排；同模型warm快速返回后仍能回收，不重复获取非重入state lock。
+native按operation隔离item终态，拒绝完成后重复/迟到事件，同时保留不同item及进程复用；
+传入共享parser前明确校验item类型和agent text/phase，不扩大异常捕获。
 
 源码 `13b65433f9228175e6c49141ddbf7aa8d965d58a` 的同包三系统及
 [完整制品/hash/两次失败与修复](MACOS_TODO.md#darwin-native-checkpoint) 已记录。

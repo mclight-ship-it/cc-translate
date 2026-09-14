@@ -104,6 +104,7 @@ class _NativeTransport(CodexAppServerTransport):
         self._pending_rpc = {}
         self._thread_id = None
         self._turn_id = None
+        self._completed_items = set()
         self.cleanup_failed = threading.Event()
         self._owner_operation_lock = operation_lock or threading.RLock()
         self._log_error = log_error
@@ -147,6 +148,8 @@ class _NativeTransport(CodexAppServerTransport):
 
     def _expire_idle_process(self, generation):
         if not self._owner_operation_lock.acquire(blocking=False):
+            # A same-model warm fast path does not schedule a replacement timer.
+            self._schedule_idle_shutdown(max_seconds=0.05, expected_generation=generation)
             return
         try:
             try:
@@ -174,6 +177,7 @@ class _NativeTransport(CodexAppServerTransport):
             self._bound_operation = self.operation
             self._thread_id = None
             self._turn_id = None
+            self._completed_items.clear()
 
     def _send(self, proc, method, params=None, request_id=None):
         if self.cleanup_failed.is_set():
@@ -285,10 +289,21 @@ class _NativeTransport(CodexAppServerTransport):
                 elif method in ("item/started", "item/completed"):
                     item = params.get("item")
                     item_id = item.get("id") if isinstance(item, dict) else None
+                    if not isinstance(item, dict) or type(item.get("type")) is not str:
+                        raise CodexAppServerProtocolError("invalid_appserver_message")
+                    if item["type"] == "agentMessage":
+                        if ("text" in item and type(item["text"]) is not str
+                                or item.get("phase") not in (None, "commentary", "final_answer")):
+                            raise CodexAppServerProtocolError("invalid_appserver_message")
                 else:
                     item_id = None
                 if method.startswith("item/") and (type(item_id) is not str or not item_id):
                     raise CodexAppServerProtocolError("invalid_appserver_message")
+                if method.startswith("item/"):
+                    if item_id in self._completed_items:
+                        raise CodexAppServerProtocolError("invalid_appserver_message")
+                    if method == "item/completed":
+                        self._completed_items.add(item_id)
         return "line", line
 
 

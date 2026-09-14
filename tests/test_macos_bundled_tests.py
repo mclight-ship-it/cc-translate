@@ -117,7 +117,7 @@ class InventoryTests(unittest.TestCase):
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
         self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
             "process": ("owner_process_support", "state_ipc_process_support"), "core": ()})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 165, "core": 403})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 172, "core": 410})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:

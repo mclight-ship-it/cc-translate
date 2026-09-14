@@ -34,7 +34,35 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 <a id="darwin-native-checkpoint"></a>
 
-## 当前连续依赖：Darwin native 后端已完成自动化（2026-09-14）
+## 当前连续依赖：Darwin native 审查修复待新源码验证（2026-09-14）
+
+`e525c97` 文档检查点之后，独立审查发现三项确定生产缺陷；下述
+`13b6543` / run34832960738 的绿色**不代表这些缺陷已修复**，暂不进入翻译 IPC。
+
+- [x] 未改生产前，三个反例实际得到 **3 tests / 0.032s / 13 failures / 4 errors**：
+  空闲timer撞同模型warm版本探测后未重排；同item重复完成/终态后delta或start被接受；
+  `item.type`为list/dict时TypeError逃出固定结果契约（complete/stream均覆盖）。
+- [x] 空闲回收重用原scheduler，新增仅内部使用的原子generation条件；
+  未取得facade操作锁时短间隔重排，旧generation/关闭/无进程不重排或误清新进程。
+  Windows原无新参数调用语义不变；不阻塞timer抢操作锁，不重试模型请求。
+- [x] 每次operation绑定清除item终态集合，同turn同item完成后拒绝重复完成、
+  delta或start；不同item仍合法，复用进程的新operation不受旧集合污染。
+  native边界明确校验item类型及agent text/phase，不靠宽泛catch吞TypeError。
+- [x] 首版重排代码曾在持有非重入state lock时调用原scheduler，两个联合调用停滞后
+  被终止，没有有效通过计数；随后仅在当前测试解释器内启用20秒有界栈诊断，
+  实际定位到重复获取该锁及cleanup等待。未设置`PYTHONFAULTHANDLER`环境变量、
+  未向GUI子进程注入诊断或安装/提权。现将generation条件移入原scheduler同一锁内，
+  不嵌套取锁、不改为全局RLock；正常联合 **300 / 12.357s OK**。
+- [x] 冻结后代理迟到加入的31行constructor cleanup回归已保留并纳入此次联合验证，
+  不冒称包含在旧67项facade或旧403项core结果中。代理均已停止写入。
+- [ ] 新源码正常完整hook及同一App的15/14/26验证：保留全部旧覆盖，
+  门槛提升到 **172 process / 410 core / 原9 Foundation**；
+  新真实timer与版本探测屏障、原组/后代清理、item反例及不同item/reuse路径尚待执行。
+- 原第二轮timeout阶段问题已在`13b6543`用冷预检未提交和真实预热后已提交两个回归修正；
+  此次保留原3秒预算与提交/清理断言，不重复不变旧源码、不增加生产timeout或retry。
+- 旧Windows `WinError5`来源未知继续保留；没有官方账号/真实模型或新的用户实机结论。
+
+### 前一源码自动化检查点（保留，不作为上述审查修复证据）
 
 源码 **`13b65433f9228175e6c49141ddbf7aa8d965d58a`** /
 [run34832960738](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832960738)

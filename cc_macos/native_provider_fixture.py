@@ -230,6 +230,27 @@ def _serve():
                 responses[2]["params"]["item"].pop("id")
             elif mode == "wrong_completion":
                 responses[-1]["params"]["turn"]["id"] = "synthetic-other"
+            elif mode in {"duplicate_item", "late_item_delta", "restarted_item"}:
+                late = json.loads(json.dumps(
+                    responses[1] if mode == "late_item_delta" else responses[2]))
+                if mode == "duplicate_item":
+                    late["params"]["item"]["text"] = "SYNTHETIC_PRIVATE_REPLACEMENT"
+                elif mode == "restarted_item":
+                    late["method"] = "item/started"
+                responses = [responses[0], responses[2], late, responses[-1]]
+            elif mode in {"invalid_item_type", "invalid_item_phase"}:
+                key = "type" if mode == "invalid_item_type" else "phase"
+                responses[2]["params"]["item"][key] = []
+                responses = [responses[0], responses[2], responses[-1]]
+            elif mode == "multiple_items":
+                started = json.loads(json.dumps(responses[2]))
+                started["method"] = "item/started"
+                started["params"]["item"].update(text="", phase=None)
+                delta = json.loads(json.dumps(responses[1]))
+                delta["params"].update(itemId="synthetic-second", delta="Synthetic second")
+                final = json.loads(json.dumps(responses[2]))
+                final["params"]["item"].update(id="synthetic-second", text="Synthetic second")
+                responses = [responses[0], started, *responses[1:3], delta, final, responses[-1]]
             elif mode == "tool":
                 responses[1] = {"method": "item/started", "params": {
                     "threadId": "synthetic-thread", "turnId": "synthetic-turn",

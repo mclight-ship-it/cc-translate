@@ -776,14 +776,15 @@ class CodexAppServerTransport:
         if timer is not None:
             timer.cancel()
 
-    def _schedule_idle_shutdown(self, max_seconds=None):
+    def _schedule_idle_shutdown(self, max_seconds=None, *, expected_generation=None):
         idle_seconds = self.idle_timeout_seconds
         if max_seconds is not None:
             idle_seconds = min(idle_seconds, max_seconds)
         if idle_seconds <= 0:
             return
         with self._state_lock:
-            if self._closed or self._proc is None:
+            if (self._closed or self._proc is None
+                    or expected_generation is not None and expected_generation != self._idle_generation):
                 return
             self._idle_generation += 1
             generation = self._idle_generation
