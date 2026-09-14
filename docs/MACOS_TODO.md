@@ -172,10 +172,11 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     旧9614eab绿色未覆盖完整性缺陷；4d769e7的历史WinError5推送失败仍保留，不称拒绝来源已解决。
     该配置检查点未接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
   - [x] 历史业务私有 helper/Swift API：同一显式连接持有双owner，
-    有界revision分页/记录/清空，保留配置与默认诊断。源码`dc0ba9c` /
-    [run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
-    同包三系统89进程/242核心/8精确Foundation通过，正常Windows hook1306通过；
+    有界revision分页/记录/清空，保留配置与默认诊断。含独立review的worker未启动终态修复，
+    源码`4021270` / [run34817356816](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816)
+    同包三系统90进程/242核心/9精确Foundation通过，正常Windows hook1306通过；
     两轮真实Mac失败及修复均保留，见[本轮依赖与证据](#history-ipc-checkpoint)。
+    旧dc0ba9c绿灯未覆盖worker_start_failed跨端缺陷，不能作为该分支的通过证据。
     不是历史UI、自动模型记录、请求快照或整个P1完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
@@ -1763,7 +1764,7 @@ SQLite真实读写、合成CLI监督、cancel/EOF、probe清理和App不可变�
 此新包只有三系统自动化证据，Finder首开/Gatekeeper/TCC/GUI/Intel仍独立待验。
 未发布Release、未改master/Windows部署、未购买或运行用户模型；旧WinError5未知风险继续显著保留。
 
-#### 独立review补充：业务worker启动失败的跨端确定终态（修复验证中）
+#### 独立review补充：业务worker启动失败的跨端确定终态（修复与新CI已完成）
 
 独立review发现上述绿灯未覆盖的真实缺陷：Python线程启动抛RuntimeError时发
 accepted(seq0)→failed(worker_start_failed, seq1)，不发started、不执行配置或历史I/O；
@@ -1779,8 +1780,47 @@ pending未结束，HelperConnection错误归类OutcomeUnknown。旧三系统成�
   检查确定failed/无pending/无unknown，再用真实HelperConnection重开验证双owner释放。
   无生产注入开关或App修改，既有8项Foundation/89进程/242核心不删减；
   新强制门槛为9个精确Foundation、90进程、242核心，尚待本次真实CI。
-- [ ] 针对性、正常完整hooks、新同包15/14/26与制品核验后再记录修复检查点，不开启下一功能。
+- [x] 针对性、正常完整hooks、新同包15/14/26与制品核验后记录修复检查点，不开启下一功能。
 
 Windows相关联合148项 / 20.970s，OK，含真实handler五操作/两类文件状态的精确frame及原Windows历史链。
 Swift新增状态机负例尚未在Windows执行；Foundation直接运行包内Python生成真实失败frames，
 不编造native消息，不改变Python服务行为；新Mac CI另行记录。
+
+最终修复执行源码 **`4021270362418c0876dfd7aa51c4c697694f3758`**，
+[run34817356816](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816)，
+attempt1，**3jobs/33steps全部success**。生产仅改Swift精确failed状态分支；
+Python已有固定失败/资源释放行为和HelperConnection消费路径不改，无生产重试或测试注入入口。
+正常完整Windows hook **1306项 / 69.888s，OK**，包括原Windows历史回归；
+仍有既有Tk teardown stderr警告，没有跳hook。旧WinError5已复现/来源未知的记录不变。
+
+| 实际系统与工具链 | 包内真进程 | 包内核心 | 强制Foundation |
+|---|---:|---:|---:|
+| macOS15.7.9 arm64，producer Xcode16.4 / Swift6.1.2 / SDK15.5 | 90 / 65.594s | 242 / 1.446s | 9 / 13.945s |
+| 同包macOS14.8.9 arm64，harness Xcode16.2 / Swift6.0.3 / SDK15.2 | 90 / 72.316s | 242 / 2.197s | 9 / 16.032s |
+| 同包macOS26.6.2 arm64，harness Xcode26.6 / Swift6.3.3 / SDK26.5 | 90 / 66.118s | 242 / 1.393s | 9 / 13.736s |
+
+表中均0 failures/errors/skips。producer便携430项 / 7.891s通过；
+普通Swift64项=55 pass+9初次无包skip，包含40项协议单测及新的精确错误code/seq/终态负例。
+后置9项在三系统全部实际运行，不能以初次skip代替。
+逐系统日志确认扩展的真实handler方法、新Mac worker失败方法及新Foundation方法各执行一次；
+五操作×缺失/旧文件10个子例均在对应方法内严格执行，没有删除原覆盖或重复继承充数。
+Foundation测试实际运行不变包内Python产生ready→accepted→failed(seq1)后，
+由真实共用ProtocolState解码消费，断言无pending/OutcomeUnknown；之后实际HelperConnection重开成功。
+这不是修改BundleRuntime/HelperConnection来伪造回包，旧盘字节、无新JSON/临时文件和双owner释放均验证。
+
+- 新App：[artifact10336766780](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816/artifacts/10336766780)，
+  API核实时未过期，到期`2026-09-21T07:22:43Z`。
+- 新小报告：[macOS14 artifact10336713348](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816/artifacts/10336713348) /
+  [macOS26 artifact10336708374](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816/artifacts/10336708374)。
+- 内层zip **18,398,253字节**，SHA-256
+  **`bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`**；
+  同包内容/模式/相对链接树摘要
+  **`956427e9349ba099548490537ed5a24857f10bbe9c44c43d988d62a8723359a0`**。
+- 完整App独立核对674库存/64资源hash/36Core源码路径（35唯一Git路径）/6 arm64 Mach-O/
+  19 runtime许可证及605保留文件覆盖，全部与固定源码/源锁/报告一致。
+  两runtime均complete/unchanged，同包未重建/重签；HTTPS/SQLite/临时storage/cancel/EOF也全部通过。
+- 已清理新下载zip/临时审计脚本，匿名小报告/日志/检查点保留；最后三文档提交与执行源码分开，
+  正常docs-only privacy hook，不重新运行未变源码CI。
+
+本项修复已取得新自动化证据，不把旧89/242/8绿灯或旧用户包实测赋给新包。
+不扩大到RequestSnapshot/provider/UI，不操作真实用户配置或历史；本轮用户无需安装/登录/重装。

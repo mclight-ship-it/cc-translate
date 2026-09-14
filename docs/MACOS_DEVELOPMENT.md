@@ -6,7 +6,8 @@ catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Win
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
 共享历史仓库和显式 Mac owner 已接入，并完成新包的 Windows/三系统自动化；
 配置owner现已接入显式私有helper与Swift API，含保存/迁移可读性修复，在同包三系统通过。
-历史现也接入同一业务连接及Swift分页/记录/清空API，同包三系统89进程/242核心/8Foundation通过。
+历史现也接入同一业务连接及Swift分页/记录/清空API，含worker未启动确定失败的跨端修复，
+同包三系统90进程/242核心/9Foundation通过。旧89/242/8绿灯未覆盖该review缺陷，不代作修复证据。
 本轮到此停止，不创建完整请求快照、provider 或新 UI；旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
@@ -243,6 +244,10 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
 - 单一 FIFO worker，最多4个排队/执行中任务。accepted 只是排队；started 后 load 也可能迁移写，
   不能撤销。排队取消可产生 cancelled；started 后 cancel 控制返回 `cancel_requested=false`，
   原操作仍完成/失败。每请求唯一终态，迟到响应和重复 ID 不导致重放。
+- 唯一accepted后、started前的确定failed例外是`worker_start_failed`：seq1，
+  必须accepted且尚未started，表示线程未启动、业务配置/历史操作未执行，不应报OutcomeUnknown。
+  同code在seq0/已started/seq2、其他failed缺started，以及重复终态均拒绝；
+  其他accepted业务failed仍要求started/seq2。Python原失败与双owner释放行为不改，不自动重放。
 - EOF/正常 shutdown 停止新请求、取消尚未开始的任务，等待已开始操作后关闭 owner；
   shutdown 完成帧在释放所有权之后发送。配置正常 stop 不沿用诊断两秒 worker join/
   三秒终止期限；显式 forceStop、传输失败或超时仍可能导致结果未知。
@@ -286,13 +291,15 @@ Swift提供`startBusiness`兼容别名以及`loadHistory(pageSize:cursor:)`、
 `addHistory(input:output:isDict:isCode:kind:sig:limit:)`、`clearHistory`；
 沿用唯一ID/严格事件API。历史未见终态的断连报告`historyOutcomeUnknown`，
 混合队列还有未终态配置时保留`configurationOutcomeUnknown`优先，均不代表提交写入已回滚。
-强制Foundation集合为原5项加历史生命周期分页/坏盘与预算保护/双owner竞争3项，全部必须真实运行且无skip。
-源码`dc0ba9c` / [run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
-现已实际达到该门槛：同包15/14/26每系统89进程、242核心、8精确Foundation，0 failures/errors/skips；
-普通Swift62项里的8次初始无包skip不作为后置证据。Windows最终正常hook1306项通过，
-两轮真实Mac测试前置/库存失败和修复均见TODO，未改生产取消/锁/协议策略凑绿。
-本地独立核对674库存/64资源/36源码路径及同包内容、模式和链接，内层zip
-SHA-256为`eaf0668fdf6c20b49ad76f29f37ccf0e175a143ae5e9d2cae066aef260b49f25`。
+强制Foundation集合为原5项加历史生命周期分页/坏盘预算保护/双owner竞争3项，
+再加实际Python worker失败frames跨端消费及重开1项，全部必须真实运行且无skip。
+源码`4021270` / [run34817356816](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816)
+现已实际达到新门槛：同包15/14/26每系统90进程、242核心、9精确Foundation，0 failures/errors/skips；
+普通Swift64项里的9次初始无包skip不作为后置证据。Windows最终正常hook1306项通过。
+旧dc0ba9c绿灯虽通过原8项，却漏掉worker未启动分支；独立review后精确修复，没有整体放松guard。
+两轮更早真实Mac测试前置/库存失败和修复仍见TODO。
+本地独立核对674库存/64资源/36源码路径及同包内容、模式和链接，新内层zip
+SHA-256为`bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`。
 真实业务API接通不等于UI或完整翻译；本轮不要求用户重装，也不继承旧包Finder/TCC报告。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
@@ -748,14 +755,14 @@ SHA-256 **d661cff7cfe5ea768a4e65a0fec6639b1a027da0ff316ee3e76d05f805316753**。
 
 ### 最新历史业务检查点（仅自动化，不要求现在重装）
 
-源码**dc0ba9c8cfcf39fd49e6220c69eeebe85c04df9d** /
-[run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)，
-三jobs/33steps全部success，每系统89进程/242核心/8精确Foundation，正常完整Windows hook1306通过。
-当前App为[artifact10336113899](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344/artifacts/10336113899)，
-到期`2026-09-21T06:54:21Z`；内层18,398,003字节，
-SHA-256 `eaf0668fdf6c20b49ad76f29f37ccf0e175a143ae5e9d2cae066aef260b49f25`。
+源码**4021270362418c0876dfd7aa51c4c697694f3758** /
+[run34817356816](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816)，
+三jobs/33steps全部success，每系统90进程/242核心/9精确Foundation，正常完整Windows hook1306通过。
+当前App为[artifact10336766780](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816/artifacts/10336766780)，
+到期`2026-09-21T07:22:43Z`；内层18,398,253字节，
+SHA-256 `bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`。
 同包14/26无需重编译或重签；新包的历史/配置API测试只使用临时home，不代表Finder/TCC/GUI已验。
-两轮Mac失败、修复、实际系统/编译器、完整资源/源码/hash/不可变证据见
+两轮Mac失败、worker跨端review缺陷与修复、实际系统/编译器、完整资源/源码/hash/不可变证据见
 [历史业务验收](MACOS_TODO.md#history-ipc-checkpoint)。完整翻译链与新UI仍待接通，旧用户包实测身份不变。
 
 ## 7. 功能对齐矩阵

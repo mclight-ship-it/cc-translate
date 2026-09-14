@@ -61,9 +61,13 @@ Windows联合301项及这次实质修复后的正常完整hook1280项通过，�
 历史业务helper/Swift完整窄链现已接通：在原显式连接内同时持有配置/历史owner，
 支持严格有界revision分页、记录、清空；默认诊断仍零用户配置/历史I/O。
 分页包含完整64KiB响应预算，写前验证后续可读性；坏盘不覆盖、queued取消和started写入明确区分，
-退出/丢响应不重放，所有测试只用临时home。最终源码`dc0ba9c` /
-[run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
-三jobs/全部steps成功，每系统89进程/242核心/8精确Foundation真实通过，正常Windows hook1306通过。
+退出/丢响应不重放，所有测试只用临时home。独立review补充发现worker启动失败的合法
+accepted→failed(seq1)曾被Swift误判为OutcomeUnknown；已仅为精确worker_start_failed放行未started终态，
+其他错误/序号/重复终态仍严格拒绝，Python原服务行为不改。
+最终源码`4021270` / [run34817356816](https://github.com/mclight-ship-it/cc-translate/actions/runs/34817356816)
+三jobs/全部steps成功，每系统90进程/242核心/9精确Foundation真实通过，正常Windows hook1306通过。
+新增真实五操作×缺失/旧文件矩阵、Python实际回包跨端消费及HelperConnection重开；
+旧dc0ba9c的89/242/8绿灯未覆盖此分支，不算修复证据。
 同一个Xcode16.4 App在15.7.9/14.8.9/26.6.2运行，674库存/64资源/36源码路径及不可变摘要独立核对。
 两轮真实Mac失败分别是旧测试目录库存未同步双owner、测试将queued取消误作started完成；
 均保留并修正精确测试前置，未改生产策略或重试凑绿。全部证据及固定制品/hash见
