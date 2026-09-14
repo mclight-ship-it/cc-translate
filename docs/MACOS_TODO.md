@@ -1694,3 +1694,9 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
 - Windows固定业务适配MRO/旧path-only API/FD与路径环合同35项 / 0.201s通过；
   最终Windows联合355项 / 33.022s通过。Swift新增9项协议负例及3项Foundation历史方法，
   原5项保留、强制精确集合提高为8项；本轮Swift尚待真实Mac编译/运行，不以静态差异检查替代。
+- 源码`e7ad36a`正常完整Windows hook **1306项 / 75.538s，OK** 后推送；
+  真实[run34814366721](https://github.com/mclight-ship-it/cc-translate/actions/runs/34814366721)
+  producer通过便携/Swift编译测试/构建审计，但包内89项 / 67.548s有1 failure：
+  原配置IPC的目录库存仍只期待config两个文件，未同步业务连接现在持有的`history.json.lock`。
+  新13项history真进程均通过；不把后置Foundation/core/smoke或未运行的14/26填成成功。
+  修正为精确三文件集合并额外断言未创建history.json，不删除/放松库存保护、不删除稳定侧文件。

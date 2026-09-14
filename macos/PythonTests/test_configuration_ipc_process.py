@@ -56,7 +56,9 @@ class TestConfigurationIPCProcess(StateIPCProcessCase):
         self.send_message(reopened, "read", "request", operation="config_load")
         self.assertEqual(self.terminal(reopened, "read")["payload"]["config"]["future"], raw["future"])
         self.finish_helper(reopened)
-        self.assertEqual(set(path.name for path in self.directory.iterdir()), {"config.json", "config.json.lock"})
+        self.assertEqual(set(path.name for path in self.directory.iterdir()),
+                         {"config.json", "config.json.lock", "history.json.lock"})
+        self.assertFalse(self.history_path.exists())
 
     def test_bad_or_unrepresentable_disk_data_returns_fixed_error_without_migration(self):
         process = self.spawn()
