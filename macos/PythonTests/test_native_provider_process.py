@@ -317,16 +317,25 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertEqual(len(self.read_lines(self.root / "calls.jsonl")), 3)
         self.assert_finished()
 
-    def exercise_failure(self, mode, code, *, submitted=False, descendant=False, timeout=8):
+    def exercise_failure(self, mode, code, *, submitted=False, descendant=False, timeout=8,
+                         prewarm=False):
         provider = self.create(mode)
+        if prewarm:
+            warmed = provider.warm_up("synthetic")
+            self.assertTrue(warmed.ok, warmed.error_code)
+            self.assertEqual(self.methods(), ["initialize", "initialized", "hooks/list"])
+            self.assertFalse(dict(warmed.metrics)["turn_submitted"])
         output, errors = io.StringIO(), io.StringIO()
+        started = time.monotonic()
         with redirect_stdout(output), redirect_stderr(errors):
             result = provider.complete(self.request(timeout))
+        elapsed = time.monotonic() - started
         self.assert_failure(result, code, submitted=submitted)
         self.assertEqual((output.getvalue(), errors.getvalue()), ("", ""))
         self.assertEqual(self.methods().count("turn/start"), int(submitted))
         self.assertEqual(len({record["pid"] for record in self.rpc()}), 1)
         self.assert_finished(descendant=descendant)
+        return elapsed
 
     def test_missing_rpc_id_is_rejected(self):
         self.exercise_failure("missing_rpc", "invalid_appserver_message")
@@ -395,11 +404,24 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.exercise_failure("eof", "appserver_exited", submitted=True, descendant=True)
 
     def test_timeout_cleans_silent_session_and_descendant(self):
-        started = time.monotonic()
-        self.exercise_failure("timeout", "timeout", submitted=True, descendant=True, timeout=3)
-        elapsed = time.monotonic() - started
+        elapsed = self.exercise_failure(
+            "timeout", "timeout", submitted=True, descendant=True, timeout=3, prewarm=True)
         self.assertGreaterEqual(elapsed, 2.9)
         self.assertLess(elapsed, 7)
+
+    def test_cold_version_timeout_never_submits_a_model_turn(self):
+        provider = self.create("version_timeout")
+        started = time.monotonic()
+        result = provider.complete(self.request(timeout=3))
+        elapsed = time.monotonic() - started
+        self.assert_failure(result, "timeout", submitted=False)
+        self.assertGreaterEqual(elapsed, 2.9)
+        self.assertLess(elapsed, 7)
+        self.assertEqual(self.methods(), [])
+        self.assertEqual(len(self.read_lines(self.root / "version.jsonl")), 1)
+        self.assertEqual(self.read_lines(self.root / "native-processes.jsonl"), [])
+        self.assertEqual(self.read_lines(self.root / "calls.jsonl"), [])
+        self.assert_finished()
 
     def wait_for_turn(self):
         deadline = time.monotonic() + 6

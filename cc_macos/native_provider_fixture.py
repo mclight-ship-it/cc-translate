@@ -122,6 +122,9 @@ def _serve():
     if args == ["--version"]:
         _receipt(root, "version.jsonl", {"pid": os.getpid(), "group": os.getpgrp(),
                                       "session": os.getsid(0), "args": args, "cwd": cwd})
+        if mode == "version_timeout":
+            time.sleep(45)
+            return
         sys.stdout.write("codex-cli " + ("0.147.0" if mode == "unsupported_version" else "0.146.0") + "\n")
         return
     if args and args[0] in ("--version", "debug"):

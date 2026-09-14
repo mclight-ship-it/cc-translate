@@ -99,6 +99,21 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   每项实际安全 override 与 catalog 字节。生产参数没有改动。
   新 process 发现下限为 **164**，core 保持 **403**，所有原断言/方法保留。
 
+第二轮真实执行：
+
+- `fa085782068cb4440568279bc7248677c9e3e917`，正常针对性
+  **76 / 10.599s OK**、完整 hook **1487 / 71.823s OK**。
+  [run 34832091646](https://github.com/mclight-ship-it/cc-translate/actions/runs/34832091646)
+  包内 **164 / 215.714s / 1 failure**；此前十项失败已不再出现。
+  新 FIFO 正反回归实际通过，记录 `read EOF verified; late selector ready = False`，
+  确认第一轮 readiness 不是可靠 EOF 代理，未修改生产组监督。
+- 剩余失败是测试把整个冷启动的 3 秒 deadline 当作必然已提交 turn：
+  本次正确返回 `timeout` 且 `turn_submitted=False`。现在保留同一个 3 秒 deadline、
+  原时间上下界及已提交/后代清理断言，先通过真实无 turn 的 prewarm 完成控制预检，
+  再计量前台调用；另加真实冷 version 超时必须不提交的独立反例。
+  没有改生产 timeout、增加重试、伪造 submitted 或把旧失败改绿。
+  新 process 下限 **165**，core **403**；仍须下一真实三系统执行。
+
 基线源码 `4021270362418c0876dfd7aa51c4c697694f3758`、文档 `ae04dc1`；
 历史/config 业务链已验收，不重复旧源码 CI。按用户授权继续到真正人工前置，
 不将付费签名资格或未完成全部真人矩阵当作纯工程开发的停止条件。
