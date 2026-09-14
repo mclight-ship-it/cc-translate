@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 配置业务链三系统通过，补充修复推送受阻
+## macOS 原生移植 — 配置业务可读性修复中，旧Windows写入风险保留
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -50,6 +50,10 @@ Swift NaN编码的真实CI异常已修复并验证，失败历史保留。后续
 捕获真实WinError5单次replace拒绝；没有重跑凑绿或绕过hooks。因此补充源码和其后文档仅本地提交，
 远端/制品仍是9614eab，74进程/212核心新门槛尚未在Mac执行；本轮不能称最终完整验收关闭。
 详见[业务链证据与阻断](MACOS_TODO.md#configuration-ipc-checkpoint)，用户无需现在操作。
+随后独立review发现compact/缩进文件预算不一致、迁移只验证normalized视图两项完整性缺陷；
+旧绿色不最终接受。三个真实反例先失败后修复，保存预判原盘与未来迁移payload，
+迁移写前在同owner锁内校验raw payload；保留原缩进字节和wire限制，不加重试。
+最新301项Windows针对性通过，76进程/218核心/5Foundation新门槛待正常完整hook与同包三系统验证。
 完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、历史业务 helper 与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 

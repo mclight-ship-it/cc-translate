@@ -128,6 +128,24 @@ class TestConfigRepository(unittest.TestCase):
             self.assertEqual(writer.call_count, 1)
         self.assertEqual(set(self.root.iterdir()), {self.path})
 
+    def test_raw_migration_validation_failure_preserves_file_and_error(self):
+        validator = mock.Mock(side_effect=ValueError("synthetic migration rejected"))
+        self.repo.load(validate_migration=validator)
+        validator.assert_not_called()
+        before = self.seed({"font_size": "16", "future": {"kept": 7}})
+        with mock.patch.object(store, "atomic_write_json") as writer:
+            with self.assertRaises(ValueError) as caught:
+                self.repo.load(validate_migration=validator)
+            self.assertIs(caught.exception, validator.side_effect)
+            writer.assert_not_called()
+        payload = validator.call_args.args[0]
+        self.assertEqual(payload["font_size"], "16")
+        self.assertEqual(payload["future"], {"kept": 7})
+        self.assertTrue(payload["ui_v2_default_migrated"])
+        self.assertNotIn("model_provider", payload)
+        self.assert_unchanged(before)
+        self.assertEqual(self.repo.load().font_size, 16)
+
     def test_markers_preserve_opt_out_and_no_migration_preserves_original_bytes(self):
         for marker in (False, True, 0, 1, "false", "true"):
             with self.subTest(marker=marker):
@@ -542,6 +560,18 @@ class TestConfigRepository(unittest.TestCase):
         self.seed({"font_size": "16"})
         loaded, _ = self.run_blocked(self.repo.load, self.repo.close,
                                      store, "atomic_write_json", cc_storage.atomic_write_json)
+        self.assertEqual(loaded.font_size, 16)
+        self.assertTrue(json.loads(self.path.read_bytes())["ui_v2_default_migrated"])
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            self.repo.load()
+
+    def test_close_waits_for_raw_migration_validation(self):
+        self.seed({"font_size": "16"})
+        validator = mock.Mock()
+        validator.check = lambda payload: None
+        loaded, _ = self.run_blocked(
+            lambda: self.repo.load(validate_migration=lambda payload: validator.check(payload)),
+            self.repo.close, validator, "check", validator.check)
         self.assertEqual(loaded.font_size, 16)
         self.assertTrue(json.loads(self.path.read_bytes())["ui_v2_default_migrated"])
         with self.assertRaisesRegex(RuntimeError, "closed"):

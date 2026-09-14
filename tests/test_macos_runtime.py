@@ -161,17 +161,19 @@ class RuntimeMatrixTests(unittest.TestCase):
             "testBundledConfigurationLoadSaveNormalizeStopAndReopen",
             "testBundledConfigurationCorruptFileFailsWithoutChangingBytes",
             "testBundledConfigurationCompetingHelperFailsThenTakesReleasedOwnership",
+            "testBundledConfigurationWriteAndMigrationBudgetsPreserveReadableData",
         ))
         methods = "\n".join("Test Case '-[CCTranslateSupportTests.HelperIntegrationTests " + method + "]' " + outcome
                             for method in runtime.INTEGRATION_TESTS for outcome in ("started", "passed"))
-        summary = "Executed 4 tests, with 0 failures (0 unexpected)"
+        summary = "Executed 5 tests, with 0 failures (0 unexpected)"
         result = runtime.integration_result(methods + "\n" + summary)
-        self.assertEqual(result, {"tests_run": 4, "failures": 0, "skipped": 0,
+        self.assertEqual(result, {"tests_run": 5, "failures": 0, "skipped": 0,
                                   "methods": list(runtime.INTEGRATION_TESTS)})
         for text in ("0 tests passed", summary, methods,
                      methods + "\nExecuted 0 tests, with 0 failures",
-                     methods + "\nExecuted 4 tests, with 1 test skipped and 0 failures",
-                     methods + "\nExecuted 4 tests, with 1 failures",
+                     methods + "\nExecuted 5 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 5 tests, with 1 failures",
+                     methods + "\nExecuted 4 tests, with 0 failures",
                      methods + "\nExecuted 1 test, with 0 failures",
                      methods + "\n" + methods + "\n" + summary,
                      methods.replace(runtime.INTEGRATION_TESTS[0], "testUnexpected") + "\n" + summary):

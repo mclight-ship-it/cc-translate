@@ -195,6 +195,73 @@ class TestConfigurationIPCProcess(OwnerProcessCase):
                 self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
         self.finish_helper(process)
 
+    def test_expanded_storage_is_rejected_and_accepted_nested_save_reopens(self):
+        def nested_config(count):
+            nested = [0] * count
+            for _ in range(7):
+                nested = [nested]
+            return {"future": nested}
+
+        process = self.spawn()
+        self.hello(process)
+        valid = nested_config(1000)
+        self.send_message(process, "save", "request", operation="config_save", config=valid)
+        self.assertEqual(self.terminal(process, "save")["payload"], {"saved": True})
+        before = self.path.read_bytes()
+        invalid = nested_config(4000)
+        protocol.validate_config(invalid)
+        self.assertGreater(len(json.dumps(invalid, indent=2).encode()), protocol.MAX_FRAME_BYTES)
+        self.send_message(process, "reject", "request", operation="config_save", config=invalid)
+        failed = self.terminal(process, "reject")
+        self.assertEqual((failed["type"], failed["seq"], failed["payload"]),
+                         ("failed", 0, {"code": "invalid_config"}))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+        self.send_message(process, "read", "request", operation="config_load")
+        self.assertEqual(self.terminal(process, "read")["payload"]["config"]["future"], valid["future"])
+        self.finish_helper(process)
+        reopened = self.spawn()
+        self.hello(reopened)
+        self.send_message(reopened, "read", "request", operation="config_load")
+        self.assertEqual(self.terminal(reopened, "read")["payload"]["config"]["future"], valid["future"])
+        self.finish_helper(reopened)
+
+    def test_future_migration_limits_preserve_disk_and_owner_on_rejection(self):
+        process = self.spawn()
+        self.hello(process)
+        self.send_message(process, "seed", "request", operation="config_save", config={"future": "kept"})
+        self.assertEqual(self.terminal(process, "seed")["payload"], {"saved": True})
+        before = self.path.read_bytes()
+        raw = {"history_enabled": "x" * 16362}
+        self.send_message(process, "reject", "request", operation="config_save", config=raw)
+        self.assertEqual(self.terminal(process, "reject")["payload"], {"code": "invalid_config"})
+        self.assertEqual(self.path.read_bytes(), before)
+        external = json.dumps(raw, ensure_ascii=False, indent=2).encode()
+        self.path.write_bytes(external)
+        self.send_message(process, "read", "request", operation="config_load")
+        self.assertEqual(self.terminal(process, "read")["payload"], {"code": "invalid_config"})
+        self.assertEqual(self.path.read_bytes(), external)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+        with self.assertRaises(ConfigInUseError):
+            MacConfigOwner(self.home, self.identity)
+        raw = {"history_enabled": ""}
+        _, payload = configuration.plan_config_migration(raw, configuration.normalize_config(raw))
+        raw["history_enabled"] = "x" * (
+            protocol.MAX_CONFIG_BYTES - len(json.dumps(payload, separators=(",", ":")).encode()))
+        self.send_message(process, "exact", "request", operation="config_save", config=raw)
+        self.assertEqual(self.terminal(process, "exact")["payload"], {"saved": True})
+        for id_ in ("first", "second"):
+            self.send_message(process, id_, "request", operation="config_load")
+            self.assertEqual(self.terminal(process, id_)["type"], "completed")
+        self.assertEqual(len(json.dumps(json.loads(self.path.read_bytes()),
+                                       separators=(",", ":")).encode()), protocol.MAX_CONFIG_BYTES)
+        self.finish_helper(process)
+        reopened = self.spawn()
+        self.hello(reopened)
+        self.send_message(reopened, "read", "request", operation="config_load")
+        self.assertEqual(self.terminal(reopened, "read")["type"], "completed")
+        self.finish_helper(reopened)
+
     def test_two_live_helpers_compete_and_exit_allows_a_new_owner(self):
         first, second = self.spawn(), self.spawn()
         self.assertEqual(self.hello(first)["type"], "ready")

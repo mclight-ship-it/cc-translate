@@ -30,6 +30,7 @@ INTEGRATION_TESTS = (
     "testBundledConfigurationLoadSaveNormalizeStopAndReopen",
     "testBundledConfigurationCorruptFileFailsWithoutChangingBytes",
     "testBundledConfigurationCompetingHelperFailsThenTakesReleasedOwnership",
+    "testBundledConfigurationWriteAndMigrationBudgetsPreserveReadableData",
 )
 
 

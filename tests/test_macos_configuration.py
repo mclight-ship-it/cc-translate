@@ -144,6 +144,98 @@ class _ConfigurationDirectory(unittest.TestCase):
 
 
 class ConfigurationServiceTests(_ConfigurationDirectory):
+    def test_exact_raw_migration_compact_and_disk_limits_remain_readable(self):
+        def stored_bytes(value):
+            return json.dumps(value, ensure_ascii=False, indent=2).replace("\n", os.linesep).encode()
+
+        self.session.open()
+        for budget in ("compact", "disk"):
+            with self.subTest(budget=budget):
+                raw = {"history_enabled": ""}
+                if budget == "disk":
+                    nested = [0] * 2800
+                    for _ in range(7):
+                        nested = [nested]
+                    raw["future"] = nested
+                view = configuration.normalize_config(raw)
+                changed, migrated = configuration.plan_config_migration(raw, view)
+                self.assertTrue(changed)
+                def measure(value):
+                    if budget == "compact":
+                        return len(json.dumps(value, separators=(",", ":")).encode())
+                    return len(stored_bytes(value))
+                limit = MAX_CONFIG_BYTES if budget == "compact" else configuration.MAX_CONFIG_FILE_BYTES
+                padding = limit - measure(migrated)
+                self.assertGreater(padding, 0)
+                raw["history_enabled"] = "x" * padding
+                _, migrated = configuration.plan_config_migration(raw, configuration.normalize_config(raw))
+                self.assertEqual(measure(migrated), limit)
+                self.assertEqual(self.session.perform({"operation": "config_save", "config": raw}), {"saved": True})
+                self.assertEqual(self.path.read_bytes(), stored_bytes(raw))
+                with patch.object(cc_config_store, "atomic_write_json",
+                                  wraps=cc_config_store.atomic_write_json) as write:
+                    self.session.perform({"operation": "config_load"})
+                    self.session.perform({"operation": "config_load"})
+                    write.assert_called_once()
+                self.assertEqual(self.path.read_bytes(), stored_bytes(migrated))
+                self.session.close()
+                self.session = configuration.ConfigurationSession(self.home, self.identity)
+                self.addCleanup(self.session.close)
+                self.session.open()
+                loaded = self.session.perform({"operation": "config_load"})["config"]
+                if "future" in raw:
+                    self.assertEqual(loaded["future"], raw["future"])
+                before = self.path.read_bytes()
+                raw["history_enabled"] += "x"
+                with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+                    self.session.perform({"operation": "config_save", "config": raw})
+                self.assertEqual(self.path.read_bytes(), before)
+                external = stored_bytes(raw)
+                self.path.write_bytes(external)
+                with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+                    self.session.perform({"operation": "config_load"})
+                self.assertEqual(self.path.read_bytes(), external)
+                self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+
+    def test_indented_storage_budget_rejects_expansion_without_changing_old_bytes(self):
+        self.session.open()
+        self.path.write_bytes(b'{"future":"old"}')
+        nested = [0] * 4000
+        for _ in range(7):
+            nested = [nested]
+        raw = {"future": nested}
+        validate_config(raw)
+        validate_config(configuration.normalize_config(raw))
+        self.assertGreater(len(json.dumps(raw, indent=2).encode()), MAX_FRAME_BYTES)
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+            self.session.perform({"operation": "config_save", "config": raw})
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+
+    def test_save_predicts_raw_migration_growth_before_changing_old_bytes(self):
+        self.session.open()
+        self.path.write_bytes(b'{"future":"old"}')
+        raw = {"history_enabled": "x" * 16362}
+        self.assertEqual(len(json.dumps(raw, separators=(",", ":")).encode()), MAX_CONFIG_BYTES)
+        validate_config(configuration.normalize_config(raw))
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+            self.session.perform({"operation": "config_save", "config": raw})
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+
+    def test_existing_raw_migration_growth_is_rejected_without_writing(self):
+        self.session.open()
+        raw = {"history_enabled": "x" * 16362}
+        before = json.dumps(raw, ensure_ascii=False, indent=2).encode()
+        self.path.write_bytes(before)
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+            self.session.perform({"operation": "config_load"})
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+        self.assertIsNotNone(self.session._owner)
+
     def test_explicit_session_load_save_and_reopen_share_real_repository(self):
         self.assertFalse(self.directory.exists())
         self.session.open()

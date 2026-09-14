@@ -134,6 +134,79 @@ final class HelperIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testBundledConfigurationWriteAndMigrationBudgetsPreserveReadableData() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        func nested(_ count: Int) -> [String: JSONValue] {
+            var value = JSONValue.array(Array(repeating: .integer(0), count: count))
+            for _ in 0..<7 { value = .array([value]) }
+            return ["future": value]
+        }
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        session.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [session.ready], timeout: 10)
+        let valid = nested(1000)
+        let saved = session.terminal("save")
+        session.connection.saveConfiguration(valid, id: "save")
+        await fulfillment(of: [saved], timeout: 10)
+        session.assertOperation("save")
+        let before = try configurationIO { try Data(contentsOf: context.config) }
+        let nearLimit: [String: JSONValue] = [
+            "history_enabled": .string(String(repeating: "x", count: 16_362))
+        ]
+        XCTAssertEqual(try JSONValue.object(nearLimit).encoded().count, ConfigurationDocument.maxBytes)
+        for (id, raw) in [("expanded", nested(4000)), ("migration", nearLimit)] {
+            XCTAssertNoThrow(try ConfigurationDocument.validate(.object(raw)))
+            let rejected = session.terminal(id)
+            session.connection.saveConfiguration(raw, id: id)
+            await fulfillment(of: [rejected], timeout: 10)
+            XCTAssertEqual(session.events.filter { $0.id == id }.map(\.type), ["failed"])
+            XCTAssertEqual(session.result(id)?.sequence, 0)
+            XCTAssertEqual(session.result(id)?.safeFailureCode, "invalid_config")
+            let unchanged = try configurationIO { try Data(contentsOf: context.config) }
+            XCTAssertTrue(unchanged == before, "Rejected save must preserve the last readable raw bytes")
+        }
+        let loaded = session.terminal("load")
+        session.connection.loadConfiguration(id: "load")
+        await fulfillment(of: [loaded], timeout: 10)
+        session.assertOperation("load")
+        XCTAssertEqual(session.result("load")?.payload["config"]?.object?["future"], valid["future"])
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        reopened.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let reloaded = reopened.terminal("reload")
+        reopened.connection.loadConfiguration(id: "reload")
+        await fulfillment(of: [reloaded], timeout: 10)
+        reopened.assertOperation("reload")
+        XCTAssertEqual(reopened.result("reload")?.payload["config"]?.object?["future"], valid["future"])
+
+        let external = try JSONValue.object(nearLimit).encoded()
+        try configurationIO { try external.write(to: context.config) }
+        for id in ["external_first", "external_second"] {
+            let rejected = reopened.terminal(id)
+            reopened.connection.loadConfiguration(id: id)
+            await fulfillment(of: [rejected], timeout: 10)
+            XCTAssertEqual(reopened.result(id)?.safeFailureCode, "invalid_config")
+            XCTAssertEqual(reopened.events.filter { $0.id == id }.map(\.type), ["accepted", "started", "failed"])
+            let unchanged = try configurationIO { try Data(contentsOf: context.config) }
+            XCTAssertTrue(unchanged == external, "Failed migration must not replace external raw bytes")
+        }
+        let names = try configurationIO {
+            try FileManager.default.contentsOfDirectory(atPath: context.config.deletingLastPathComponent().path)
+        }
+        XCTAssertFalse(names.contains { $0.hasPrefix(".tmp_") })
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty, "Storage validation rejection must remain a domain error")
+    }
+
+    @MainActor
     func testBundledConfigurationCorruptFileFailsWithoutChangingBytes() async throws {
         let context = try configurationContext()
         defer { removeConfigurationHome(context.home) }

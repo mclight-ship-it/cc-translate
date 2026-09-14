@@ -164,6 +164,7 @@ history/config 共用稳定侧文件所有权原语；config 的 `config.json.lo
 Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfiguration` API；
 真实测试只选择临时 home + 所选 App 实际 Info.plist 身份。
 主链 `9614eab` / run34808290474 已完成同包15/14/26三系统（每系统73进程/211核心/4Foundation）。
+但随后独立review确认保存/迁移预算缺陷，该绿色不构成最终接受，正在按真实反例修复可读性不变式。
 后续初始化符号链接环固定错误补充 `4d769e7` 的正常Windows hook复现旧WinError5，
 1274项中2条关联断言失败，推送被阻断；新74/212门槛尚未在Mac运行，不继承旧绿包结论。
 精确源码/制品/hash与失败见[配置业务检查点](MACOS_TODO.md#configuration-ipc-checkpoint)。
@@ -223,7 +224,11 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
   config 必须是 JSON 对象，紧凑 UTF-8 编码不超过16KiB，根深度1、键/值也计下一层、最多10层；
   数值有限且绝对值不超过 `2^53-1`，布尔与数值严格区分。完整帧仍64KiB/16层。
   raw 和规范化后的可返回视图均先校验，但 save 只写 raw，不 dump normalized 视图。
-  严格磁盘 decoder 和返回值检查都在 owner 操作锁内、迁移写之前。
+  保存还预判真实raw迁移payload；原始和未来迁移的indent=2 UTF-8实际表示
+  （按writer平台换行）必须不超过65535字节，为现有有界decoder追加的LF预留1字节。
+  不扩大wire/decoder，不改原writer字节；即使compact合法，缩进扩张过大仍明确拒绝保存。
+  严格磁盘 decoder、返回值检查和独立validate_migration(payload)都在owner操作锁内、迁移写之前；
+  不允许只因normalized视图变小就把超限raw迁移写回。缺失读取不调用迁移validator、不新建配置。
 - 固定错误为 `config_in_use`、`config_unavailable`、`invalid_config`、`config_io_failed`，
   加既有协议/调度错误；不向 stderr/报告输出路径、配置内容或异常原文。
   只有真正缺失返回默认且不创建 config.json，坏文件不当空配置覆盖。
@@ -235,10 +240,10 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
   三秒终止期限；显式 forceStop、传输失败或超时仍可能导致结果未知。
   Swift 对未见终态的配置请求报告 `configurationOutcomeUnknown`，不声称取消已提交写入或自动重放。
   原子文件完整性不等于回滚/完整事务，协作侧文件锁不是恶意篡改沙箱。
-- 这是真实可调用配置业务链，不是新增翻译/设置 UI。Foundation 后置集成必须精确执行四项
-  （诊断、配置读保存重开、坏盘保护、竞争接管），包内进程测试另用真实 fsync 后的测试端 FIFO
+- 这是真实可调用配置业务链，不是新增翻译/设置 UI。Foundation 后置集成必须精确执行五项
+  （诊断、配置读保存重开、坏盘保护、竞争接管、保存/迁移可读性预算），包内进程测试另用真实 fsync 后的测试端 FIFO
   屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。上述主链在9614eab三系统实际通过；
-  本地后续路径环错误映射仍因Windows hook阻断未推送，验收状态以 TODO 为准。
+  此后新增路径环和可读性预算修复不继承旧绿色，验收状态以 TODO 为准。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。

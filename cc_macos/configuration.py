@@ -1,6 +1,8 @@
 """Explicit connection-owned configuration service; never initialized by diagnostic hello."""
 
 from pathlib import Path
+import json
+import os
 import sys
 
 from cc_config import plan_config_migration
@@ -8,6 +10,9 @@ from cc_config_store import normalize_config
 from cc_macos.config_owner import ConfigForkError, ConfigInUseError, MacConfigOwner
 from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, decode_frame, validate_config
 from cc_storage import macos_user_paths
+
+
+MAX_CONFIG_FILE_BYTES = MAX_FRAME_BYTES - 1
 
 
 class ConfigurationError(RuntimeError):
@@ -24,13 +29,23 @@ def _resolve(path, *, strict):
         raise ConfigurationError("config_unavailable") from error
 
 
-def validate_save(config):
-    """Validate both raw transport data and its eventual load view before any write."""
+def validate_stored_config(config):
+    """Keep the unchanged indent=2 writer's bytes within the decoder's LF-framed budget."""
     validate_config(config)
+    encoded = json.dumps(config, ensure_ascii=False, indent=2).replace("\n", os.linesep).encode("utf-8")
+    if len(encoded) > MAX_CONFIG_FILE_BYTES:
+        raise ProtocolError("invalid_config")
+
+
+def validate_save(config):
+    """Preflight raw storage, the exact future migration payload and the returned view."""
+    validate_stored_config(config)
     try:
         view = normalize_config(config)
-        plan_config_migration(config, view)
+        changed, payload = plan_config_migration(config, view)
         validate_config(view)
+        if changed:
+            validate_stored_config(payload)
     except (ValueError, TypeError, OverflowError) as error:
         raise ProtocolError("invalid_config") from error
 
@@ -75,7 +90,9 @@ class ConfigurationSession:
             raise ConfigurationError("config_unavailable")
         try:
             if payload["operation"] == "config_load":
-                return {"config": self._owner.load(validate=validate_config, decode=decode_config_file)}
+                return {"config": self._owner.load(
+                    validate=validate_config, decode=decode_config_file,
+                    validate_migration=validate_stored_config)}
             if payload["operation"] == "config_save":
                 validate_save(payload["config"])
                 self._owner.save(payload["config"])

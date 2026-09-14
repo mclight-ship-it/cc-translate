@@ -124,8 +124,8 @@ P0 被动 Cmd+C 的 AX-only 路线显式要求辅助功能及输入监控均通�
 
 CI 先运行普通 Swift 测试，此时包尚不存在，需要包的集成测试会明确 skip；
 构建 `.app` 后再设置 `CC_TRANSLATE_APP`，用 `--filter HelperIntegrationTests` 真正执行
-Foundation.Process→包内 helper。当前门槛为精确四个方法：原 fixture/SQLite/关闭，
-以及配置读保存重开、坏文件保护、owner 竞争接管；逐项名称与数量都校验，拒绝 skip。
+Foundation.Process→包内 helper。当前门槛为精确五个方法：原 fixture/SQLite/关闭，
+以及配置读保存重开、坏文件保护、owner 竞争接管、保存/迁移可读性预算；逐项名称与数量都校验，拒绝 skip。
 首轮历史中的单项计数保持原样；初次 skip 不能计为集成通过。
 Python HTTPS smoke 是另一步，不替代原生客户端链路。
 
@@ -165,8 +165,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     源码 `0fd56c2` / [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
     同包三系统通过，见[配置 owner 证据](#config-owner-checkpoint)。
     该历史检查点尚未接业务 helper；不改变 Windows 配置入口或后台共享 cfg 策略。
-  - [ ] 配置业务私有 helper + Swift 可调用 API：主链源码 `9614eab` 已通过同包三系统；
-    初始化错误边界补充 `4d769e7` 被真实 Windows hook WinError5 阻断，未推送/未跑 Mac，
+  - [ ] 配置业务私有 helper + Swift 可调用 API：主链源码 `9614eab` 曾通过同包三系统，
+    但独立review发现保存/迁移可读性缺陷，不能最终接受；当前按真实反例修复中。
+    初始化错误边界补充 `4d769e7` 曾被真实 Windows hook WinError5 阻断，未推送/未跑 Mac，
     见[业务 IPC 证据与阻断](#configuration-ipc-checkpoint)，不把旧绿包绑定本地新提交。
     不接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
@@ -1566,3 +1567,26 @@ hook拒绝推送。真实旧Windows历史矩阵的一个subtest
 没有设置UI、历史业务IPC、RequestSnapshot/provider或全App可变配置线程安全。
 旧 `eec92a5` 用户实测仍只属于旧包；本轮不验证用户真实文件/TCC/干净首开/官方CLI/账号/Intel。
 免费GitHub/零预算路线保持，用户不需要现在重装、安装CLI或登录。
+
+#### 独立review后的保存/迁移可读性修复（实施中）
+
+父独立review发现两个真实数据完整性问题；旧9614eab绿色不能当它们的通过证据。
+先在未改生产实现上运行三个新增反例：**3 tests / 0.072s / 3 failures**，全部未按新不变式拒绝写入。
+另用真实临时JSON复现旧结果：8层数组/4000个零的compact8026字节，save返回saved:true，
+Windows原缩进写入88205字节，随后两次load均invalid_config；
+history_enabled长度16362的raw compact16384字节，save成功，第一次load迁移成功，
+第二次load invalid_config（旧盘16391字节被改为16548字节）。均为合成数据，无用户文件。
+
+选择最小兼容方案：**保持原indent=2 writer、wire64KiB、config compact16KiB/depth10/数值限制，
+不扩大decoder或改成compact落盘**。保存前检查真实原始缩进表示、未来raw迁移payload的
+compact和缩进表示，以及规范化后的返回视图。缩进UTF-8按writer平台换行计最多65535字节，
+为现有decoder的LF保留1字节；因此4000零扩张例明确invalid_config，不再先saved成功后不可读。
+每次load迁移写之前在原操作锁内单独validate_migration(payload)，不只检查normalized cfg；
+异常保留旧字节/owner，默认仓库和Windows读取/写入/日志契约不变。
+
+新增旧缺陷反例、compact和disk未来迁移payload恰好/多1字节、只迁移一次、无temp残留、
+原盘不变、关闭等待validator、真实helper拒绝后仍持锁/接管、Foundation保存读取重开/固定拒绝。
+待执行最新联合Windows/hooks及同包三系统；新门槛76进程/218核心/精确5Foundation不能提前标通过。
+上一1274项WinError5失败继续保留，本次是实质完整性修复后的新验证，不是对旧代码重复凑绿。
+修复后最新联合Windows协议/仓库/旧Config与AtomicWrites/隔离/打包/严格runner回归：
+**301项 / 32.124s / OK**；包含三个原失败反例及exact/over边界，不替代真实Mac或正常完整hook。

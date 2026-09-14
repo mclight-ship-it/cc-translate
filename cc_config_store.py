@@ -27,7 +27,9 @@ class ConfigRepository:
     ``load`` returns a fresh Config subclass using the shared strict field
     conversions: failed conversions propagate instead of falling back to
     defaults. Optional decoder/validator callbacks run under the same lock,
-    before any migration write. The default JSON read behavior is unchanged.
+    before any migration write. The optional migration validator checks the
+    actual raw write payload, separately from the normalized returned view.
+    The default JSON read behavior is unchanged.
     Reading, planning and writing exceptions propagate.
 
     ``save`` writes a detached JSON snapshot of the supplied dict, not a
@@ -50,7 +52,7 @@ class ConfigRepository:
         if self._closed:
             raise RuntimeError("config_repository_closed")
 
-    def load(self, *, validate=None, decode=None):
+    def load(self, *, validate=None, decode=None, validate_migration=None):
         with self._lock:
             self._ensure_open()
             try:
@@ -69,6 +71,8 @@ class ConfigRepository:
             if validate is not None:
                 validate(cfg)
             if changed:
+                if validate_migration is not None:
+                    validate_migration(payload)
                 atomic_write_json(self.path, payload)
             return cfg
 
