@@ -702,8 +702,14 @@ public struct ProtocolState {
                     throw ProbeError.invalidPayload
                 }
             }
-            if mode == .configuration, entry.type == "request", entry.accepted {
-                guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
+            if mode == .configuration, entry.type == "request" {
+                if payload["code"] == .string("worker_start_failed") {
+                    guard entry.accepted, !entry.started, seq == 1 else {
+                        throw ProbeError.invalidTransition
+                    }
+                } else if entry.accepted {
+                    guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
+                }
             }
         default: throw ProbeError.invalidEnvelope
         }

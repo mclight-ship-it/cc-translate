@@ -576,16 +576,59 @@ class ConfigurationExitTests(_ConfigurationDirectory):
         self.assertIsNone(self.session._owner)
 
     def test_worker_start_failure_releases_initialized_owner(self):
-        server, thread, incoming, _, output, errors, result, ready = self.start()
-        self.assertEqual(ready["type"], "ready")
-        with patch("cc_macos.server.threading.Thread.start", side_effect=RuntimeError("private thread")):
-            incoming.put(message("r", "request", operation="config_load"))
-            thread.join(5)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(result, [2])
-        self.assertEqual(errors.getvalue(), "cc_macos:worker_start_failed\n")
-        self.assertIsNone(self.session._owner)
-        self.assertFalse(self.path.exists())
+        operations = [
+            {"operation": "config_load"},
+            {"operation": "config_save", "config": {"font_size": 21}},
+            {"operation": "history_load", "page_size": 1, "cursor": None},
+            {"operation": "history_add", "input": "synthetic", "output": "never",
+             "is_dict": False, "is_code": False, "kind": "text", "sig": "", "limit": 10},
+            {"operation": "history_clear"},
+        ]
+        history_path = self.directory / "history.json"
+        for existing in (False, True):
+            for payload in operations:
+                with self.subTest(operation=payload["operation"], existing=existing):
+                    self.session = configuration.ConfigurationSession(self.home, self.identity)
+                    server, thread, incoming, _, output, errors, result, ready = self.start()
+                    self.assertEqual(ready["type"], "ready")
+                    before = {self.path: b'{"font_size":"16","future":"preserved"}',
+                              history_path: b'[{"input":"synthetic","output":"keep","kind":"text"}]'}
+                    for path, data in before.items():
+                        if existing:
+                            path.write_bytes(data)
+                        else:
+                            path.unlink(missing_ok=True)
+                    owner, history_owner = self.session._owner, self.session._history._owner
+                    with patch("cc_macos.server.threading.Thread.start", side_effect=RuntimeError("private thread")) as start, \
+                            patch.object(self.session, "perform", wraps=self.session.perform) as perform, \
+                            patch.object(self.session, "perform_history", wraps=self.session.perform_history) as perform_history, \
+                            patch.object(owner, "close", wraps=owner.close) as close, \
+                            patch.object(history_owner, "close", wraps=history_owner.close) as close_history:
+                        incoming.put(message("r", "request", **payload))
+                        thread.join(5)
+                        start.assert_called_once()
+                        perform.assert_not_called()
+                        perform_history.assert_not_called()
+                        close.assert_called_once()
+                        close_history.assert_called_once()
+                    self.assertFalse(thread.is_alive())
+                    self.assertEqual(result, [2])
+                    self.assertEqual(errors.getvalue(), "cc_macos:worker_start_failed\n")
+                    events = [decode_frame(raw + b"\n") for raw in output.getvalue().splitlines()]
+                    self.assertEqual(events[1:], [
+                        {"v": 1, "id": "r", "seq": 0, "type": "accepted", "payload": {"operation": payload["operation"]}},
+                        {"v": 1, "id": "r", "seq": 1, "type": "failed", "payload": {"code": "worker_start_failed"}},
+                    ])
+                    self.assertEqual(server._tasks, {})
+                    self.assertEqual(server._workers, set())
+                    self.assertIsNone(self.session._owner)
+                    self.assertIsNone(self.session._history)
+                    for path, data in before.items():
+                        if existing:
+                            self.assertEqual(path.read_bytes(), data)
+                        else:
+                            self.assertFalse(path.exists())
+                    self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
 
     def test_owner_close_failure_produces_failed_shutdown_not_false_success(self):
         server, thread, incoming, _, output, errors, result, _ = self.start()

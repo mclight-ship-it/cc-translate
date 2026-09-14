@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 @testable import CCTranslateSupport
 
 final class HelperIntegrationTests: XCTestCase {
@@ -674,6 +675,142 @@ final class HelperIntegrationTests: XCTestCase {
         reopened.connection.stop()
         await fulfillment(of: [reopened.stopped], timeout: 10)
         XCTAssertTrue(reopened.failures.isEmpty)
+    }
+
+    @MainActor
+    func testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations() async throws {
+        let requests = [
+            ClientMessage(id: "config_load", type: "request", payload: ["operation": .string("config_load")]),
+            ClientMessage(id: "config_save", type: "request", payload: [
+                "operation": .string("config_save"), "config": .object(["font_size": .integer(21)])
+            ]),
+            ClientMessage(id: "history_load", type: "request", payload: [
+                "operation": .string("history_load"), "page_size": .integer(1), "cursor": .null
+            ]),
+            ClientMessage(id: "history_add", type: "request", payload: [
+                "operation": .string("history_add"), "input": .string("synthetic"), "output": .string("never"),
+                "is_dict": .bool(false), "is_code": .bool(false), "kind": .string("text"),
+                "sig": .string(""), "limit": .integer(10)
+            ]),
+            ClientMessage(id: "history_clear", type: "request", payload: ["operation": .string("history_clear")])
+        ]
+        let script = """
+        from pathlib import Path
+        import signal
+        import sys
+        import threading
+        signal.alarm(10)
+        core = Path(sys.argv[1]).resolve()
+        sys.path.insert(0, str(core))
+        from cc_macos import server
+        assert Path(server.__file__).resolve() == core / "cc_macos" / "server.py"
+        def fail_start(thread):
+            if thread.name != "cc-macos-configuration":
+                raise AssertionError("unexpected synthetic worker")
+            raise RuntimeError("synthetic thread start failure")
+        threading.Thread.start = fail_start
+        raise SystemExit(server.main(["--config-home", sys.argv[2], "--application-id", sys.argv[3]]))
+        """
+        for existing in [false, true] {
+            for request in requests {
+                let context = try configurationContext()
+                defer { removeConfigurationHome(context.home) }
+                let directory = context.config.deletingLastPathComponent()
+                let history = directory.appendingPathComponent("history.json")
+                let configBytes = Data(#"{"font_size":"16","future":"keep"}"#.utf8)
+                let historyBytes = Data(#"[{"input":"synthetic","output":"keep","kind":"text"}]"#.utf8)
+                if existing {
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try configBytes.write(to: context.config)
+                    try historyBytes.write(to: history)
+                }
+                let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
+                var handles = [input.fileHandleForReading, input.fileHandleForWriting,
+                               output.fileHandleForReading, output.fileHandleForWriting,
+                               errors.fileHandleForReading, errors.fileHandleForWriting]
+                func close(_ handle: FileHandle) throws {
+                    try handle.close()
+                    handles.removeAll { $0 === handle }
+                }
+                defer {
+                    if process.isRunning {
+                        process.terminate()
+                        process.waitUntilExit()
+                    }
+                    for handle in handles {
+                        do { try handle.close() }
+                        catch { XCTFail("Synthetic worker failure pipe cleanup failed") }
+                    }
+                }
+                process.executableURL = context.runtime.executable
+                process.arguments = ["-I", "-B", "-c", script, context.runtime.launcher.deletingLastPathComponent().path,
+                                     context.home.path, try context.runtime.configurationApplicationIdentifier()]
+                process.currentDirectoryURL = context.home
+                process.environment = ["PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
+                                       "HOME": context.home.path, "TMPDIR": context.home.path]
+                process.standardInput = input
+                process.standardOutput = output
+                process.standardError = errors
+                guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+                    throw ProbeError.writeFailed
+                }
+                try process.run()
+                try close(input.fileHandleForReading)
+                try close(output.fileHandleForWriting)
+                try close(errors.fileHandleForWriting)
+                let hello = ClientMessage(id: "hello", type: "hello")
+                try input.fileHandleForWriting.write(contentsOf: try hello.encoded() + request.encoded())
+                try close(input.fileHandleForWriting)
+                let stdout = output.fileHandleForReading.readDataToEndOfFile()
+                let stderr = errors.fileHandleForReading.readDataToEndOfFile()
+                try close(output.fileHandleForReading)
+                try close(errors.fileHandleForReading)
+                process.waitUntilExit()
+                XCTAssertEqual(process.terminationReason, .exit)
+                XCTAssertEqual(process.terminationStatus, 2)
+                XCTAssertEqual(stderr, Data("cc_macos:worker_start_failed\n".utf8))
+                var framer = LineFramer()
+                let frames = try framer.append(stdout)
+                try framer.finish()
+                XCTAssertEqual(frames.count, 3)
+                guard frames.count == 3 else { throw ProbeError.invalidEnvelope }
+                // Feed actual Python frames to the exact state machine used by HelperConnection.
+                var state = ProtocolState(mode: .configuration)
+                try state.register(hello)
+                XCTAssertEqual(try state.receive(frames[0]).type, "ready")
+                try state.register(request)
+                let accepted = try state.receive(frames[1])
+                XCTAssertEqual(accepted.type, "accepted")
+                XCTAssertEqual(accepted.sequence, 0)
+                let failed = try state.receive(frames[2])
+                XCTAssertEqual(failed.type, "failed")
+                XCTAssertEqual(failed.sequence, 1)
+                XCTAssertEqual(failed.safeFailureCode, "worker_start_failed")
+                XCTAssertTrue(failed.isTerminal)
+                XCTAssertFalse(state.hasPendingResponses)
+                XCTAssertFalse(state.hasPendingConfiguration)
+                XCTAssertFalse(state.hasPendingHistory)
+                XCTAssertNil(state.pendingOutcomeUnknown)
+                let successor = ConfigurationNotices()
+                defer { successor.connection.forceStop() }
+                successor.connection.startBusiness(runtime: context.runtime, home: context.home)
+                await fulfillment(of: [successor.ready], timeout: 10)
+                successor.connection.stop()
+                await fulfillment(of: [successor.stopped], timeout: 10)
+                XCTAssertTrue(successor.failures.isEmpty)
+                if existing {
+                    XCTAssertEqual(try Data(contentsOf: context.config), configBytes)
+                    XCTAssertEqual(try Data(contentsOf: history), historyBytes)
+                } else {
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: context.config.path))
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: history.path))
+                }
+                let expected = existing
+                    ? Set(["config.json", "history.json", "config.json.lock", "history.json.lock"])
+                    : Set(["config.json.lock", "history.json.lock"])
+                XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: directory.path)), expected)
+            }
+        }
     }
 
     @MainActor

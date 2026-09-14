@@ -34,6 +34,7 @@ INTEGRATION_TESTS = (
     "testBundledHistoryLifecyclePaginationUnicodeAndConfigurationCoexistence",
     "testBundledHistoryCorruptOversizedAndRejectedAddsPreserveBytes",
     "testBundledHistoryCompetingHelpersReleaseBothOwners",
+    "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
 )
 
 

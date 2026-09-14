@@ -1762,3 +1762,25 @@ SQLite真实读写、合成CLI监督、cancel/EOF、probe清理和App不可变�
 不称整个P1完成。用户现在无需重装/安装CLI/登录。旧`eec92a5`用户正向报告仍只属于旧包；
 此新包只有三系统自动化证据，Finder首开/Gatekeeper/TCC/GUI/Intel仍独立待验。
 未发布Release、未改master/Windows部署、未购买或运行用户模型；旧WinError5未知风险继续显著保留。
+
+#### 独立review补充：业务worker启动失败的跨端确定终态（修复验证中）
+
+独立review发现上述绿灯未覆盖的真实缺陷：Python线程启动抛RuntimeError时发
+accepted(seq0)→failed(worker_start_failed, seq1)，不发started、不执行配置或历史I/O；
+Swift却对所有accepted业务failed强制started/seq2，导致合法失败被判invalidTransition，
+pending未结束，HelperConnection错误归类OutcomeUnknown。旧三系统成功不作为该分支通过证据。
+
+- [x] 保留Python现有固定失败语义；Swift仅对accepted且未started的worker_start_failed/seq1放行，
+  对该code的seq0/seq2/已started、其他code缺started、重复终态仍严格拒绝。
+- [x] 原便携真实handler测试扩为五操作(config load/save、history page/add/clear)与缺失/旧盘两类，
+  断言精确frame序列、perform未调用、两个owner关闭各一次、无任务/线程残留和旧盘不变。
+- [x] 新真Mac进程矩阵和Foundation跨端测试：用不变App的Python -I -B及真实server，
+  只在测试脚本注入Thread.start失败；实际stdout交给HelperConnection共用的ProtocolState，
+  检查确定failed/无pending/无unknown，再用真实HelperConnection重开验证双owner释放。
+  无生产注入开关或App修改，既有8项Foundation/89进程/242核心不删减；
+  新强制门槛为9个精确Foundation、90进程、242核心，尚待本次真实CI。
+- [ ] 针对性、正常完整hooks、新同包15/14/26与制品核验后再记录修复检查点，不开启下一功能。
+
+Windows相关联合148项 / 20.970s，OK，含真实handler五操作/两类文件状态的精确frame及原Windows历史链。
+Swift新增状态机负例尚未在Windows执行；Foundation直接运行包内Python生成真实失败frames，
+不编造native消息，不改变Python服务行为；新Mac CI另行记录。

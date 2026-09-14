@@ -10,10 +10,51 @@ if sys.platform != "darwin":
 
 from cc_macos import configuration, protocol
 from cc_macos.config_owner import ConfigInUseError, MacConfigOwner
+from cc_macos.history_owner import MacHistoryOwner
 from state_ipc_process_support import StateIPCProcessCase
 
 
 class TestConfigurationIPCProcess(StateIPCProcessCase):
+
+    def test_worker_start_failure_is_prestart_for_all_business_operations(self):
+        operations = [
+            {"operation": "config_load"},
+            {"operation": "config_save", "config": {"font_size": 21}},
+            {"operation": "history_load", "page_size": 1, "cursor": None},
+            {"operation": "history_add", "input": "synthetic", "output": "never",
+             "is_dict": False, "is_code": False, "kind": "text", "sig": "", "limit": 10},
+            {"operation": "history_clear"},
+        ]
+        self.mode = "worker-start-failure"
+        for existing in (False, True):
+            for payload in operations:
+                with self.subTest(operation=payload["operation"], existing=existing):
+                    process = self.spawn()
+                    self.assertEqual(self.hello(process)["type"], "ready")
+                    before = {self.path: b'{"font_size":"16","future":"keep"}',
+                              self.history_path: b'[{"input":"synthetic","output":"keep","kind":"text"}]'}
+                    for path, data in before.items():
+                        if existing:
+                            path.write_bytes(data)
+                        else:
+                            path.unlink(missing_ok=True)
+                    self.send_message(process, "r", "request", **payload)
+                    accepted, failed = self.receive(process), self.receive(process)
+                    self.assertEqual(accepted, {"v": 1, "id": "r", "seq": 0, "type": "accepted",
+                                                "payload": {"operation": payload["operation"]}})
+                    self.assertEqual(failed, {"v": 1, "id": "r", "seq": 1, "type": "failed",
+                                              "payload": {"code": "worker_start_failed"}})
+                    self.finish_helper(process, code=2, errors=b"cc_macos:worker_start_failed\n")
+                    self.assertEqual([event["type"] for pid, event in self.events if pid == process.pid],
+                                     ["ready", "accepted", "failed"])
+                    with MacConfigOwner(self.home, self.identity), MacHistoryOwner(self.history_path):
+                        pass
+                    for path, data in before.items():
+                        if existing:
+                            self.assertEqual(path.read_bytes(), data)
+                        else:
+                            self.assertFalse(path.exists())
+                    self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
 
     def test_default_diagnostic_connection_does_not_create_application_support(self):
         self.mode = "diagnostic"

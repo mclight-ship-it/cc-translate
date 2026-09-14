@@ -22,6 +22,13 @@ import sys
 sys.path.insert(0, sys.argv[1])
 home, identity, mode = Path(sys.argv[2]), sys.argv[3], sys.argv[4]
 signal.alarm(15)
+if mode == "worker-start-failure":
+    import threading
+    def fail_start(thread):
+        if thread.name != "cc-macos-configuration":
+            raise AssertionError("unexpected synthetic worker")
+        raise RuntimeError("synthetic thread start failure")
+    threading.Thread.start = fail_start
 if mode == "barrier":
     import cc_storage
     actual_fsync = cc_storage.os.fsync

@@ -760,6 +760,55 @@ final class ProtocolTests: XCTestCase {
         XCTAssertFalse(state.hasPendingHistory)
     }
 
+    func testBusinessWorkerStartFailureIsExactDeterminateTerminal() throws {
+        let requests = [
+            ClientMessage(id: "config_load", type: "request", payload: ["operation": .string("config_load")]),
+            ClientMessage(id: "config_save", type: "request", payload: [
+                "operation": .string("config_save"), "config": .object(["font_size": .integer(16)])
+            ]),
+            historyLoad("history_load"), historyAdd("history_add"),
+            ClientMessage(id: "history_clear", type: "request", payload: ["operation": .string("history_clear")])
+        ]
+        for request in requests {
+            var state = try configurationConnected()
+            try state.register(request)
+            let failure: [String: JSONValue] = ["code": .string("worker_start_failed")]
+            XCTAssertThrowsError(try state.receive(event(request.id, 0, "failed", failure)))
+            _ = try state.receive(event(request.id, 0, "accepted", [
+                "operation": try XCTUnwrap(request.payload["operation"])
+            ]))
+            for code in ["config_io_failed", "history_io_failed", "internal_error"] {
+                XCTAssertThrowsError(try state.receive(event(request.id, 1, "failed", ["code": .string(code)])))
+            }
+            for sequence: Int64 in [0, 2] {
+                XCTAssertThrowsError(try state.receive(event(request.id, sequence, "failed", failure)))
+            }
+            XCTAssertThrowsError(try state.receive(event(request.id, 1, "failed", ["code": .bool(true)])))
+            XCTAssertThrowsError(try state.receive(event(request.id, 1, "failed", [
+                "code": .string("worker_start_failed"), "detail": .string("not allowed")
+            ])))
+            let result = try state.receive(event(request.id, 1, "failed", failure))
+            XCTAssertTrue(result.isTerminal)
+            XCTAssertEqual(result.safeFailureCode, "worker_start_failed")
+            XCTAssertFalse(state.hasPendingResponses)
+            XCTAssertFalse(state.hasPendingConfiguration)
+            XCTAssertFalse(state.hasPendingHistory)
+            XCTAssertNil(state.pendingOutcomeUnknown)
+            for sequence: Int64 in [1, 2] {
+                XCTAssertThrowsError(try state.receive(event(request.id, sequence, "failed", failure)))
+            }
+            XCTAssertThrowsError(try state.receive(event(request.id, 2, "started", [
+                "operation": try XCTUnwrap(request.payload["operation"])
+            ])))
+            var started = try configurationConnected()
+            try startOperation(request, state: &started)
+            XCTAssertThrowsError(try started.receive(event(request.id, 2, "failed", failure)))
+            XCTAssertTrue(started.hasPendingResponses)
+            _ = try started.receive(event(request.id, 2, "failed", ["code": .string("internal_error")]))
+            XCTAssertNil(started.pendingOutcomeUnknown)
+        }
+    }
+
     private func runtimeReport(https: Bool = false) -> [String: JSONValue] {
         [
             "python": .object([
