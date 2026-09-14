@@ -152,15 +152,17 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 无 I/O 配置默认/Config 与 raw 迁移计划共享，Windows 真实入口接线；
     源码 `7770b70` / [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
     同包三系统通过，正常完整 Windows hook 1194 项通过，见[配置规则证据](#配置规则自动化检查点)。
-    针对性运行仍出现 WinError 5，失败保留；仅规则依赖完成，不是配置 owner/持久化或线程安全完成。
+    该次针对性运行出现 WinError 5，失败保留；该次只完成规则依赖，后续配置 owner 见下。
   - [ ] Windows 历史矩阵偶发原子替换拒绝访问的根因：2026-09-14 二十轮复核已复现，
     不是全部通过；新旧历史路径的单次 `os.replace` 均观察到 WinError 5。
     见[复核与阻断记录](#历史矩阵二十轮复核2026-09-14)，未用重试或削弱断言规避。
     后续[实际旧 writer 对照](#抽取前后实际-writer-有界对照2026-09-14)也复现，不能归因于未关闭 FD，
     但拒绝来源仍未知，不标解决。
-  - [ ] Mac 配置仓库/owner 服务（本轮实施与验证中）：显式 home + 应用身份选择
+  - [x] Mac 配置仓库/owner 服务：显式 home + 应用身份选择
     Application Support，严格读取/raw 迁移/独立保存快照；与历史共用稳定侧文件所有权。
-    不接业务 helper/设置 UI，不改变 Windows 配置入口或后台共享 cfg 策略。
+    源码 `0fd56c2` / [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
+    同包三系统通过，见[配置 owner 证据](#config-owner-checkpoint)。
+    不接业务 helper/设置 UI，不改变 Windows 配置入口或后台共享 cfg 策略；不是全 App 配置线程安全完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1355,16 +1357,18 @@ Mac 配置 owner/迁移文件服务/全局配置锁、后台 cfg 竞态、业务
 均不在本次内，整个 P0/P1/P2–P6 未完成。当前新包只有自动化证据，旧 `eec92a5` 用户报告不迁移；
 免费分发/零预算及真实 TCC/干净首开/CLI账号/Intel 边界不变，不要求现在重装或登录。
 
-### Mac 配置 owner 服务切片（2026-09-14，实施中）
+<a id="config-owner-checkpoint"></a>
 
-1. [ ] 从已验证历史 owner 提取稳定侧文件所有权原语，history/config 共用；
+### Mac 配置 owner 服务检查点（2026-09-14）
+
+1. [x] 从已验证历史 owner 提取稳定侧文件所有权原语，history/config 共用；
    保持旧历史 API、`.lock` 名称、非阻塞竞争、fork 子不 unlock 父、失败 FD 清理与 close 串行。
-2. [ ] 显式路径配置仓库和 Mac owner：load 的读取/规范化/raw 迁移/原子写入共用同一操作锁；
+2. [x] 显式路径配置仓库和 Mac owner：load 的读取/规范化/raw 迁移/原子写入共用同一操作锁；
    仅确实缺失返回默认且不创建配置文件，其它读取/格式/转换或迁移失败显式，不覆写损坏输入。
    save 明确写独立 JSON payload，不保存调用者可变引用；load 不泄漏内部状态。
-3. [ ] 真实临时 Application Support/bundle ID fixture，第二进程竞争/替换后稳定 inode/
+3. [x] 真实临时 Application Support/bundle ID fixture，第二进程竞争/替换后稳定 inode/
    正常退出/崩溃接管、fork/close/故障保护；新增便携与真实进程测试并保留原历史覆盖。
-4. [ ] 正常联合 targeted、一次完整 hooks、免费同包 15/14/26 CI 与资源/许可/不可变核验；
+4. [x] 正常联合 targeted、一次完整 hooks、免费同包 15/14/26 CI 与资源/许可/不可变核验；
    WinError5 失败原样记录，不循环凑绿或跳过 hooks。
 
 当前只实现可调用服务依赖，不接 Swift/业务 helper 协议或按钮，不修 Windows 后台共享 cfg 竞态，
@@ -1390,4 +1394,56 @@ Mac 配置 owner/迁移文件服务/全局配置锁、后台 cfg 竞态、业务
 原始 hash 不改、不删除断言，真实 Windows 差分继续运行。本次没有观察到 WinError5，
 但旧的拒绝访问失败及未知根因仍保留，不能以本次无复现代替解决。
 修复后仅复跑这个失败 selector：1 项 / 0.045s / OK。其余 336 项已有真实通过结果，
-接下来由一次正常完整 pre-push 联合验证，不为测试断言同步循环重跑故障矩阵。
+随后仅一次正常完整 pre-push：privacy/compile 成功，**1245 项 / 62.823s / OK**，允许正常推送。
+保留既有 Tk teardown stderr；没有增加生产重试、换目录或跳 hooks。本轮没有观察到自然 WinError5，
+不等于旧的二十轮/旧新 writer/配置 targeted 拒绝访问根因已解决。
+
+#### 源码、运行与制品
+
+- 源码 **0fd56c2d9f3630d03b078ad62e66e998fbc3419e**，
+  [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
+  attempt 1，3 jobs 和全部关键 steps success；没有重跑失败 Mac job 或修改平台声明。
+- 本检查点随后的提交仅收尾本 TODO、开发指南和 ROADMAP，文档提交不是新制品源码；
+  精确文档 HEAD 以这些文件的 Git 历史及交接报告为准，不把 docs-only SHA 绑定旧 App。
+- 唯一 App [artifact 10332347322](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265/artifacts/10332347322)，
+  `macos-arm64-p0-development-NOT-A-RELEASE`，到期 **2026-09-21T03:52:53Z**。
+  内层 `CCTranslateMac-P0.zip` **18,370,423 字节**；
+  SHA-256 **21a37524448e129928540d5b76a32e934fa4e472117a19aecdd087d69a910987**。
+- Mac14 [小报告 10333065999](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265/artifacts/10333065999)
+  2,389 字节；Mac26 [小报告 10332651126](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265/artifacts/10332651126)
+  2,391 字节；没有重复上传第二/第三份 App。
+- 独立下载核验归档 CRC、0755、相对 symlink、全部 **672 库存/62 资源 hash**，
+  **34 个包内源码路径与固定 Git blob 相等**（33 个不同 Git 路径，launch 有两个包内目标）、
+  **6 arm64 Mach-O / 19 实际 runtime 许可**，完整构建保留文件核对数 **605**。
+  锁文件必需许可子集仍为10，不与实际19混淆；项目自身许可仍标 `requires separate confirmation`。
+  首次本地审计脚本误将源码映射去重后与34比较，已改为逐包内路径计数，不放宽字节/hash断言。
+- 三系统同包内容/模式/链接摘要均为
+  **a835a9c9489ce93e81dd186e638258c6a316dde6197d8053e819d1c8e164c8c9**；
+  只有 Mac15/Xcode16.4 构建产品，14/26 不重建/重签，前后 App 不可变。
+
+| 实际系统/构建 | 产品或 harness | 进程 63 | 核心 183 | 后置 Foundation 1 |
+|---|---|---:|---:|---:|
+| 15.7.9 / 24G830 / arm64 | producer Xcode16.4 / Swift6.1.2 / SDK15.5 | 58.914s | 1.525s | 2.565s |
+| 14.8.9 / 23J631 / arm64 | harness Xcode16.2 / Swift6.0.3 / SDK15.2 | 55.463s | 1.180s | 2.596s |
+| 26.6.2 / 25G83 / arm64 | harness Xcode26.6 / Swift6.3.3 / SDK26.5 | 55.304s | 1.353s | 2.393s |
+
+实际 ImageVersion 分别为15=`20260907.0337.1`、14=`20260831.0302.1`、
+26=`20260907.0351.1`；producer宿主 Python3.14.7，不与被测包内 Python3.12.14 混用。
+producer便携 **369 / 10.953s / OK**；普通Swift **35总数=34通过+包未构建时集成skip1 / 9.780s**。
+该 skip 不算集成通过：构建后强制 Foundation 实际1项通过，14/26各自独立编译 harness 后同样实际1项。
+三系统包内核心/进程/后置集成均0 failure/error/skip。
+
+逐项日志另核对每个系统的新增 **36 ConfigRepository + 19 ConfigOwnerProcess** 名称集合与源码一致；
+旧 **19 HistoryOwnerProcess + 19 ConfigRuleTests** 同样全部逐项 ok，不因共享锁/转换抽取减少旧覆盖。
+原44进程/147核心都保留，新下限为63/183；共享测试 harness 也必须来自同一 checkout，不计为空测试凑数。
+配置 fixture 使用实际 Info.plist bundle ID 和临时 Unicode/空格/#/% home，真实 save/load/迁移一次/重开；
+第二 owner、replace 稳定侧 inode、退出/崩溃后 reap 接管、兄弟存活、fork/close/FD/真实权限拒绝/
+坏数据/写失败保旧等实际执行。既有存储、历史、HTTPS/SQLite、helper cancel/EOF、资源/不可变门槛不缩减。
+
+**边界：**可调用配置服务/owner 依赖已完成，不是整个 P1、全 App 配置线程安全或业务 helper 接线。
+Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 raw JSON 快照，不自动默认化/迁移，
+非法字段可保存但下次严格 load 拒绝；调用方不能在快照创建时并发改输入。
+真实用户文件选择/旧文件迁移、RequestSnapshot、provider/新UI仍待后续明确切片。
+旧 `eec92a5` 的用户正向实测只属于旧包，新包仅本次三系统自动化；未新增用户账号/模型或实机结论。
+免费 GitHub 路线和零付费不变；未 Release/master/Windows部署，不要求用户现在重装、安装CLI或登录。
+下载的内层 ZIP 与本轮临时审计脚本已清理，保留去敏 JSON/测试日志；未在 Windows 执行 Mac 二进制。

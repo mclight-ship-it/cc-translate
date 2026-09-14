@@ -597,7 +597,7 @@ producer 便携 **299**、普通 XCTest **34 pass + 初次集成skip1**，后置
 Windows add/clear 统一锁与 Mac owner 生命周期已完成；这不是配置/历史完整 helper 服务、新UI或全P1完成，
 也不继承旧 `eec92a5` 用户报告或验证用户自报26.5.2。免费分发及人工门槛不变。
 
-### 最新无 I/O 配置规则检查点（仅自动化，不要求现在重装）
+### 历史无 I/O 配置规则检查点（仅自动化）
 
 源码 **7770b704f05890b60b734a3dc0652f674847c960**，
 [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
@@ -614,6 +614,27 @@ Windows正常完整hook单次 **1194 / 67.382s OK**，但先前targeted **215 / 
 确有WinError5及保留日志的连带失败，不能宣称targeted全绿或写入稳定性已解决，详见TODO。
 本次只共享Config/default/纯迁移计划并接原Windows入口，不是Mac配置存储/owner/线程安全或新UI；
 不增加任何CLI/模型请求，用户无需现在重装。新包不继承旧包实机结论，正式平台/许可门槛不变。
+
+### 最新配置 owner 服务检查点（仅自动化，不要求现在重装）
+
+源码 **0fd56c2d9f3630d03b078ad62e66e998fbc3419e**，
+[run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
+attempt1 三 jobs/全部 steps success。
+[唯一 App artifact 10332347322](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265/artifacts/10332347322)
+到期 **2026-09-21T03:52:53Z**；内层 `CCTranslateMac-P0.zip` **18,370,423 字节**，
+SHA-256 **21a37524448e129928540d5b76a32e934fa4e472117a19aecdd087d69a910987**。
+产品只由 Mac15.7.9/Xcode16.4 构建，同包在14.8.9/26.6.2 arm64原样运行；
+两者仅用16.2/26.6构建测试 harness。每系统 **63进程/183核心/1强制Foundation**，全部0 failure/error/skip。
+新增36配置仓库与19配置owner进程逐项通过，原19历史owner/19配置规则名称集合也全部通过。
+producer便携369；普通Swift仍34pass+包未构建时skip1，后置真实集成另计，不能混报。
+独立核验672库存/62资源hash/34包内源码映射/6 arm64 Mach-O/19 runtime许可，
+三系统同一归档/内容/模式/链接，合成配置fixture和所有既有存储/HTTPS/SQLite/cancel/EOF门槛通过。
+Windows联合337首次1项旧AST检查失败，冻结原方法后该项通过，原hash不改；
+随后单次正常完整hook **1245 / 62.823s / OK**。旧WinError5拒绝来源仍未知，不能据此标解决。
+这只完成可调用服务与显式owner，不接业务helper/设置UI，也不解决整个App共享cfg竞争；
+旧配置文件迁移/请求快照/provider仍待办，用户旧包实测不绑定本源码。
+完整计数、OS/Image/编译器、失败、hash与文档/源码身份分离见
+[配置 owner 验收记录](MACOS_TODO.md#config-owner-checkpoint)。
 
 ## 7. 功能对齐矩阵
 

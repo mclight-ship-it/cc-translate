@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 无I/O配置规则已共享并经三系统验证，Windows写入阻断保留
+## macOS 原生移植 — 配置 owner 服务已完成三系统验证，Windows写入阻断保留
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -27,13 +27,19 @@ Mac 显式 owner 使用稳定侧文件协作锁，真实包内竞争、replace/c
 Mac 坏文件/读取错误不当空历史覆盖。没有新增历史业务 IPC 或按钮，也未接触真实用户数据。
 Windows 原子替换偶发 WinError 5 的二十轮复核及实际旧/新 writer 对照已复现，拒绝来源仍未知；
 错误与根因阻断保留，不加生产重试，不将旧成功证据等同于当前稳定性已解决。
-当前单一切片已把默认/Config 规范化与迁移计划移到无 I/O 共享模块，实际接 Windows Config/load_config，
+此前切片已把默认/Config 规范化与迁移计划移到无 I/O 共享模块，实际接 Windows Config/load_config，
 保持原类型/未知字段/磁盘 payload，只随包合成验证，不新增用户文件/配置 UI。
 源码 `7770b70` / [run 34801568838](https://github.com/mclight-ship-it/cc-translate/actions/runs/34801568838)
 同包三系统各147核心（新增19配置规则）/44进程/1强制Foundation通过；正常完整Windows hook1194通过。
 该成功不覆盖此前targeted的WinError5失败，稳定性根因仍待诊断；固定制品/hash和所有失败见TODO。
-下一配置服务切片正在验证：显式路径的严格仓库、独立 raw 保存快照，以及与历史共用的
-稳定侧文件 owner；仅可调用核心/合成 fixture，不新增业务 IPC 或设置 UI，实际结果见 TODO。
+现已完成可调用的 Mac 配置服务：显式路径严格仓库、独立 raw 保存快照，以及与历史共用的
+稳定侧文件 owner；真实缺失/迁移/重开/竞争/退出/fork/close/故障保护在同包三系统通过。
+源码 `0fd56c2` / [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)，
+每系统183核心（新增36）/63进程（新增19）/1强制Foundation；正常完整Windows hook1245通过。
+Windows原转换仍兼容，新Mac服务用同一规则的严格模式；不把坏文件/转换失败当默认配置覆盖。
+首次targeted1项旧AST检查失败已保留并修复，旧WinError5根因仍未解决；完整证据见
+[配置 owner 检查点](MACOS_TODO.md#config-owner-checkpoint)。
+仅可调用核心/临时合成 fixture，不新增业务 IPC 或设置 UI，不宣称整个存储安全完成。
 完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、业务 helper 唯一入口与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 
