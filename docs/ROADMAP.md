@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 配置 owner 服务已完成三系统验证，Windows写入阻断保留
+## macOS 原生移植 — 配置业务 IPC 验证中，Windows写入阻断保留
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -39,8 +39,11 @@ Windows 原子替换偶发 WinError 5 的二十轮复核及实际旧/新 writer 
 Windows原转换仍兼容，新Mac服务用同一规则的严格模式；不把坏文件/转换失败当默认配置覆盖。
 首次targeted1项旧AST检查失败已保留并修复，旧WinError5根因仍未解决；完整证据见
 [配置 owner 检查点](MACOS_TODO.md#config-owner-checkpoint)。
-仅可调用核心/临时合成 fixture，不新增业务 IPC 或设置 UI，不宣称整个存储安全完成。
-完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、业务 helper 唯一入口与新翻译 UI 仍待办；
+该 owner 检查点当时仅可调用核心/临时合成 fixture。后续切片现已接入私有 helper 的配置
+load/save 与 Swift 显式连接 API，正在验证同包三系统；正常诊断仍零用户配置 I/O。
+仅显式启动参数选择 home/实际 bundle ID，配置操作串行持有 owner，started 后取消不谎称回滚，
+EOF/shutdown 等待本地操作后释放，响应丢失为结果未知且不重放；不是新的设置 UI。
+完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、历史业务 helper 与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 
 ## 术语表 / 风格预设 — 待办，独立于移植

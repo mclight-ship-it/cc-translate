@@ -57,6 +57,7 @@ cc_config.py                 P1 无 I/O 的单一默认/Config/迁移计划；�
 cc_config_store.py           P1 显式配置仓库；严格 load/raw 迁移/独立 save 快照，共用操作锁
 cc_macos/file_owner.py       P1 history/config 共用稳定侧文件锁、fork guard 和显式 close
 cc_macos/config_owner.py     P1 显式 home + bundle ID 的 Mac 配置 owner；不创建数据目录
+cc_macos/configuration.py    P1 显式配置连接生命周期、严格业务边界和固定错误码
 cc_providers/base.py         冻结请求/结果/状态契约；纯导入不加载 CLI
 cc_providers/registry.py     显式注册/获取/退出的纯 registry
 cc_dictionary_store.py      显式路径的只读 SQLite/原 schema；无默认用户词库加载
@@ -159,9 +160,11 @@ Application Support 下的 `config.json`，调用方先创建目录并用 contex
 history/config 共用稳定侧文件所有权原语；config 的 `config.json.lock` 不随 replace 删除，
 第二 owner 非阻塞拒绝，close 与整个操作互斥，关闭后拒绝操作，fork 子不 unlock 父。
 获取 owner 可创建侧文件，但缺失配置的 load 不创建 JSON；协作式锁不是恶意篡改权限沙箱。
-本轮服务验证以 TODO 为准；只在包内临时 home + 实际 Info.plist 身份的合成 fixture/测试调用，
-未接业务 helper 协议/设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
-真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、唯一业务 helper 接线/
+配置 owner 的已完成证据以 TODO 为准。后续业务切片已接同一 owner 到私有 helper 与
+Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfiguration` API；
+真实测试只选择临时 home + 所选 App 实际 Info.plist 身份，尚待本切片三系统验收。
+没有设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
+真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、历史业务 helper 接线/
 完整请求快照仍未完成；本 owner 不解决整个 App 的可变状态所有权。
 Windows WinError 5 的已有复核和实际旧 writer 对照均失败，拒绝来源仍未知；
 不以纯规则/旧三系统成功覆盖该阻断，不新增重试或弱化旧测试。最新实际验收见 TODO。
@@ -200,9 +203,39 @@ UTF-8 NDJSON，每帧必须以 LF 结尾。上限 **65,536 字节（含 LF）**�
 isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对路径。`ssl` 的 context
 通过不等于实际 TLS 通过；只有 `https.status == passed` 且证书验证开启才算联网探针完成。
 未来 P1 增加 `local_result`、配置版本和真实 provider 能力时同步更新合同及测试。
-P0 没有业务配置/历史写操作，不能将无配置版本的探针当作最终业务协议。
+默认 P0 诊断模式没有业务配置/历史写操作，不能将探针当作最终翻译业务协议。
 
-最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
+上述表格与四个并行任务属于默认诊断模式；新增配置连接不混入诊断能力：
+
+- 调用方显式调用 `startConfiguration(runtime:home:)`；从所选 App 的 Info.plist 读取真实
+  bundle ID，启动参数固定传入一次绝对 home/ID，不读取环境 fallback，不允许请求指定路径。
+  初始模块导入/参数解析无用户文件 I/O，首次有效空 hello 才创建 Application Support/取得 owner。
+  原生 App 启动/打开现有诊断面板仍不选择业务连接，不新增用户操作。
+- 配置 ready 保持同四字段，但 `fixture=false`，capabilities 精确为
+  `config_load`、`config_save`。等待 ready 后才调用读写 API；普通模式仍 `fixture=true`，
+  仅原两项能力。模式交叉、未知字段/ID/乱序/重复键均严格拒绝，不自动降级或重试。
+- load 请求仅 `{"operation":"config_load"}`，完成为 `{"config":{...}}`；
+  save 请求仅 `{"operation":"config_save","config":{...}}`，完成为 `{"saved":true}`。
+  config 必须是 JSON 对象，紧凑 UTF-8 编码不超过16KiB，根深度1、键/值也计下一层、最多10层；
+  数值有限且绝对值不超过 `2^53-1`，布尔与数值严格区分。完整帧仍64KiB/16层。
+  raw 和规范化后的可返回视图均先校验，但 save 只写 raw，不 dump normalized 视图。
+  严格磁盘 decoder 和返回值检查都在 owner 操作锁内、迁移写之前。
+- 固定错误为 `config_in_use`、`config_unavailable`、`invalid_config`、`config_io_failed`，
+  加既有协议/调度错误；不向 stderr/报告输出路径、配置内容或异常原文。
+  只有真正缺失返回默认且不创建 config.json，坏文件不当空配置覆盖。
+- 单一 FIFO worker，最多4个排队/执行中任务。accepted 只是排队；started 后 load 也可能迁移写，
+  不能撤销。排队取消可产生 cancelled；started 后 cancel 控制返回 `cancel_requested=false`，
+  原操作仍完成/失败。每请求唯一终态，迟到响应和重复 ID 不导致重放。
+- EOF/正常 shutdown 停止新请求、取消尚未开始的任务，等待已开始操作后关闭 owner；
+  shutdown 完成帧在释放所有权之后发送。配置正常 stop 不沿用诊断两秒 worker join/
+  三秒终止期限；显式 forceStop、传输失败或超时仍可能导致结果未知。
+  Swift 对未见终态的配置请求报告 `configurationOutcomeUnknown`，不声称取消已提交写入或自动重放。
+  原子文件完整性不等于回滚/完整事务，协作侧文件锁不是恶意篡改沙箱。
+- 这是真实可调用配置业务链，不是新增翻译/设置 UI。Foundation 后置集成必须精确执行四项
+  （诊断、配置读保存重开、坏盘保护、竞争接管），包内进程测试另用真实 fsync 后的测试端 FIFO
+  屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。验收状态以 TODO 为准。
+
+诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
 前端保留每 ID 序号验证，切换当前请求后忽略旧请求的 UI 结果；未知 ID/乱序为协议错误。
 握手超时、异常退出或协议错误要可见，禁止 success-shaped fallback。原生持续排空两个输出管道，

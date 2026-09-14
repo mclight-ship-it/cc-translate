@@ -25,6 +25,12 @@ APP_NAME = "CCTranslateMac-P0.app"
 RECEIPT = "runtime-receipt.json"
 ROOT = Path(__file__).resolve().parents[2]
 need = bundle.need
+INTEGRATION_TESTS = (
+    "testOptionalBundledHelperHandshakeFixtureAndShutdown",
+    "testBundledConfigurationLoadSaveNormalizeStopAndReopen",
+    "testBundledConfigurationCorruptFileFailsWithoutChangingBytes",
+    "testBundledConfigurationCompetingHelperFailsThenTakesReleasedOwnership",
+)
 
 
 def json_digest(value):
@@ -132,11 +138,27 @@ def prepare_harness(destination):
 
 
 def integration_result(text):
+    source = (ROOT / "macos/Tests/CCTranslateSupportTests/HelperIntegrationTests.swift").read_text(encoding="utf-8")
+    methods = re.findall(r"\bfunc (test\w+)\(", source)
+    need(len(methods) == len(INTEGRATION_TESTS) and set(methods) == set(INTEGRATION_TESTS),
+         "integration source method set changed")
+    for outcome in ("started", "passed"):
+        found = re.findall(
+            r"Test Case '-\[CCTranslateSupportTests\.HelperIntegrationTests (\w+)\]' " + outcome, text)
+        need(len(found) == len(INTEGRATION_TESTS) and set(found) == set(INTEGRATION_TESTS),
+             "XCTest integration method set incomplete or duplicated")
     matches = re.findall(r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text)
     need(bool(matches), "XCTest integration not discovered")
-    need(all(int(total) == 1 and int(skipped or 0) == 0 and int(failed) == 0
+    need(all(int(total) == len(INTEGRATION_TESTS) and int(skipped or 0) == 0 and int(failed) == 0
              for total, skipped, failed in matches), "XCTest integration failed/skipped/wrong count")
-    return {"tests_run": 1, "failures": 0, "skipped": 0}
+    return {"tests_run": len(INTEGRATION_TESTS), "failures": 0, "skipped": 0,
+            "methods": list(INTEGRATION_TESTS)}
+
+
+def verify_integration(args):
+    verify_checkout(args.source_sha)
+    report = integration_result((args.directory / "integration-tests.log").read_text(encoding="utf-8"))
+    bundle.write_json(args.directory / "integration-tests.json", report)
 
 
 def seal(args):
@@ -224,7 +246,7 @@ def run_runtime(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("seal", "run"))
+    parser.add_argument("command", choices=("seal", "run", "integration"))
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--run-id", required=True)
@@ -240,7 +262,12 @@ def main(argv=None):
             parser.error("runtime arguments required")
         args.output = args.output.resolve()
     try:
-        seal(args) if args.command == "seal" else run_runtime(args)
+        if args.command == "seal":
+            seal(args)
+        elif args.command == "integration":
+            verify_integration(args)
+        else:
+            run_runtime(args)
     except (bundle.BundleError, OSError, ValueError, KeyError, zipfile.BadZipFile,
             subprocess.SubprocessError) as error:
         detail = str(error) if isinstance(error, bundle.BundleError) else type(error).__name__

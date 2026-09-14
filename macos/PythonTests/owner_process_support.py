@@ -59,7 +59,7 @@ class OwnerProcessCase(unittest.TestCase):
                 if stream is not None:
                     stream.close()
 
-    def line(self, process):
+    def line(self, process, limit=256):
         deadline = time.monotonic() + 8
         output = bytearray()
         with selectors.DefaultSelector() as selector:
@@ -73,7 +73,7 @@ class OwnerProcessCase(unittest.TestCase):
                 if part == b"\n":
                     return output.decode("utf-8")
                 output.extend(part)
-                self.assertLess(len(output), 256, "Unexpected synthetic protocol output.")
+                self.assertLess(len(output), limit, "Unexpected synthetic protocol output.")
         self.fail("Synthetic owner child did not complete its handshake.")
 
     def send(self, process, command, expected=None):

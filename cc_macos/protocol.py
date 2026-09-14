@@ -13,6 +13,9 @@ MAX_FRAME_BYTES = 65_536
 MAX_TEXT_BYTES = 8_192
 MAX_IDS = 4_096
 MAX_DEPTH = 16
+MAX_CONFIG_BYTES = 16_384
+MAX_CONFIG_DEPTH = 10
+MAX_CONFIG_NUMBER = 9_007_199_254_740_991
 RESERVED_ID = "protocol"
 _ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 _CLIENT_TYPES = {"hello", "request", "cancel", "shutdown"}
@@ -102,3 +105,64 @@ def encode_frame(message: dict) -> bytes:
     if len(raw) > MAX_FRAME_BYTES:
         raise ProtocolError("frame_too_large")
     return raw
+
+
+def validate_config(config: object) -> None:
+    if not isinstance(config, dict):
+        raise ProtocolError("invalid_config")
+    pending = [(config, 1)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > MAX_CONFIG_DEPTH:
+            raise ProtocolError("invalid_config")
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise ProtocolError("invalid_config")
+            pending.extend((child, depth + 1) for child in value)
+            pending.extend((child, depth + 1) for child in value.values())
+        elif isinstance(value, list):
+            pending.extend((child, depth + 1) for child in value)
+        elif type(value) in (int, float):
+            if abs(value) > MAX_CONFIG_NUMBER or (type(value) is float and not math.isfinite(value)):
+                raise ProtocolError("invalid_config")
+        elif not (value is None or type(value) is bool or isinstance(value, str)):
+            raise ProtocolError("invalid_config")
+    try:
+        data = json.dumps(config, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    except (ValueError, TypeError, UnicodeError, RecursionError) as error:
+        raise ProtocolError("invalid_config") from error
+    if len(data) > MAX_CONFIG_BYTES:
+        raise ProtocolError("invalid_config")
+
+
+class PipeFrameReader:
+    """Interruptible reads for a business connection whose worker may lose stdout."""
+
+    def __init__(self, stream, stopping):
+        import os
+        import select
+
+        self._fd = stream.fileno()
+        self._read = os.read
+        self._select = select.select
+        self._stopping = stopping
+        self._buffer = bytearray()
+
+    def read(self):
+        while not self._stopping.is_set():
+            end = self._buffer.find(b"\n")
+            if end >= 0:
+                raw = bytes(self._buffer[:end + 1])
+                del self._buffer[:end + 1]
+                return decode_frame(raw)
+            if len(self._buffer) >= MAX_FRAME_BYTES:
+                raise ProtocolError("frame_too_large")
+            if not self._select([self._fd], [], [], 0.05)[0]:
+                continue
+            chunk = self._read(self._fd, min(4096, MAX_FRAME_BYTES - len(self._buffer)))
+            if not chunk:
+                if self._buffer:
+                    raise ProtocolError("truncated_frame")
+                return None
+            self._buffer.extend(chunk)
+        return None

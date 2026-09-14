@@ -20,6 +20,7 @@ PROCESS_TEST_MODULES = (
     "test_codex_catalog_process",
     "test_history_owner_process",
     "test_config_owner_process",
+    "test_configuration_ipc_process",
 )
 CORE_TEST_MODULES = (
     "test_classify",
@@ -35,10 +36,11 @@ CORE_TEST_MODULES = (
     "test_history",
     "test_config_rules",
     "test_config_store",
+    "test_macos_configuration",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support",), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 63, "core": 183}
+MINIMUM_TEST_COUNTS = {"process": 73, "core": 211}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
@@ -51,6 +53,9 @@ PROCESS_BUNDLE_MODULES = (
     "cc_macos.file_owner",
     "cc_macos.config_owner",
     "cc_macos.config_store_fixture",
+    "cc_macos.configuration",
+    "cc_macos.server",
+    "cc_macos.protocol",
 )
 CORE_BUNDLE_MODULES = (
     "cc_classify",
@@ -65,6 +70,9 @@ CORE_BUNDLE_MODULES = (
     "cc_history",
     "cc_config",
     "cc_config_store",
+    "cc_macos.configuration",
+    "cc_macos.server",
+    "cc_macos.protocol",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 

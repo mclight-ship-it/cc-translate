@@ -7,6 +7,9 @@ public enum ProbeError: String, Error, LocalizedError {
     case handshakeTimeout, requestTimeout, helperEOF, helperExited, helperProtocolError
     case stderrLimit, shuttingDown, cliTimeout, cliOutputLimit, cliFailed, cliCancelled
     case permissionDenied, secureInput, noDisplay, captureFailed, noImage, ocrFailed
+    case configurationOutcomeUnknown
+    case configInUse = "config_in_use"
+    case configUnavailable = "config_unavailable"
 
     public var errorDescription: String? { rawValue }
 }
@@ -71,7 +74,8 @@ public enum JSONValue: Equatable {
     }
 
     public func encoded() throws -> Data {
-        try JSONSerialization.data(withJSONObject: foundation, options: [.sortedKeys, .fragmentsAllowed])
+        try JSONSerialization.data(withJSONObject: foundation,
+                                   options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
     }
 
     public static func parse(_ data: Data) throws -> JSONValue {
@@ -115,6 +119,7 @@ private struct StrictJSON {
             var result: [String: JSONValue] = [:]
             if consume(125) { return .object(result) }
             repeat {
+                guard depth < 16 else { throw ProbeError.invalidJSON }
                 whitespace()
                 let key = try string()
                 guard result[key] == nil, consume(58) else { throw ProbeError.invalidJSON }
@@ -244,6 +249,45 @@ private struct StrictJSON {
     }
 }
 
+public enum ConfigurationDocument {
+    public static let maxBytes = 16_384
+    public static let maxDepth = 10
+    public static let maxNumber: Int64 = 9_007_199_254_740_991
+
+    public static func validate(_ value: JSONValue) throws {
+        guard value.object != nil else { throw ProbeError.invalidPayload }
+        try validateTree(value, depth: 1)
+        let data = try value.encoded()
+        guard data.count <= maxBytes else { throw ProbeError.invalidPayload }
+        _ = try JSONValue.parse(data)
+    }
+
+    public static func parse(_ data: Data) throws -> [String: JSONValue] {
+        let value = try JSONValue.parse(data)
+        try validate(value)
+        guard let object = value.object else { throw ProbeError.invalidPayload }
+        return object
+    }
+
+    private static func validateTree(_ value: JSONValue, depth: Int) throws {
+        guard depth <= maxDepth else { throw ProbeError.invalidPayload }
+        switch value {
+        case .object(let object):
+            for (key, child) in object {
+                try validateTree(.string(key), depth: depth + 1)
+                try validateTree(child, depth: depth + 1)
+            }
+        case .array(let array):
+            for child in array { try validateTree(child, depth: depth + 1) }
+        case .integer(let integer):
+            guard (-maxNumber...maxNumber).contains(integer) else { throw ProbeError.invalidPayload }
+        case .number(let number):
+            guard number.isFinite, abs(number) <= Double(maxNumber) else { throw ProbeError.invalidPayload }
+        case .bool, .string, .null: break
+        }
+    }
+}
+
 public struct ClientMessage {
     public let id: String
     public let type: String
@@ -256,11 +300,16 @@ public struct ClientMessage {
     }
 
     public func encoded() throws -> Data {
+        if payload["operation"] == .string("config_save"), let config = payload["config"] {
+            try ConfigurationDocument.validate(config)
+        }
         var data = try JSONValue.object([
             "v": .integer(1), "id": .string(id), "type": .string(type), "payload": .object(payload)
         ]).encoded()
+        guard data.count < LineFramer.maxFrameBytes else { throw ProbeError.frameTooLarge }
+        // Validate the actual bytes, not just the caller's in-memory value tree.
+        _ = try JSONValue.parse(data)
         data.append(10)
-        guard data.count <= LineFramer.maxFrameBytes else { throw ProbeError.frameTooLarge }
         return data
     }
 }
@@ -296,22 +345,40 @@ private enum HelperFailureCode: String {
     case httpsStatusFailed = "https_status_failed"
     case httpsCertificateFailed = "https_certificate_failed"
     case httpsProbeFailed = "https_probe_failed"
+    case configInUse = "config_in_use"
+    case configUnavailable = "config_unavailable"
+    case invalidConfig = "invalid_config"
+    case configIOFailed = "config_io_failed"
 }
 
 public struct ProtocolState {
+    public enum Mode { case diagnostic, configuration }
+
     private struct Entry {
         let type: String
         let operation: String?
         let https: Bool
+        let cancellationTarget: String?
+        let cancellationEligible: Bool
         var sequence: Int64 = 0
         var accepted = false
+        var started = false
+        var cancellationConfirmed = false
+        var cancelled = false
         var terminal = false
     }
     private var entries: [String: Entry] = [:]
     public private(set) var ready = false
     public private(set) var closing = false
     public var registeredCount: Int { entries.count }
-    public init() {}
+    public let mode: Mode
+    public var hasPendingResponses: Bool { entries.values.contains { !$0.terminal } }
+    public var hasPendingConfiguration: Bool {
+        entries.values.contains {
+            !$0.terminal && ["config_load", "config_save"].contains($0.operation ?? "")
+        }
+    }
+    public init(mode: Mode = .diagnostic) { self.mode = mode }
 
     public static func validID(_ id: String) -> Bool {
         let bytes = Array(id.utf8)
@@ -337,7 +404,19 @@ public struct ProtocolState {
         case "hello", "shutdown":
             guard payload.isEmpty else { throw ProbeError.invalidPayload }
         case "request":
+            let operations: Set<String> = mode == .configuration ?
+                ["config_load", "config_save"] : ["fixture", "runtime_probe"]
+            guard let operation = operation, operations.contains(operation) else {
+                throw ProbeError.invalidPayload
+            }
             switch operation {
+            case "config_load":
+                guard Set(payload.keys) == ["operation"] else { throw ProbeError.invalidPayload }
+            case "config_save":
+                guard Set(payload.keys) == ["operation", "config"], let config = payload["config"] else {
+                    throw ProbeError.invalidPayload
+                }
+                try ConfigurationDocument.validate(config)
             case "fixture":
                 guard Set(payload.keys).isSubset(of: ["operation", "text", "delay_ms"]),
                       let text = payload["text"]?.string, text.utf8.count <= 8192 else {
@@ -362,7 +441,14 @@ public struct ProtocolState {
             }
         default: throw ProbeError.invalidEnvelope
         }
-        entries[message.id] = Entry(type: message.type, operation: operation, https: payload["https"]?.bool ?? false)
+        let target = payload["request_id"]?.string
+        let targetEntry = target.flatMap { entries[$0] }
+        entries[message.id] = Entry(type: message.type, operation: operation,
+                                   https: payload["https"]?.bool ?? false,
+                                   cancellationTarget: target,
+                                   cancellationEligible: targetEntry.map {
+                                       $0.type == "request" && !$0.started && !$0.terminal
+                                   } ?? false)
         if message.type == "shutdown" { closing = true }
     }
 
@@ -389,10 +475,12 @@ public struct ProtocolState {
             guard entry.type == "hello", seq == 0,
                   Set(payload.keys) == ["protocol", "capabilities", "max_frame_bytes", "fixture"],
                   payload["protocol"] == .integer(1),
-                  payload["max_frame_bytes"] == .integer(65_536), payload["fixture"] == .bool(true),
+                  payload["max_frame_bytes"] == .integer(65_536),
+                  payload["fixture"] == .bool(mode == .diagnostic),
                   case let .array(capabilities)? = payload["capabilities"],
                   capabilities.count == 2,
-                  Set(capabilities.compactMap(\.string)) == ["fixture", "runtime_probe"] else {
+                  Set(capabilities.compactMap(\.string)) == (mode == .configuration ?
+                      ["config_load", "config_save"] : ["fixture", "runtime_probe"]) else {
                 throw ProbeError.invalidPayload
             }
             ready = true
@@ -401,6 +489,13 @@ public struct ProtocolState {
                   Set(payload.keys) == ["operation"],
                   payload["operation"]?.string == entry.operation else { throw ProbeError.invalidTransition }
             entry.accepted = true
+        case "started":
+            guard mode == .configuration, entry.type == "request", entry.accepted,
+                  !entry.started, !entry.cancellationConfirmed, seq == 1, Set(payload.keys) == ["operation"],
+                  payload["operation"]?.string == entry.operation else {
+                throw ProbeError.invalidTransition
+            }
+            entry.started = true
         case "delta":
             guard entry.accepted, entry.operation == "fixture", fixturePayload(payload) else {
                 throw ProbeError.invalidPayload
@@ -409,7 +504,19 @@ public struct ProtocolState {
             switch entry.type {
             case "request":
                 guard entry.accepted else { throw ProbeError.invalidTransition }
-                if entry.operation == "fixture" {
+                if mode == .configuration {
+                    guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
+                    if entry.operation == "config_load" {
+                        guard Set(payload.keys) == ["config"], let config = payload["config"] else {
+                            throw ProbeError.invalidPayload
+                        }
+                        try ConfigurationDocument.validate(config)
+                    } else {
+                        guard Set(payload.keys) == ["saved"], payload["saved"] == .bool(true) else {
+                            throw ProbeError.invalidPayload
+                        }
+                    }
+                } else if entry.operation == "fixture" {
                     guard fixturePayload(payload) else { throw ProbeError.invalidPayload }
                 } else {
                     guard runtimePayload(payload, https: entry.https) else {
@@ -419,20 +526,38 @@ public struct ProtocolState {
             case "cancel":
                 guard seq == 0, Set(payload.keys) == ["cancel_requested"],
                       payload["cancel_requested"]?.bool != nil else { throw ProbeError.invalidPayload }
+                if mode == .configuration, payload["cancel_requested"] == .bool(true) {
+                    guard entry.cancellationEligible,
+                          let target = entry.cancellationTarget, let request = entries[target],
+                          request.type == "request", request.accepted, !request.started,
+                          !request.terminal || request.cancelled else {
+                        throw ProbeError.invalidTransition
+                    }
+                    entries[target]?.cancellationConfirmed = true
+                }
             case "shutdown":
                 guard seq == 0, payload.isEmpty else { throw ProbeError.invalidPayload }
+                if mode == .configuration, hasPendingConfiguration {
+                    throw ProbeError.invalidTransition
+                }
             default: throw ProbeError.invalidTransition
             }
         case "cancelled":
-            guard entry.type == "request", entry.accepted, payload.isEmpty else {
+            guard entry.type == "request", entry.accepted, !entry.started, payload.isEmpty else {
                 throw ProbeError.invalidTransition
             }
         case "failed":
             guard validFailure(payload) else { throw ProbeError.invalidPayload }
+            if mode == .configuration, entry.type == "hello" {
+                guard seq == 0, ["config_in_use", "config_unavailable"].contains(payload["code"]?.string ?? "") else {
+                    throw ProbeError.invalidPayload
+                }
+            }
         default: throw ProbeError.invalidEnvelope
         }
         entry.sequence += 1
         entry.terminal = event.isTerminal
+        entry.cancelled = type == "cancelled"
         entries[id] = entry
         return event
     }

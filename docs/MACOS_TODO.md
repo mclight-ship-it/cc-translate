@@ -122,9 +122,11 @@ EOF 会给自有 worker 有限清理时间，线程无法启动明确 failed，�
 原生 P0 结果窗口只用于非激活探针，完整可选择结果/IME/浮窗产品交互仍属于 P2。
 P0 被动 Cmd+C 的 AX-only 路线显式要求辅助功能及输入监控均通过；缺失时不假装已经监听。
 
-CI 先运行普通 Swift 测试，此时包尚不存在，唯一包内集成测试会明确 skip；
+CI 先运行普通 Swift 测试，此时包尚不存在，需要包的集成测试会明确 skip；
 构建 `.app` 后再设置 `CC_TRANSLATE_APP`，用 `--filter HelperIntegrationTests` 真正执行
-Foundation.Process→包内 helper→fixture/SQLite/关闭流程。初次 skip 不能计为集成通过。
+Foundation.Process→包内 helper。当前门槛为精确四个方法：原 fixture/SQLite/关闭，
+以及配置读保存重开、坏文件保护、owner 竞争接管；逐项名称与数量都校验，拒绝 skip。
+首轮历史中的单项计数保持原样；初次 skip 不能计为集成通过。
 Python HTTPS smoke 是另一步，不替代原生客户端链路。
 
 首次 Mac 编译/自动化已覆盖这些此前仅静态检查的 API/生命周期边界：
@@ -162,7 +164,10 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     Application Support，严格读取/raw 迁移/独立保存快照；与历史共用稳定侧文件所有权。
     源码 `0fd56c2` / [run 34803920265](https://github.com/mclight-ship-it/cc-translate/actions/runs/34803920265)
     同包三系统通过，见[配置 owner 证据](#config-owner-checkpoint)。
-    不接业务 helper/设置 UI，不改变 Windows 配置入口或后台共享 cfg 策略；不是全 App 配置线程安全完成。
+    该历史检查点尚未接业务 helper；不改变 Windows 配置入口或后台共享 cfg 策略。
+  - [ ] 配置业务私有 helper + Swift 可调用 API：已接显式启动/严格读保存/串行 owner，
+    正在验证同包三系统，见[业务 IPC 切片](#configuration-ipc-checkpoint)。
+    不接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1447,3 +1452,36 @@ Mac严格 load 不把坏数据当空配置覆盖；显式 save 只保存独立 r
 旧 `eec92a5` 的用户正向实测只属于旧包，新包仅本次三系统自动化；未新增用户账号/模型或实机结论。
 免费 GitHub 路线和零付费不变；未 Release/master/Windows部署，不要求用户现在重装、安装CLI或登录。
 下载的内层 ZIP 与本轮临时审计脚本已清理，保留去敏 JSON/测试日志；未在 Windows 执行 Mac 二进制。
+
+<a id="configuration-ipc-checkpoint"></a>
+
+### 配置业务私有 IPC 切片（2026-09-14，验证中）
+
+1. [x] 保留普通启动/空 hello/fixture/runtime_probe 的零用户配置 I/O；
+   仅显式配置连接启动参数选择 caller home + 实际 Info.plist 身份，首次有效 hello 创建目录/取得 owner。
+2. [x] Python/Swift 同步 config_load/config_save 严格契约、真实/诊断能力区分及客户端可调用 API。
+   不允许 request 指定路径；完整帧仍64KiB/16层，配置对象另限16KiB/10层与可精确互操作数值。
+3. [x] accepted 只表示排队，started 后本地操作不可撤销；只有 started 前可 cancelled。
+   EOF/shutdown 等待已经开始的操作、释放 owner 后退出；响应丢失/强制终止为结果未知，不重试/重放。
+4. [ ] 真实 Foundation -> 包内 helper -> 临时配置 load/save/退出/重开/竞争/坏文件；
+   包内真进程加测试端 writer 屏障覆盖 cancel/EOF/shutdown 等待，不增加生产测试开关。
+5. [ ] 同步后置 XCTest 的准确方法集合/数量与严格0skip门槛，正常 Windows/hooks 与同包15/14/26，
+   固定源码/文档/制品证据及临时包清理后停止。
+
+本轮不接 history/provider/完整 RequestSnapshot，不改原生应用启动或现有诊断面板，
+不操作真实用户配置/账号。旧 WinError5 风险及协作锁/原子文件完整性边界继续保留。
+
+实现使用原 `MacConfigOwner` 和共享 writer，不建平行配置存储。连接启动只解析显式参数；
+配置模式第一次有效空 hello 才创建 Application Support/取锁，不读配置文件。
+普通诊断仍 `fixture=true`/原两项能力；配置模式 `fixture=false`/仅 config_load 与 config_save，
+后者是真实本地业务 I/O，不是翻译/provider 能力。路径不在每次请求中指定。
+配置 raw 与规范化结果都先校验；磁盘 decoder 的重复 key/非有限值/过深/超限错误在迁移写前拒绝。
+新增可选 decode/validate 在原仓库锁内执行，不改变默认仓库或 Windows 读取接口。
+配置 FIFO worker 非 daemon，started 与取消决策共用 server 锁；正常 EOF/shutdown 无两秒提前释放。
+管道失效触发可中断 reader，仍等待本地操作和 owner 关闭；强制终止/响应丢失是结果未知，不回滚或重放。
+
+本轮 Windows 验证按真实执行保留：
+- 首次 backend 命令在新测试 bytes literal 引号处 SyntaxError，**0 tests 执行**；已修正字面量。
+- 修正后 backend 联合 **152 项 / 23.922s / OK**；当时尚无全部最终门槛改动。
+- 最新联合协议/配置/Windows真实兼容/隔离/打包/harness 回归 **294 项 / 32.131s / OK**。
+  本轮未观察到自然 WinError5，不表示旧拒绝来源已解决；尚待正常完整 hook 与真实 Mac 运行。

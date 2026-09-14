@@ -16,12 +16,19 @@ class _StrictConfig(Config):
         coerce_config(self, strict=True)
 
 
+def normalize_config(data=None):
+    """Return a strict view without I/O, retaining Config's nested-value identity rules."""
+    return _StrictConfig(data)
+
+
 class ConfigRepository:
     """Serialize operations without caching values or excluding other processes.
 
     ``load`` returns a fresh Config subclass using the shared strict field
     conversions: failed conversions propagate instead of falling back to
-    defaults. Reading, planning and writing exceptions also propagate.
+    defaults. Optional decoder/validator callbacks run under the same lock,
+    before any migration write. The default JSON read behavior is unchanged.
+    Reading, planning and writing exceptions propagate.
 
     ``save`` writes a detached JSON snapshot of the supplied dict, not a
     normalized Config, and returns None. JSON-serializable tuples/keys follow
@@ -43,19 +50,24 @@ class ConfigRepository:
         if self._closed:
             raise RuntimeError("config_repository_closed")
 
-    def load(self):
+    def load(self, *, validate=None, decode=None):
         with self._lock:
             self._ensure_open()
             try:
                 stream = open(self.path, "r", encoding="utf-8")
             except FileNotFoundError:
-                return _StrictConfig()
+                cfg = normalize_config()
+                if validate is not None:
+                    validate(cfg)
+                return cfg
             with stream:
-                raw = json.load(stream)
+                raw = json.load(stream) if decode is None else decode(stream)
             if not isinstance(raw, dict):
                 raise ConfigFormatError("config_object_required")
-            cfg = _StrictConfig(raw)
+            cfg = normalize_config(raw)
             changed, payload = plan_config_migration(raw, cfg)
+            if validate is not None:
+                validate(cfg)
             if changed:
                 atomic_write_json(self.path, payload)
             return cfg

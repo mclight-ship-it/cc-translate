@@ -27,9 +27,9 @@ class MacConfigOwner(MacFileOwner, ConfigRepository):
                          os_api=os, platform=sys.platform, path_type=Path)
 
     # A fork child must fail before entering a possibly inherited locked RLock.
-    def load(self):
+    def load(self, *, validate=None, decode=None):
         self._ensure_process()
-        return super().load()
+        return super().load(validate=validate, decode=decode)
 
     def save(self, config):
         self._ensure_process()

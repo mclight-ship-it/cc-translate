@@ -47,6 +47,7 @@ jobs:
           tests.test_result_rules tests.test_storage
           tests.test_history tests.test_history_owner_contract
           tests.test_config_rules tests.test_config_store tests.test_config_owner_contract
+          tests.test_macos_configuration
           tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
@@ -60,7 +61,13 @@ jobs:
       - name: Native Foundation.Process to bundled helper integration (not optional here)
         env:
           CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
-        run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 --filter HelperIntegrationTests
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
+            --filter HelperIntegrationTests 2>&1 | tee tools/macos/.build/integration-tests.log
+          python3 -B tools/macos/runtime_matrix.py integration --directory tools/macos/.build \
+            --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
       - name: Explicit bundled helper HTTPS and SQLite smoke
         run: python3 tools/macos/smoke.py --allow-https
       - name: Shared rules and prompt contracts with bundled Python
@@ -96,6 +103,7 @@ jobs:
             tools/macos/.build/runtime-receipt.json
             tools/macos/.build/process-tests.json
             tools/macos/.build/core-tests.json
+            tools/macos/.build/integration-tests.json
 
   runtime:
     needs: p0

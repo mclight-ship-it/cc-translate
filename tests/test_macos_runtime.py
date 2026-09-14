@@ -155,12 +155,26 @@ class RuntimeMatrixTests(unittest.TestCase):
                 patch.dict(os.environ, {"DEVELOPER_DIR": "wrong"}), self.assertRaises(bundle.BundleError):
             runtime.environment_record(14, "16.2")
 
-    def test_integration_requires_actual_one_test_and_no_skip_or_failure(self):
-        result = runtime.integration_result("Executed 1 test, with 0 failures (0 unexpected)")
-        self.assertEqual(result, {"tests_run": 1, "failures": 0, "skipped": 0})
-        for text in ("0 tests passed", "Executed 0 tests, with 0 failures",
-                     "Executed 1 test, with 1 test skipped and 0 failures",
-                     "Executed 1 test, with 1 failures", "Executed 2 tests, with 0 failures"):
+    def test_integration_requires_exact_method_set_and_no_skip_or_failure(self):
+        self.assertEqual(runtime.INTEGRATION_TESTS, (
+            "testOptionalBundledHelperHandshakeFixtureAndShutdown",
+            "testBundledConfigurationLoadSaveNormalizeStopAndReopen",
+            "testBundledConfigurationCorruptFileFailsWithoutChangingBytes",
+            "testBundledConfigurationCompetingHelperFailsThenTakesReleasedOwnership",
+        ))
+        methods = "\n".join("Test Case '-[CCTranslateSupportTests.HelperIntegrationTests " + method + "]' " + outcome
+                            for method in runtime.INTEGRATION_TESTS for outcome in ("started", "passed"))
+        summary = "Executed 4 tests, with 0 failures (0 unexpected)"
+        result = runtime.integration_result(methods + "\n" + summary)
+        self.assertEqual(result, {"tests_run": 4, "failures": 0, "skipped": 0,
+                                  "methods": list(runtime.INTEGRATION_TESTS)})
+        for text in ("0 tests passed", summary, methods,
+                     methods + "\nExecuted 0 tests, with 0 failures",
+                     methods + "\nExecuted 4 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 4 tests, with 1 failures",
+                     methods + "\nExecuted 1 test, with 0 failures",
+                     methods + "\n" + methods + "\n" + summary,
+                     methods.replace(runtime.INTEGRATION_TESTS[0], "testUnexpected") + "\n" + summary):
             with self.subTest(text=text), self.assertRaises(bundle.BundleError):
                 runtime.integration_result(text)
 

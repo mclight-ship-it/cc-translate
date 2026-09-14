@@ -76,6 +76,8 @@ try:
     import cc_config_store
     import cc_macos.config_owner
     import cc_macos.config_store_fixture
+    import cc_macos.configuration
+    assert cc_macos.configuration.startup_configuration([]) is None
     repository = cc_config_store.ConfigRepository(Path(sys.argv[2]) / "absent-config.json")
     repository.close()
 finally:
