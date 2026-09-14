@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 历史业务接线实施中，配置已验证，旧Windows写入风险保留
+## macOS 原生移植 — 配置与历史业务链已验证，完整翻译仍待接通
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -58,11 +58,17 @@ Swift NaN编码的真实CI异常已修复并验证，失败历史保留。后续
 三jobs全部steps success：每系统 **76进程/218核心/5精确Foundation**，新增反例均真实执行。
 Windows联合301项及这次实质修复后的正常完整hook1280项通过，未跳hooks；旧WinError5根因仍未知。
 同包来源/673库存/63资源/35源码路径/许可/不可变已独立核验，最终三文档与源码身份分开。
-当前继续历史业务helper/Swift完整窄链：在原显式连接内同时持有配置/历史owner，
+历史业务helper/Swift完整窄链现已接通：在原显式连接内同时持有配置/历史owner，
 支持严格有界revision分页、记录、清空；默认诊断仍零用户配置/历史I/O。
 分页包含完整64KiB响应预算，写前验证后续可读性；坏盘不覆盖、queued取消和started写入明确区分，
-退出/丢响应不重放，所有测试只用临时home。新三系统验证与制品证据以
-[历史业务检查点](MACOS_TODO.md#history-ipc-checkpoint)为准，不继承旧配置或旧用户包结果。
+退出/丢响应不重放，所有测试只用临时home。最终源码`dc0ba9c` /
+[run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
+三jobs/全部steps成功，每系统89进程/242核心/8精确Foundation真实通过，正常Windows hook1306通过。
+同一个Xcode16.4 App在15.7.9/14.8.9/26.6.2运行，674库存/64资源/36源码路径及不可变摘要独立核对。
+两轮真实Mac失败分别是旧测试目录库存未同步双owner、测试将queued取消误作started完成；
+均保留并修正精确测试前置，未改生产策略或重试凑绿。全部证据及固定制品/hash见
+[历史业务检查点](MACOS_TODO.md#history-ipc-checkpoint)，不继承旧配置或旧用户包结果。
+旧Windows WinError5已复现但拒绝来源仍未知，当前成功不表示该稳定性风险已解决。
 完整请求快照、用户旧配置文件迁移/全 App 配置线程安全与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 

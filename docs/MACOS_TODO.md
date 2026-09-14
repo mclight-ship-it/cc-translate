@@ -171,8 +171,12 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
     见[业务 IPC 证据与历史失败](#configuration-ipc-checkpoint)。
     旧9614eab绿色未覆盖完整性缺陷；4d769e7的历史WinError5推送失败仍保留，不称拒绝来源已解决。
     该配置检查点未接设置 UI、历史业务或完整请求快照，不是全 App 配置线程安全完成。
-  - [ ] 历史业务私有 helper/Swift API（本轮实施和验证中）：同一显式连接持有双owner，
-    有界revision分页/记录/清空，保留配置与默认诊断；见[本轮依赖与证据](#history-ipc-checkpoint)。
+  - [x] 历史业务私有 helper/Swift API：同一显式连接持有双owner，
+    有界revision分页/记录/清空，保留配置与默认诊断。源码`dc0ba9c` /
+    [run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
+    同包三系统89进程/242核心/8精确Foundation通过，正常Windows hook1306通过；
+    两轮真实Mac失败及修复均保留，见[本轮依赖与证据](#history-ipc-checkpoint)。
+    不是历史UI、自动模型记录、请求快照或整个P1完成。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1643,7 +1647,7 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
 免费GitHub/零预算不变，不要求用户现在重装、安装CLI或登录。
 
 <a id="history-ipc-checkpoint"></a>
-### 历史业务私有 IPC 切片（2026-09-14，实施中）
+### 历史业务私有 IPC 切片（2026-09-14，已完成本次接线与自动化）
 
 1. [x] 现有显式配置连接提升为config/history业务连接；保留旧启动参数和配置API，
    首次有效hello同时持有config.json.lock/history.json.lock，部分初始化失败释放已取得owner。
@@ -1655,7 +1659,7 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
    追加/clear、外部内容变化或新连接使旧cursor明确过期，不混页，不静默当空历史。
 4. [x] 新add字段严格有界，实际未来文件及每条最坏分页envelope在写前验证；
    单条legacy无法入帧报固定错误，不写/删旧数据。配置16KiB预算不用于历史页。
-5. [ ] 真实并发/取消/EOF/shutdown/pipe失败释放两个owner，started mutation不冒称撤销；
+5. [x] 真实并发/取消/EOF/shutdown/pipe失败释放两个owner，started mutation不冒称撤销；
    Windows兼容/新便携、包内真进程与Foundation、同包三系统及制品审计后正常3docs收尾。
 
 本轮协议选择（版本仍v1，capabilities区分，默认诊断不变）：
@@ -1678,7 +1682,7 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
 这些是有界业务API限制，不改Windows泛型仓库/default/schema/缓存或上层history开关策略。
 没有历史UI、请求快照、provider或真实用户数据操作；旧WinError5未知风险继续保留。
 
-#### 本轮实施中已运行的验证（不替代尚未执行的Mac新CI）
+#### 实施过程验证与失败记录（最终结果在下一节，不回写历史失败）
 
 - 第一轮Windows联合155项 / 20.337s：2 errors，旧owner合同明确禁止caller注入reader/writer；
   初版扩构造参数违反该既有合同。已恢复MacHistoryOwner的path-only公开API，不削弱负例，
@@ -1707,3 +1711,54 @@ Foundation新增第五项通过真实Swift API验证：合法嵌套保存/读取
   修正测试为先观察真实started事件再stop，仍严格要求accepted/started/completed及0/1/2；
   新增清空后文件不存在、再次连接取得双owner并读到空历史。没有把两种终态都放行或改生产取消策略。
   受控进行中fsync/EOF/shutdown的强并发证明仍由真实进程屏障用例覆盖，不用事件观察冒充文件操作屏障。
+
+#### 历史业务自动化可靠检查点
+
+最终执行源码 **`dc0ba9c8cfcf39fd49e6220c69eeebe85c04df9d`**；
+[run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)，
+attempt1，**全部3jobs/33steps success**。最后两次修复只改对应测试和事实文档，
+未修改生产终态语义、不重试相同源码凑绿；不将此前两个失败run算作通过。
+最后修复的Windows严格runtime选择/集合14项 / 0.381s通过，
+正常完整hook **1306项 / 70.511s，OK** 后推送。前三次正常hook结果分别为
+1306/75.538s、1306/76.357s、1306/70.511s，均有既有Tk teardown stderr警告，
+这三次完整hook无failure/error/skip；初期155项的2 errors仍按上文保留。
+这些成功仍不证明旧WinError5拒绝来源已解决。
+
+| 实际系统与构建/测试身份 | 真包内进程 | 包内共享核心 | 强制Foundation |
+|---|---:|---:|---:|
+| producer macOS15.7.9 / arm64 / Xcode16.4 / Swift6.1.2 / SDK15.5 | 89 / 69.453s | 242 / 1.665s | 8 / 9.987s |
+| 同包macOS14.8.9 / arm64；仅harness用Xcode16.2 / Swift6.0.3 / SDK15.2 | 89 / 62.220s | 242 / 1.200s | 8 / 7.283s |
+| 同包macOS26.6.2 / arm64；仅harness用Xcode26.6 / Swift6.3.3 / SDK26.5 | 89 / 68.644s | 242 / 1.797s | 8 / 10.826s |
+
+全部表中套件0 failures/errors/skips。producer另有便携 **430项 / 10.607s，OK**；
+普通Swift **62项，54 pass + 8初次无包skip，0 failures**，其中协议39项实际通过。
+构建后的8个精确Foundation方法在每个系统均实际运行通过，初次skip不是后置通过证据。
+独立从固定源码AST逐方法核对：每系统**24项历史业务核心、13项历史IPC真进程、
+原13项配置IPC真进程**各执行一次；新9项Swift历史协议负例包含在producer的39项中。
+没有重复继承旧测试充数；新共享进程support与所有测试文件均来自同一checkout SHA，
+包内全部`cc_*`来源验证不回退宿主或仓库Python。临时storage fixture、HTTPS证书验证、
+SQLite真实读写、合成CLI监督、cancel/EOF、probe清理和App不可变检查均通过。
+
+- App：[artifact10336113899](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344/artifacts/10336113899)，
+  `macos-arm64-p0-development-NOT-A-RELEASE`，API核实时未过期，到期`2026-09-21T06:54:21Z`。
+- 小报告：[macOS14 artifact10335824928](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344/artifacts/10335824928) /
+  [macOS26 artifact10336223743](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344/artifacts/10336223743)；
+  两者均`stage=complete/status=passed/bundle_unchanged=true`，不重复上传App。
+- 内层`CCTranslateMac-P0.zip` **18,398,003字节**，
+  SHA-256 **`eaf0668fdf6c20b49ad76f29f37ccf0e175a143ae5e9d2cae066aef260b49f25`**。
+- 内容/模式/相对链接树摘要
+  **`f3b48e310acc3613e5507960d2ab1078934485c504c49b1e78caee5f26d9d8be`**，
+  与producer及两个runtime前后报告一致。14/26使用该同包，没有重建或重签产品。
+- 本地独立按ZIP真实字节核对**674库存、64资源hash、36包内源码路径（35唯一Git路径）、
+  6个arm64 Mach-O、19份runtime许可证**；源锁与仓库相同，保留605个runtime文件的许可覆盖记录。
+  包内新history模块及所有Core源码与上述固定提交Git blob逐一一致，source_tree_dirty=false。
+  主程序/Python0755、相对symlink、CRC、必需资源、树摘要全部一致。
+- 已清理下载的App zip和临时审计脚本，保留小型匿名JSON/实际测试日志与checkpoint。
+  源码身份为上述固定SHA；记录本节的最终三文档提交独立，不冒称新的执行源码或重新触发未变CI。
+
+本轮真正接通Swift客户端→包内helper→显式临时历史文件，包含有界分页、记录、清空、错误保护、
+退出释放与重开。默认原生启动/诊断面板仍不打开业务连接，不读写用户配置或历史。
+没有新历史UI、自动翻译记录、RequestSnapshot、provider/native官方账号或完整翻译闭环；
+不称整个P1完成。用户现在无需重装/安装CLI/登录。旧`eec92a5`用户正向报告仍只属于旧包；
+此新包只有三系统自动化证据，Finder首开/Gatekeeper/TCC/GUI/Intel仍独立待验。
+未发布Release、未改master/Windows部署、未购买或运行用户模型；旧WinError5未知风险继续显著保留。

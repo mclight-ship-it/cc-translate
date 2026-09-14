@@ -6,7 +6,8 @@ catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Win
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
 共享历史仓库和显式 Mac owner 已接入，并完成新包的 Windows/三系统自动化；
 配置owner现已接入显式私有helper与Swift API，含保存/迁移可读性修复，在同包三系统通过。
-本轮到此停止，不创建完整请求快照、provider 或新 UI，也未增加历史业务 IPC。
+历史现也接入同一业务连接及Swift分页/记录/清空API，同包三系统89进程/242核心/8Foundation通过。
+本轮到此停止，不创建完整请求快照、provider 或新 UI；旧Windows WinError5拒绝来源仍未知。
 完整首开/TCC 矩阵未验收。最低版本暂定 macOS 14，
 macOS 26.6.2 的 CI 系统版本已有独立记录，但旧包用户自报 26.5.2 仍未独立核验，不等于完整兼容性结论，
 Apple Silicon 优先；Intel 只有独立构建及实测通过后才承诺支持。
@@ -139,8 +140,9 @@ Mac 必须显式构造 `MacHistoryOwner`，在 caller-owned 目录对稳定 `.lo
 JSON replace/clear 不替换或删除侧文件，close 与操作互斥，close 后拒绝写入，fork 继承对象拒绝操作。
 只在显式 Darwin 构造时导入 fcntl；损坏/读取错误直接传播，不当空历史覆盖。异常/崩溃接管已用真实
 包内合成进程验证，但锁是协作式，不是抵御恶意目录替换的权限系统。单进程仓库本身不是跨进程锁。
-现有 helper 的业务历史接线仍未实现；history fixture 由 CI 单独显式调用，
-Foundation 集成继续验证原 helper 通道，不宣称已有新的历史 IPC 或用户数据服务。
+原history fixture仍由CI单独显式调用；后续业务切片已通过`cc_macos.history`固定仓库策略，
+在同一helper/FIFO及双owner生命周期接入分页/记录/清空，Foundation实际验证该业务链。
+默认原生UI没有业务连接或历史按钮；不会仅因启动就选择用户数据目录。
 无 I/O 配置规则已移到 `cc_config`，原始抽取时类/常量 AST 一致。本轮仅将 `_coerce` 循环提取为
 单一 `coerce_config`；冻结旧方法恢复原类后仍核对原指纹，并继续真实 Windows 差分。
 Windows 导出同一常量/默认 dict/Config 对象，`_coerce` 默认容错策略和 typed accessors 保留；
@@ -173,7 +175,7 @@ Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfigura
 精确源码/制品/hash与失败见[配置业务检查点](MACOS_TODO.md#configuration-ipc-checkpoint)。
 没有设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
 真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、完整请求快照仍未完成；
-历史业务helper接线是当前独立切片，实施/验证状态见TODO。本owner不解决整个App的可变状态所有权。
+历史业务helper独立切片已完成同包三系统自动化，证据见TODO；本owner不解决整个App的可变状态所有权。
 Windows WinError 5 的已有复核和实际旧 writer 对照均失败，拒绝来源仍未知；
 不以纯规则/旧三系统成功覆盖该阻断，不新增重试或弱化旧测试。最新实际验收见 TODO。
 `DictionaryStore` 保持原有线程局部连接和 `close_thread` 契约；SQLite URI 使用原生 `Path.as_uri`，
@@ -285,6 +287,13 @@ Swift提供`startBusiness`兼容别名以及`loadHistory(pageSize:cursor:)`、
 沿用唯一ID/严格事件API。历史未见终态的断连报告`historyOutcomeUnknown`，
 混合队列还有未终态配置时保留`configurationOutcomeUnknown`优先，均不代表提交写入已回滚。
 强制Foundation集合为原5项加历史生命周期分页/坏盘与预算保护/双owner竞争3项，全部必须真实运行且无skip。
+源码`dc0ba9c` / [run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)
+现已实际达到该门槛：同包15/14/26每系统89进程、242核心、8精确Foundation，0 failures/errors/skips；
+普通Swift62项里的8次初始无包skip不作为后置证据。Windows最终正常hook1306项通过，
+两轮真实Mac测试前置/库存失败和修复均见TODO，未改生产取消/锁/协议策略凑绿。
+本地独立核对674库存/64资源/36源码路径及同包内容、模式和链接，内层zip
+SHA-256为`eaf0668fdf6c20b49ad76f29f37ccf0e175a143ae5e9d2cae066aef260b49f25`。
+真实业务API接通不等于UI或完整翻译；本轮不要求用户重装，也不继承旧包Finder/TCC报告。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
@@ -720,7 +729,7 @@ Windows联合337首次1项旧AST检查失败，冻结原方法后该项通过，
 完整计数、OS/Image/编译器、失败、hash与文档/源码身份分离见
 [配置 owner 验收记录](MACOS_TODO.md#config-owner-checkpoint)。
 
-### 最新配置业务与可读性检查点（仅自动化，不要求现在重装）
+### 历史配置业务与可读性检查点（仅自动化，不要求现在重装）
 
 源码 **c4596526bd7429f76b701228bf35f031f737a3a5** /
 [run34809961745](https://github.com/mclight-ship-it/cc-translate/actions/runs/34809961745)，三jobs全部steps success。
@@ -736,6 +745,18 @@ SHA-256 **d661cff7cfe5ea768a4e65a0fec6639b1a027da0ff316ee3e76d05f805316753**。
 6 arm64 Mach-O/19许可通过，前后字节/模式/相对链接不变；临时下载包清理。
 完整实际OS/编译器/计数及源码与文档身份见[业务配置验收](MACOS_TODO.md#configuration-ipc-checkpoint)。
 这不是完整P1、全App可变配置线程安全或用户实机结论，旧包用户报告不迁移；免费路线及零付费不变。
+
+### 最新历史业务检查点（仅自动化，不要求现在重装）
+
+源码**dc0ba9c8cfcf39fd49e6220c69eeebe85c04df9d** /
+[run34815172344](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344)，
+三jobs/33steps全部success，每系统89进程/242核心/8精确Foundation，正常完整Windows hook1306通过。
+当前App为[artifact10336113899](https://github.com/mclight-ship-it/cc-translate/actions/runs/34815172344/artifacts/10336113899)，
+到期`2026-09-21T06:54:21Z`；内层18,398,003字节，
+SHA-256 `eaf0668fdf6c20b49ad76f29f37ccf0e175a143ae5e9d2cae066aef260b49f25`。
+同包14/26无需重编译或重签；新包的历史/配置API测试只使用临时home，不代表Finder/TCC/GUI已验。
+两轮Mac失败、修复、实际系统/编译器、完整资源/源码/hash/不可变证据见
+[历史业务验收](MACOS_TODO.md#history-ipc-checkpoint)。完整翻译链与新UI仍待接通，旧用户包实测身份不变。
 
 ## 7. 功能对齐矩阵
 
