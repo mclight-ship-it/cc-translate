@@ -27,23 +27,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var menuTarget: FocusTarget?
     private let model = ProbeModel()
     private var terminating = false
+    private var showTranslationResults = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "CC P0"
-        item.button?.toolTip = "CC Translate native P0 probes"
+        item.button?.title = "CC Dev"
+        item.button?.toolTip = "CC Translate native development build"
         let menu = NSMenu()
         menu.delegate = self
-        add("Open P0 input / probes...", action: #selector(openInput), to: menu)
+        add("Open input / diagnostics...", action: #selector(openInput), to: menu)
         add("Read current AX selection (local only)", action: #selector(readSelection), to: menu)
+        add("Translate current AX selection (native Codex)", action: #selector(translateSelection), to: menu)
         menu.addItem(.separator())
         add("Start passive double Cmd+C", action: #selector(startMonitor), to: menu)
         add("Stop passive monitor", action: #selector(stopMonitor), to: menu)
         menu.addItem(.separator())
-        add("Quit CC Translate P0", action: #selector(quit), to: menu)
+        add("Quit CC Translate", action: #selector(quit), to: menu)
         item.menu = menu
         statusItem = item
-        model.onSelection = { [weak self] result in self?.showSelection(result) }
+        model.onSelection = { [weak self] result in
+            guard let self = self else { return }
+            if self.model.translatePassiveSelections, self.model.nativeTranslation, self.model.ready {
+                self.model.translateSelection(result)
+            } else {
+                self.showSelection(result)
+            }
+        }
+        model.onTranslationStarted = { [weak self] in self?.showTranslationResults = true }
+        model.onTranslationResult = { [weak self] text in
+            guard let self = self, !self.terminating, self.showTranslationResults else { return }
+            self.showLocalResult(text)
+        }
         model.onStopped = { [weak self] in
             guard self?.terminating == true else { return }
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -68,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 contentRect: NSRect(x: 0, y: 0, width: 760, height: 600),
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
             )
-            panel.title = "CC Translate P0 - synthetic probes, not translation"
+            panel.title = "CC Translate - opt-in native Codex / diagnostics"
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.delegate = self
@@ -83,6 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @objc private func readSelection() {
         showSelection(SelectionProbe.read(target: menuTarget))
+    }
+
+    @objc private func translateSelection() {
+        model.translateSelection(SelectionProbe.read(target: menuTarget))
     }
 
     @objc private func startMonitor() {
@@ -101,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         case .present(let text): message = "AX selection: PRESENT (local probe, not translation)\n\n\(text)"
         case .absent: message = "AX selection: ABSENT (selectedText is empty)."
         case .unknown(let reason):
-            message = "AX selection: UNKNOWN (\(reason.rawValue)).\nNo clipboard fallback. Use explicit P0 input."
+            message = "AX selection: UNKNOWN (\(reason.rawValue)).\nNo clipboard fallback. Use explicit input."
         }
         showLocalResult(message)
     }
@@ -113,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 styleMask: [.nonactivatingPanel, .titled, .closable, .resizable],
                 backing: .buffered, defer: false
             )
-            panel.title = "CC Translate - local probe"
+            panel.title = "CC Translate - selection / result"
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.isFloatingPanel = true
@@ -133,8 +151,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window === inputPanel { model.closePanel() }
-        if window === resultPanel { resultPanel?.contentView = nil }
+        if window === inputPanel {
+            showTranslationResults = false
+            model.closePanel()
+            resultPanel?.contentView = nil
+            resultPanel?.orderOut(nil)
+        }
+        if window === resultPanel {
+            showTranslationResults = false
+            if model.nativeTranslation { model.cancel() }
+            resultPanel?.contentView = nil
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

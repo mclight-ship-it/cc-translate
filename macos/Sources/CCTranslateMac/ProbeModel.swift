@@ -4,12 +4,23 @@ import CCTranslateSupport
 
 @MainActor
 final class ProbeModel: ObservableObject {
-    @Published var input = "P0 synthetic fixture"
+    @Published var input = ""
     @Published private(set) var output = ""
-    @Published private(set) var status = "Not connected. No translation/model provider in P0."
+    @Published private(set) var status = "Not connected. Diagnostics and native translation require separate explicit connections."
     @Published private(set) var ready = false
     @Published private(set) var connected = false
     @Published private(set) var active = false
+    @Published private(set) var nativeTranslation = false
+    @Published private(set) var settingsReady = false
+    @Published private(set) var settingsBusy = false
+    @Published private(set) var historyEnabled = true
+    @Published var direction = "auto"
+    @Published var modelProfile = "auto-fast"
+    @Published var translatePassiveSelections = false
+    @Published private(set) var historyPage: [HistoryRow] = []
+    @Published private(set) var historyStatus = "History has not been read."
+    @Published private(set) var historyBusy = false
+    @Published private(set) var hasNextHistoryPage = false
     @Published private(set) var permissions = "Not checked."
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
     @Published var cliName = "codex"
@@ -21,6 +32,19 @@ final class ProbeModel: ObservableObject {
     let monitor = PassiveCopyMonitor()
     var onSelection: ((SelectionResult) -> Void)?
     var onStopped: (() -> Void)?
+    var onTranslationResult: ((String) -> Void)?
+    var onTranslationStarted: (() -> Void)?
+    struct HistoryRow: Identifiable {
+        let id: String
+        let input: String
+        let output: String
+    }
+    private var savedConfiguration: [String: JSONValue]?
+    private var configLoadID: String?
+    private var configSaveID: String?
+    private var historyID: String?
+    private var historyClearID: String?
+    private var historyCursor: JSONValue = .null
     private var connection: HelperConnection?
     private var connectionID = UUID()
     private var latest = LatestRequest()
@@ -38,6 +62,20 @@ final class ProbeModel: ObservableObject {
     }
 
     func startHelper() {
+        startConnection(native: false)
+    }
+
+    func startNativeTranslation() {
+        guard cliName == "codex", candidates.contains(where: {
+            $0.url.path == selectedCLI && $0.executable
+        }) else {
+            status = "Locate or choose a Codex executable in CLI locator first. No installation or login is automatic."
+            return
+        }
+        startConnection(native: true)
+    }
+
+    private func startConnection(native: Bool) {
         guard connection == nil else { return }
         do {
             let runtime = try BundleRuntime()
@@ -53,8 +91,23 @@ final class ProbeModel: ObservableObject {
             error = nil
             stopping = false
             connected = true
+            nativeTranslation = native
+            settingsReady = false
+            output = ""
+            latest.select(nil)
             status = "Starting bundled isolated Python; waiting for ready..."
-            connection.start(runtime: runtime)
+            if native {
+                let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                var environment = ProcessInfo.processInfo.environment
+                environment["HOME"] = home.path
+                let inheritedPath = environment["PATH"].map { ":" + $0 } ?? ""
+                environment["PATH"] = CLILocator.searchPath + inheritedPath
+                connection.startTranslation(
+                    runtime: runtime, home: home,
+                    codexCommand: URL(fileURLWithPath: selectedCLI), environment: environment)
+            } else {
+                connection.start(runtime: runtime)
+            }
         } catch let error as ProbeError {
             self.error = error
             status = "Cannot start: \(error.rawValue). No host Python fallback."
@@ -65,6 +118,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func fixture() {
+        guard !nativeTranslation else { return }
         guard input.utf8.count <= 8192 else {
             status = "Input exceeds 8192 UTF-8 bytes."
             return
@@ -73,7 +127,97 @@ final class ProbeModel: ObservableObject {
     }
 
     func runtimeProbe(https: Bool) {
+        guard !nativeTranslation else { return }
         request(["operation": .string("runtime_probe"), "https": .bool(https)])
+    }
+
+    func translate(origin: String = "text") {
+        guard nativeTranslation, ready, settingsReady, !settingsBusy, let connection = connection else {
+            status = "Enable native Codex and wait for its settings operation to finish first."
+            return
+        }
+        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf8.count <= 8192 else {
+            status = "Enter non-empty text within 8192 UTF-8 bytes."
+            return
+        }
+        if active { cancel() }
+        let id = UUID().uuidString
+        latest.select(id)
+        pending.insert(id)
+        active = true
+        output = ""
+        onTranslationStarted?()
+        status = "Translation requested. Uses the selected native CLI; no automatic retry."
+        connection.translate(text: input, appLanguage: "en_US", origin: origin, useCache: true,
+                             recordHistory: true, id: id)
+    }
+
+    func translateSelection(_ selection: SelectionResult) {
+        onTranslationStarted?()
+        switch selection {
+        case .present(let text):
+            input = text
+            translate(origin: "selection")
+        case .absent:
+            status = "No selected text. Nothing submitted."
+        case .unknown(let reason):
+            status = "Selection unavailable (\(reason.rawValue)). No clipboard fallback or submission."
+        }
+        onTranslationResult?(status + (output.isEmpty ? "" : "\n\n" + output))
+    }
+
+    func loadSettings() {
+        guard nativeTranslation, ready, !settingsBusy, let connection = connection else { return }
+        settingsBusy = true
+        settingsReady = false
+        let id = UUID().uuidString
+        configLoadID = id
+        connection.loadConfiguration(id: id)
+    }
+
+    func saveSettings(history: Bool? = nil) {
+        guard nativeTranslation, ready, !settingsBusy, var config = savedConfiguration,
+              let connection = connection else { return }
+        let enabled = history ?? historyEnabled
+        if !enabled, active { cancel() }
+        config["history_enabled"] = .bool(enabled)
+        config["direction"] = .string(direction)
+        config["codex_model"] = .string(modelProfile)
+        config["model_provider"] = .string("codex_cli")
+        settingsBusy = true
+        let id = UUID().uuidString
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    func loadHistory(next: Bool = false) {
+        guard nativeTranslation, ready, !historyBusy, let connection = connection else { return }
+        historyBusy = true
+        let id = UUID().uuidString
+        historyID = id
+        connection.loadHistory(pageSize: 20, cursor: next ? historyCursor : .null, id: id)
+    }
+
+    func clearHistory() {
+        guard nativeTranslation, ready, !historyBusy, let connection = connection else { return }
+        if active { cancel() }
+        historyBusy = true
+        let id = UUID().uuidString
+        historyClearID = id
+        connection.clearHistory(id: id)
+    }
+
+    func copyResult() {
+        copyText(output)
+    }
+
+    func copyText(_ text: String) {
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        if !NSPasteboard.general.setString(text, forType: .string) {
+            status = "Could not copy the result."
+            historyStatus = status
+        }
     }
 
     private func request(_ payload: [String: JSONValue]) {
@@ -108,15 +252,20 @@ final class ProbeModel: ObservableObject {
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
                 ready = true
-                status = "Ready: fixture + runtime_probe. Fixture is NOT translation."
+                status = nativeTranslation
+                    ? "Native connection ready. CLI/account/model availability is not yet verified."
+                    : "Ready: fixture + runtime_probe. Fixture is NOT translation."
+                if nativeTranslation { loadSettings() }
                 return
             }
+            if handleBusinessEvent(event) { return }
             if event.isTerminal { pending.remove(event.id) }
             // The transport validated seq/terminal rules even for events hidden here.
             guard latest.accepts(event) else { return }
             active = pending.contains(event.id)
             switch event.type {
-            case "accepted": status = "Accepted (P0 probe)."
+            case "accepted": status = nativeTranslation ? "Translation accepted." : "Accepted (P0 probe)."
+            case "started": status = "Native request started; submission status is not yet known."
             case "delta":
                 output += event.payload["text"]?.string ?? ""
                 if output.utf8.count > 65_536 {
@@ -127,7 +276,19 @@ final class ProbeModel: ObservableObject {
             case "completed":
                 if let text = event.payload["text"]?.string {
                     output = text
-                    status = "Completed SYNTHETIC FIXTURE - NOT translation."
+                    if nativeTranslation {
+                        let cached = event.payload["cached"] == .bool(true)
+                        let history = event.payload["history"]?.string ?? ""
+                        status = cached ? "Loaded matching cached translation." : "Native translation completed."
+                        if history == "failed" {
+                            status += " History was not saved."
+                            if let code = event.payload["history_error"]?.string { status += " \(code)." }
+                        } else {
+                            status += " History: \(history)."
+                        }
+                    } else {
+                        status = "Completed SYNTHETIC FIXTURE - NOT translation."
+                    }
                 } else {
                     do {
                         output = String(decoding: try JSONValue.object(event.payload).encoded(), as: UTF8.self)
@@ -138,25 +299,107 @@ final class ProbeModel: ObservableObject {
                         status = "Runtime result could not be rendered."
                     }
                 }
-            case "cancelled": status = "Cancelled."
+            case "cancelled":
+                status = event.payload["submitted"] == .bool(true)
+                    ? "Cancelled after possible CLI submission. Submission cannot be rolled back."
+                    : "Cancelled before native submission."
             case "failed": status = "Helper request failed: \(event.safeFailureCode). No fallback or automatic retry."
             default: break
             }
+            if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
         case .failure(let error):
             self.error = error
             ready = false
             active = false
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
+            if error == .translationOutcomeUnknown {
+                status = "Translation outcome unknown. The CLI may have received the request and history may have changed. Not retried."
+            }
+            if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
         case .stopped:
             stopping = false
             connected = false
             ready = false
             active = false
             pending.removeAll()
+            savedConfiguration = nil
+            settingsReady = false
+            settingsBusy = false
+            historyBusy = false
+            configLoadID = nil
+            configSaveID = nil
+            historyID = nil
+            historyClearID = nil
+            translatePassiveSelections = false
+            historyPage = []
+            historyCursor = .null
+            hasNextHistoryPage = false
             connection = nil
             if error == nil { status = "Helper stopped." }
+            if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
             notifyStoppedIfIdle()
         }
+    }
+
+    private func handleBusinessEvent(_ event: ServerEvent) -> Bool {
+        if event.id == configLoadID || event.id == configSaveID {
+            guard event.isTerminal else { return true }
+            settingsBusy = false
+            if event.type == "completed" {
+                if event.id == configSaveID {
+                    configSaveID = nil
+                    status = "Settings saved. Reloading their normalized view; no write replay."
+                    loadSettings()
+                    return true
+                }
+                guard let config = event.payload["config"]?.object,
+                      case let .bool(enabled)? = config["history_enabled"],
+                      let savedDirection = config["direction"]?.string,
+                      let profile = config["codex_model"]?.string else {
+                    error = .invalidTransition
+                    settingsReady = false
+                    status = "Invalid normalized settings response; stopping the connection."
+                    stopHelper()
+                    return true
+                }
+                savedConfiguration = config
+                historyEnabled = enabled
+                direction = savedDirection
+                modelProfile = profile
+                settingsReady = true
+                status = "Native settings loaded. Account and model access require an explicit translation."
+            } else {
+                status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
+            }
+            configLoadID = nil
+            configSaveID = nil
+            return true
+        }
+        if event.id == historyID || event.id == historyClearID {
+            guard event.isTerminal else { return true }
+            historyBusy = false
+            if event.type == "completed", event.id == historyClearID {
+                historyPage = []
+                historyCursor = .null
+                hasNextHistoryPage = false
+                historyStatus = "History cleared. Later translations may still be recorded if history is enabled."
+            } else if event.type == "completed", case let .array(entries)? = event.payload["entries"] {
+                let revision = event.payload["revision"]?.string ?? ""
+                historyPage = entries.enumerated().map { index, value in
+                    HistoryRow(id: "\(revision)-\(index)", input: value.object?["input"]?.string ?? "",
+                               output: value.object?["output"]?.string ?? "")
+                }
+                historyCursor = event.payload["next_cursor"] ?? .null
+                hasNextHistoryPage = historyCursor != .null
+                historyStatus = "Showing \(entries.count) entries. \(hasNextHistoryPage ? "Another page is available." : "End of history.")"
+            } else {
+                historyStatus = "History operation failed: \(event.safeFailureCode). Reload explicitly if history changed."
+            }
+            historyID = nil
+            historyClearID = nil
+            return true
+        }
+        return false
     }
 
     func refreshPermissions() {

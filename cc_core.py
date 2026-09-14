@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import i18n
 from cc_config import CFG, DEFAULT_CONFIG
 from cc_classify import is_single_word
+from cc_summary import STREAM_MIN_CHARS
 from cc_direction import (
     LANGUAGES, DIRECTION_MODES, CJK_SOURCE_RATIO,
     auto_direction_prompt, direction_prompt, resolve_target_lang,
@@ -42,7 +43,6 @@ from cc_prompts import (
 # ---------------------------------------------------------------------------
 APP_NAME = "CC Translate"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-STREAM_MIN_CHARS = 400
 # Keep Codex routing independent from Claude/summary behavior. A real route A/B
 # on 0.146.0 showed stable exec winning near 200 chars and app-server revealing
 # first text materially earlier from roughly 400 chars onward.

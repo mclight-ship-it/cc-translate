@@ -32,6 +32,50 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
+<a id="translation-ipc-checkpoint"></a>
+
+## 当前连续依赖：显式 native 翻译业务与原生触发（进行中）
+
+前置`6d029d1` / 文档`e577c5b`及run34836719504已获独立增量审查和三系统报告核验接受，
+三项审查问题关闭，不重复该源码CI。按持续授权实际接下一业务链：
+
+- [x] 原摘要/阈值共享抽取且Windows真实入口复用；分类/方向/prompt/cache字节保持，
+  helper构造完整RequestSnapshot，不导入cc_core/Tk/Win32。
+- [ ] 显式连接固定home、实际Info.plist身份、CLI绝对路径与私有编码环境；
+  普通诊断/config-only不启动CLI。Native环境不放argv，也不直接污染helper加载器环境。
+- [ ] 翻译worker与原storage FIFO并行，实际provider调用不占状态操作锁；
+  执行快照冻结，完成时重新检查已提交的当前history开关/limit，取消/UI状态不冻结。
+  已开始最终history提交后不假称可撤销；关闭等待受控执行/写入并释放双owner。
+- [ ] Python/Swift严格同协议：ID/seq/唯一终态、实际UTF8和转义字节、完整envelope累计预算、
+  submitted/未知结果/不重放；原config/history五操作及默认启动保持。
+- [ ] 临时home中的真实Foundation→包内helper→合成native CLI→配置/历史；
+  原生现有输入/选区界面提供明确启用与用户触发，不自动运行用户CLI或模型。
+- [ ] 针对性Windows/正常hook、新同包15/14/26、精确新增发现/来源/许可/清理及文档检查点。
+
+当前源码仍在实现，不把未验证的业务连接或合成CLI当作完整产品、官方账号/模型、
+Finder/TCC/IME/多屏验收。旧Windows WinError5来源未知继续保留。
+
+本轮未提交验证记录（不是新Mac CI证据）：
+- 摘要抽取前原27项通过，新增测试先行因模块尚不存在而失败；抽取后新15项加原摘要/元数据共43项通过。
+  主将源码读取及隔离子进程指向实际导入模块，
+  保证后续随包验证不回退checkout。新增八方向/代码/词典/长文快照回归后45项通过。
+- 首次Windows联合115项有2失败：新fixture缺Labs显式optout marker，以及新eager import破坏
+  原默认server不得加载provider的断言。修正fixture并改为仅显式translation bootstrap导入provider，
+  原断言保留，随后115/17.129s通过。
+- 扩展联合223/29.740s有1失败：Foundation冻结清单尚为旧9项；同步新13精确方法及拒绝skip、
+  错误计数/重复/缺方法负例后，224/27.908s通过。输出中的HTTPS `BLOCKED`来自原拒绝隐式网络负例。
+- 随后Windows真实Summary/Config/AtomicWrites/storage/history消费者及快照/provider/翻译协议联合
+  556/26.423s通过。旧WinError5仍未定位，不以这一绿色宣称解决。
+- Swift代理交付31项新协议/连接XCTest，Windows未执行；主发现Foundation新增extension误嵌套，
+  已由原代理移至文件作用域并保留13方法/全部断言，编译与真实发现仍待Mac。
+- 已新增13个真实Mac process和4个Foundation方法，尚未执行。当前185 process/458 core及13 Foundation
+  为本轮计划执行门槛（其中旧基线172/410/9），不能写成已通过。
+- 正常SIGTERM是可捕获退出：仅显式translation入口安装处理器，只置标志，不在signal handler取锁；
+  原循环取消/drain、清理自有native组及双owner后非零退出。便携调度回归通过，真实组消亡待Mac执行。
+  不承诺SIGKILL、崩溃或恶意脱离进程组的后代安全，也不声称强退回滚。
+- 本轮测试遵守已有load强制streaming迁移：false磁盘配置会规范化/迁移为true；
+  场景改名streaming-migration并检查真实迁移及delta，不误报为非流式业务执行。
+
 <a id="darwin-native-checkpoint"></a>
 
 ## 当前连续依赖：Darwin native 三项审查修复已通过同包验证（2026-09-14）

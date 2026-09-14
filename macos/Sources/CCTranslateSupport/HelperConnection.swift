@@ -91,15 +91,44 @@ public final class HelperConnection {
         startConfiguration(runtime: runtime, home: home)
     }
 
-    private func start(runtime: BundleRuntime, configurationHome: URL?) {
+    public func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL,
+                                 environment: [String: String]) {
+        start(runtime: runtime, configurationHome: home, codexCommand: codexCommand,
+              codexEnvironment: environment)
+    }
+
+    static func translationEnvironment(home: URL, codexCommand: URL,
+                                       environment: [String: String]) throws -> [String: String] {
+        guard home.isFileURL, home.path.hasPrefix("/"), !home.path.contains("\0"),
+              codexCommand.isFileURL, codexCommand.path.hasPrefix("/"),
+              !codexCommand.path.contains("\0"),
+              environment["HOME"] == home.path, environment["PATH"] != nil,
+              environment.allSatisfy({
+                  !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.contains("\0") && !$0.value.contains("\0")
+              }) else { throw ProbeError.translationUnavailable }
+        let encoded = try JSONValue.object(environment.mapValues(JSONValue.string)).encoded()
+        guard encoded.count <= 32_768 else { throw ProbeError.translationUnavailable }
+        return [
+            "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "HOME": home.path,
+            "CC_TRANSLATE_CODEX_ENV": String(decoding: encoded, as: UTF8.self)
+        ]
+    }
+
+    private func start(runtime: BundleRuntime, configurationHome: URL?, codexCommand: URL? = nil,
+                       codexEnvironment: [String: String] = [:]) {
         queue.async {
             guard !self.started, !self.stopping else { return }
             self.started = true
-            self.state = ProtocolState(mode: configurationHome == nil ? .diagnostic : .configuration)
+            self.state = ProtocolState(mode: codexCommand != nil ? .translation :
+                                        (configurationHome == nil ? .diagnostic : .configuration))
             self.process.executableURL = runtime.executable
             self.process.arguments = ["-I", "-B", runtime.launcher.path]
-            if let home = configurationHome {
-                do {
+            do {
+                self.process.environment = [
+                    "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
+                    "HOME": configurationHome?.path ?? NSHomeDirectory()
+                ]
+                if let home = configurationHome {
                     guard home.isFileURL, home.path.hasPrefix("/"),
                           !home.pathComponents.contains(".."),
                           !home.pathComponents.contains(where: { $0.lowercased().hasSuffix(".app") }) else {
@@ -108,18 +137,19 @@ public final class HelperConnection {
                     let identifier = try runtime.configurationApplicationIdentifier()
                     self.process.arguments = ["-I", "-B", runtime.launcher.path,
                                               "--config-home", home.path, "--application-id", identifier]
-                } catch {
-                    self.fail((error as? ProbeError) ?? .bundleMissing)
-                    self.finishWithoutLaunch()
-                    return
+                    if let command = codexCommand {
+                        self.process.environment = try Self.translationEnvironment(
+                            home: home, codexCommand: command, environment: codexEnvironment
+                        )
+                        self.process.arguments?.append(contentsOf: ["--codex-command", command.path])
+                    }
                 }
+            } catch {
+                self.fail((error as? ProbeError) ?? .bundleMissing)
+                self.finishWithoutLaunch()
+                return
             }
             self.process.currentDirectoryURL = runtime.launcher.deletingLastPathComponent()
-            self.process.environment = [
-                "PATH": "/usr/bin:/bin",
-                "LANG": "en_US.UTF-8",
-                "HOME": configurationHome?.path ?? NSHomeDirectory()
-            ]
             self.process.standardInput = self.input.fileHandleForReading
             self.process.standardOutput = self.output.fileHandleForWriting
             self.process.standardError = self.errors.fileHandleForWriting
@@ -156,12 +186,24 @@ public final class HelperConnection {
                 return
             }
             self.enqueue(message, timeout: timeout)
-            if self.state.mode == .configuration, self.state.closing {
+            if self.state.isBusiness, self.state.closing {
                 self.stopping = true
                 self.cancelDeadlines()
                 self.closeInput()
             }
         }
+    }
+
+    @discardableResult
+    public func translate(text: String, appLanguage: String, origin: String = "text",
+                          useCache: Bool = true, recordHistory: Bool = true,
+                          id: String = UUID().uuidString, timeout: TimeInterval = 110) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("translate"), "text": .string(text),
+            "app_language": .string(appLanguage), "origin": .string(origin),
+            "use_cache": .bool(useCache), "record_history": .bool(recordHistory)
+        ]), timeout: timeout)
+        return id
     }
 
     @discardableResult
@@ -212,15 +254,15 @@ public final class HelperConnection {
         queue.async {
             guard !self.stopping else { return }
             self.stopping = true
-            let configuration = self.state.mode == .configuration
-            if configuration { self.cancelDeadlines() }
+            let business = self.state.isBusiness
+            if business { self.cancelDeadlines() }
             if self.started, self.process.isRunning, self.state.ready, !self.failed,
-               !configuration || self.state.registeredCount < 4096 {
+               !business || self.state.registeredCount < 4096 {
                 self.enqueue(ClientMessage(id: UUID().uuidString, type: "shutdown"),
-                             timeout: configuration ? nil : 3)
+                             timeout: business ? nil : 3)
             }
             self.closeInput()
-            if !configuration { self.scheduleTermination() }
+            if !business { self.scheduleTermination() }
             if !self.started { self.emit(.stopped) }
         }
     }
@@ -244,8 +286,8 @@ public final class HelperConnection {
 
     private func enqueue(_ message: ClientMessage, timeout: TimeInterval?) {
         do {
-            let drainingConfiguration = state.mode == .configuration && message.type == "shutdown"
-            guard pendingWrites < 8 || drainingConfiguration else { throw ProbeError.writeFailed }
+            let drainingBusiness = state.isBusiness && message.type == "shutdown"
+            guard pendingWrites < 8 || drainingBusiness else { throw ProbeError.writeFailed }
             let bytes = try message.encoded()
             try state.register(message)
             pendingWrites += 1
@@ -322,7 +364,7 @@ public final class HelperConnection {
                 let event = try state.receive(frame)
                 if event.isTerminal { deadlines.removeValue(forKey: event.id)?.cancel() }
                 if !state.ready, event.isTerminal {
-                    if state.mode == .configuration, event.type == "failed" {
+                    if state.isBusiness, event.type == "failed" {
                         emit(.event(event))
                         fail(ProbeError(rawValue: event.safeFailureCode) ?? .helperProtocolError)
                         return
@@ -345,7 +387,7 @@ public final class HelperConnection {
                 do { try framer.finish() }
                 catch let error as ProbeError { fail(error) }
                 catch { fail(.incompleteFrame) }
-                let pending = state.mode == .configuration ? state.hasPendingResponses : !deadlines.isEmpty
+                let pending = state.isBusiness ? state.hasPendingResponses : !deadlines.isEmpty
                 if !stopping || pending { fail(.helperEOF) }
             }
         } else {
@@ -380,7 +422,7 @@ public final class HelperConnection {
             do { try self.input.fileHandleForWriting.close() }
             catch {
                 self.queue.async {
-                    if self.state.mode == .configuration { self.fail(.writeFailed) }
+                    if self.state.isBusiness { self.fail(.writeFailed) }
                     else { self.emit(.failure(.writeFailed)) }
                 }
             }
@@ -397,11 +439,16 @@ public final class HelperConnection {
         }
     }
 
+    static func terminationGrace(for mode: ProtocolState.Mode) -> (eof: TimeInterval, term: TimeInterval) {
+        // Native version/config/catalog probes and their separately owned CLI groups
+        // must unwind before killing the helper that still owns those groups.
+        mode == .translation ? (30, 30) : (3, 1)
+    }
+
     private func scheduleTermination() {
         guard !terminationScheduled else { return }
         terminationScheduled = true
-        // Leave time for the core's two-second bounded worker cleanup and pipe drain.
-        queue.asyncAfter(deadline: .now() + 3) {
+        queue.asyncAfter(deadline: .now() + Self.terminationGrace(for: state.mode).eof) {
             guard self.process.isRunning else { return }
             if self.state.mode == .diagnostic {
                 self.emit(.failure(.requestTimeout))
@@ -416,9 +463,10 @@ public final class HelperConnection {
         guard process.isRunning, !terminationRequested else { return }
         terminationRequested = true
         process.terminate()
-        queue.asyncAfter(deadline: .now() + 1) {
+        queue.asyncAfter(deadline: .now() + Self.terminationGrace(for: state.mode).term) {
             guard self.process.isRunning else { return }
-            // Only the still-owned helper PID; its CLI groups have separate core supervision.
+            // Last resort for only the still-owned helper PID. This cannot prove
+            // descendant cleanup or rollback; pending work remains OutcomeUnknown.
             if Darwin.kill(self.process.processIdentifier, SIGKILL) != 0, errno != ESRCH {
                 self.emit(.failure(self.state.pendingOutcomeUnknown ?? .helperExited))
             }

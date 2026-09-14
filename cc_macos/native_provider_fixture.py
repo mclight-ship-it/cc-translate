@@ -102,6 +102,32 @@ def _descendant(root):
         time.sleep(0.01)
 
 
+def _translation_gate(root, cwd):
+    """Wait for an explicit test gate, but continue servicing real cancellation."""
+    import select
+    import time
+
+    deadline = time.monotonic() + 30
+    while not (root / "release.gate").exists():
+        if time.monotonic() >= deadline:
+            raise SystemExit(79)
+        if not select.select([sys.stdin], [], [], 0.05)[0]:
+            continue
+        line = sys.stdin.readline()
+        if not line:
+            return False
+        request = json.loads(line)
+        if request.get("method") != "turn/interrupt":
+            raise SystemExit(80)
+        _receipt(root, "native-rpc.jsonl",
+                 {"pid": os.getpid(), "kind": "provider", "request": request})
+        for response in reply_messages(request, cwd):
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
+        return False
+    return True
+
+
 def _serve():
     import time
 
@@ -117,6 +143,8 @@ def _serve():
     root = Path(os.environ["CC_SYNTHETIC_ROOT"]).resolve()
     cwd = str(Path.cwd().resolve())
     mode, args = os.environ["CC_SYNTHETIC_MODE"], sys.argv[1:]
+    translation = (json.loads((root / "expected-request.json").read_bytes())
+                   if mode.startswith("translation_") else None)
     if not Path(cwd).is_relative_to(Path(os.environ["HOME"]).resolve()):
         raise SystemExit(70)
     if args == ["--version"]:
@@ -157,21 +185,41 @@ def _serve():
             "args": args, "cwd": cwd, "kind": "config" if config_probe else "provider"}
     _receipt(root, "native-processes.jsonl", info)
     if not config_probe and mode in {
-            "descendant", "eof", "timeout", "cancel", "shutdown", "blank_flood"}:
+            "descendant", "eof", "timeout", "cancel", "shutdown", "blank_flood",
+            "translation_gated"}:
         _descendant(root)
     previous = None
     for line in sys.stdin:
         request = json.loads(line)
         method = request["method"]
+        if translation is not None and method == "thread/start":
+            if request.get("params", {}).get("model") != translation["model"]:
+                raise SystemExit(81)
         if method == "turn/start":
-            expected = build_codex_prompt(ProviderRequest(
-                "text", "synthetic", SYSTEM_PROMPT, USER_TEXT))
+            expected = (translation["prompt"] if translation is not None else
+                        build_codex_prompt(ProviderRequest(
+                            "text", "synthetic", SYSTEM_PROMPT, USER_TEXT)))
             if request.get("params", {}).get("input") != [{"type": "text", "text": expected}]:
                 raise SystemExit(78)
         # Receipts contain only our synthetic request, never account/config data.
         _receipt(root, "native-rpc.jsonl", {"pid": os.getpid(), "kind": info["kind"],
                                          "request": request})
         responses = reply_messages(request, cwd)
+        if translation is not None and method == "turn/start":
+            text = translation["output"]
+            responses[1]["params"]["delta"] = text
+            responses[2]["params"]["item"]["text"] = text
+            if mode == "translation_envelope-limit":
+                deltas = [{"method": "item/agentMessage/delta", "params": {
+                    **responses[1]["params"], "delta": character}} for character in text]
+                responses = [responses[0], *deltas, *responses[2:]]
+            if mode == "translation_gated":
+                for response in responses[:2]:
+                    sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                if not _translation_gate(root, cwd):
+                    return
+                responses = responses[2:]
         if not config_probe and method == "initialize":
             if mode == "blank_flood":
                 # Long whitespace-only lines exceed the cumulative 8 MiB

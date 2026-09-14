@@ -1,0 +1,503 @@
+import XCTest
+@testable import CCTranslateSupport
+
+final class TranslationHelperConnectionTests: XCTestCase {
+    @MainActor
+    private final class Notices {
+        let ready = XCTestExpectation(description: "helper ready")
+        let stopped = XCTestExpectation(description: "helper and pipes stopped")
+        private(set) var events: [ServerEvent] = []
+        private(set) var failures: [ProbeError] = []
+        private var terminals: [String: XCTestExpectation] = [:]
+        private var starts: [String: XCTestExpectation] = [:]
+        private(set) var connection: HelperConnection!
+
+        init() {
+            connection = HelperConnection { [weak self] notice in
+                MainActor.assumeIsolated {
+                    guard let self = self else { return }
+                    switch notice {
+                    case .event(let event):
+                        self.events.append(event)
+                        if event.type == "ready" { self.ready.fulfill() }
+                        if event.type == "started" { self.starts[event.id]?.fulfill() }
+                        if event.isTerminal { self.terminals[event.id]?.fulfill() }
+                    case .failure(let error): self.failures.append(error)
+                    case .stopped: self.stopped.fulfill()
+                    }
+                }
+            }
+        }
+
+        func terminal(_ id: String) -> XCTestExpectation {
+            let result = XCTestExpectation(description: "\(id) terminal")
+            terminals[id] = result
+            return result
+        }
+
+        func started(_ id: String) -> XCTestExpectation {
+            let result = XCTestExpectation(description: "\(id) started")
+            starts[id] = result
+            return result
+        }
+    }
+
+    private struct Fixture {
+        let root: URL
+        let home: URL
+        let runtime: BundleRuntime
+        var codex: URL { home.appendingPathComponent("codex-never-executed") }
+        var environment: [String: String] { ["HOME": home.path, "PATH": "/synthetic/cli/bin"] }
+    }
+
+    private func fixture(script: String) throws -> Fixture {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent(".translation-connection-\(UUID().uuidString)", isDirectory: true)
+        let app = root.appendingPathComponent("Synthetic.app", isDirectory: true)
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let bin = app.appendingPathComponent("Contents/Helpers/python/bin", isDirectory: true)
+        let core = app.appendingPathComponent("Contents/Resources/Core", isDirectory: true)
+        do {
+            for directory in [home, bin, core] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            let executable = bin.appendingPathComponent("python3")
+            try Data(script.utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+            try Data("# synthetic launcher\n".utf8).write(to: core.appendingPathComponent("launch.py"))
+            let plist = try PropertyListSerialization.data(fromPropertyList: [
+                "CFBundleIdentifier": "dev.cc-translate.synthetic"
+            ], format: .xml, options: 0)
+            try plist.write(to: app.appendingPathComponent("Contents/Info.plist"))
+            return Fixture(root: root, home: home, runtime: try BundleRuntime(appURL: app))
+        } catch {
+            do { try FileManager.default.removeItem(at: root) }
+            catch { XCTFail("Synthetic helper fixture initialization cleanup failed") }
+            throw error
+        }
+    }
+
+    private func remove(_ fixture: Fixture) {
+        do { try FileManager.default.removeItem(at: fixture.root) }
+        catch { XCTFail("Synthetic helper fixture cleanup failed") }
+    }
+
+    private func emit(_ id: String, _ seq: Int64, _ type: String,
+                      _ payload: [String: JSONValue] = [:]) throws -> String {
+        let data = try JSONValue.object([
+            "v": .integer(1), "id": .string(id), "seq": .integer(seq),
+            "type": .string(type), "payload": .object(payload)
+        ]).encoded()
+        let quoted = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "'", with: "'\\''")
+        return "printf '%s\\n' '\(quoted)'"
+    }
+
+    private let readLine = "IFS= read -r line"
+    private let shutdown = #"""
+    IFS= read -r line
+    printf '%s\n' "$line" | /usr/bin/sed 's/"type":"shutdown"/"seq":0,"type":"completed"/'
+    """#
+    private let operation: [String: JSONValue] = ["operation": .string("translate")]
+    private var completion: [String: JSONValue] {
+        [
+            "text": .string("synthetic translated text"), "submitted": .bool(true), "cached": .bool(false),
+            "kind": .string("text"), "target_lang": .string("zh"), "summarize": .bool(false),
+            "history": .string("disabled"), "history_error": .null
+        ]
+    }
+
+    private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
+        let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
+            ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
+                (mode == .translation ? ["translate"] : [])
+        var ready: [String: JSONValue] = [
+            "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
+            "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
+        ]
+        if mode == .translation { ready["backend"] = .string("native_appserver") }
+        return "#!/bin/sh\nset -eu\n\(readLine)\n\(try emit("hello", 0, "ready", ready))\n\(body)\n"
+    }
+
+    func testTranslationEnvironmentIsolatedTypedAndCompactByteBounded() throws {
+        let home = URL(fileURLWithPath: "/synthetic/home", isDirectory: true)
+        let command = URL(fileURLWithPath: "/synthetic/bin/codex")
+        let environment = [
+            "HOME": home.path, "PATH": "/synthetic/cli/bin", "LANG": "synthetic-locale",
+            "TOKEN": "synthetic-private-value", "PYTHONPATH": "/synthetic/python",
+            "DYLD_INSERT_LIBRARIES": "/synthetic/library", "CODEX_HOME": "/synthetic/codex",
+            "TEXT": "\u{4e2d}\u{6587}\"\\\n"
+        ]
+        let helper = try HelperConnection.translationEnvironment(home: home, codexCommand: command,
+                                                                 environment: environment)
+        XCTAssertEqual(Set(helper.keys), ["PATH", "LANG", "HOME", "CC_TRANSLATE_CODEX_ENV"])
+        XCTAssertEqual(helper["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(helper["LANG"], "en_US.UTF-8")
+        XCTAssertEqual(helper["HOME"], home.path)
+        let encoded = try XCTUnwrap(helper["CC_TRANSLATE_CODEX_ENV"])
+        XCTAssertEqual(try JSONValue.parse(Data(encoded.utf8)), .object(environment.mapValues(JSONValue.string)))
+        for invalid in [
+            environment.filter { $0.key != "HOME" }, environment.filter { $0.key != "PATH" },
+            environment.merging(["HOME": "/different/home"]) { _, new in new },
+            environment.merging(["": "value"]) { _, new in new },
+            environment.merging(["X=Y": "value"]) { _, new in new },
+            environment.merging(["X\0Y": "value"]) { _, new in new },
+            environment.merging(["TOKEN": "a\0b"]) { _, new in new }
+        ] {
+            XCTAssertThrowsError(try HelperConnection.translationEnvironment(
+                home: home, codexCommand: command, environment: invalid
+            )) { XCTAssertEqual($0 as? ProbeError, .translationUnavailable) }
+        }
+        XCTAssertThrowsError(try HelperConnection.translationEnvironment(
+            home: home, codexCommand: XCTUnwrap(URL(string: "https://example.invalid/codex")), environment: environment
+        ))
+        var boundary = ["HOME": home.path, "PATH": "", "TOKEN": ""]
+        let overhead = try JSONValue.object(boundary.mapValues(JSONValue.string)).encoded().count
+        boundary["TOKEN"] = String(repeating: "a", count: 32_768 - overhead)
+        let exact = try HelperConnection.translationEnvironment(home: home, codexCommand: command, environment: boundary)
+        XCTAssertEqual(exact["CC_TRANSLATE_CODEX_ENV"]?.utf8.count, 32_768)
+        boundary["TOKEN"]! += "\u{4e2d}"
+        XCTAssertThrowsError(try HelperConnection.translationEnvironment(home: home, codexCommand: command, environment: boundary))
+        boundary["TOKEN"] = String(repeating: "\"", count: 16_384)
+        XCTAssertThrowsError(try HelperConnection.translationEnvironment(home: home, codexCommand: command, environment: boundary))
+    }
+
+    @MainActor
+    func testStartTranslationPassesExplicitCommandAndIsolatesCLIEnvironmentAndRequestDefaults() async throws {
+        let script = try connectedScript("""
+        printf '%s\\n' "$@" > "$HOME/arguments"
+        printf '%s' "$CC_TRANSLATE_CODEX_ENV" > "$HOME/cli-environment"
+        printf '%s\\n' "$PATH" "$LANG" "$HOME" "${TOKEN-unset}" "${PYTHONPATH-unset}" "${CODEX_HOME-unset}" > "$HOME/loader-environment"
+        \(readLine)
+        printf '%s' "$line" > "$HOME/default-request"
+        \(try emit("one", 0, "accepted", operation))
+        \(try emit("one", 1, "started", operation))
+        \(try emit("one", 2, "completed", completion))
+        \(readLine)
+        printf '%s' "$line" > "$HOME/explicit-request"
+        \(try emit("two", 0, "accepted", operation))
+        \(try emit("two", 1, "started", operation))
+        \(try emit("two", 2, "completed", completion))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        let environment = context.environment.merging([
+            "TOKEN": "synthetic-secret", "PYTHONPATH": "/synthetic/python", "CODEX_HOME": "/synthetic/codex"
+        ]) { _, new in new }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let one = notices.terminal("one")
+        XCTAssertEqual(notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "one"), "one")
+        await fulfillment(of: [one], timeout: 10)
+        let two = notices.terminal("two")
+        notices.connection.translate(text: "selection", appLanguage: "en_US", origin: "selection",
+                                     useCache: false, recordHistory: false, id: "two", timeout: 30)
+        await fulfillment(of: [two], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        let arguments = try String(contentsOf: context.home.appendingPathComponent("arguments"), encoding: .utf8)
+        XCTAssertEqual(Array(arguments.components(separatedBy: "\n").dropLast()), [
+            "-I", "-B", context.runtime.launcher.path, "--config-home", context.home.path,
+            "--application-id", "dev.cc-translate.synthetic", "--codex-command", context.codex.path
+        ])
+        XCTAssertFalse(arguments.contains("synthetic-secret"))
+        let cli = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("cli-environment")))
+        XCTAssertEqual(cli, .object(environment.mapValues(JSONValue.string)))
+        let loader = try String(contentsOf: context.home.appendingPathComponent("loader-environment"), encoding: .utf8)
+        XCTAssertEqual(loader, "/usr/bin:/bin\nen_US.UTF-8\n\(context.home.path)\nunset\nunset\nunset\n")
+        let defaults = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("default-request")))
+        XCTAssertEqual(defaults.object?["payload"], .object([
+            "operation": .string("translate"), "text": .string("synthetic"), "app_language": .string("zh_CN"),
+            "origin": .string("text"), "use_cache": .bool(true), "record_history": .bool(true)
+        ]))
+        let explicit = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("explicit-request")))
+        XCTAssertEqual(explicit.object?["payload"], .object([
+            "operation": .string("translate"), "text": .string("selection"), "app_language": .string("en_US"),
+            "origin": .string("selection"), "use_cache": .bool(false), "record_history": .bool(false)
+        ]))
+    }
+
+    @MainActor
+    func testInvalidTranslationEnvironmentStopsBeforeLaunchingHelper() async throws {
+        let context = try fixture(script: "#!/bin/sh\nprintf launched > \"$HOME/launched\"\n")
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: ["HOME": context.home.path])
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.translationUnavailable])
+        XCTAssertTrue(notices.events.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.home.appendingPathComponent("launched").path))
+    }
+
+    @MainActor
+    func testLegacyStartsDoNotEnableCodexEnvironmentOrArguments() async throws {
+        for mode in [ProtocolState.Mode.configuration, .diagnostic] {
+            let script = try connectedScript("""
+            test "${CC_TRANSLATE_CODEX_ENV-unset}" = unset
+            test "$#" -eq \(mode == .diagnostic ? 3 : 7)
+            \(shutdown)
+            """, mode: mode)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            if mode == .diagnostic { notices.connection.start(runtime: context.runtime) }
+            else { notices.connection.startBusiness(runtime: context.runtime, home: context.home) }
+            await fulfillment(of: [notices.ready], timeout: 10)
+            notices.connection.stop()
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertTrue(notices.failures.isEmpty)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: context.home.path).isEmpty)
+        }
+    }
+
+    @MainActor
+    func testTranslationEOFReportsUnknownAheadOfConfigurationAndHistoryWithoutReplay() async throws {
+        let script = try connectedScript("""
+        \(readLine)
+        \(readLine)
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "started", operation))
+        exit 0
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t")
+        notices.connection.loadConfiguration(id: "config")
+        notices.connection.clearHistory(id: "history")
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.translationOutcomeUnknown])
+        XCTAssertEqual(notices.events.map(\.type), ["ready", "accepted", "started"])
+    }
+
+    @MainActor
+    func testTranslationReservedInternalErrorBecomesUnknownWithoutInventedTerminal() async throws {
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "started", operation))
+        \(try emit("protocol", 0, "failed", ["code": .string("internal_error")]))
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t")
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.translationOutcomeUnknown])
+        XCTAssertEqual(notices.events.map(\.type), ["ready", "accepted", "started"])
+        XCTAssertFalse(notices.events.contains { $0.id == "t" && $0.isTerminal })
+    }
+
+    @MainActor
+    func testTranslationShutdownCleanupFailureIsDeliveredAsDeterminateControlTerminal() async throws {
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("shutdown", 0, "failed", ["code": .string("provider_cleanup_failed")]))
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let shutdown = notices.terminal("shutdown")
+        notices.connection.send(ClientMessage(id: "shutdown", type: "shutdown"))
+        await fulfillment(of: [shutdown, notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.last?.id, "shutdown")
+        XCTAssertEqual(notices.events.last?.sequence, 0)
+        XCTAssertEqual(notices.events.last?.type, "failed")
+        XCTAssertEqual(notices.events.last?.payload, ["code": .string("provider_cleanup_failed")])
+    }
+
+    @MainActor
+    func testTranslationForceStopAndTimeoutRemainUnknownWithoutSubmissionEvidence() async throws {
+        for force in [true, false] {
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("t", 0, "accepted", operation))
+            \(try emit("t", 1, "started", operation))
+            while IFS= read -r line; do :; done
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            let started = notices.started("t")
+            notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t", timeout: force ? 20 : 1)
+            await fulfillment(of: [started], timeout: 10)
+            if force { notices.connection.forceStop() }
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertEqual(notices.failures, [.translationOutcomeUnknown])
+            XCTAssertEqual(notices.events.filter { $0.id == "t" }.map(\.type), ["accepted", "started"])
+        }
+    }
+
+    func testTranslationTerminationGracePreservesNativeCleanupAndLegacyBounds() {
+        let native = HelperConnection.terminationGrace(for: .translation)
+        XCTAssertEqual(native.eof, 30)
+        XCTAssertEqual(native.term, 30)
+        for mode in [ProtocolState.Mode.diagnostic, .configuration] {
+            let legacy = HelperConnection.terminationGrace(for: mode)
+            XCTAssertEqual(legacy.eof, 3)
+            XCTAssertEqual(legacy.term, 1)
+        }
+    }
+
+    @MainActor
+    func testTranslationFailureAndForceStopAllowCleanupBeyondFixtureGrace() async throws {
+        for trigger in ["timeout", "force", "eof"] {
+            let script = try connectedScript("""
+            cleanup() {
+                trap '' TERM
+                /bin/sleep 5
+                printf cleaned > "$HOME/cleanup-finished"
+                exit 0
+            }
+            trap cleanup TERM
+            \(readLine)
+            \(try emit("t", 0, "accepted", operation))
+            \(try emit("t", 1, "started", operation))
+            \(trigger == "eof" ? "exec 1>&-" : ":")
+            while IFS= read -r line; do :; done
+            cleanup
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            let started = notices.started("t")
+            notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t",
+                                         timeout: trigger == "timeout" ? 1 : 20)
+            await fulfillment(of: [started], timeout: 10)
+            if trigger == "force" { notices.connection.forceStop() }
+            await fulfillment(of: [notices.stopped], timeout: 15)
+            XCTAssertEqual(notices.failures, [.translationOutcomeUnknown], trigger)
+            XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("cleanup-finished"),
+                                      encoding: .utf8), "cleaned", trigger)
+            XCTAssertFalse(notices.events.contains { $0.id == "t" && $0.isTerminal }, trigger)
+        }
+    }
+
+    @MainActor
+    func testTranslationGracefulStopDrainsBeyondDiagnosticTerminationDeadline() async throws {
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "started", operation))
+        \(readLine)
+        /bin/sleep 4
+        \(try emit("t", 2, "completed", completion))
+        printf '%s\\n' "$line" | /usr/bin/sed 's/"type":"shutdown"/"seq":0,"type":"completed"/'
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("t")
+        let terminal = notices.terminal("t")
+        notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t")
+        await fulfillment(of: [started], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [terminal, notices.stopped], timeout: 15)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.filter { $0.id == "t" }.map(\.type), ["accepted", "started", "completed"])
+    }
+
+    @MainActor
+    func testTranslationBootstrapAndPrestartWorkerFailuresStayDeterminate() async throws {
+        let bootstrap = try fixture(script: """
+        #!/bin/sh
+        \(readLine)
+        \(try emit("hello", 0, "failed", ["code": .string("translation_unavailable")]))
+        """)
+        defer { remove(bootstrap) }
+        let unavailable = Notices()
+        defer { unavailable.connection.forceStop() }
+        unavailable.connection.startTranslation(runtime: bootstrap.runtime, home: bootstrap.home, codexCommand: bootstrap.codex,
+                                               environment: bootstrap.environment)
+        await fulfillment(of: [unavailable.stopped], timeout: 10)
+        XCTAssertEqual(unavailable.failures, [.translationUnavailable])
+        XCTAssertEqual(unavailable.events.first?.safeFailureCode, "translation_unavailable")
+
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "failed", ["code": .string("worker_start_failed")]))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let terminal = notices.terminal("t")
+        notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t")
+        await fulfillment(of: [terminal], timeout: 10)
+        notices.connection.send(ClientMessage(id: "shutdown", type: "shutdown"))
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.filter { $0.id == "t" }.map(\.type), ["accepted", "failed"])
+        XCTAssertEqual(notices.events.last?.id, "shutdown")
+    }
+
+    @MainActor
+    func testConfirmedTranslationCancellationDrainsActualSubmittedTerminal() async throws {
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "started", operation))
+        \(readLine)
+        \(try emit("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        \(try emit("t", 2, "delta", ["text": .string("in flight"), "submitted": .bool(true)]))
+        \(try emit("t", 3, "cancelled", ["submitted": .bool(true)]))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("t")
+        let terminal = notices.terminal("t")
+        notices.connection.translate(text: "synthetic", appLanguage: "zh_CN", id: "t")
+        await fulfillment(of: [started], timeout: 10)
+        let cancel = notices.terminal("cancel")
+        notices.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("t")]))
+        await fulfillment(of: [cancel, terminal], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.last { $0.id == "t" }?.payload, ["submitted": .bool(true)])
+    }
+}

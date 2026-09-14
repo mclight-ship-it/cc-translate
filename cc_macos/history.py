@@ -219,6 +219,18 @@ class HistoryService:
             code = error.code if isinstance(error, ProtocolError) and error.code == "history_entry_too_large" else "invalid_history"
             raise HistoryError(code) from error
 
+    def find_cached(self, text, kind, sig):
+        if self._owner is None:
+            raise HistoryError("history_unavailable")
+        try:
+            return self._owner.find_cached(text, kind, sig)
+        except OSError as error:
+            raise HistoryError("history_io_failed") from error
+        except HistoryForkError as error:
+            raise HistoryError("history_unavailable") from error
+        except (ValueError, TypeError, OverflowError) as error:
+            raise HistoryError("invalid_history") from error
+
     def close(self):
         owner, self._owner = self._owner, None
         if owner is not None:

@@ -166,15 +166,23 @@ class RuntimeMatrixTests(unittest.TestCase):
             "testBundledHistoryCorruptOversizedAndRejectedAddsPreserveBytes",
             "testBundledHistoryCompetingHelpersReleaseBothOwners",
             "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
+            "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
+            "testBundledTranslationConcurrentOptoutAndCancellationDrain",
+            "testBundledTranslationCorruptionAndOutputBudgets",
+            "testBundledTranslationCompetingHelpersForceStopAndReopen",
         ))
         methods = "\n".join("Test Case '-[CCTranslateSupportTests.HelperIntegrationTests " + method + "]' " + outcome
                             for method in runtime.INTEGRATION_TESTS for outcome in ("started", "passed"))
-        summary = "Executed 9 tests, with 0 failures (0 unexpected)"
+        summary = "Executed 13 tests, with 0 failures (0 unexpected)"
         result = runtime.integration_result(methods + "\n" + summary)
-        self.assertEqual(result, {"tests_run": 9, "failures": 0, "skipped": 0,
+        self.assertEqual(result, {"tests_run": 13, "failures": 0, "skipped": 0,
                                   "methods": list(runtime.INTEGRATION_TESTS)})
         for text in ("0 tests passed", summary, methods,
                      methods + "\nExecuted 0 tests, with 0 failures",
+                     methods + "\nExecuted 13 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 13 tests, with 1 failures",
+                     methods + "\nExecuted 12 tests, with 0 failures",
+                     methods + "\nExecuted 9 tests, with 0 failures",
                      methods + "\nExecuted 9 tests, with 1 test skipped and 0 failures",
                      methods + "\nExecuted 9 tests, with 1 failures",
                      methods + "\nExecuted 8 tests, with 0 failures",

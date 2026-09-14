@@ -2,6 +2,385 @@ import XCTest
 import Darwin
 @testable import CCTranslateSupport
 
+extension HelperIntegrationTests {
+    private struct TranslationContext {
+        let runtime: BundleRuntime
+        let cleanupRoot: URL
+        let root: URL
+        let home: URL
+        let command: URL
+        let gate: URL
+        let configFile: URL
+        let environment: [String: String]
+        let config: [String: JSONValue]
+        let request: [String: JSONValue]
+        let expected: [String: JSONValue]
+
+        var historyFile: URL { configFile.deletingLastPathComponent().appendingPathComponent("history.json") }
+    }
+
+    private func translationFixture(runtime: BundleRuntime, home: URL,
+                                    arguments: [String]) throws -> [String: JSONValue] {
+        let process = Process(), output = Pipe(), errors = Pipe()
+        var handles = [output.fileHandleForReading, output.fileHandleForWriting,
+                       errors.fileHandleForReading, errors.fileHandleForWriting]
+        func close(_ handle: FileHandle) throws {
+            try handle.close()
+            handles.removeAll { $0 === handle }
+        }
+        defer {
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            for handle in handles {
+                do { try handle.close() }
+                catch { XCTFail("Synthetic translation fixture pipe cleanup failed") }
+            }
+        }
+        let fixture = runtime.launcher.deletingLastPathComponent()
+            .appendingPathComponent("cc_macos/translation_fixture.py")
+        process.executableURL = runtime.executable
+        process.arguments = ["-I", "-B", fixture.path] + arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath,
+                                          isDirectory: true)
+        process.environment = ["PATH": "/usr/bin:/bin", "HOME": home.path, "TMPDIR": home.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output.fileHandleForWriting
+        process.standardError = errors.fileHandleForWriting
+        try process.run()
+        try close(output.fileHandleForWriting)
+        try close(errors.fileHandleForWriting)
+        let bytes = output.fileHandleForReading.readDataToEndOfFile()
+        let diagnostic = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, "Bundled translation fixture failed")
+        XCTAssertTrue(diagnostic.isEmpty, "Synthetic fixture must not emit diagnostics")
+        guard process.terminationStatus == 0, diagnostic.isEmpty else { throw ProbeError.launchFailed }
+        return try XCTUnwrap(JSONValue.parse(bytes).object)
+    }
+
+    private func translationContext(scenario: String = "normal") throws -> TranslationContext {
+        guard let app = ProcessInfo.processInfo.environment["CC_TRANSLATE_APP"], !app.isEmpty else {
+            throw ProbeError.bundleMissing
+        }
+        let base = try configurationContext()
+        do {
+            let identifier = try base.runtime.configurationApplicationIdentifier()
+            let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: [
+                "--prepare", base.home.appendingPathComponent("translation").path,
+                "--application-id", identifier, "--scenario", scenario
+            ])
+            let home = URL(fileURLWithPath: try XCTUnwrap(fixture["home"]?.string), isDirectory: true)
+            let environment = try XCTUnwrap(fixture["environment"]?.object)
+                .mapValues { try XCTUnwrap($0.string) }
+            XCTAssertEqual(environment["HOME"], home.path)
+            XCTAssertNotNil(environment["PATH"])
+            XCTAssertTrue(home.path.hasPrefix(base.home.path + "/"))
+            let configFile = home.appendingPathComponent("Library/Application Support")
+                .appendingPathComponent(identifier).appendingPathComponent("config.json")
+            return TranslationContext(
+                runtime: base.runtime, cleanupRoot: base.home,
+                root: URL(fileURLWithPath: try XCTUnwrap(fixture["root"]?.string), isDirectory: true),
+                home: home, command: URL(fileURLWithPath: try XCTUnwrap(fixture["command"]?.string)),
+                gate: URL(fileURLWithPath: try XCTUnwrap(fixture["gate"]?.string)),
+                configFile: configFile, environment: environment,
+                config: try XCTUnwrap(fixture["config"]?.object),
+                request: try XCTUnwrap(fixture["request"]?.object),
+                expected: try XCTUnwrap(fixture["expected"]?.object))
+        } catch {
+            removeConfigurationHome(base.home)
+            throw error
+        }
+    }
+
+    @MainActor
+    private func startTranslation(_ session: ConfigurationNotices, _ context: TranslationContext) {
+        session.connection.startTranslation(runtime: context.runtime, home: context.home,
+                                            codexCommand: context.command, environment: context.environment)
+    }
+
+    @MainActor
+    private func sendTranslation(_ session: ConfigurationNotices, _ context: TranslationContext,
+                                 id: String = "translation", useCache: Bool = true) throws {
+        session.connection.translate(text: try XCTUnwrap(context.request["text"]?.string),
+                                     appLanguage: try XCTUnwrap(context.request["app_language"]?.string),
+                                     useCache: useCache, id: id)
+    }
+
+    @MainActor
+    private func assertTranslation(_ session: ConfigurationNotices, _ context: TranslationContext,
+                                   id: String = "translation", cached: Bool = false,
+                                   history: String = "recorded",
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(session.result(id)?.type, "completed", file: file, line: line)
+        XCTAssertEqual(session.result(id)?.payload, [
+            "text": context.expected["output"]!,
+            "submitted": .bool(!cached), "cached": .bool(cached),
+            "kind": context.expected["kind"]!, "target_lang": context.expected["target_lang"]!,
+            "summarize": context.expected["summarize"]!,
+            "history": .string(history), "history_error": .null
+        ], file: file, line: line)
+        let events = session.events.filter { $0.id == id }
+        XCTAssertEqual(events.map(\.sequence), (0..<events.count).map { Int64($0) }, file: file, line: line)
+        XCTAssertEqual(Array(events.prefix(2)).map(\.type), ["accepted", "started"], file: file, line: line)
+        XCTAssertTrue(events.allSatisfy { $0.payload["fixture"] == nil }, file: file, line: line)
+    }
+
+    private func assertNoTranslationCLI(_ context: TranslationContext,
+                                        file: StaticString = #filePath, line: UInt = #line) {
+        for name in ["calls.jsonl", "version.jsonl", "native-processes.jsonl", "native-rpc.jsonl"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: context.root.appendingPathComponent(name).path),
+                           "Hello/configuration must not start any CLI", file: file, line: line)
+        }
+    }
+
+    private func verifyTranslation(_ context: TranslationContext, turns: Int64, cleanup: Bool,
+                                   descendant: Bool = false) throws {
+        var arguments = ["--verify", context.root.path]
+        if cleanup { arguments.append("--require-cleanup") }
+        if descendant { arguments.append("--require-descendant") }
+        let evidence = try translationFixture(runtime: context.runtime, home: context.home, arguments: arguments)
+        XCTAssertEqual(evidence["submitted_turns"], .integer(turns))
+        XCTAssertEqual(evidence["prompt_verified"], .bool(true))
+        XCTAssertEqual(evidence["cleanup_verified"], .bool(cleanup))
+        if descendant { XCTAssertGreaterThan(try XCTUnwrap(evidence["descendants"]?.integer), 0) }
+    }
+
+    @MainActor
+    func testBundledTranslationConfigurationStreamHistoryCacheAndReopen() async throws {
+        let context = try translationContext(scenario: "direction")
+        defer { removeConfigurationHome(context.cleanupRoot) }
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        startTranslation(session, context)
+        await fulfillment(of: [session.ready], timeout: 10)
+        XCTAssertEqual(session.events.first?.payload["backend"], .string("native_appserver"))
+        XCTAssertEqual(session.events.first?.payload["fixture"], .bool(false))
+        assertNoTranslationCLI(context)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.configFile.path))
+
+        let saved = session.terminal("save")
+        session.connection.saveConfiguration(context.config, id: "save")
+        await fulfillment(of: [saved], timeout: 10)
+        session.assertOperation("save")
+        assertNoTranslationCLI(context)
+        let firstDelta = session.firstDelta("translation"), translated = session.terminal("translation")
+        try sendTranslation(session, context)
+        await fulfillment(of: [firstDelta, translated], timeout: 25, enforceOrder: true)
+        assertTranslation(session, context)
+        XCTAssertEqual(session.result("translation")?.payload["target_lang"], .string("ja"))
+        XCTAssertEqual(session.events.filter { $0.id == "translation" }.map(\.type),
+                       ["accepted", "started", "delta", "completed"])
+        let history = session.terminal("history")
+        session.connection.loadHistory(id: "history")
+        await fulfillment(of: [history], timeout: 10)
+        let entries = try session.historyEntries("history")
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?["input"], context.request["text"])
+        XCTAssertEqual(entries.first?["output"], context.expected["output"])
+        XCTAssertEqual(entries.first?["sig"], context.expected["signature"])
+        let stored = try Data(contentsOf: context.historyFile)
+        let cached = session.terminal("cached")
+        try sendTranslation(session, context, id: "cached")
+        await fulfillment(of: [cached], timeout: 10)
+        assertTranslation(session, context, id: "cached", cached: true, history: "unchanged")
+        XCTAssertEqual(try Data(contentsOf: context.historyFile), stored)
+        try verifyTranslation(context, turns: 1, cleanup: false)
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+        try verifyTranslation(context, turns: 1, cleanup: true)
+
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        startTranslation(reopened, context)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let replay = reopened.terminal("translation")
+        try sendTranslation(reopened, context)
+        await fulfillment(of: [replay], timeout: 10)
+        assertTranslation(reopened, context, cached: true, history: "unchanged")
+        XCTAssertEqual(try Data(contentsOf: context.historyFile), stored)
+        let reloaded = reopened.terminal("history")
+        reopened.connection.loadHistory(id: "history")
+        await fulfillment(of: [reloaded], timeout: 10)
+        XCTAssertEqual(try reopened.historyEntries("history"), entries)
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty)
+        try verifyTranslation(context, turns: 1, cleanup: true)
+    }
+
+    @MainActor
+    func testBundledTranslationConcurrentOptoutAndCancellationDrain() async throws {
+        for cancel in [false, true] {
+            let context = try translationContext(scenario: "gated")
+            defer { removeConfigurationHome(context.cleanupRoot) }
+            let session = ConfigurationNotices()
+            defer { session.connection.forceStop() }
+            startTranslation(session, context)
+            await fulfillment(of: [session.ready], timeout: 10)
+            let saved = session.terminal("save")
+            session.connection.saveConfiguration(context.config, id: "save")
+            await fulfillment(of: [saved], timeout: 10)
+            session.assertOperation("save")
+            let delta = session.firstDelta("translation"), terminal = session.terminal("translation")
+            try sendTranslation(session, context)
+            await fulfillment(of: [delta], timeout: 25)
+            XCTAssertNil(session.result("translation"), "The explicit gate holds completion, not a timing guess")
+            if cancel {
+                let cancelled = session.terminal("cancel")
+                session.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: [
+                    "request_id": .string("translation")
+                ]))
+                await fulfillment(of: [cancelled, terminal], timeout: 15)
+                XCTAssertEqual(session.result("cancel")?.payload, ["cancel_requested": .bool(true)])
+                XCTAssertEqual(session.result("translation")?.type, "cancelled")
+                XCTAssertEqual(session.result("translation")?.payload, ["submitted": .bool(true)])
+                try verifyTranslation(context, turns: 1, cleanup: true, descendant: true)
+            } else {
+                let optout = session.terminal("optout")
+                var config = context.config
+                config["history_enabled"] = .bool(false)
+                config["direction"] = .string("to_ja")
+                session.connection.saveConfiguration(config, id: "optout")
+                await fulfillment(of: [optout], timeout: 10)
+                session.assertOperation("optout")
+                try Data("release".utf8).write(to: context.gate)
+                await fulfillment(of: [terminal], timeout: 15)
+                assertTranslation(session, context, history: "disabled")
+                XCTAssertEqual(session.result("translation")?.payload["target_lang"], .string("zh"),
+                               "The in-flight snapshot must not adopt the later direction")
+            }
+            let history = session.terminal("history")
+            session.connection.loadHistory(id: "history")
+            await fulfillment(of: [history], timeout: 10)
+            XCTAssertEqual(try session.historyEntries("history"), [])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path))
+            session.connection.stop()
+            await fulfillment(of: [session.stopped], timeout: 10)
+            XCTAssertTrue(session.failures.isEmpty)
+            try verifyTranslation(context, turns: 1, cleanup: true, descendant: true)
+        }
+    }
+
+    @MainActor
+    func testBundledTranslationCorruptionAndOutputBudgets() async throws {
+        for scenario in ["config-corrupt", "history-corrupt", "controls", "output-limit", "envelope-limit"] {
+            let corrupt = scenario.hasSuffix("-corrupt")
+            let context = try translationContext(scenario: corrupt ? "normal" : scenario)
+            defer { removeConfigurationHome(context.cleanupRoot) }
+            let session = ConfigurationNotices()
+            defer { session.connection.forceStop() }
+            startTranslation(session, context)
+            await fulfillment(of: [session.ready], timeout: 10)
+            let saved = session.terminal("save")
+            session.connection.saveConfiguration(context.config, id: "save")
+            await fulfillment(of: [saved], timeout: 10)
+            session.assertOperation("save")
+            let malformed = Data(#"{"SYNTHETIC_PRIVATE_CORRUPTION":"#.utf8)
+            let damaged = scenario == "config-corrupt" ? context.configFile : context.historyFile
+            // Direct bytes are fault injection only; normal business writes always use HelperConnection.
+            if corrupt { try malformed.write(to: damaged) }
+            let terminal = session.terminal("translation")
+            try sendTranslation(session, context)
+            await fulfillment(of: [terminal], timeout: 90)
+            if corrupt {
+                XCTAssertEqual(session.result("translation")?.type, "failed")
+                XCTAssertEqual(session.result("translation")?.payload, [
+                    "code": .string(scenario == "config-corrupt" ? "invalid_config" : "invalid_history"),
+                    "submitted": .bool(false)
+                ])
+                XCTAssertEqual(try Data(contentsOf: damaged), malformed)
+                assertNoTranslationCLI(context)
+            } else if scenario == "controls" {
+                assertTranslation(session, context)
+                let deltas = session.events.filter { $0.id == "translation" && $0.type == "delta" }
+                XCTAssertGreaterThan(deltas.count, 1)
+                XCTAssertEqual(deltas.compactMap { $0.payload["text"]?.string }.joined(),
+                               context.expected["output"]?.string)
+                let history = session.terminal("history")
+                session.connection.loadHistory(id: "history")
+                await fulfillment(of: [history], timeout: 10)
+                XCTAssertEqual(try session.historyEntries("history").first?["output"], context.expected["output"])
+            } else {
+                XCTAssertEqual(session.result("translation")?.type, "failed")
+                XCTAssertEqual(session.result("translation")?.payload, [
+                    "code": .string("translation_output_limit"), "submitted": .bool(true)
+                ])
+                XCTAssertNil(session.result("translation")?.payload["text"], "Budget failure is never truncated success")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path))
+                if scenario == "envelope-limit" {
+                    XCTAssertGreaterThan(session.events.filter { $0.type == "delta" }.count, 1000)
+                }
+            }
+            session.connection.stop()
+            await fulfillment(of: [session.stopped], timeout: 10)
+            XCTAssertTrue(session.failures.isEmpty)
+            if corrupt { XCTAssertEqual(try Data(contentsOf: damaged), malformed) }
+            else { try verifyTranslation(context, turns: 1, cleanup: true) }
+        }
+        let context = try translationContext()
+        defer { removeConfigurationHome(context.cleanupRoot) }
+        let invalid = ConfigurationNotices()
+        defer { invalid.connection.forceStop() }
+        startTranslation(invalid, context)
+        await fulfillment(of: [invalid.ready], timeout: 10)
+        invalid.connection.translate(text: String(repeating: "\u{4e2d}", count: 2731),
+                                     appLanguage: "zh_CN", id: "oversize")
+        await fulfillment(of: [invalid.stopped], timeout: 10)
+        XCTAssertFalse(invalid.failures.isEmpty)
+        XCTAssertFalse(invalid.events.contains { $0.id == "oversize" && $0.type == "started" })
+        assertNoTranslationCLI(context)
+    }
+
+    @MainActor
+    func testBundledTranslationCompetingHelpersForceStopAndReopen() async throws {
+        let context = try translationContext(scenario: "gated")
+        defer { removeConfigurationHome(context.cleanupRoot) }
+        let owner = ConfigurationNotices()
+        defer { owner.connection.forceStop() }
+        startTranslation(owner, context)
+        await fulfillment(of: [owner.ready], timeout: 10)
+        let saved = owner.terminal("save")
+        owner.connection.saveConfiguration(context.config, id: "save")
+        await fulfillment(of: [saved], timeout: 10)
+        owner.assertOperation("save")
+        let competitor = ConfigurationNotices()
+        defer { competitor.connection.forceStop() }
+        let refused = competitor.terminal("hello")
+        startTranslation(competitor, context)
+        await fulfillment(of: [refused, competitor.stopped], timeout: 10, enforceOrder: true)
+        XCTAssertEqual(competitor.result("hello")?.safeFailureCode, "config_in_use")
+        XCTAssertEqual(competitor.failures, [.configInUse])
+        assertNoTranslationCLI(context)
+        let delta = owner.firstDelta("translation")
+        try sendTranslation(owner, context)
+        await fulfillment(of: [delta], timeout: 25)
+        owner.connection.forceStop()
+        await fulfillment(of: [owner.stopped], timeout: 15)
+        XCTAssertEqual(owner.failures, [.translationOutcomeUnknown])
+        XCTAssertFalse(owner.events.contains { $0.id == "translation" && $0.type == "completed" })
+        try verifyTranslation(context, turns: 1, cleanup: true, descendant: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path))
+
+        let successor = ConfigurationNotices()
+        defer { successor.connection.forceStop() }
+        startTranslation(successor, context)
+        await fulfillment(of: [successor.ready], timeout: 10)
+        let history = successor.terminal("history"), config = successor.terminal("config")
+        successor.connection.loadHistory(id: "history")
+        successor.connection.loadConfiguration(id: "config")
+        await fulfillment(of: [history, config], timeout: 10, enforceOrder: true)
+        XCTAssertEqual(try successor.historyEntries("history"), [])
+        XCTAssertEqual(successor.result("config")?.payload["config"]?.object?["codex_model"], .string("synthetic"))
+        try verifyTranslation(context, turns: 1, cleanup: true, descendant: true)
+        successor.connection.stop()
+        await fulfillment(of: [successor.stopped], timeout: 10)
+        XCTAssertTrue(successor.failures.isEmpty, "Reopening releases locks but never replays an unknown submission")
+    }
+}
+
 final class HelperIntegrationTests: XCTestCase {
     @MainActor
     private final class ConfigurationNotices {
@@ -11,6 +390,7 @@ final class HelperIntegrationTests: XCTestCase {
         private(set) var failures: [ProbeError] = []
         private var terminals: [String: XCTestExpectation] = [:]
         private var starts: [String: XCTestExpectation] = [:]
+        private var deltas: [String: XCTestExpectation] = [:]
         private(set) var connection: HelperConnection!
 
         init() {
@@ -22,6 +402,7 @@ final class HelperIntegrationTests: XCTestCase {
                         self.events.append(event)
                         if event.type == "ready" { self.ready.fulfill() }
                         if event.type == "started" { self.starts[event.id]?.fulfill() }
+                        if event.type == "delta" { self.deltas.removeValue(forKey: event.id)?.fulfill() }
                         if event.isTerminal { self.terminals[event.id]?.fulfill() }
                     case .failure(let error): self.failures.append(error)
                     case .stopped: self.stopped.fulfill()
@@ -39,6 +420,12 @@ final class HelperIntegrationTests: XCTestCase {
         func started(_ id: String) -> XCTestExpectation {
             let expectation = XCTestExpectation(description: "business request started")
             starts[id] = expectation
+            return expectation
+        }
+
+        func firstDelta(_ id: String) -> XCTestExpectation {
+            let expectation = XCTestExpectation(description: "native translation first delta")
+            deltas[id] = expectation
             return expectation
         }
 

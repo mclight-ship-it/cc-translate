@@ -50,6 +50,7 @@ jobs:
           tests.test_macos_configuration
           tests.test_macos_history
           tests.test_request_snapshot
+          tests.test_summary_rules tests.test_macos_translation
           tests.test_darwin_rpc_contract tests.test_codex_darwin
           tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)

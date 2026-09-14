@@ -24,6 +24,7 @@ PROCESS_TEST_MODULES = (
     "test_history_ipc_process",
     "test_darwin_rpc_process",
     "test_native_provider_process",
+    "test_translation_ipc_process",
 )
 CORE_TEST_MODULES = (
     "test_classify",
@@ -44,10 +45,12 @@ CORE_TEST_MODULES = (
     "test_request_snapshot",
     "test_darwin_rpc_contract",
     "test_codex_darwin",
+    "test_summary_rules",
+    "test_macos_translation",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 172, "core": 410}
+MINIMUM_TEST_COUNTS = {"process": 185, "core": 458}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
@@ -67,6 +70,9 @@ PROCESS_BUNDLE_MODULES = (
     "cc_macos.server",
     "cc_macos.protocol",
     "cc_macos.history",
+    "cc_macos.translation",
+    "cc_macos.translation_fixture",
+    "cc_summary",
 )
 CORE_BUNDLE_MODULES = (
     "cc_classify",
@@ -88,6 +94,10 @@ CORE_BUNDLE_MODULES = (
     "cc_macos.protocol",
     "cc_macos.history",
     "cc_request",
+    "cc_summary",
+    "cc_macos.translation",
+    "cc_macos.translation_fixture",
+    "cc_macos.native_provider_fixture",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 

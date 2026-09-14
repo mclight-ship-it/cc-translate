@@ -35,6 +35,10 @@ INTEGRATION_TESTS = (
     "testBundledHistoryCorruptOversizedAndRejectedAddsPreserveBytes",
     "testBundledHistoryCompetingHelpersReleaseBothOwners",
     "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
+    "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
+    "testBundledTranslationConcurrentOptoutAndCancellationDrain",
+    "testBundledTranslationCorruptionAndOutputBudgets",
+    "testBundledTranslationCompetingHelpersForceStopAndReopen",
 )
 
 

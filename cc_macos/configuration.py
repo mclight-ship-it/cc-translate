@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import os
 import sys
+import threading
 
 from cc_config import plan_config_migration
 from cc_config_store import normalize_config
@@ -20,6 +21,7 @@ class ConfigurationError(RuntimeError):
     def __init__(self, code):
         super().__init__(code)
         self.code = code
+        self.submitted = False
 
 
 def _resolve(path, *, strict):
@@ -65,6 +67,7 @@ class ConfigurationSession:
         self._owner = None
         self._history = None
         self._closed = False
+        self._operations_lock = threading.RLock()
 
     def open(self):
         if self._closed or self._owner is not None:
@@ -99,6 +102,10 @@ class ConfigurationSession:
                     raise ConfigurationError("state_io_failed") from error
 
     def perform_history(self, payload, request_id, sequence):
+        with self._operations_lock:
+            return self._perform_history(payload, request_id, sequence)
+
+    def _perform_history(self, payload, request_id, sequence):
         if self._closed or self._history is None:
             raise ConfigurationError("history_unavailable")
         try:
@@ -107,6 +114,10 @@ class ConfigurationSession:
             raise ConfigurationError(error.code) from error
 
     def perform(self, payload):
+        with self._operations_lock:
+            return self._perform(payload)
+
+    def _perform(self, payload):
         if self._closed or self._owner is None:
             raise ConfigurationError("config_unavailable")
         try:
@@ -127,6 +138,10 @@ class ConfigurationSession:
             raise ConfigurationError("config_unavailable") from error
 
     def close(self):
+        with self._operations_lock:
+            self._close()
+
+    def _close(self):
         self._closed = True
         owner, self._owner = self._owner, None
         history, self._history = self._history, None
@@ -138,14 +153,25 @@ class ConfigurationSession:
                 owner.close()
 
 
-def startup_configuration(arguments):
+def startup_configuration(arguments, *, environment=None):
     if not arguments:
         return None
-    if (len(arguments) != 4 or arguments[0] != "--config-home"
+    if (len(arguments) not in (4, 6) or arguments[0] != "--config-home"
             or arguments[2] != "--application-id"):
         raise ProtocolError("invalid_startup")
     try:
         macos_user_paths(arguments[1], arguments[3])
     except (ValueError, TypeError) as error:
         raise ProtocolError("invalid_startup") from error
+    if len(arguments) == 6:
+        if arguments[4] != "--codex-command":
+            raise ProtocolError("invalid_startup")
+        from .translation import TranslationSession, parse_cli_environment
+
+        cli_environment = parse_cli_environment(environment, arguments[1])
+        command = arguments[5]
+        if (not isinstance(command, str) or not os.path.isabs(command) or "\0" in command
+                or ".." in Path(command).parts):
+            raise ProtocolError("invalid_startup")
+        return TranslationSession(arguments[1], arguments[3], command, cli_environment)
     return ConfigurationSession(arguments[1], arguments[3])
