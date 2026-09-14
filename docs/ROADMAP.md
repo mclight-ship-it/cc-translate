@@ -2,7 +2,7 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## macOS 原生移植 — 配置业务 IPC 验证中，Windows写入阻断保留
+## macOS 原生移植 — 配置业务链三系统通过，补充修复推送受阻
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
@@ -40,9 +40,16 @@ Windows原转换仍兼容，新Mac服务用同一规则的严格模式；不把�
 首次targeted1项旧AST检查失败已保留并修复，旧WinError5根因仍未解决；完整证据见
 [配置 owner 检查点](MACOS_TODO.md#config-owner-checkpoint)。
 该 owner 检查点当时仅可调用核心/临时合成 fixture。后续切片现已接入私有 helper 的配置
-load/save 与 Swift 显式连接 API，正在验证同包三系统；正常诊断仍零用户配置 I/O。
+load/save 与 Swift 显式连接 API，源码 `9614eab` /
+[run34808290474](https://github.com/mclight-ship-it/cc-translate/actions/runs/34808290474)
+同包15/14/26各73进程/211核心/4强制Foundation通过；正常诊断仍零用户配置 I/O。
 仅显式启动参数选择 home/实际 bundle ID，配置操作串行持有 owner，started 后取消不谎称回滚，
 EOF/shutdown 等待本地操作后释放，响应丢失为结果未知且不重放；不是新的设置 UI。
+Swift NaN编码的真实CI异常已修复并验证，失败历史保留。后续初始化路径环错误映射
+`4d769e7` 的62项针对性通过，但正常完整Windows hook1274项中2条历史矩阵关联断言失败，
+捕获真实WinError5单次replace拒绝；没有重跑凑绿或绕过hooks。因此补充源码和其后文档仅本地提交，
+远端/制品仍是9614eab，74进程/212核心新门槛尚未在Mac执行；本轮不能称最终完整验收关闭。
+详见[业务链证据与阻断](MACOS_TODO.md#configuration-ipc-checkpoint)，用户无需现在操作。
 完整请求快照、用户旧配置文件迁移/全 App 配置线程安全、历史业务 helper 与新翻译 UI 仍待办；
 不扩大其他功能、不要求用户现在重装，也不宣称整个 P0/P1/P2–P6 已完成。实际结果以 TODO 为准。
 

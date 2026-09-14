@@ -162,7 +162,11 @@ history/config 共用稳定侧文件所有权原语；config 的 `config.json.lo
 获取 owner 可创建侧文件，但缺失配置的 load 不创建 JSON；协作式锁不是恶意篡改权限沙箱。
 配置 owner 的已完成证据以 TODO 为准。后续业务切片已接同一 owner 到私有 helper 与
 Swift `startConfiguration(runtime:home:)`、`loadConfiguration`、`saveConfiguration` API；
-真实测试只选择临时 home + 所选 App 实际 Info.plist 身份，尚待本切片三系统验收。
+真实测试只选择临时 home + 所选 App 实际 Info.plist 身份。
+主链 `9614eab` / run34808290474 已完成同包15/14/26三系统（每系统73进程/211核心/4Foundation）。
+后续初始化符号链接环固定错误补充 `4d769e7` 的正常Windows hook复现旧WinError5，
+1274项中2条关联断言失败，推送被阻断；新74/212门槛尚未在Mac运行，不继承旧绿包结论。
+精确源码/制品/hash与失败见[配置业务检查点](MACOS_TODO.md#configuration-ipc-checkpoint)。
 没有设置 UI，不表示共享 Windows 默认对应的 Mac 功能已就绪。
 真实用户路径选择/旧文件迁移服务、后台共享 cfg 与 UI 保存竞争、历史业务 helper 接线/
 完整请求快照仍未完成；本 owner 不解决整个 App 的可变状态所有权。
@@ -233,7 +237,8 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
   原子文件完整性不等于回滚/完整事务，协作侧文件锁不是恶意篡改沙箱。
 - 这是真实可调用配置业务链，不是新增翻译/设置 UI。Foundation 后置集成必须精确执行四项
   （诊断、配置读保存重开、坏盘保护、竞争接管），包内进程测试另用真实 fsync 后的测试端 FIFO
-  屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。验收状态以 TODO 为准。
+  屏障验证 cancel/EOF/shutdown/丢 stdout，生产没有测试开关。上述主链在9614eab三系统实际通过；
+  本地后续路径环错误映射仍因Windows hook阻断未推送，验收状态以 TODO 为准。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
