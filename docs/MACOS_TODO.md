@@ -149,6 +149,9 @@ Mac 编译/XCTest/原生包内 IPC/Mach-O/HTTPS/SQLite 通过后，可推进独�
   - [x] 共享历史仓库与 Windows 兼容入口、add/clear 统一锁、Mac 显式跨进程 owner；
     源码 `c78d8ee` / [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072) 三系统通过，
     详见末尾历史仓库证据。仅历史 I/O，不等于整个配置/历史服务或业务 helper 接线。
+  - [ ] Windows 历史矩阵偶发原子替换拒绝访问的根因：2026-09-14 二十轮复核已复现，
+    不是全部通过；新旧历史路径的单次 `os.replace` 均观察到 WinError 5。
+    见[复核与阻断记录](#历史矩阵二十轮复核2026-09-14)，未用重试或削弱断言规避。
 - [ ] 抽取分类/方向/提示词、请求快照、缓存签名与词典结构；保留 Windows 兼容入口。
   - [x] 本地分类抽到 `cc_classify.py`，Windows 导出相同函数/阈值，helper 包含同一份模块；
     不导入 Tk/Win32/`cc_core`，不改 P0 协议/UI/provider 能力。
@@ -1127,8 +1130,85 @@ Mac 历史 fixture 从实际 Info.plist 取得身份，在 caller-owned 临时 h
   没有在 Windows 冒充执行 Mac 二进制。下载 zip 与临时审计脚本已清理，只保留脱敏 JSON。
 - 最终证据使用 docs-only 正常提交/push，不重跑未变源码；源码 SHA 与最终文档 HEAD 分别报告。
 
-**本轮历史 I/O 单一切片完成，停止新增代码。** Windows 真入口已接共享仓库、Mac 显式 owner 已验证；
+**历史检查点当时结论：历史 I/O 单一切片完成，停止新增代码。**
+以下 2026-09-14 复核重新打开 Windows 偶发写入失败的根因待办，不撤销上述真实 CI 结果。
+Windows 真入口已接共享仓库、Mac 显式 owner 已验证；
 配置 writer/迁移、历史业务 helper 唯一入口、完整 RequestSnapshot/provider 与 P2–P6 仍未完成。
 这些后续可独立项不因付费签名阻断，但不属于本次实施。旧 `eec92a5` 用户报告不迁移到本包，
 用户自报26.5.2、干净首开/官方单App例外、TCC拒绝/重启/跨版本、多屏/IME、真实CLI/账号与Intel仍待验证。
 免费 GitHub 分发/零预算不变；不 Release/master/Windows部署，不要求现在重装、安装CLI或登录。
+
+### 历史矩阵二十轮复核（2026-09-14）
+
+本次只复核原失败矩阵及精确消费者，不启动配置服务或其它实现。
+测试时 HEAD 为 **dcf70d70ddcbefce9613de3361fa242d4b0948a6**，
+其生产源码仍为 `c78d8ee994a0d335a1e2c87b51e60c33949d4cc9`。
+使用 Windows Python **3.12.10 / AMD64** 的现有 unittest runner：
+
+```text
+python -B -m unittest -v tests.test_history tests.test_history_windows tests.test_storage_windows tests.test_full.TestHistoryIO tests.test_full.TestHistoryHelpers
+```
+
+- 正常环境独立进程 **20 轮，每轮完整 89 项，共 1,780 tests**，runner 累计 **72.606s**。
+  无 `PYTHONFAULTHANDLER` / `PYTHONMALLOC` 注入，无测试 skip；第 6 轮失败后仍执行余下全部轮次，
+  不是反复运行直到成功。20 份逐项 verbose 日志及每份 SHA-256、计数/退出码/UTC 时间保留在本地会话证据。
+- **19 轮通过；第 6 轮 89 项 / 4.087s，2 failures，exit 1。**
+  `TestWindowsHistoryRepository.test_add_bytes_match_legacy_matrix` 的
+  `kind='invalid', flags=(False, False), sig=None, limit='4'` 字节断言及最终无日志断言失败。
+  实际兼容日志已明确保留 `PermissionError: [WinError 5] Access is denied`：
+  同目录唯一临时 JSON 到合成 `history.json` 的 `os.replace` 被拒绝。
+  不能称“二十轮未复现”，也不能将此前未保留异常的原 89 项失败追溯判定为同一个根因。
+
+为区分历史抽取与底层替换失败，额外只在会话外做两组有界诊断（不是替代验收）：
+
+| 诊断组 | 完整执行 | 实际结果 |
+|---|---|---|
+| 原新入口矩阵，观察一次真实 replace 后原样抛错 | 20 次矩阵 / 8,960 次 replace / 46.004s | 2 次 WinError 5，3 个断言失败，0 error/skip |
+| 冻结抽取前 load/add/cache/clear 函数绑定相同测试路径、现有共享原子 writer 与日志 seam | 20 次矩阵 / 8,960 次 replace / 48.957s | 3 次 WinError 5，4 个断言失败，0 error/skip |
+
+- 旧历史对照中实际栈为冻结旧 `add_history` 到同一个共享 writer，参考文件自身也发生过替换失败；
+  这不是旧版本全部环境/原子 writer 的独立回滚验证，也不能据此排除所有新旧代码问题。
+  已知现象不只限于新增 `HistoryRepository` 路径。
+- 失败时、原 writer 清理临时文件前，保留了仅合成的源/目标 JSON 副本、stat/文件属性、
+  当前 Python 线程栈、最近替换的单调时序及 errno/winerror。诊断没有重试、删除目标或改断言，
+  原错误仍由 Windows 既有 wrapper 记录；没有更改仓库测试/生产代码。
+  观察到源和目标为普通可写文件、archive 属性（不是 read-only），单链接；
+  当前 Python 仅 MainThread；失败后针对这两个文件申请 DELETE 访问并立即关闭句柄成功，
+  **未执行删除，也不证明失败瞬间没有其它句柄或系统组件参与**。
+- **根因仍未定位，稳定性复核未通过。** 已定位失败 syscall 和新旧路径、保留文件/线程时序，
+  但没有失败瞬间持有者/拒绝来源证据，不能猜测杀毒软件、磁盘竞争或确定为环境问题。
+  不为凑绿加入生产重试/延时、换测试目录、放宽断言、忽略日志或改变 Windows 兼容错误策略。
+  在取得足够因果证据前不作推测性“修复”，这一项明确保留为阻断，交协调会话定下一诊断范围。
+- 测试自身清理完成，工作树无残留 `.storage-test-*`；本地仅保留日志、JSON 汇总和必要合成失败证据，
+  不保存真实用户历史/认证，不将主机路径或原始日志提交公开仓库。
+  本次仅文档收尾，正常 privacy/docs-only hooks 提交/push；不重跑不变源码三系统 CI，
+  不以旧绿色 [run 34768088072](https://github.com/mclight-ship-it/cc-translate/actions/runs/34768088072)
+  抹掉本次 Windows 失败，也不将旧 `eec92a5` 用户实测赋给新包。
+
+### 下一配置持久化候选（只读调查，尚未开放实施）
+
+1. **真实入口与线程边界。** `translator.pyw` 的 `load_config` / `save_config` /
+   `TranslatorApp._save_config` 是实际磁盘链；加载有迁移写回，初始化检测语言可保存配置。
+   `_run_startup_tasks` 在后台线程设置 `AUTOSTART_INITIALIZED` 后也保存同一 `self.cfg`；
+   设置提交、词典删除、经 `root.after` 返回 UI 的下载完成回调也通过 `_save_config` 保存。
+   当前没有配置操作锁，不能只锁 `save_config` 就声称修复共享可变 dict 或全部写入所有权。
+2. **Windows 兼容边界。** `cc_core.CFG` / `DEFAULT_CONFIG` 是当前常量来源，不能让 Mac
+   导入整个带 DATA_DIR 创建/旧文件迁移副作用的 `cc_core`。`_resolve_data_dir` /
+   `_user_data_path`、公开函数与 writer/log patch seam 本轮均未改。
+   诊断模块虽然只展示 config/history 路径，但 import 时同样调用 `_user_data_path`，
+   不是可直接用于 Mac 的无副作用路径模块。
+3. **迁移应先分离规则与持久化。** `Config` 合并默认/类型转换/保留未知键，并做旧 model/provider、
+   `gpt-5.4-mini`、UI/Labs 的内存迁移；`load_config` 磁盘写回却仅给 raw 的副本补 UI/Labs 标记及
+   streaming 开关，不直接 dump 整个归一化 Config。候选先共享显式输入的规范化与
+   `changed + payload` 迁移计划，保持原字段顺序、未知字段、一次写回和已有显式 opt-out；
+   语言检测、开机启动和设置副作用留上层，不把 Windows UI 默认解释为已实现 Mac 功能。
+4. **Mac 严格读/owner 是下一依赖，不是当前成果。** 显式路径与调用方生命周期，缺失文件与
+   损坏/权限错误分开；只在明确缺失时提供默认，错误不当空配置覆盖。
+   read → migration plan → atomic write 应在同一 owner/操作锁内，跨进程协作锁必须是稳定侧文件。
+   可评估从已验证的历史 owner 抽取窄公共原语，不能复制一套平行锁或假称原子 replace 等于单写服务。
+   Windows 既有缺失/坏配置读取日志及默认、迁移写失败保留旧盘但返回已迁移内存值的兼容行为须另保留。
+5. **建议下一授权按依赖拆。** 先纯配置规则/迁移计划并接 Windows 原 load，
+   用 `TestConfigPersistence` / `TestConfigWrapper` / `TestAtomicWrites`、
+   `test_storage_windows` 固定字节/未知键/错误矩阵验证；随后再单独批准显式配置 owner、
+   启动后台任务与 UI 保存所有权和 Mac 合成入口。完整服务、RequestSnapshot/provider/UI 不在本次内，
+   此建议未执行，也不因付费签名成为不可独立推进项。
