@@ -2,6 +2,7 @@
 
 import hashlib
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,76 @@ import tomllib
 from .codex_config import CODEX_CONFIG_OVERRIDES
 
 
-SUPPORTED_CODEX_VERSIONS = {"0.146.0"}
+MINIMUM_CODEX_VERSION = (0, 146, 0)
+_VERSION_COMPONENT = r"(?:0|[1-9][0-9]{0,8})"
+_VERSION_IDENTIFIER = r"[0-9A-Za-z-]+"
+_VERSION_PATTERN = re.compile(
+    r"codex-cli[ \t]+(" + _VERSION_COMPONENT + r")\.("
+    + _VERSION_COMPONENT + r")\.(" + _VERSION_COMPONENT + r")"
+    r"(?:-(" + _VERSION_IDENTIFIER + r"(?:\." + _VERSION_IDENTIFIER + r")*))?"
+    r"(?:\+(" + _VERSION_IDENTIFIER + r"(?:\." + _VERSION_IDENTIFIER + r")*))?",
+    re.ASCII,
+)
+
+
+@dataclass(frozen=True)
+class CodexVersion:
+    components: tuple[int, int, int]
+    prerelease: bool
+
+    @property
+    def text(self):
+        return ".".join(str(part) for part in self.components)
+
+    @property
+    def supported(self):
+        return not self.prerelease and self.components >= MINIMUM_CODEX_VERSION
+
+
+def parse_codex_version(output):
+    """Extract one identified version line, never an incidental warning version."""
+    if isinstance(output, bytes):
+        if len(output) > 8192:
+            return None
+        try:
+            output = output.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(output, str) or len(output) > 8192:
+        return None
+    try:
+        if len(output.encode("utf-8")) > 8192:
+            return None
+    except UnicodeEncodeError:
+        return None
+    candidates = [line.strip() for line in output.splitlines()
+                  if line.strip().startswith("codex-cli")]
+    if len(candidates) != 1:
+        return None
+    match = _VERSION_PATTERN.fullmatch(candidates[0])
+    if match is None:
+        return None
+    prerelease = match.group(4)
+    if prerelease is not None and any(
+            part.isdigit() and len(part) > 1 and part.startswith("0")
+            for part in prerelease.split(".")):
+        return None
+    return CodexVersion(tuple(int(match.group(index)) for index in (1, 2, 3)),
+                        prerelease is not None)
+
+
+def codex_version_supported(output):
+    version = parse_codex_version(output)
+    return version is not None and version.supported
+
+
+def _cached_version_supported(value):
+    if not isinstance(value, str):
+        return False
+    version = parse_codex_version("codex-cli " + value)
+    return version is not None and version.supported and version.text == value
+
+
 _MAX_AGE_SECONDS = 24 * 60 * 60
 _RETRY_SECONDS = 60
 _MAX_BYTES = 8 * 1024 * 1024
@@ -244,7 +314,7 @@ class CodexModelCatalog:
                 catalog_path = directory / ("models-" + state["sha256"] + ".json")
                 content = _read(catalog_path)
                 if (state["identity"] == identity
-                        and state["version"] in SUPPORTED_CODEX_VERSIONS
+                        and _cached_version_supported(state["version"])
                         and 0 <= now - state["created_at"] < _MAX_AGE_SECONDS
                         and hashlib.sha256(content).hexdigest() == state["sha256"]):
                     payload = json.loads(content)
@@ -252,10 +322,14 @@ class CodexModelCatalog:
             except (ValueError, KeyError, TypeError, OSError):
                 self._warn("invalid_cached_catalog")
         if payload is None:
-            version_text = self._run(["--version"]).decode("utf-8").strip()
-            version = version_text.removeprefix("codex-cli ")
-            if version not in SUPPORTED_CODEX_VERSIONS:
+            detected = parse_codex_version(self._run(["--version"]))
+            if detected is None:
+                raise CatalogError("unreadable_catalog_version")
+            if detected.prerelease:
+                raise CatalogError("prerelease_catalog_version")
+            if not detected.supported:
                 raise CatalogError("unsupported_catalog_version")
+            version = detected.text
             # Export effective metadata, not an account entitlement list or a
             # hand-written capability table. This may refresh native discovery.
             payload = json.loads(self._run(["debug", "models"]))

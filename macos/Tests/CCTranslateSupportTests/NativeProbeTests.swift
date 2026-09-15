@@ -110,11 +110,13 @@ final class NativeProbeTests: XCTestCase {
     }
 
     @MainActor
-    func testVersionProbeDiscardsOutputInsteadOfReturningText() async {
-        let finished = expectation(description: "child output discarded")
+    func testVersionProbeDiscardsUnrecognizedOutputWithoutBreakingGenericSuccess() async {
+        let finished = expectation(description: "child output discarded without a parsed Codex version")
         let run = CLIVersionRun { result in
             switch result {
-            case .success: break
+            case .success(let version):
+                XCTAssertNil(version.codexVersion)
+                XCTAssertEqual(version.codexPolicy, .unrecognized)
             case .failure(let error): XCTFail("Unexpected fixed diagnostic: \(error.rawValue)")
             }
             finished.fulfill()

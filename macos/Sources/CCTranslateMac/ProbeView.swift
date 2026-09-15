@@ -167,8 +167,8 @@ struct ProbeView: View {
                     ForEach(model.candidates) { candidate in
                         Text("\(candidate.executable ? "executable" : "missing/not executable"): \(candidate.url.path)")
                             .tag(candidate.url.path)
-                    }.disabled(model.connected)
-                }
+                    }
+                }.disabled(model.cliBusy || model.connected)
             }
             Text("This version probe supervises only its own process group, including descendants that stay in it. Wrappers that leave the group are unsupported.")
                 .font(.callout).foregroundStyle(.orange)
@@ -177,7 +177,7 @@ struct ProbeView: View {
                     .disabled(model.cliBusy || model.selectedCLI.isEmpty)
                 Button("Cancel version probe") { model.cancelCLI() }.disabled(!model.cliBusy)
             }
-            Text("No shell/profile, login, credential copy, or model launch. CLI output is discarded, never displayed or logged.")
+            Text("No shell/profile, login, credential copy, or model launch. Only a sanitized Codex numeric version and policy are shown. Raw CLI output is discarded, never displayed or logged.")
             ScrollView {
                 Text(model.cliStatus).font(.body.monospaced()).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

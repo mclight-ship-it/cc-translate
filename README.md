@@ -180,8 +180,10 @@ the managed override and records a metadata-only `codex_catalog` warning in
 `%APPDATA%\CC Translate\error.log`. No submitted translation is resent.
 First-time generation can add startup time; prewarm normally does this work.
 
-Currently validated with Codex **0.146.0**. Unvalidated CLI versions retain
-native discovery rather than using an old snapshot. Official OpenAI configs,
+The managed catalog and app-server path accept stable Codex versions **0.146.0 or later**
+for runtime validation, rather than pinning one exact version. A newer version must still
+pass metadata roundtrip and protocol checks; its version alone does not establish compatibility.
+Unrecognized versions and prereleases are not automatically admitted. Official OpenAI configs,
 layered provider/model/catalog settings and user-specified `model_catalog_json` retain
 their native behavior; CC Translate does not repair or override user-owned
 catalogs. A requested model missing from the exported catalog also retains native

@@ -484,14 +484,38 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.assertEqual(self.processes[0].close_count, 1)
         self.assertEqual(self.methods(self.processes[1]).count("turn/start"), 1)
 
-    def test_pinned_version_only_and_invalid_utf8_never_start_a_turn(self):
-        for version in (b"codex-cli 0.145.0", b"codex-cli 0.147.0", b"codex-cli 1.0.0", b"\xff"):
+    def test_old_unreadable_and_prerelease_versions_never_start_a_turn(self):
+        for version, code in (
+                (b"codex-cli 0.145.0", "appserver_version_unsupported"),
+                (b"\xff", "appserver_version_unreadable"),
+                (b"warning 0.146.0", "appserver_version_unreadable"),
+                (b"codex-cli 0.147.0-rc.1", "appserver_version_prerelease")):
             with self.subTest(version=version):
                 self.capture.return_value = version
-                self.assert_failure(self.provider().complete(self.request()),
-                                    "appserver_version_unsupported")
+                self.assert_failure(self.provider().complete(self.request()), code)
         self.rpc.assert_not_called()
         self.config.assert_not_called()
+
+    def test_newer_versions_still_require_real_protocol_checks(self):
+        normal_responses = self.responses
+        for version in (b"codex-cli 0.147.0", b"codex-cli 1.0.0+build"):
+            with self.subTest(version=version):
+                self.responses = normal_responses
+                self.capture.return_value = version
+                provider = self.provider()
+                self.assertTrue(provider.complete(self.request()).ok)
+                provider.shutdown()
+                self.malformed_response({"id": True, "result": {}}, "invalid_appserver_message")
+
+    def test_version_failure_does_not_replay_or_make_a_later_explicit_request_sticky(self):
+        provider = self.provider()
+        self.capture.return_value = b"unknown SYNTHETIC_PRIVATE 0.146.0"
+        self.assert_failure(provider.complete(self.request()), "appserver_version_unreadable")
+        self.rpc.assert_not_called()
+        self.capture.return_value = b"codex-cli 0.154.0"
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(sum(self.methods(process).count("turn/start") for process in self.processes), 1)
 
     def malformed_response(self, message, code="invalid_appserver_message"):
         self.responses = lambda proc, request: [message] if request["method"] == "initialize" else []

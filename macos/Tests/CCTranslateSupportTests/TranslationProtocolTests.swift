@@ -371,6 +371,52 @@ final class TranslationProtocolTests: XCTestCase {
         }
     }
 
+    func testVersionAndProtocolFailuresHaveFixedActionableDiagnostics() throws {
+        let actions = [
+            "provider_version_unsupported": "too old",
+            "provider_version_unreadable": "could not be recognized",
+            "provider_version_prerelease": "prereleases are not supported",
+            "provider_protocol_error": "failed strict protocol validation"
+        ]
+        for (code, action) in actions {
+            XCTAssertTrue(TranslationDocument.failureCodes.contains(code))
+            var state = try pending()
+            let result = try state.receive(event("t", 2, "failed", [
+                "code": .string(code), "submitted": .bool(false)
+            ]))
+            XCTAssertEqual(result.safeFailureCode, code)
+            XCTAssertTrue(result.safeFailureMessage.contains(action))
+            XCTAssertTrue(result.safeFailureMessage.contains("No fallback or automatic retry."))
+            if code != "provider_protocol_error" {
+                XCTAssertTrue(result.safeFailureMessage.contains("0.146.0"))
+            }
+            let extra = ServerEvent(id: "t", sequence: 2, type: "failed", payload: [
+                "submitted": .bool(false),
+                "code": .string(code), "detail": .string("/SYNTHETIC-PRIVATE/path token=SYNTHETIC-PRIVATE"),
+                "stdout": .string("SYNTHETIC-PRIVATE"), "stderr": .string("SYNTHETIC-PRIVATE")
+            ])
+            XCTAssertEqual(extra.safeFailureMessage, result.safeFailureMessage)
+            XCTAssertFalse(result.safeFailureMessage.contains("SYNTHETIC-PRIVATE"))
+        }
+        let unknown = ServerEvent(id: "t", sequence: 2, type: "failed", payload: [
+            "code": .string("/SYNTHETIC-PRIVATE/path token=SYNTHETIC-PRIVATE")
+        ])
+        XCTAssertEqual(unknown.safeFailureMessage,
+                       "Helper request failed: helper_failed. No fallback or automatic retry.")
+    }
+
+    func testProtocolFailureAfterPossibleSubmissionDoesNotSuggestReplay() {
+        for submitted: JSONValue? in [.bool(true), nil] {
+            var payload: [String: JSONValue] = ["code": .string("provider_protocol_error")]
+            if let submitted = submitted { payload["submitted"] = submitted }
+            let failed = ServerEvent(id: "t", sequence: 2, type: "failed", payload: payload)
+            XCTAssertTrue(failed.safeFailureMessage.contains("Do not replay"))
+            XCTAssertTrue(failed.safeFailureMessage.contains("outcome is unknown"))
+            XCTAssertTrue(failed.safeFailureMessage.contains("provider_protocol_error"))
+            XCTAssertFalse(failed.safeFailureMessage.contains("before model submission"))
+        }
+    }
+
     func testTranslationFailureWhitelistSubmissionAndDeterminateWorkerStartFailure() throws {
         for code in TranslationDocument.failureCodes.union(TranslationDocument.storageFailureCodes) {
             for submitted in [false, true] {

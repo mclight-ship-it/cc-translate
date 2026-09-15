@@ -25,7 +25,13 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
     @Published var cliName = "codex"
     @Published private(set) var candidates: [CLICandidate] = []
-    @Published var selectedCLI = ""
+    @Published var selectedCLI = "" {
+        didSet {
+            if selectedCLI != oldValue {
+                cliStatus = "Selection changed; not executed. Run --version explicitly. Authentication: unknown."
+            }
+        }
+    }
     @Published private(set) var cliStatus = "Not located. Authentication: unknown."
     @Published private(set) var cliBusy = false
     let screen = ScreenProbe()
@@ -303,7 +309,7 @@ final class ProbeModel: ObservableObject {
                 status = event.payload["submitted"] == .bool(true)
                     ? "Cancelled after possible CLI submission. Submission cannot be rolled back."
                     : "Cancelled before native submission."
-            case "failed": status = "Helper request failed: \(event.safeFailureCode). No fallback or automatic retry."
+            case "failed": status = event.safeFailureMessage
             default: break
             }
             if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
@@ -465,17 +471,23 @@ final class ProbeModel: ObservableObject {
         cliStatus = "Running selected executable with --version only..."
         cliGeneration = UUID()
         let generation = cliGeneration
+        let name = cliName
+        let selectedPath = selectedCLI
         let run = CLIVersionRun { [weak self] result in
             MainActor.assumeIsolated {
                 guard let self = self else { return }
                 self.cliBusy = false
                 self.cliRun = nil
-                if self.cliGeneration == generation {
+                if self.cliGeneration == generation, self.cliName == name, self.selectedCLI == selectedPath {
                     switch result {
-                    case .success:
-                        self.cliStatus = "Version command exited successfully. All CLI output discarded.\nAuthentication: unknown. No model call."
+                    case .success(let version):
+                        self.cliStatus = name == "codex" ? version.codexStatus
+                            : "Version command exited successfully. Raw CLI output discarded.\nAuthentication: unknown. No model call."
                     case .failure(let error):
                         self.cliStatus = "Version probe: \(error.rawValue). Authentication: unknown."
+                        if name == "codex" {
+                            self.cliStatus += "\n" + CLIVersionResult(codexVersion: nil).codexStatus
+                        }
                     }
                 } else {
                     self.cliStatus = "Version probe closed. Authentication: unknown."

@@ -33,6 +33,7 @@ class TestCodexCatalog(unittest.TestCase):
             {"slug": "mini", "priority": 9, "visibility": "hide"},
         ]}
         self.calls = []
+        self.version_output = b"codex-cli 0.146.0"
         self.run = patch("cc_providers.codex_catalog.subprocess.run",
                          side_effect=self.fake_run).start()
         self.addCleanup(patch.stopall)
@@ -47,7 +48,7 @@ class TestCodexCatalog(unittest.TestCase):
         self.assertTrue(kwargs["capture_output"])
         self.assertLessEqual(kwargs["timeout"], 8)
         if "--version" in args:
-            output = b"codex-cli 0.146.0"
+            output = self.version_output
         else:
             output = json.dumps(self.payload).encode()
         return subprocess.CompletedProcess(args, 0, output, b"")
@@ -101,11 +102,52 @@ class TestCodexCatalog(unittest.TestCase):
     def test_unsupported_version_uses_native_without_exporting(self):
         self.run.side_effect = None
         self.run.return_value = subprocess.CompletedProcess(
-            [], 0, b"codex-cli 99.0.0", b"")
+            [], 0, b"codex-cli 0.145.0", b"")
         self.assertEqual(self.manager.overrides(), ())
         self.assertEqual(self.manager.status, "unsupported_catalog_version")
         self.assertEqual(self.run.call_count, 1)
         self.assertTrue(self.log.called)
+
+    def test_newer_version_exports_and_reopens_validated_catalog(self):
+        for version in (b"codex-cli 0.147.0", b"codex-cli 1.0.0+build"):
+            with self.subTest(version=version):
+                self.binary.write_bytes(version)
+                self.version_output = version
+                first = self.manager.overrides()
+                self.assertTrue(first)
+                self.assertEqual(json.loads(self.catalog_path(first).read_bytes()), self.payload)
+                other = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
+                before = len(self.calls)
+                self.assertEqual(other.overrides(), first)
+                self.assertEqual(len(self.calls) - before, 1, "Cache must still be revalidated.")
+                self.assertEqual(other.status, "ready")
+        self.assertFalse(self.log.called)
+
+    def test_unreadable_and_prerelease_versions_have_distinct_status(self):
+        for version, code in ((b"\xff", "unreadable_catalog_version"),
+                              (b"warning 0.146.0", "unreadable_catalog_version"),
+                              (b"codex-cli 0.147.0-rc.1", "prerelease_catalog_version")):
+            with self.subTest(version=version):
+                manager = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
+                self.version_output = version
+                before = len(self.calls)
+                self.assertEqual(manager.overrides(), ())
+                self.assertEqual(manager.status, code)
+                self.assertEqual(len(self.calls) - before, 1)
+                self.assertFalse(list(self.cache.rglob("state.json")))
+
+    def test_cached_version_requires_canonical_supported_numeric_text(self):
+        first = self.manager.overrides()
+        path = self.catalog_path(first).parent / "state.json"
+        for invalid in ("0.145.0", "0.147.0-rc.1", "0.147.0\nprivate warning", None):
+            with self.subTest(version=invalid):
+                state = json.loads(path.read_bytes())
+                state["version"] = invalid
+                path.write_text(json.dumps(state), encoding="utf-8")
+                before = len(self.calls)
+                self.assertEqual(self.manager.overrides(), first)
+                self.assertEqual(len(self.calls) - before, 3)
+                self.assertEqual(json.loads(path.read_bytes())["version"], "0.146.0")
 
     def test_unknown_model_is_not_silently_replaced(self):
         self.assertEqual(self.manager.overrides("new-model"), ())

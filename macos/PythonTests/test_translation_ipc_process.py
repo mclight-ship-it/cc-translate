@@ -54,6 +54,71 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         translation, translation_fixture, native_provider_fixture)
     owner_script = HELPER_SCRIPT
 
+    def test_newer_cli_versions_complete_with_validated_catalog_and_history(self):
+        for index, version in enumerate(("0.147.0", "0.154.0", "1.0.0")):
+            with self.subTest(version=version):
+                if index:
+                    self.prepare()
+                (self.root / "version-output.bin").write_bytes(
+                    ("Warning runtime 99.0.0 SYNTHETIC_PRIVATE\ncodex-cli " + version + "+build\n").encode())
+                process = self.start()
+                self.request(process)
+                self.assert_completed(self.terminal(process, "translation"))
+                self.assertEqual(len(self.turns()), 1)
+                self.assertEqual(len(self.history(process)), 1)
+                states = list(self.home.rglob("state.json"))
+                self.assertEqual(len(states), 1)
+                self.assertEqual(json.loads(states[0].read_bytes())["version"], version)
+                self.stop(process)
+                self.assert_native_gone()
+
+    def test_version_failures_are_distinct_before_submission_without_retry(self):
+        cases = ((b"codex-cli 0.145.0", "provider_version_unsupported"),
+                 (b"codex-cli 0.147.0-rc.1", "provider_version_prerelease"),
+                 (b"runtime 0.146.0 SYNTHETIC_PRIVATE", "provider_version_unreadable"),
+                 (b"\xff", "provider_version_unreadable"),
+                 (b"codex-cli 0.146.0\ncodex-cli 0.147.0", "provider_version_unreadable"))
+        for index, (output, code) in enumerate(cases):
+            with self.subTest(code=code, index=index):
+                if index:
+                    self.prepare()
+                (self.root / "version-output.bin").write_bytes(output)
+                process = self.start()
+                self.request(process)
+                result = self.terminal(process, "translation")
+                self.assertEqual(result["type"], "failed")
+                self.assertEqual(result["payload"], {"code": code, "submitted": False})
+                frames = [event for pid, event in self.events
+                          if pid == process.pid and event["id"] == "translation"]
+                self.assertEqual([(event["type"], event["seq"]) for event in frames],
+                                 [("accepted", 0), ("started", 1), ("failed", 2)])
+                self.assertNotIn("SYNTHETIC_PRIVATE", json.dumps(result))
+                self.assertEqual(self.turns(), [])
+                self.assertFalse((self.root / "native-rpc.jsonl").exists())
+                self.assertFalse(self.history_path.exists())
+                self.assertEqual(len((self.root / "version.jsonl").read_text().splitlines()), 1)
+                self.stop(process)
+                self.assert_native_gone()
+
+    def test_corrected_version_only_runs_after_a_new_explicit_request(self):
+        output = self.root / "version-output.bin"
+        output.write_bytes(b"not a version SYNTHETIC_PRIVATE")
+        process = self.start()
+        self.request(process, id_="unreadable")
+        failure = self.terminal(process, "unreadable")
+        self.assertEqual(failure["payload"],
+                         {"code": "provider_version_unreadable", "submitted": False})
+        output.write_bytes(b"codex-cli 0.154.0")
+        time.sleep(0.1)
+        self.assertEqual(self.turns(), [])
+        self.assertEqual(len((self.root / "version.jsonl").read_text().splitlines()), 1)
+        self.request(process, id_="corrected")
+        self.assert_completed(self.terminal(process, "corrected"))
+        self.assertEqual(len(self.turns()), 1)
+        self.assertEqual(len((self.root / "version.jsonl").read_text().splitlines()), 2)
+        self.stop(process)
+        self.assert_native_gone()
+
     def setUp(self):
         super().setUp()
         self.barriers = self.home

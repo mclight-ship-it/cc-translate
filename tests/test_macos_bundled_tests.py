@@ -113,12 +113,12 @@ class InventoryTests(unittest.TestCase):
             "test_catalog_storage_portable", "test_result_rules", "test_storage", "test_history",
             "test_config_rules", "test_config_store", "test_macos_configuration", "test_macos_history",
             "test_request_snapshot", "test_darwin_rpc_contract", "test_codex_darwin",
-            "test_summary_rules", "test_macos_translation"))
+            "test_summary_rules", "test_macos_translation", "test_codex_version"))
         self.assertEqual(bundled_tests.SUITE_MODULES, {
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
         self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
             "process": ("owner_process_support", "state_ipc_process_support"), "core": ()})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 185, "core": 458})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 188, "core": 473})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:

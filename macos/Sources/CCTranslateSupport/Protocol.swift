@@ -400,7 +400,8 @@ enum TranslationDocument {
     static let failureCodes: Set<String> = [
         "invalid_translation", "translation_unavailable", "unsupported_provider",
         "invalid_translation_settings", "translation_timeout", "translation_output_limit",
-        "provider_version_unsupported", "provider_cleanup_failed", "provider_protocol_error", "provider_failed"
+        "provider_version_unsupported", "provider_version_unreadable", "provider_version_prerelease",
+        "provider_cleanup_failed", "provider_protocol_error", "provider_failed"
     ]
     static let storageFailureCodes: Set<String> = [
         "config_in_use", "config_unavailable", "invalid_config", "config_io_failed",
@@ -490,6 +491,25 @@ public struct ServerEvent: Equatable {
     public var safeFailureCode: String {
         HelperFailureCode(rawValue: payload["code"]?.string ?? "")?.rawValue ?? "helper_failed"
     }
+
+    public var safeFailureMessage: String {
+        let action: String
+        switch HelperFailureCode(rawValue: safeFailureCode) {
+        case .providerVersionUnsupported:
+            action = "The selected Codex CLI is too old. Select stable Codex \(CodexVersion.minimum) or newer and run the explicit --version probe."
+        case .providerVersionUnreadable:
+            action = "The Codex version could not be recognized. Choose a Codex executable and run the explicit --version probe; stable \(CodexVersion.minimum) or newer is required."
+        case .providerVersionPrerelease:
+            action = "Codex prereleases are not supported. Select stable Codex \(CodexVersion.minimum) or newer and run the explicit --version probe."
+        case .providerProtocolError:
+            action = payload["submitted"] == .bool(false)
+                ? "The Codex app-server response failed strict protocol validation before model submission. Check the selected Codex installation. Meeting the version minimum does not prove protocol compatibility."
+                : "The Codex app-server response failed strict protocol validation after possible model submission. Do not replay this request; its remote outcome is unknown."
+        default:
+            return "Helper request failed: \(safeFailureCode). No fallback or automatic retry."
+        }
+        return "Helper request failed: \(safeFailureCode). \(action) No fallback or automatic retry."
+    }
 }
 
 private enum HelperFailureCode: String {
@@ -532,6 +552,8 @@ private enum HelperFailureCode: String {
     case translationTimeout = "translation_timeout"
     case translationOutputLimit = "translation_output_limit"
     case providerVersionUnsupported = "provider_version_unsupported"
+    case providerVersionUnreadable = "provider_version_unreadable"
+    case providerVersionPrerelease = "provider_version_prerelease"
     case providerCleanupFailed = "provider_cleanup_failed"
     case providerProtocolError = "provider_protocol_error"
     case providerFailed = "provider_failed"

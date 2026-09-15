@@ -38,6 +38,14 @@ def request(**changes):
 
 
 class TranslationContracts(unittest.TestCase):
+    def test_version_failure_categories_remain_distinct_and_allowlisted(self):
+        for suffix in ("unsupported", "unreadable", "prerelease"):
+            code = translation.provider_failure("appserver_version_" + suffix)
+            self.assertEqual(code, "provider_version_" + suffix)
+            self.assertIn(code, translation.TRANSLATION_FAILURE_CODES)
+        self.assertEqual(translation.provider_failure("invalid_appserver_message"),
+                         "provider_protocol_error")
+
     def test_exact_payload_types_and_unknown_fields(self):
         translation.validate_translation_request(request())
         for value in (request(extra=True), request(text=" "), request(text=True),

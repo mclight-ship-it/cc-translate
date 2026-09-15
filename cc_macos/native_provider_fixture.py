@@ -147,18 +147,22 @@ def _serve():
                    if mode.startswith("translation_") else None)
     if not Path(cwd).is_relative_to(Path(os.environ["HOME"]).resolve()):
         raise SystemExit(70)
+    version_file = root / "version-output.bin"
+    version_output = (version_file.read_bytes() if version_file.is_file() else
+                      b"codex-cli 0.145.0\n" if mode == "unsupported_version" else
+                      b"codex-cli 0.146.0\n")
     if args == ["--version"]:
         _receipt(root, "version.jsonl", {"pid": os.getpid(), "group": os.getpgrp(),
                                       "session": os.getsid(0), "args": args, "cwd": cwd})
         if mode == "version_timeout":
             time.sleep(45)
             return
-        sys.stdout.write("codex-cli " + ("0.147.0" if mode == "unsupported_version" else "0.146.0") + "\n")
+        sys.stdout.buffer.write(version_output)
         return
     if args and args[0] in ("--version", "debug"):
         # Reuse the existing catalog version/export/roundtrip and override checks.
         os.environ["CC_SYNTHETIC_MODE"] = "normal"
-        catalog_process_fixture._serve()
+        catalog_process_fixture._serve(version_output=version_output)
         return
     config_probe = args[:2] == ["app-server", "--strict-config"]
     prefix = (["app-server", "--strict-config"] if config_probe else

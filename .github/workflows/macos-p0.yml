@@ -51,12 +51,18 @@ jobs:
           tests.test_macos_history
           tests.test_request_snapshot
           tests.test_summary_rules tests.test_macos_translation
-          tests.test_darwin_rpc_contract tests.test_codex_darwin
+          tests.test_darwin_rpc_contract tests.test_codex_darwin tests.test_codex_version
+          tests.test_codex_version_smoke
           tests.test_macos_runtime tests.test_macos_bundled_tests
       - name: Native Swift tests (not GUI or first-use TCC validation)
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
+      - name: Official pinned CLI version-only probes (no account or model)
+        run: >-
+          python3 -B tools/macos/codex_version_smoke.py
+          --app tools/macos/.build/CCTranslateMac-P0.app
+          --report tools/macos/.build/codex-version-smoke.json
       - name: Native provider and repository owner lifecycle with bundled Python (synthetic only)
         run: >-
           tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
@@ -108,6 +114,7 @@ jobs:
             tools/macos/.build/process-tests.json
             tools/macos/.build/core-tests.json
             tools/macos/.build/integration-tests.json
+            tools/macos/.build/codex-version-smoke.json
 
   runtime:
     needs: p0

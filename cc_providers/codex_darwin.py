@@ -12,9 +12,9 @@ from .base import (
     CODEX_PROVIDER, ProviderCapabilities, ProviderRequest, ProviderResult, ProviderStatus,
 )
 from .codex_appserver import (
-    CodexAppServerProtocolError, CodexAppServerTransport, appserver_version_supported,
+    CodexAppServerProtocolError, CodexAppServerTransport,
 )
-from .codex_catalog import CodexModelCatalog, CatalogProbeError
+from .codex_catalog import CodexModelCatalog, CatalogProbeError, parse_codex_version
 from .codex_config import child_environment, CodexConfigError
 from .darwin_process import capture_output, ProcessError
 from .darwin_rpc import RpcProcess, RpcError
@@ -114,11 +114,12 @@ class _NativeTransport(CodexAppServerTransport):
             [self.command, "--version"], self.env, self.work_dir,
             cancel_event=self.operation, timeout=min(5, max(
                 0.001, self.operation.deadline - time.monotonic())), max_bytes=8192)
-        try:
-            version = output.decode("utf-8")
-        except UnicodeError:
-            return False
-        return appserver_version_supported(version)
+        version = parse_codex_version(output)
+        if version is None:
+            raise ProcessError("appserver_version_unreadable")
+        if version.prerelease:
+            raise ProcessError("appserver_version_prerelease")
+        return version.supported
 
     def _start_process(self, request, *, cancel_event=None):
         with self._state_lock:

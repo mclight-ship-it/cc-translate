@@ -11,7 +11,7 @@ import threading
 import time
 
 from .base import ProviderResult
-from .codex_catalog import CatalogProbeError, SUPPORTED_CODEX_VERSIONS
+from .codex_catalog import CatalogProbeError, codex_version_supported
 from .codex_config import (
     CodexConfigError, child_environment, integration_overrides, read_native_config,
 )
@@ -36,7 +36,6 @@ _SAFE_ITEM_TYPES = {
     "plan",
     "contextCompaction",
 }
-_SUPPORTED_CODEX_VERSIONS = SUPPORTED_CODEX_VERSIONS
 _VERSION_CACHE_MAX_ENTRIES = 8
 _version_cache = {}
 _version_cache_lock = threading.Lock()
@@ -931,8 +930,7 @@ def _clear_appserver_version_cache():
 
 
 def appserver_version_supported(version_text):
-    match = re.search(r"\b(\d+\.\d+\.\d+)\b", version_text or "")
-    return bool(match and match.group(1) in _SUPPORTED_CODEX_VERSIONS)
+    return codex_version_supported(version_text)
 
 
 def _validate_hook_preflight(result, work_dir):

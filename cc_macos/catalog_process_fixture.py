@@ -56,7 +56,7 @@ def probe_catalog_process(root, cancel_event=None):
             "cache_verified": True, "reopen_verified": True}
 
 
-def _serve():
+def _serve(*, version_output=b"codex-cli 0.146.0\n"):
     import signal
     import subprocess
     import time
@@ -120,7 +120,7 @@ def _serve():
         time.sleep(45)
         return
     if args == ["--version"]:
-        sys.stdout.write("codex-cli 0.146.0\n")
+        sys.stdout.buffer.write(version_output)
     elif len(args) == 4:
         key, separator, value = args[3].partition("=")
         if key != "model_catalog_json" or not separator:

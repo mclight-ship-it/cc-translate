@@ -26,7 +26,8 @@ MAX_DELTA_BYTES = 4_096
 TRANSLATION_FAILURE_CODES = {
     "invalid_translation", "translation_unavailable", "unsupported_provider",
     "invalid_translation_settings", "translation_timeout", "translation_output_limit",
-    "provider_version_unsupported", "provider_cleanup_failed", "provider_protocol_error",
+    "provider_version_unsupported", "provider_version_unreadable", "provider_version_prerelease",
+    "provider_cleanup_failed", "provider_protocol_error",
     "provider_failed",
 }
 
@@ -112,6 +113,8 @@ def provider_failure(code):
         return "provider_cleanup_failed"
     if code == "appserver_version_unsupported":
         return "provider_version_unsupported"
+    if code in ("appserver_version_unreadable", "appserver_version_prerelease"):
+        return code.replace("appserver_", "provider_", 1)
     if code in ("timeout", "rpc_timeout", "probe_timeout"):
         return "translation_timeout"
     if code == "translation_output_limit":

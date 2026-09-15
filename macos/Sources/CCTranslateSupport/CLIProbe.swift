@@ -103,8 +103,9 @@ public final class CLIVersionRun {
     private var killSent = false
     private let output = Pipe()
     private let errors = Pipe()
-    private let completion: (Result<Void, ProbeError>) -> Void
+    private let completion: (Result<CLIVersionResult, ProbeError>) -> Void
     private var stdoutBytes = 0
+    private var versionOutput = Data()
     private var totalBytes = 0
     private var readEnds = 0
     private var exitCode: Int32?
@@ -114,7 +115,7 @@ public final class CLIVersionRun {
     private var timeout: DispatchWorkItem?
     private var readers: [CLIPipeReader] = []
 
-    public init(completion: @escaping (Result<Void, ProbeError>) -> Void) {
+    public init(completion: @escaping (Result<CLIVersionResult, ProbeError>) -> Void) {
         self.completion = completion
     }
 
@@ -176,7 +177,14 @@ public final class CLIVersionRun {
                 abort(.cliOutputLimit)
                 return
             }
-            if stdout { stdoutBytes += chunk.count }
+            if stdout {
+                stdoutBytes += chunk.count
+                if stdoutBytes <= CodexVersion.maxOutputBytes {
+                    versionOutput.append(chunk)
+                } else {
+                    versionOutput.removeAll()
+                }
+            }
         }, ended: { [self] error in
             if let error = error { abort(error) }
             readEnds += 1
@@ -261,16 +269,18 @@ public final class CLIVersionRun {
         finished = true
         timeout?.cancel()
         readers.removeAll()
-        let result: Result<Void, ProbeError>
+        let result: Result<CLIVersionResult, ProbeError>
         if let failure = failure {
             result = .failure(failure)
         } else if code != 0 {
             result = .failure(.cliFailed)
         } else if stdoutBytes > 0 {
-            result = .success(())
+            let version = stdoutBytes <= CodexVersion.maxOutputBytes ? CodexVersion.parse(versionOutput) : nil
+            result = .success(CLIVersionResult(codexVersion: version))
         } else {
             result = .failure(.cliFailed)
         }
+        versionOutput.removeAll()
         DispatchQueue.main.async { self.completion(result) }
     }
 

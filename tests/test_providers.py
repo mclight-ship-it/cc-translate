@@ -603,7 +603,7 @@ class TestCodexAppServerTransport(_NativeConfigMock):
         self.assertIn('model_verbosity="low"', command)
         self.assertNotIn("auto-fast", command)
 
-    def test_version_gate_accepts_only_pinned_protocol_version(self):
+    def test_version_gate_accepts_minimum_and_newer_protocol_candidates(self):
         self.addCleanup(_clear_appserver_version_cache)
         _clear_appserver_version_cache()
         supported = unittest.mock.Mock(
@@ -620,9 +620,10 @@ class TestCodexAppServerTransport(_NativeConfigMock):
         with unittest.mock.patch(
                 "cc_providers.codex_appserver.subprocess.run",
                 return_value=future):
-            self.assertFalse(_supported_appserver_version("codex.exe"))
+            self.assertTrue(_supported_appserver_version("codex.exe"))
         self.assertTrue(appserver_version_supported("codex-cli 0.146.0"))
-        self.assertFalse(appserver_version_supported("codex-cli 0.147.0"))
+        self.assertTrue(appserver_version_supported("codex-cli 0.147.0"))
+        self.assertFalse(appserver_version_supported("codex-cli 0.145.0"))
         self.assertFalse(appserver_version_supported(""))
 
     def test_version_gate_retries_transient_probe_failures(self):
