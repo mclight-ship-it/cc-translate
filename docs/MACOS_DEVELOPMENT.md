@@ -1,11 +1,15 @@
 # macOS 原生客户端开发指南
 
-当前版本兼容修复：稳定版 Codex `>= 0.146.0` 可进入运行时协议/目录验证，
-不再使用精确版本白名单。显式版本探针将报告安全解析的版本；无法识别、过旧和预发布
-不会混为同一结论。新构建正在验证，以下 `2b116f0` 下载包仍是修复前版本，
-不能通过修改用户 CLI 或配置把旧包变成修复包。用户无需反复降级或登录。
+当前版本兼容修复已验证：源码`3efebbfabb7a6af16772d313ca3a5789a0988b64` /
+[run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)。
+稳定版 Codex `>= 0.146.0` 可进入运行时协议/目录验证，不再使用精确版本白名单。
+显式版本探针显示安全解析的数字版本和最低要求；无法识别、过旧和预发布不会混为同一结论。
+正常Windows完整hook1565通过，同包三系统各188process/473core/13Foundation通过；
+官方0.146.0与0.154.0只读`--version`也在producer用随包监督实际通过，没有登录或模型调用。
+用户需使用[当前修复包](#native-translation-user-check)，不必为符合最低要求的稳定CLI降级。
+旧`2b116f0`包及旧用户实测均不覆盖本修复；所有未来版本的完整兼容性仍不能仅凭版本号承诺。
 
-状态（2026-09-14）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
+前置阶段概述（2026-09-14；最新修复见上）：P0 真实 Mac 自动化及多项 P1 切片已通过，已收到首轮匿名用户正向实机报告；
 catalog 真进程监督及缓存签名/history-kind 纯规则切片已通过 Windows/Mac 自动化；
 显式平台路径/原子 JSON 基础也已通过；同一 Mac15/Xcode 16.4 制品现已在标准免费
 macOS 14.8.9/26.6.2 arm64 CI 完成包内运行、进程、存储、网络与 Foundation 集成验证。
@@ -22,7 +26,7 @@ Darwin native Codex 后端前置修复源码 `6d029d1` /
 该次新增14个进程/核心方法逐名各执行一次；当时尚无翻译helper/Swift API/UI。
 此前独立审查发现idle回收责任、item终态及非法item类型三项生产缺陷；现已实证并修复，
 正常联合300项、完整hook和同包三系统均通过；旧13b6543绿灯不代作这三项修复证据。
-**当前翻译业务链已接通并通过真实合成进程验证**：源码
+**前置翻译业务链已接通并通过真实合成进程验证**：源码
 `2b116f0731803b52d87565d1e8e4602b6794c324` /
 [run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)，
 正常Windows完整hook1542；同包三系统各185进程/458核心/13精确Foundation。
@@ -188,7 +192,8 @@ Mac 随包验证共享契约；本切片不增 helper operation、Swift 消息�
 构造不启动进程；工作目录在显式 home 内，catalog 扫描在该 home 停止，
 不从 ambient 环境补 CLI 配置。原 Windows 无新参数路径仍保持惰性 home、配置和日志语义。
 当前仅 text/translation_summary，无图像能力；不支持的任务明确拒绝且未提交。
-`complete` 也走 native app-server，不冒充 exec 兼容。固定0.146.0协议、原安全override/catalog、
+`complete` 也走 native app-server，不冒充 exec 兼容。稳定CLI最低版本0.146.0，
+新版本仍须通过实际协议与目录检查；原安全override/catalog、
 prompt/thread/turn/item身份严格检查；Mac拒绝全部已启用hook及工具/server request，不沿用Windows例外。
 
 RPC使用同步selector和nonblocking管道，8MiB每operation累计预算包含空行和已消费行；
@@ -635,15 +640,18 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ### 当前 native 翻译开发包：下一轮最小用户操作
 
-这是新增业务链的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
-macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；官方CLI/账号/模型与GUI操作不属于该证据。
+这是版本兼容/诊断修复后的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
+macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；另在producer实际检查官方0.146.0/0.154.0
+二进制的`--version`。官方账号/模型与GUI操作仍不属于该证据。
 
-- 源码：`2b116f0731803b52d87565d1e8e4602b6794c324`；
-  [run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)；
-  [artifact10348832396](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053/artifacts/10348832396)。
-- 内层`CCTranslateMac-P0.zip`：18,491,375 bytes；
-  SHA-256 `d778a34d7d0155120bd5683834b69b76a479813f3d5d8ad144d2b91732bef3f9`。
-  artifact按本次设置保留到2026-09-21；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`3efebbfabb7a6af16772d313ca3a5789a0988b64`；
+  [run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)；
+  [artifact10407398182](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967/artifacts/10407398182)。
+- 内层`CCTranslateMac-P0.zip`：18,503,830 bytes；
+  SHA-256 `d15b1b32841f28f8645dd38c24a2d715f2aa551a536bca8ab593c6eca4f80372`。
+  artifact保留到2026-09-22T16:46:19Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
+  不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
   本包**有显式native调用能力**，不再是只有fixture；但不是完整翻译产品，也未验证真实账户可用。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
@@ -659,15 +667,20 @@ macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；官方CLI/账号/模型�
    `Open input / diagnostics...` → `Bundled core` → `Start bundled helper`，
    先做synthetic fixture、offline及明确点击HTTPS探针；这是诊断，不是翻译。
    完成后`Stop helper`，不把同一连接同时当诊断和native业务。
-3. **只有用户愿意使用其CLI账号时才继续。**先确认兼容的官方Codex CLI（当前协议固定0.146.0）
-   及正常登录；安装方式/依赖按官方所选途径，不一律要求Node/Homebrew，不在聊天交凭据，
-   不由测试包安装或登录。旧用户报告当时没有CLI，不能推断现在已有。
-   `CLI locator`选择Codex并定位/选择可执行文件；`--version`探针只证明命令退出成功，
-   不显示版本全文、也不证明认证。没有合适CLI就停在这里，保留诊断功能。
+3. **只有用户愿意使用其CLI账号时才继续。**使用官方稳定Codex CLI `>= 0.146.0`，
+   无需把现有新版降级到0.146.0。先停止旧连接，再在`CLI locator`选择Codex及实际可执行文件，
+   明确点击`Run selected --version (5s limit)`。新包显示`Detected Codex version`及
+   `Version policy`，满足最低要求时为`meets minimum`；只显示数字版本/固定分类，不显示原始输出。
+   `too old`、`prerelease`、`unrecognized`分别处理，不把无法识别说成版本太旧。
+   若仍只看到旧版“All CLI output discarded”而没有版本字段，先确认打开的是这个新包。
+   探针不证明登录/模型权限或协议兼容。已有合适CLI就保留；安装/登录由用户按官方流程完成，
+   不一律要求Node/Homebrew，不在聊天交凭据，不由测试包自动安装或登录。
 4. `Translate` → `Enable native Codex`。这一步明确创建本App的Application Support状态，
    加载设置但不调用模型。使用一段自行输入的合成短句；明确点击`Translate`会使用该CLI账号，
    可能产生模型费用，仅在用户愿意时执行。观察流式结果/固定错误；`Copy result`只在点击时写剪贴板。
-   错误、超时或unknown不要自动/反复重发；`provider_version_unsupported`不代表已提交模型。
+   错误、超时或unknown不要自动/反复重发。版本过旧为`provider_version_unsupported`，
+   无法识别为`provider_version_unreadable`，预发布为`provider_version_prerelease`；
+   这些真实版本预检失败未提交模型。协议错误若带submitted，不能假称未执行或建议重放。
 5. 如需同轮验证状态：关闭history开关，等保存及读回完成后再发一条合成请求；
    历史不应新增。重新开启、完成一条后在History读取，再退出重开核对。清空需明确确认，
    会请求取消当前翻译；已开始写入不能倒退，但清空操作等待该写入。只使用合成内容。
@@ -678,7 +691,8 @@ macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；官方CLI/账号/模型�
    不把本轮自动化当这些真人结果。
 
 **失败只回报脱敏摘要：**固定source/run、芯片/系统版本、内层hash MATCH/MISMATCH、
-发生步骤、固定错误码、是否显示submitted/unknown及是否能正常退出重开。
+发生步骤、App版本探针显示的数字版本/固定分类、固定错误码、
+是否显示submitted/unknown及是否能正常退出重开。
 当前无自动诊断导出按钮；不要发送CLI原始日志、环境、账号/认证文件、真实配置/历史、
 真实屏幕/剪贴板或个人路径。unknown不等于未计费/未写入，不能据此重放。
 仅安装/登录、Finder/TCC及真实模型需要用户操作；已完成的工程链不以付费签名资格为前置。

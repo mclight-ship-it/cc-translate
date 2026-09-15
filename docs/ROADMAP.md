@@ -2,19 +2,27 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## 当前修复：Codex 版本兼容与诊断
+## 当前检查点：Codex 版本兼容与诊断修复已验证
 
 将精确 `0.146.0` 白名单改为最低稳定版本门槛加实际协议验证，并在原生界面显示
 安全解析的 CLI 版本，区分版本过旧、无法识别和协议不兼容。
-正在验证修复源码；下方 `2b116f0` 是前置包证据，不覆盖此次变化。
-用户账号/真实模型仍由用户控制，不以降低版本或关闭检查代替修复。
+源码 **`3efebbf`** /
+[run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)
+已通过原独立reviewer、正常Windows完整hook1565及同包三系统各188process/473core/13Foundation。
+显式版本探针显示数字版本/最低要求，版本过旧、无法识别、预发布与协议错误分别处理；
+可能已提交的协议失败明确禁止重放，默认启动和原生命周期不变。
+官方0.146.0/0.154.0二进制在producer实际执行`--version`通过，但没有登录或模型调用。
+[当前App及操作步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新，
+完整684库存/74资源/46Core源码路径/6Mach-O与同包不可变证据独立核验。
+下方 `2b116f0` 是前置包证据，不覆盖此次变化。
+用户账号/真实模型与新GUI仍由用户实测，不以降低版本或关闭检查代替修复。
 
 ## macOS 原生移植 — 显式 Codex 翻译链已验证，账号与实机待验
 
 - [开发指南、架构、安全边界与 P0–P6](MACOS_DEVELOPMENT.md)
 - [独立 TODO 与逐项验收证据](MACOS_TODO.md)
 
-当前源码 **`2b116f0`** /
+前置源码 **`2b116f0`** /
 [run34847149053](https://github.com/mclight-ship-it/cc-translate/actions/runs/34847149053)
 已把不可变请求、Darwin native Codex、私有helper/Swift流式API与现有原生显式入口接通。
 输入/选区、复制、设置保存、当前history开关及分页/清空已有开发入口；

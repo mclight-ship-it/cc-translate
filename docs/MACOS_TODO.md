@@ -1,7 +1,7 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-14。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-16。
 **当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
 Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
@@ -34,7 +34,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 <a id="codex-version-checkpoint"></a>
 
-## 当前实施：Codex 最低版本策略与可见版本诊断
+## 当前检查点：Codex 最低版本与诊断修复已通过三系统
 
 用户在前置开发包遇到 `provider_version_unsupported`，更换 CLI/路径后仍报告失败。
 尚未收到该次实际版本输出，不能认定用户安装错误，也不能把下面的修复当作其真机已通过。
@@ -46,9 +46,48 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   不暴露原始输出或私人路径，不在启动时运行 CLI。
 - 新版本仍必须通过实际协议与目录往返检查；不增加 exec 回退、自动重试或模型调用。
   版本失败后的新显式请求可以重新检查，不把失败变为永久状态或自动重放。
-- 本地针对性回归已通过；新的同包门槛为 188 process / 473 core，旧覆盖不减少。
-  同时安排固定官方 0.146.0/0.154.0 二进制的 CI `--version` 检查，只用临时 home，
-  这不是登录或真实模型验证。新源码/Swift/三系统/制品证据完成后在此补充，不借用旧绿色。
+- 版本输出过旧/不可识别时不运行模型；修正版本后须新显式请求才执行，不自动重放，
+  也不把可恢复的版本错误永久锁死。协议错误若可能已经提交，界面明确提示结果未知、不得重放。
+
+**源码 `3efebbfabb7a6af16772d313ca3a5789a0988b64` /
+[run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)**：
+同一原 reviewer 的30文件增量审查可接受，无必须修复项；实际watch exit0，
+API确认attempt1、3jobs/34steps全部success。没有重跑不变源码或绕hook。
+Windows最终联合363/29.460s通过；唯一正常privacy/compile/full hook
+**1565/78.897s OK**。原Tk teardown stderr、拒绝隐式HTTPS的负例输出仍保留，
+旧WinError5来源未知，不把本次通过称为解决了该历史风险。
+
+| 实际系统 | 包内process | 包内core | 后置Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 producer | 188 / 347.467s | 473 / 3.844s | 13 / 54.297s |
+| 14.8.9 / Xcode16.2 harness | 188 / 321.428s | 473 / 2.969s | 13 / 48.909s |
+| 26.6.2 / Xcode26.6 harness | 188 / 329.863s | 473 / 3.201s | 13 / 52.956s |
+
+各包内suite零failure/error/skip，全部新/重命名方法及13个Foundation逐名核对各passed一次。
+初次普通Swift **113=100pass+13无App可选skip**，后置13真实执行另计；
+producer portable668/10.093s。新增真实进程覆盖0.147.0/0.154.0/1.0.0合成CLI的
+版本/目录/模型响应/历史全链，以及过旧、非法编码、重复版本、预发布等明确未提交失败。
+**官方0.146.0与当前stable0.154.0原生二进制也各实际执行了`--version`**：
+固定GitHub官方SHA下载，使用本App隔离Python与原自有组监督、临时home和最小环境，
+两者识别正确且满足最低版本；原始输出不入报告，二进制不打进App、执行后已清理。
+这仅验证真实版本输出，不证明官方账号、模型或所有新版协议均兼容。
+
+完整App及报告：
+- [artifact10407398182](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967/artifacts/10407398182)，
+  有效至2026-09-22T16:46:19Z；内层`CCTranslateMac-P0.zip` **18,503,830 bytes**。
+- 内层SHA-256：`d15b1b32841f28f8645dd38c24a2d715f2aa551a536bca8ab593c6eca4f80372`；
+  tree：`9ac2e5bd1868375a2cd268d36734c9bfe77b859fe24877718818ab21cb3fdf58`。
+- 14/26小报告分别为10408281891/10407929214；同一15构建App，不重建或重签产品。
+- 独立ZIP逐文件审计：684库存/74资源hash/46Core源码路径（45唯一Git路径）/
+  6实际arm64 Mach-O及load commands均对应指定source和producer报告。
+  包内19个runtime许可证文件（manifest要求14个）已纳入资源字节校验；
+  606个vendor runtime文件/链接与前置已验收包一致，原605 full-build覆盖声明保留，两个口径分开。
+- HTTPS证书/SQLite/storage/取消/EOF及同包不可变继续通过。完整ZIP和两个临时审计脚本已删除，
+  小JSON、官方version-only报告、逐名发现结果、完整日志及source/docs分离检查点保留。
+
+下一步使用[当前新包操作说明](MACOS_DEVELOPMENT.md#native-translation-user-check)。
+无需为新版稳定CLI降级；先用App的显式版本探针确认同一选择的安全版本信息，再由用户主动测试翻译。
+原2b116包及其绿色不覆盖本修复，旧实机报告不迁移到新包。
 
 <a id="translation-ipc-checkpoint"></a>
 
