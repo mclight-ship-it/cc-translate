@@ -4,16 +4,13 @@ import CCTranslateSupport
 @MainActor
 struct ProbeView: View {
     @ObservedObject var model: ProbeModel
-    @State private var confirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("CC Translate - native development build").font(.title2)
-            Text("Native Codex is opt-in. Diagnostic fixtures are not translation.")
-                .font(.headline).foregroundStyle(.orange)
+            Text("Diagnostics").font(.title2)
+            Text("Optional checks. These do not need to pass before you can translate.")
+                .font(.callout).foregroundStyle(.secondary)
             TabView {
-                translation.tabItem { Text("Translate") }
-                history.tabItem { Text("History") }
                 core.tabItem { Text("Bundled core") }
                 native.tabItem { Text("Permissions / AX") }
                 ScreenView(probe: model.screen).tabItem { Text("Screen / local OCR") }
@@ -22,79 +19,6 @@ struct ProbeView: View {
         }
         .padding(16)
         .frame(minWidth: 700, minHeight: 560)
-    }
-
-    private var translation: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Choose Codex in CLI locator, then enable this connection. This creates private application state; Translate uses your selected CLI and account. No automatic installation, login, or request retry.")
-                .font(.callout)
-            HStack {
-                Button("Enable native Codex") { model.startNativeTranslation() }.disabled(model.connected)
-                Button("Stop connection") { model.stopHelper() }.disabled(!model.connected)
-            }
-            Text("Text / selected text (max 8192 UTF-8 bytes)")
-            TextEditor(text: $model.input).font(.body).frame(height: 100).border(.secondary)
-            HStack {
-                Button("Translate") { model.translate() }
-                    .disabled(!model.nativeTranslation || !model.ready || !model.settingsReady || model.settingsBusy)
-                Button("Cancel latest") { model.cancel() }.disabled(!model.active || !model.ready)
-                Button("Copy result") { model.copyResult() }.disabled(!model.nativeTranslation || model.output.isEmpty)
-            }
-            HStack {
-                Picker("Direction", selection: $model.direction) {
-                    Text("Auto").tag("auto")
-                    Text("English").tag("to_en")
-                    Text("Chinese").tag("to_zh")
-                    Text("Japanese").tag("to_ja")
-                    Text("Korean").tag("to_ko")
-                    Text("French").tag("to_fr")
-                    Text("German").tag("to_de")
-                    Text("Spanish").tag("to_es")
-                }
-                TextField("Native model/profile", text: $model.modelProfile)
-                Button("Save settings") { model.saveSettings() }
-            }.disabled(!model.settingsReady || model.settingsBusy)
-            Toggle("Keep history and use matching cached results", isOn: Binding(
-                get: { model.historyEnabled }, set: { model.saveSettings(history: $0) }
-            )).disabled(!model.settingsReady || model.settingsBusy)
-            Text("Turning history off also requests cancellation of the active translation. It is effective when saved; an already-started local write cannot be undone.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text(model.status).font(.callout).fixedSize(horizontal: false, vertical: true)
-            ScrollView {
-                Text(!model.nativeTranslation ? "Native translation is not enabled." :
-                        (model.output.isEmpty ? "No translation result." : model.output))
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }.padding()
-    }
-
-    private var history: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("History is accessed only through the explicitly enabled native connection.")
-            HStack {
-                Button("Load / refresh first page") { model.loadHistory() }
-                Button("Next page") { model.loadHistory(next: true) }.disabled(!model.hasNextHistoryPage)
-                Button("Clear history...") { confirmingClear = true }
-            }.disabled(!model.nativeTranslation || !model.ready || model.historyBusy)
-            Text(model.historyStatus).font(.callout)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(model.historyPage) { row in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(row.input).font(.headline).textSelection(.enabled)
-                            Text(row.output).textSelection(.enabled)
-                            Button("Copy result") { model.copyText(row.output) }
-                            Divider()
-                        }
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }.padding()
-        .confirmationDialog("Clear this application's saved history?", isPresented: $confirmingClear) {
-            Button("Clear history", role: .destructive) { model.clearHistory() }
-        } message: {
-            Text("This cannot be undone. Future translations can still be recorded while history is enabled.")
-        }
     }
 
     private var core: some View {
@@ -141,9 +65,6 @@ struct ProbeView: View {
                 Button("Stop monitor") { model.stopMonitor() }
             }
             Text(model.monitorStatus).fixedSize(horizontal: false, vertical: true)
-            Toggle("Translate passive AX selections with the enabled native connection",
-                   isOn: $model.translatePassiveSelections)
-                .disabled(!model.nativeTranslation || !model.ready || !model.settingsReady)
             Text("Secure Input stops monitoring. Permission changes may require a restart. No automatic permission requests.")
                 .foregroundStyle(.secondary)
             Spacer()

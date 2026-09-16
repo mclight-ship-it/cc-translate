@@ -1,0 +1,34 @@
+import Foundation
+import CCTranslateSupport
+
+protocol AppHelperClient: AnyObject {
+    func start(runtime: BundleRuntime)
+    func startConfiguration(runtime: BundleRuntime, home: URL)
+    func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL, environment: [String: String])
+    func send(_ message: ClientMessage, timeout: TimeInterval)
+    func translate(text: String, appLanguage: String, origin: String, useCache: Bool,
+                   recordHistory: Bool, id: String, timeout: TimeInterval) -> String
+    func loadConfiguration(id: String, timeout: TimeInterval) -> String
+    func saveConfiguration(_ config: [String: JSONValue], id: String, timeout: TimeInterval) -> String
+    func loadHistory(pageSize: Int, cursor: JSONValue, id: String, timeout: TimeInterval) -> String
+    func clearHistory(id: String, timeout: TimeInterval) -> String
+    func stop()
+}
+
+extension HelperConnection: AppHelperClient {}
+
+extension AppHelperClient {
+    func send(_ message: ClientMessage) { send(message, timeout: 25) }
+    @discardableResult
+    func loadConfiguration(id: String) -> String { loadConfiguration(id: id, timeout: 20) }
+    @discardableResult
+    func saveConfiguration(_ config: [String: JSONValue], id: String) -> String {
+        saveConfiguration(config, id: id, timeout: 20)
+    }
+    @discardableResult
+    func loadHistory(pageSize: Int, cursor: JSONValue, id: String) -> String {
+        loadHistory(pageSize: pageSize, cursor: cursor, id: id, timeout: 20)
+    }
+    @discardableResult
+    func clearHistory(id: String) -> String { clearHistory(id: id, timeout: 20) }
+}
