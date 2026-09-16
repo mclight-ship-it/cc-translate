@@ -456,6 +456,63 @@ final class ProtocolTests: XCTestCase {
         }
     }
 
+    func testHistorySearchRequestsAcceptOptionalFiltersWithExistingTextBudget() throws {
+        let base = historyLoad("search").payload
+        let validFilters: [[String: JSONValue]] = [
+            [:], ["query": .string("")], ["kind": .string("all")],
+            ["query": .string(" STRASSE \u{4e16}\u{754c} "), "kind": .string("dict")],
+            ["query": .string(String(repeating: "\u{1f600}", count: 6000)), "kind": .string("ocr")],
+            ["kind": .string("code")], ["kind": .string("text")]
+        ]
+        for fields in validFilters {
+            var state = try configurationConnected()
+            let request = ClientMessage(id: "search", type: "request",
+                                        payload: base.merging(fields) { _, new in new })
+            let encoded = try request.encoded()
+            XCTAssertEqual(try JSONValue.parse(Data(encoded.dropLast())).object?["payload"], .object(request.payload))
+            try startOperation(request, state: &state)
+            _ = try state.receive(event("search", 2, "completed", historyPage()))
+            XCTAssertFalse(state.hasPendingHistory)
+        }
+        let invalidFilters: [[String: JSONValue]] = [
+            ["query": .null], ["query": .bool(false)], ["query": .integer(1)], ["query": .array([])],
+            ["query": .string(String(repeating: "\u{1f600}", count: 6001))],
+            ["query": .string(String(repeating: "a", count: 24_001))],
+            ["kind": .null], ["kind": .bool(true)], ["kind": .array([])],
+            ["kind": .string("mixed")], ["kind": .string("DICT")], ["query_limit": .integer(1)]
+        ]
+        for fields in invalidFilters {
+            var state = try configurationConnected()
+            let request = ClientMessage(id: "invalid", type: "request",
+                                        payload: base.merging(fields) { _, new in new })
+            XCTAssertThrowsError(try request.encoded())
+            XCTAssertThrowsError(try state.register(request))
+            XCTAssertFalse(state.hasPendingHistory)
+        }
+    }
+
+    func testHistoryFilteredPagingKeepsRevisionChecksAndDefiniteCursorFailure() throws {
+        var state = try configurationConnected()
+        let filters: [String: JSONValue] = ["query": .string("needle"), "kind": .string("dict")]
+        let first = ClientMessage(id: "filtered", type: "request",
+                                  payload: historyLoad("filtered").payload.merging(filters) { _, new in new })
+        try startOperation(first, state: &state)
+        _ = try state.receive(event("filtered", 2, "completed",
+                                   historyPage([.object(["input": .string("needle")])],
+                                               total: 2, next: historyCursor(1))))
+        let next = ClientMessage(id: "next", type: "request",
+                                 payload: historyLoad("next", cursor: historyCursor(1)).payload
+                                    .merging(filters) { _, new in new })
+        try startOperation(next, state: &state)
+        var changedRevision = historyPage([.object([:])], total: 2)
+        changedRevision["revision"] = .string(String(repeating: "b", count: 64))
+        XCTAssertThrowsError(try state.receive(event("next", 2, "completed", changedRevision)))
+        let failed = try state.receive(event("next", 2, "failed", ["code": .string("history_cursor_expired")]))
+        XCTAssertEqual(failed.safeFailureCode, "history_cursor_expired")
+        XCTAssertFalse(state.hasPendingHistory)
+        XCTAssertNil(state.pendingOutcomeUnknown)
+    }
+
     func testHistoryAddAndClearValidateFieldsUTF8AndFullFrameBudget() throws {
         var state = try configurationConnected()
         let valid = historyAdd("invalid").payload

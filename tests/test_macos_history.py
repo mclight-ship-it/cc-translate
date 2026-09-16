@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import cc_history
 from cc_macos import configuration, history
-from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, decode_frame
+from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, decode_frame, encode_frame
 from cc_macos.server import Server
 
 if __package__:
@@ -27,6 +27,33 @@ def addition(text="synthetic", **changes):
 
 
 class HistoryRequestTests(unittest.TestCase):
+    def test_load_optional_filters_keep_required_fields_and_strict_value_types(self):
+        original = {"operation": "history_load", "page_size": 1, "cursor": None}
+        for filters in ({}, {"query": ""}, {"kind": "all"}, *(
+                {"query": " \u4e2d ", "kind": kind} for kind in ("all", "text", "dict", "code", "ocr"))):
+            history.validate_history_request(original | filters)
+        for filters in ({"query": None}, {"query": 1}, {"query": False}, {"query": []}, {"query": {}},
+                        {"kind": None}, {"kind": ""}, {"kind": "ALL"}, {"kind": True}, {"kind": []},
+                        {"query": "", "path": "private"}):
+            with self.subTest(filters=filters), self.assertRaisesRegex(ProtocolError, "^invalid_payload$"):
+                history.validate_history_request(original | filters)
+        with self.assertRaisesRegex(ProtocolError, "^invalid_payload$"):
+            history.validate_history_request({"operation": "history_load", "query": "", "kind": "all"})
+
+    def test_query_uses_existing_full_history_utf8_budget_before_normalization(self):
+        original = {"operation": "history_load", "page_size": 1, "cursor": None}
+        for query in ("x" * 24000, "\u4e2d" * 8000, "\U0001f642" * 6000, " " * 24000):
+            payload = original | {"query": query}
+            history.validate_history_request(payload)
+            self.assertEqual(decode_frame(encode_frame(message("query", "request", **payload)))["payload"], payload)
+        for query in ("x" * 24001, "\u4e2d" * 8001, "\U0001f642" * 6001, " " * 24001, "\ud800"):
+            with self.subTest(length=len(query)), self.assertRaisesRegex(ProtocolError, "^invalid_payload$"):
+                history.validate_history_request(original | {"query": query})
+        payload = original | {"query": "\0" * 24000}
+        history.validate_history_request(payload)
+        with self.assertRaisesRegex(ProtocolError, "^frame_too_large$"):
+            encode_frame(message("escaped", "request", **payload))
+
     def test_only_exact_operations_fields_and_kinds_are_allowed(self):
         for kind in ("text", "dict", "code", "ocr"):
             history.validate_history_request(addition(kind=kind))
@@ -102,8 +129,160 @@ class HistoryServiceTests(_ConfigurationDirectory):
     def call(self, payload, id_="request"):
         return self.session.perform_history(payload, id_, 2)
 
-    def page(self, cursor=None, page_size=100, id_="request"):
-        return self.call({"operation": "history_load", "page_size": page_size, "cursor": cursor}, id_)
+    def page(self, cursor=None, page_size=100, id_="request", **filters):
+        return self.call({"operation": "history_load", "page_size": page_size, "cursor": cursor, **filters}, id_)
+
+    def test_empty_all_filters_preserve_original_shape_revision_order_and_cursor(self):
+        entries = [{"input": str(n), "future": [n], "kind": "legacy"} for n in range(3)]
+        before = json.dumps(entries).encode()
+        self.history_path.write_bytes(before)
+        first = self.page(page_size=1)
+        for filters in ({}, {"query": ""}, {"kind": "all"}, {"query": " \n\t\u3000", "kind": "all"}):
+            self.assertEqual(self.page(page_size=1, **filters), first)
+            second = self.page(first["next_cursor"], page_size=1, **filters)
+            self.assertEqual(second["entries"], entries[1:2])
+            self.assertEqual(second["revision"], first["revision"])
+        self.assertEqual(set(first), {"entries", "revision", "total", "next_cursor"})
+        self.assertEqual(set(first["next_cursor"]), {"revision", "offset"})
+        self.assertEqual(self.history_path.read_bytes(), before)
+
+    def test_search_filters_entire_snapshot_including_unloaded_input_output_and_timestamp(self):
+        entries = [{"input": "row " + str(n), "output": "other", "ts": "2026-09-17"} for n in range(125)]
+        for n, field in ((120, "input"), (121, "output"), (122, "ts")):
+            entries[n][field] = "prefix Stra\u00dfe \u4e16\u754c suffix"
+        entries[123]["sig"] = "strasse \u4e16\u754c"
+        entries[124]["future"] = "strasse \u4e16\u754c"
+        before = json.dumps(entries, ensure_ascii=False).encode()
+        self.history_path.write_bytes(before)
+        self.assertEqual(self.page()["entries"], entries[:100])
+        with patch.object(history, "filter_history_entries", wraps=cc_history.filter_history_entries) as shared:
+            first = self.page(page_size=2, query=" \tSTRASSE\u3000\u4e16\u754c\n")
+        shared.assert_called_once()
+        self.assertEqual(len(shared.call_args.args[0]), 125)
+        self.assertEqual(first["entries"], entries[120:122])
+        self.assertEqual(first["total"], 3)
+        last = self.page(first["next_cursor"], query="strasse \u4e16\u754c", kind="all")
+        self.assertEqual(last["entries"], entries[122:123])
+        self.assertEqual(last["total"], 3)
+        self.assertIsNone(last["next_cursor"])
+        self.assertEqual(self.history_path.read_bytes(), before)
+
+    def test_kind_filters_reuse_explicit_and_legacy_precedence_and_query_intersection(self):
+        entries = [{"input": "needle0", "kind": "text", "is_code": True, "is_dict": True},
+                   {"input": "needle1", "is_code": True, "is_dict": True},
+                   {"input": "needle2", "kind": "legacy", "is_dict": True},
+                   {"input": "needle3", "kind": "ocr", "is_dict": True},
+                   {"input": "other", "kind": "dict"}, {"input": "needle5"}]
+        self.history_path.write_text(json.dumps(entries), encoding="utf-8")
+        for kind, indices in (("text", [0, 5]), ("code", [1]), ("dict", [2]), ("ocr", [3]),
+                               ("all", [0, 1, 2, 3, 5])):
+            page = self.page(query="NEEDLE", kind=kind)
+            self.assertEqual(page["entries"], [entries[n] for n in indices])
+            self.assertEqual(page["total"], len(indices))
+
+    def test_filtered_cursor_binds_canonical_conditions_not_page_size_or_matching_subset_alone(self):
+        entries = [{"input": "Alpha beta other", "kind": "dict"} for _ in range(3)] + [{"input": "excluded"}]
+        self.history_path.write_text(json.dumps(entries), encoding="utf-8")
+        first = self.page(page_size=1, query=" \tALPHA\u3000beta\n")
+        cursor = first["next_cursor"]
+        last = self.page(cursor, page_size=2, query="alpha beta", kind="all")
+        self.assertEqual(last["entries"], entries[1:3])
+        self.assertEqual(last["revision"], first["revision"])
+        self.assertIsNone(last["next_cursor"])
+        for filters in ({}, {"query": "other"}, {"query": "alpha beta", "kind": "dict"}):
+            with self.subTest(filters=filters), self.assertRaisesRegex(
+                    configuration.ConfigurationError, "^history_cursor_expired$"):
+                self.page(cursor, **filters)
+        plain = self.page(page_size=1)["next_cursor"]
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^history_cursor_expired$"):
+            self.page(plain, query="alpha beta")
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_history_cursor$"):
+            self.page(cursor | {"offset": 3}, query="alpha beta")
+
+    def test_filtered_cursor_expires_when_excluded_data_or_revision_changes(self):
+        self.history_path.write_text(json.dumps([{"input": "match1"}, {"input": "match2"}, {"input": "hidden"}]),
+                                     encoding="utf-8")
+        for change in ("add", "external_hidden", "external_whitespace", "reopen", "clear"):
+            cursor = self.page(page_size=1, query="match")["next_cursor"]
+            if change == "add":
+                self.call(addition("excluded"))
+            elif change == "external_hidden":
+                entries = json.loads(self.history_path.read_bytes())
+                entries[-1]["output"] = "changed hidden output"
+                self.history_path.write_text(json.dumps(entries), encoding="utf-8")
+            elif change == "external_whitespace":
+                self.history_path.write_bytes(self.history_path.read_bytes() + b" ")
+            elif change == "reopen":
+                self.session.close()
+                self.session = configuration.ConfigurationSession(self.home, self.identity)
+                self.addCleanup(self.session.close)
+                self.session.open()
+            else:
+                self.call({"operation": "history_clear"})
+            with self.subTest(change=change), self.assertRaisesRegex(
+                    configuration.ConfigurationError, "^history_cursor_expired$"):
+                self.page(cursor, query="match")
+
+    def test_filtered_unicode_pages_keep_byte_budget_all_results_and_filtered_totals(self):
+        entries = [{"input": "match" + str(n), "output": "\u4e2d" * 6000} for n in range(6)]
+        stored = [entry for match in entries for entry in (match, {"input": "excluded", "kind": "dict"})]
+        before = json.dumps(stored, ensure_ascii=False).encode()
+        self.history_path.write_bytes(before)
+        cursor, found = None, []
+        for _ in range(6):
+            page = self.page(cursor, id_="r" * 64, query="match", kind="text")
+            self.assertLessEqual(len(history.page_frame(page, "r" * 64, 2)), MAX_FRAME_BYTES)
+            self.assertEqual(page["total"], 6)
+            self.assertTrue(page["entries"])
+            found.extend(page["entries"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        self.assertIsNone(cursor)
+        self.assertEqual(found, entries)
+        self.assertEqual(self.history_path.read_bytes(), before)
+
+    def test_filtered_tail_cursor_removal_preserves_exact_frame_boundary(self):
+        entries = [{"input": ""}, {}]
+        overhead = len(history.page_frame(history.page_payload(entries, "0" * 64, 2, None), "r" * 64, 2))
+        entries[0]["input"] = "x" * (MAX_FRAME_BYTES - overhead)
+        self.history_path.write_text(json.dumps([{"kind": "dict"}, *entries]), encoding="utf-8")
+        page = self.page(page_size=2, id_="r" * 64, kind="text")
+        self.assertEqual(page["entries"], entries)
+        self.assertEqual(page["total"], 2)
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(len(history.page_frame(page, "r" * 64, 2)), MAX_FRAME_BYTES)
+        entries[0]["input"] += "x"
+        before = json.dumps(entries).encode()
+        self.history_path.write_bytes(before)
+        with self.assertRaisesRegex(configuration.ConfigurationError, "^history_entry_too_large$"):
+            self.page(page_size=2, id_="r" * 64, kind="text")
+        self.assertEqual(self.history_path.read_bytes(), before)
+
+    def test_filtered_nonmatches_do_not_hide_bad_history_permissions_or_file_limits(self):
+        for raw in (b"{", b'[{"input":"other","is_dict":1}]', b'[{"input":"other","future":NaN}]'):
+            self.history_path.write_bytes(raw)
+            with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_history$"):
+                self.page(query="missing", kind="ocr")
+            self.assertEqual(self.history_path.read_bytes(), raw)
+        self.history_path.write_bytes(b'[{"input":"other"}]')
+        before = self.history_path.read_bytes()
+        with patch("cc_macos.history.open", side_effect=PermissionError("PRIVATE"), create=True):
+            with self.assertRaisesRegex(configuration.ConfigurationError, "^history_io_failed$"):
+                self.page(query="missing")
+        with patch.object(history, "MAX_HISTORY_FILE_BYTES", len(before) - 1):
+            with self.assertRaisesRegex(configuration.ConfigurationError, "^history_too_large$"):
+                self.page(query="missing")
+        self.assertEqual(self.history_path.read_bytes(), before)
+        self.assertEqual(self.page(query="missing")["entries"], [])
+
+    def test_full_length_query_and_history_disabled_need_no_new_configuration_prerequisite(self):
+        text = "\u4e2d" * 8000
+        self.call(addition(text))
+        self.session.perform({"operation": "config_save", "config": {"history_enabled": False}})
+        page = self.page(query=text)
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["entries"][0]["input"], text)
 
     def test_empty_history_is_read_without_creating_a_file_or_config(self):
         page = self.page()
@@ -311,6 +490,44 @@ class BusinessOwnershipTests(_ConfigurationDirectory):
 
 
 class HistorySchedulingTests(_ConfigurationDirectory):
+    def test_filtered_load_observes_committed_add_in_existing_history_fifo(self):
+        output = io.BytesIO()
+        server = Server(io.BytesIO(), output, io.StringIO(), configuration=self.session)
+        server._handle(message("hello", "hello"))
+        entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+        actual_write, actual_send = history.atomic_write_json, server._send
+
+        def blocked(path, entries):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            actual_write(path, entries)
+
+        def observed(request, event, payload):
+            actual_send(request, event, payload)
+            if request.id == "search" and event == "completed":
+                completed.set()
+
+        with patch.object(history, "atomic_write_json", side_effect=blocked), \
+                patch.object(server, "_send", side_effect=observed):
+            try:
+                server._handle(message("add", "request", **addition("needle")))
+                self.assertTrue(entered.wait(3))
+                server._handle(message("search", "request", operation="history_load",
+                                       page_size=1, cursor=None, query="NEEDLE", kind="text"))
+                self.assertFalse(completed.is_set())
+            finally:
+                release.set()
+                finished = completed.wait(3)
+                server._stop()
+                server._join_workers()
+        events = [decode_frame(line + b"\n") for line in output.getvalue().splitlines()]
+        self.assertTrue(finished)
+        result = next(e["payload"] for e in events if e["id"] == "search" and e["type"] == "completed")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["entries"][0]["input"], "needle")
+        self.assertLess(next(i for i, e in enumerate(events) if e["id"] == "add" and e["type"] == "completed"),
+                        next(i for i, e in enumerate(events) if e["id"] == "search" and e["type"] == "started"))
+
     def test_started_add_then_clear_are_fifo_and_queued_cancel_never_writes(self):
         output = io.BytesIO()
         server = Server(io.BytesIO(), output, io.StringIO(), configuration=self.session)

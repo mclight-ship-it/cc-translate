@@ -5,7 +5,7 @@ import json
 import os
 import re
 
-from cc_history import HistoryRepository, validate_history_entries
+from cc_history import HistoryRepository, filter_history_entries, normalize_history_query, validate_history_entries
 from cc_storage import atomic_write_json
 from .history_owner import HistoryForkError, HistoryInUseError, MacHistoryOwner
 from .protocol import ProtocolError, VERSION, decode_json_document, encode_frame, validate_json_value
@@ -57,8 +57,17 @@ def validate_writable_entry(entry):
 def validate_history_request(payload):
     operation = payload.get("operation")
     if operation == "history_load":
-        if set(payload) != {"operation", "page_size", "cursor"}:
+        required = {"operation", "page_size", "cursor"}
+        if not required <= set(payload) or set(payload) - required - {"query", "kind"}:
             raise ProtocolError("invalid_payload")
+        query = payload.get("query", "")
+        if not isinstance(query, str) or payload.get("kind", "all") not in ("all", "text", "dict", "code", "ocr"):
+            raise ProtocolError("invalid_payload")
+        try:
+            if len(query.encode("utf-8")) > MAX_HISTORY_TEXT_BYTES:
+                raise ProtocolError("invalid_payload")
+        except UnicodeError as error:
+            raise ProtocolError("invalid_payload") from error
         size = payload["page_size"]
         if type(size) is not int or not 1 <= size <= MAX_PAGE_SIZE:
             raise ProtocolError("invalid_payload")
@@ -151,13 +160,20 @@ class HistoryService:
         except (OSError, ValueError, TypeError) as error:
             raise HistoryError("history_unavailable") from error
 
-    def _revision(self):
-        return hashlib.sha256(self._epoch + self._generation.to_bytes(8, "big")
-                              + self._owner.content_digest).hexdigest()
+    def _revision(self, query="", kind="all"):
+        snapshot = self._epoch + self._generation.to_bytes(8, "big") + self._owner.content_digest
+        if query or kind != "all":
+            # Bind the opaque view revision without enlarging the existing cursor.
+            filters = json.dumps([query, kind], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            snapshot += b"\0history-filter-v1\0" + filters
+        return hashlib.sha256(snapshot).hexdigest()
 
     def _page(self, payload, request_id, sequence):
         entries = self._owner.load()
-        revision = self._revision()
+        query = normalize_history_query(payload.get("query", ""))
+        kind = payload.get("kind", "all")
+        revision = self._revision(query, kind)
+        entries = filter_history_entries(entries, query, kind)
         cursor = payload["cursor"]
         if cursor is not None and cursor["revision"] != revision:
             raise HistoryError("history_cursor_expired")

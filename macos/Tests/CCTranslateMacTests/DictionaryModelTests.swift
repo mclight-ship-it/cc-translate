@@ -82,10 +82,8 @@ final class DictionaryModelTests: XCTestCase {
         model.loadHistory()
         var entry = try XCTUnwrap(ProductTestHarness.historyEntry(input: "example", output: Self.senses, kind: "dict").object)
         entry["sig"] = .string("local-dictionary|fixture|native-plain-v1:en_US")
-        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id), payload: [
-            "entries": .array([.object(entry)]),
-            "revision": .string("local"), "next_cursor": .null
-        ])
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [.object(entry)], total: 1))
         XCTAssertEqual(model.historyPage.first?.output, Self.senses)
         XCTAssertEqual(model.historyPage.first?.kind, "dict")
         model.reuseHistory(try XCTUnwrap(model.historyPage.first))

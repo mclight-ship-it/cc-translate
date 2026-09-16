@@ -7,6 +7,10 @@ enum TranslationPhase: Equatable {
     case idle, preparing, translating, completed, cancelled, failed
 }
 
+enum HistoryPhase: Equatable {
+    case idle, waiting, loading, loaded, clearing, failed
+}
+
 @MainActor
 final class ProbeModel: ObservableObject {
     private enum ConnectionMode { case diagnostic, configuration, translation }
@@ -52,8 +56,12 @@ final class ProbeModel: ObservableObject {
     @Published var translatePassiveSelections = false
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
-    @Published var historySearch = ""
-    @Published var historyFilter = "all"
+    @Published var historySearch = "" {
+        didSet { if historySearch != oldValue { queueHistorySearch(debounce: true) } }
+    }
+    @Published var historyFilter = "all" {
+        didSet { if historyFilter != oldValue { queueHistorySearch(debounce: false) } }
+    }
     @Published private(set) var productPhase: TranslationPhase = .idle
     @Published private(set) var productMessage = ""
     @Published private(set) var needsCLI = false
@@ -66,6 +74,8 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var historyPage: [HistoryRow] = []
     @Published private(set) var historyStatus = "History has not been read."
     @Published private(set) var historyBusy = false
+    @Published private(set) var historyPhase: HistoryPhase = .idle
+    @Published private(set) var historyTotal: Int? = nil
     @Published private(set) var hasNextHistoryPage = false
     @Published private(set) var permissions = "Not checked."
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
@@ -111,6 +121,30 @@ final class ProbeModel: ObservableObject {
         var kind = "text"
         var timestamp = ""
         var signature = ""
+        var isLocalDictionary: Bool { signature.hasPrefix("local-dictionary|") }
+
+        @MainActor
+        static func decode(_ value: JSONValue, id: String) throws -> HistoryRow {
+            try HistoryDocument.validateEntry(value)
+            guard let entry = value.object else { throw ProbeError.invalidPayload }
+            let rawKind = entry["kind"]?.string ?? ""
+            let kind = ProbeModel.historyKinds.contains(rawKind) ? rawKind :
+                entry["is_code"] == .bool(true) ? "code" : entry["is_dict"] == .bool(true) ? "dict" : "text"
+            return HistoryRow(id: id, input: entry["input"]?.string ?? "", output: entry["output"]?.string ?? "",
+                              kind: kind, timestamp: entry["ts"]?.string ?? "", signature: entry["sig"]?.string ?? "")
+        }
+    }
+    private struct HistoryCriteria: Equatable {
+        let query: String
+        let kind: String
+    }
+    private struct HistoryRead {
+        let id: String
+        let generation: UUID
+        let criteria: HistoryCriteria
+        let cursor: JSONValue
+        let offset: Int
+        let appending: Bool
     }
     private struct Draft {
         let text: String
@@ -144,7 +178,12 @@ final class ProbeModel: ObservableObject {
     private var modelEdited = false
     private var openAfterStop = false
     private var historyRequested = false
-    private var historyAppending = false
+    private var historySearchActive = false
+    private var historyGeneration = UUID()
+    private var historyDebounce: DispatchWorkItem?
+    private var queuedHistory: HistoryCriteria?
+    private var loadedHistory: HistoryCriteria?
+    private var historyRead: HistoryRead?
     private var hideCurrentOutput = false
     private var bufferedDelta = ""
     private var renderUpdate: DispatchWorkItem?
@@ -159,8 +198,8 @@ final class ProbeModel: ObservableObject {
     private var savedConfiguration: [String: JSONValue]?
     private var configLoadID: String?
     private var configSaveID: String?
-    private var historyID: String?
     private var historyClearID: String?
+    private var historyClearGeneration: UUID?
     private var historyCursor: JSONValue = .null
     private var connection: AppHelperClient?
     private var connectionMode: ConnectionMode = .diagnostic
@@ -200,13 +239,8 @@ final class ProbeModel: ObservableObject {
     var preferredColorScheme: ColorScheme? {
         appearance == "dark" ? .dark : appearance == "light" ? .light : nil
     }
-    var filteredHistory: [HistoryRow] {
-        historyPage.filter {
-            (historyFilter == "all" || $0.kind == historyFilter) &&
-            (historySearch.isEmpty || $0.input.localizedCaseInsensitiveContains(historySearch) ||
-             $0.output.localizedCaseInsensitiveContains(historySearch))
-        }
-    }
+    static let historyKinds = ["text", "dict", "code", "ocr"]
+    var filteredHistory: [HistoryRow] { historyPage }
     var usesChinese: Bool {
         interfaceLanguage == "zh" ||
         (interfaceLanguage == "system" && (Locale.preferredLanguages.first?.hasPrefix("zh") ?? false))
@@ -287,7 +321,7 @@ final class ProbeModel: ObservableObject {
         if connected {
             if connectionMode == .diagnostic || error != nil {
                 openAfterStop = true
-                stopHelper()
+                stopHelper(preservePendingHistory: true)
             }
             return
         }
@@ -357,10 +391,18 @@ final class ProbeModel: ObservableObject {
             self.error = error
             status = "Cannot start: \(error.rawValue). No host Python fallback."
             failPreparation(status)
+            if queuedHistory != nil {
+                failHistory(text("History helper could not start (\(error.rawValue)). Refresh explicitly.",
+                                 "历史记录助手无法启动（\(error.rawValue)），请手动刷新。"))
+            }
         } catch {
             self.error = .launchFailed
             status = "Cannot start bundled helper. No host Python fallback."
             failPreparation(status)
+            if queuedHistory != nil {
+                failHistory(text("History helper could not start. Refresh explicitly.",
+                                 "历史记录助手无法启动，请手动刷新。"))
+            }
         }
     }
 
@@ -608,25 +650,150 @@ final class ProbeModel: ObservableObject {
     }
 
     func loadHistory(next: Bool = false) {
-        if connectionMode == .diagnostic || !ready || !settingsReady {
-            historyRequested = true
-            openProduct()
+        if !next {
+            submitHistorySearch()
             return
         }
-        guard connectionMode != .diagnostic, ready, !historyBusy, let connection = connection else { return }
+        let criteria = HistoryCriteria(query: historySearch, kind: historyFilter)
+        guard historySearchActive, ready, settingsReady, !settingsBusy, !stopping, !historyBusy,
+              historyDebounce == nil, queuedHistory == nil, historyPhase == .loaded,
+              loadedHistory == criteria, historyCursor != .null else {
+            historyStatus = text("Finish the current search or refresh history before loading more.",
+                                 "请先完成当前搜索或刷新历史记录，再加载更多。")
+            return
+        }
+        sendHistory(criteria, cursor: historyCursor, appending: true)
+    }
+
+    func submitHistorySearch() {
+        historySearchActive = true
+        queueHistorySearch(debounce: false)
+    }
+
+    private func queueHistorySearch(debounce: Bool) {
+        // Seeded bindings stay inert until history is explicitly opened or submitted.
+        guard historySearchActive else { return }
+        let criteria = HistoryCriteria(query: historySearch, kind: historyFilter)
+        if let read = historyRead, read.generation == historyGeneration,
+           !read.appending, read.criteria == criteria, queuedHistory == nil { return }
+        historyDebounce?.cancel()
+        historyDebounce = nil
+        // New edits own the UI immediately; the old read keeps its transport slot until terminal.
+        historyGeneration = UUID()
+        historyCursor = .null
+        hasNextHistoryPage = false
+        historyTotal = nil
+        if loadedHistory != criteria {
+            historyPage = []
+            loadedHistory = nil
+        }
+        guard criteria.query.utf8.count <= 24_000,
+              criteria.kind == "all" || Self.historyKinds.contains(criteria.kind) else {
+            queuedHistory = nil
+            historyRequested = false
+            historyPhase = .failed
+            historyStatus = text("Search text must fit 24,000 UTF-8 bytes and use a supported type.",
+                                 "搜索文字不能超过 24,000 UTF-8 字节，且必须选择支持的类型。")
+            return
+        }
+        queuedHistory = criteria
+        historyPhase = .waiting
+        historyStatus = text("Searching all saved history…", "正在搜索所有已保存的历史记录…")
+        if debounce {
+            let generation = historyGeneration
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.historyGeneration == generation else { return }
+                self.historyDebounce = nil
+                self.submitPendingHistory()
+            }
+            historyDebounce = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        } else {
+            submitPendingHistory()
+        }
+    }
+
+    private func submitPendingHistory() {
+        guard let criteria = queuedHistory, historyDebounce == nil,
+              !historyBusy, !stopping else { return }
+        guard connectionMode != .diagnostic, ready, settingsReady, !settingsBusy else {
+            historyRequested = true
+            openProduct()
+            if connectionMode != .diagnostic, ready, !settingsReady, !settingsBusy { loadSettings() }
+            return
+        }
+        historyRequested = false
+        queuedHistory = nil
+        sendHistory(criteria, cursor: .null, appending: false)
+    }
+
+    private func sendHistory(_ criteria: HistoryCriteria, cursor: JSONValue, appending: Bool) {
+        guard let connection else {
+            failHistory(text("History connection is unavailable. Refresh to try again.",
+                             "历史记录连接不可用，请刷新重试。"))
+            return
+        }
         historyBusy = true
-        historyAppending = next
+        historyPhase = .loading
+        historyStatus = text(appending ? "Loading more matching records…" : "Searching all saved history…",
+                             appending ? "正在加载更多匹配记录…" : "正在搜索所有已保存的历史记录…")
         let id = UUID().uuidString
-        historyID = id
-        connection.loadHistory(pageSize: 20, cursor: next ? historyCursor : .null, id: id)
+        historyRead = HistoryRead(id: id, generation: historyGeneration, criteria: criteria, cursor: cursor,
+                                  offset: appending ? historyPage.count : 0, appending: appending)
+        connection.loadHistory(pageSize: 20, cursor: cursor, query: criteria.query, kind: criteria.kind, id: id)
+    }
+
+    func closeHistorySearch() {
+        // Retain an in-flight read as a barrier if the user reopens the window before it finishes.
+        historySearchActive = false
+        invalidateHistory(retireActive: false)
+        historyPhase = .idle
+    }
+
+    private func invalidateHistory(retireActive: Bool, preservePending: Bool = false) {
+        historyDebounce?.cancel()
+        historyDebounce = nil
+        historyCursor = .null
+        hasNextHistoryPage = false
+        if !preservePending {
+            historyGeneration = UUID()
+            queuedHistory = nil
+            historyRequested = false
+        }
+        if retireActive {
+            historyRead = nil
+            historyClearID = nil
+            historyClearGeneration = nil
+            historyBusy = false
+        }
+    }
+
+    private func failHistory(_ message: String) {
+        invalidateHistory(retireActive: true)
+        historyTotal = nil
+        historyPhase = .failed
+        historyStatus = message
     }
 
     func clearHistory() {
-        guard connectionMode != .diagnostic, ready, !historyBusy, let connection = connection else { return }
+        guard connectionMode != .diagnostic, ready, settingsReady, !settingsBusy, !stopping,
+              !historyBusy, let connection else {
+            historyStatus = text("Wait for the current history operation before clearing all records.",
+                                 "请等待当前历史记录操作完成，再清除所有记录。")
+            return
+        }
+        invalidateHistory(retireActive: false)
+        historySearchActive = true
         if active { cancel() }
+        historyPage = []
+        historyTotal = nil
+        loadedHistory = nil
         historyBusy = true
+        historyPhase = .clearing
+        historyStatus = text("Clearing all saved history…", "正在清除所有已保存的历史记录…")
         let id = UUID().uuidString
         historyClearID = id
+        historyClearGeneration = historyGeneration
         connection.clearHistory(id: id)
     }
 
@@ -649,7 +816,7 @@ final class ProbeModel: ObservableObject {
         primaryResult = row.output
         resultGeneration = UUID()
         resultKind = row.kind
-        isLocalDictionaryResult = row.signature.hasPrefix("local-dictionary|")
+        isLocalDictionaryResult = row.isLocalDictionary
         hideCurrentOutput = true
         productPhase = .completed
         productMessage = text("From history", "来自历史记录")
@@ -708,8 +875,18 @@ final class ProbeModel: ObservableObject {
         ))
     }
 
-    func stopHelper() {
+    func stopHelper(preservePendingHistory: Bool = false) {
         guard !stopping else { return }
+        let keepHistory = preservePendingHistory && historyRead == nil && historyClearID == nil && queuedHistory != nil
+        let interruptedHistory = historyBusy || queuedHistory != nil || historyDebounce != nil
+        if !keepHistory { historySearchActive = false }
+        invalidateHistory(retireActive: true, preservePending: keepHistory)
+        if interruptedHistory && !keepHistory {
+            historyTotal = nil
+            historyPhase = .failed
+            historyStatus = text("History connection closed. Refresh explicitly to reload.",
+                                 "历史记录连接已关闭，请手动刷新以重新加载。")
+        }
         stopping = true
         ready = false
         if error == nil { status = "Stopping helper..." }
@@ -837,6 +1014,7 @@ final class ProbeModel: ObservableObject {
                 resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
             let hadSeparateModelRequest = active && !hadLocalLookup && nativeTranslation
             upgradingForDraft = false
@@ -847,6 +1025,13 @@ final class ProbeModel: ObservableObject {
             self.error = error
             ready = false
             active = false
+            if historyBusy || queuedHistory != nil || historyDebounce != nil ||
+                !historyPage.isEmpty || historyTotal != nil {
+                failHistory(text("History connection interrupted (\(error.rawValue)). Refresh explicitly; no automatic retry.",
+                                 "历史记录连接中断（\(error.rawValue)）。请手动刷新，不会自动重试。"))
+            } else {
+                invalidateHistory(retireActive: true)
+            }
             dictionary.connectionLost()
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
             if error == .translationOutcomeUnknown {
@@ -872,7 +1057,11 @@ final class ProbeModel: ObservableObject {
         case .stopped:
             discardBufferedDelta()
             let reopen = openAfterStop
+            let keepHistory = reopen && historyRequested && queuedHistory != nil
+            let interruptedHistory = historyBusy || queuedHistory != nil || historyDebounce != nil
+            historySearchActive = keepHistory
             openAfterStop = false
+            invalidateHistory(retireActive: true, preservePending: keepHistory)
             stopping = false
             cliChangeDeferred = false
             connected = false
@@ -886,13 +1075,20 @@ final class ProbeModel: ObservableObject {
             historyBusy = false
             configLoadID = nil
             configSaveID = nil
-            historyID = nil
             historyClearID = nil
             if !reopen {
                 stopMonitor()
                 translatePassiveSelections = false
             }
             historyPage = []
+            historyTotal = nil
+            loadedHistory = nil
+            if keepHistory { historyPhase = .waiting }
+            else if historyPhase != .failed {
+                historyPhase = interruptedHistory ? .failed : .idle
+                historyStatus = text("History connection closed. Refresh explicitly to reload.",
+                                     "历史记录连接已关闭，请手动刷新以重新加载。")
+            }
             historyCursor = .null
             hasNextHistoryPage = false
             connection = nil
@@ -1035,48 +1231,94 @@ final class ProbeModel: ObservableObject {
             } else {
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 failPreparation(status)
+                if historyRead == nil && historyClearID == nil && queuedHistory != nil {
+                    failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
+                                     "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))
+                }
             }
             configLoadID = nil
             configSaveID = nil
             if settingsReady { dictionary.connectionReady() }
             resumeTranslation()
             resumeDeferredCLIConnection()
-            if historyRequested && settingsReady {
-                historyRequested = false
-                loadHistory()
+            if settingsReady { submitPendingHistory() }
+            return true
+        }
+        if event.id == historyRead?.id {
+            guard event.isTerminal else { return true }
+            guard let read = historyRead else { return true }
+            historyRead = nil
+            historyBusy = false
+            guard read.generation == historyGeneration else {
+                submitPendingHistory()
+                return true
+            }
+            guard event.type == "completed" else {
+                if event.safeFailureCode == "history_cursor_expired" {
+                    failHistory(text("History or search conditions changed; the page cursor expired. Refresh to search again.",
+                                     "历史记录或搜索条件已更改，分页游标已过期。请刷新后重新搜索。"))
+                } else {
+                    failHistory(text("History read ended: \(event.safeFailureCode). Refresh explicitly; no automatic retry.",
+                                     "历史记录读取已结束：\(event.safeFailureCode)。请手动刷新，不会自动重试。"))
+                }
+                return true
+            }
+            do {
+                let page = try decodeHistoryPage(event.payload, request: read)
+                historyPage = read.appending ? historyPage + page.rows : page.rows
+                historyTotal = page.total
+                loadedHistory = read.criteria
+                historyCursor = page.cursor
+                hasNextHistoryPage = historyCursor != .null
+                historyPhase = .loaded
+                historyStatus = text("\(historyPage.count) of \(page.total) matching records loaded.",
+                                     "已加载 \(historyPage.count) 条，共 \(page.total) 条匹配记录。")
+            } catch {
+                failHistory(text("Invalid history response. Refresh explicitly; no partial results were accepted.",
+                                 "历史记录响应无效。请手动刷新，未接受任何部分结果。"))
             }
             return true
         }
-        if event.id == historyID || event.id == historyClearID {
+        if event.id == historyClearID {
             guard event.isTerminal else { return true }
-            historyBusy = false
-            if event.type == "completed", event.id == historyClearID {
-                historyPage = []
-                historyCursor = .null
-                hasNextHistoryPage = false
-                historyStatus = "History cleared. Later translations may still be recorded if history is enabled."
-            } else if event.type == "completed", case let .array(entries)? = event.payload["entries"] {
-                let revision = event.payload["revision"]?.string ?? ""
-                let offset = historyAppending ? historyPage.count : 0
-                let rows = entries.enumerated().map { index, value in
-                    HistoryRow(id: "\(revision)-\(offset + index)", input: value.object?["input"]?.string ?? "",
-                               output: value.object?["output"]?.string ?? "",
-                               kind: value.object?["kind"]?.string ?? "text",
-                               timestamp: value.object?["ts"]?.string ?? "",
-                               signature: value.object?["sig"]?.string ?? "")
-                }
-                historyPage = historyAppending ? historyPage + rows : rows
-                historyCursor = event.payload["next_cursor"] ?? .null
-                hasNextHistoryPage = historyCursor != .null
-                historyStatus = text("\(historyPage.count) entries loaded", "已加载 \(historyPage.count) 条记录")
-            } else {
-                historyStatus = "History operation failed: \(event.safeFailureCode). Reload explicitly if history changed."
-            }
-            historyID = nil
+            let current = historyClearGeneration == historyGeneration
             historyClearID = nil
+            historyClearGeneration = nil
+            historyBusy = false
+            let completed = event.type == "completed" && Set(event.payload.keys) == ["cleared", "revision"] &&
+                event.payload["cleared"] == .bool(true) && HistoryDocument.validRevision(event.payload["revision"])
+            if !current && queuedHistory == nil { return true }
+            guard completed else {
+                failHistory(text("History clear did not complete: \(event.safeFailureCode). Refresh to check the state; the clear will not be replayed.",
+                                 "清除历史记录未完成：\(event.safeFailureCode)。请刷新以检查状态，不会重试清除。"))
+                return true
+            }
+            if current {
+                historyPage = []
+                historyTotal = 0
+                loadedHistory = HistoryCriteria(query: historySearch, kind: historyFilter)
+                historyPhase = .loaded
+                historyStatus = text("All saved history cleared. Future translations may still be recorded.",
+                                     "已清除所有已保存的历史记录。未来的翻译仍可能被保存。")
+            }
+            submitPendingHistory()
             return true
         }
         return false
+    }
+
+    private func decodeHistoryPage(_ payload: [String: JSONValue], request: HistoryRead) throws
+        -> (rows: [HistoryRow], total: Int, cursor: JSONValue) {
+        try HistoryDocument.validatePage(payload, pageSize: 20, cursor: request.cursor)
+        guard case let .array(entries)? = payload["entries"],
+              let revision = payload["revision"]?.string,
+              let total = payload["total"]?.integer, let cursor = payload["next_cursor"] else {
+            throw ProbeError.invalidPayload
+        }
+        let rows = try entries.enumerated().map { index, value in
+            try HistoryRow.decode(value, id: "\(revision)-\(request.offset + index)")
+        }
+        return (rows, Int(total), cursor)
     }
 
     func refreshPermissions() {
@@ -1182,6 +1424,14 @@ final class ProbeModel: ObservableObject {
 
     func closePanel() {
         discardBufferedDelta()
+        historySearchActive = false
+        invalidateHistory(retireActive: true)
+        historyPage = []
+        historyTotal = nil
+        loadedHistory = nil
+        historyPhase = .idle
+        historyStatus = text("History connection closed. Refresh explicitly to reload.",
+                             "历史记录连接已关闭，请手动刷新以重新加载。")
         draft = nil
         cliChangeDeferred = false
         isLocalDictionaryResult = false

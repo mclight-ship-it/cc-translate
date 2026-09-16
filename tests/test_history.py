@@ -13,6 +13,56 @@ import cc_history as history
 import cc_storage
 
 
+class TestHistoryFiltering(unittest.TestCase):
+    def test_kind_keeps_explicit_values_then_code_and_dictionary_flags(self):
+        for kind in ("text", "dict", "code", "ocr"):
+            self.assertEqual(history.history_entry_kind({"kind": kind, "is_code": True, "is_dict": True}), kind)
+        for entry, expected in ((None, "text"), ({}, "text"), ({"kind": "future"}, "text"),
+                                ({"kind": "future", "is_code": True, "is_dict": True}, "code"),
+                                ({"kind": None, "is_dict": True}, "dict"),
+                                ({"is_code": "legacy truthy flag"}, "code")):
+            self.assertEqual(history.history_entry_kind(entry), expected)
+
+    def test_all_and_legacy_falsy_queries_keep_order_identity_and_values(self):
+        entries = [{"input": None, "future": [1]}, {"is_dict": True}, None]
+        before = json.dumps(entries)
+        for query in ("", None, False, " \t\n\u3000"):
+            for kind in ("all", "invalid", None, "DICT"):
+                result = history.filter_history_entries(entries, query, kind)
+                self.assertEqual(result, entries)
+                self.assertIsNot(result, entries)
+                for actual, original in zip(result, entries):
+                    self.assertIs(actual, original)
+        self.assertEqual(json.dumps(entries), before)
+        self.assertEqual(history.filter_history_entries(None), [])
+
+    def test_unicode_casefolded_substring_search_covers_input_output_and_timestamp_only(self):
+        entries = [{"input": "prefix Stra\u00dfe \u4e16\u754c suffix"}, {"output": "STRASSE \u4e16\u754c"},
+                   {"ts": "strasse \u4e16\u754c"}, {"sig": "strasse \u4e16\u754c"},
+                   {"future": "strasse \u4e16\u754c"}, {"kind": "text", "input": None}]
+        query = " \tSTRASSE\u3000\u4e16\u754c\n"
+        self.assertEqual(history.normalize_history_query(query), "strasse \u4e16\u754c")
+        self.assertEqual(history.filter_history_entries(entries, query), entries[:3])
+        self.assertEqual(history.filter_history_entries(entries, "\u4e16"), entries[:3])
+
+    def test_windows_query_whitespace_is_normalized_but_record_whitespace_and_unicode_are_not(self):
+        entries = [{"input": "Hello world"}, {"input": "hello\tworld"}, {"input": "hello", "output": "world"},
+                   {"input": "Caf\u00e9"}, {"input": "Cafe\u0301"}, {"input": "word.*"}]
+        self.assertEqual(history.filter_history_entries(entries, " HELLO \n world "), entries[:1])
+        self.assertEqual(history.filter_history_entries(entries, "CAF\u00c9"), entries[3:4])
+        self.assertEqual(history.filter_history_entries(entries, ".*"), entries[5:])
+        self.assertEqual(history.filter_history_entries(entries, "hello missing"), [])
+
+    def test_kind_and_query_intersect_with_legacy_fallback(self):
+        entries = [{"input": "needle", "is_code": True, "is_dict": True},
+                   {"input": "needle", "kind": "text", "is_dict": True},
+                   {"output": "needle", "kind": "legacy", "is_dict": True},
+                   {"input": "needle", "kind": "ocr"}, {"input": "other", "kind": "dict"}]
+        for kind, expected in (("code", entries[:1]), ("text", entries[1:2]),
+                               ("dict", entries[2:3]), ("ocr", entries[3:4]), ("all", entries[:4])):
+            self.assertEqual(history.filter_history_entries(entries, "NEEDLE", kind), expected)
+
+
 class ObservedLock:
     def __init__(self):
         self.inner = threading.RLock()

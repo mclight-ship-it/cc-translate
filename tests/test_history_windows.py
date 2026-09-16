@@ -23,6 +23,16 @@ class TestWindowsHistoryRepository(StorageTestCase):
         clock.start()
         self.addCleanup(clock.stop)
 
+    def test_public_filtering_helpers_reexport_shared_logic_with_windows_defaults(self):
+        self.assertIs(tr.filter_history_entries, history.filter_history_entries)
+        self.assertIs(tr.history_entry_kind, history.history_entry_kind)
+        entries = [{"input": "Stra\u00dfe \u4e16\u754c", "is_code": True},
+                   {"output": "strasse \u4e16\u754c", "kind": "dict"}]
+        self.assertEqual(tr.filter_history_entries(entries, " STRASSE\t\u4e16\u754c ", "code"), entries[:1])
+        self.assertEqual(tr.filter_history_entries(entries, None, "unknown"), entries)
+        self.assertFalse(self.history.exists())
+        self.assertFalse(self.log.exists())
+
     def test_all_public_entries_construct_the_same_repository_with_one_lock(self):
         with mock.patch.object(tr, "HistoryRepository", wraps=history.HistoryRepository) as factory:
             tr.add_history("word", "out", True, 3, kind="dict", sig="sig")

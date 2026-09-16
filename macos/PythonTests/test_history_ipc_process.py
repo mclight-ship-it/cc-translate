@@ -20,8 +20,8 @@ def addition(text="synthetic", **changes):
 
 
 class TestHistoryIPCProcess(StateIPCProcessCase):
-    def page(self, process, id_, *, size=100, cursor=None):
-        self.send_message(process, id_, "request", operation="history_load", page_size=size, cursor=cursor)
+    def page(self, process, id_, *, size=100, cursor=None, **filters):
+        self.send_message(process, id_, "request", operation="history_load", page_size=size, cursor=cursor, **filters)
         return self.terminal(process, id_)
 
     def add(self, process, id_, **changes):
@@ -49,6 +49,125 @@ class TestHistoryIPCProcess(StateIPCProcessCase):
         self.assertFalse(self.history_path.exists())
         self.assertEqual(len(list(self.directory.glob(".tmp_*.json"))), 1)
         return process
+
+    def test_full_snapshot_search_reaches_unloaded_unicode_fields_and_legacy_kinds(self):
+        process = self.spawn()
+        self.hello(process)
+        entries = [{"input": "row" + str(n)} for n in range(125)]
+        for n, field in ((120, "input"), (121, "output"), (122, "ts")):
+            entries[n][field] = "Stra\u00dfe \u4e16\u754c"
+        entries[120]["is_dict"] = True
+        entries[121]["kind"] = "dict"
+        entries[122]["kind"] = "code"
+        entries[123]["sig"] = "strasse \u4e16\u754c"
+        before = json.dumps(entries, ensure_ascii=False).encode()
+        self.history_path.write_bytes(before)
+        original = self.page(process, "original")["payload"]
+        self.assertEqual(original["entries"], entries[:100])
+        self.assertEqual(self.page(process, "defaults", query=" \t", kind="all")["payload"], original)
+        first = self.page(process, "search", size=2, query=" \tSTRASSE\u3000\u4e16\u754c\n")["payload"]
+        self.assertEqual(first["entries"], entries[120:122])
+        self.assertEqual(first["total"], 3)
+        last = self.page(process, "last", cursor=first["next_cursor"], query="strasse \u4e16\u754c")["payload"]
+        self.assertEqual(last["entries"], entries[122:123])
+        self.assertIsNone(last["next_cursor"])
+        only_dict = self.page(process, "dictionary", query="strasse \u4e16\u754c", kind="dict")["payload"]
+        self.assertEqual(only_dict["entries"], entries[120:122])
+        self.assertEqual(only_dict["total"], 2)
+        self.assertEqual(self.history_path.read_bytes(), before)
+        self.assertFalse(self.path.exists())
+        self.finish_helper(process)
+
+    def test_filtered_cursor_binds_normalized_conditions_and_unfiltered_data_revision(self):
+        process = self.spawn()
+        self.hello(process)
+        entries = [{"input": "Alpha beta other", "kind": "dict"} for _ in range(3)] + [{"input": "excluded"}]
+        self.history_path.write_text(json.dumps(entries), encoding="utf-8")
+        first = self.page(process, "first", size=1, query=" \tALPHA\u3000beta\n")["payload"]
+        cursor = first["next_cursor"]
+        last = self.page(process, "same", size=2, cursor=cursor, query="alpha beta", kind="all")["payload"]
+        self.assertEqual(last["entries"], entries[1:3])
+        self.assertEqual(last["revision"], first["revision"])
+        for n, filters in enumerate(({}, {"query": "other"}, {"query": "alpha beta", "kind": "dict"})):
+            self.assertEqual(self.page(process, "changed" + str(n), cursor=cursor, **filters)["payload"],
+                             {"code": "history_cursor_expired"})
+        self.assertEqual(self.page(process, "offset", cursor=cursor | {"offset": 3}, query="alpha beta")["payload"],
+                         {"code": "invalid_history_cursor"})
+        entries[-1]["output"] = "unmatched record changed"
+        self.history_path.write_text(json.dumps(entries), encoding="utf-8")
+        self.assertEqual(self.page(process, "external", cursor=cursor, query="alpha beta")["payload"],
+                         {"code": "history_cursor_expired"})
+        cursor = self.page(process, "fresh", size=1, query="alpha beta")["payload"]["next_cursor"]
+        self.add(process, "append", text="also excluded")
+        self.assertEqual(self.page(process, "written", cursor=cursor, query="alpha beta")["payload"],
+                         {"code": "history_cursor_expired"})
+        self.finish_helper(process)
+
+    def test_search_query_budget_and_invalid_options_fail_explicitly_without_writes(self):
+        process = self.spawn()
+        self.hello(process)
+        text = "\u4e2d" * 8000
+        entries = [{"input": text}]
+        before = json.dumps(entries, ensure_ascii=False).encode()
+        self.history_path.write_bytes(before)
+        page = self.page(process, "full", query=text)["payload"]
+        self.assertEqual((page["entries"], page["total"]), (entries, 1))
+        for n, filters in enumerate(({"query": None}, {"query": False}, {"query": []},
+                                      {"query": text + "\u4e2d"}, {"query": " " * 24001},
+                                      {"kind": None}, {"kind": []}, {"kind": "ALL"}, {"kind": "future"},
+                                      {"query": "", "path": "private"})):
+            event = self.page(process, "invalid" + str(n), **filters)
+            self.assertEqual((event["type"], event["seq"], event["payload"]), ("failed", 0, {"code": "invalid_payload"}))
+            self.assertEqual(self.history_path.read_bytes(), before)
+        self.history_path.write_bytes(b'[{"input":"excluded","is_code":1}]')
+        self.assertEqual(self.page(process, "bad_history", query="no match", kind="ocr")["payload"],
+                         {"code": "invalid_history"})
+        self.assertEqual(self.history_path.read_bytes(), b'[{"input":"excluded","is_code":1}]')
+        self.finish_helper(process)
+
+    def test_filtered_pages_budget_unicode_and_json_escaping_without_dropping_matches(self):
+        process = self.spawn()
+        self.hello(process)
+        entries = [{"input": "needle" + str(n), "output": "\u4e2d" * 3000 + "\0" * 1500, "kind": "dict"}
+                   for n in range(6)]
+        stored = [entry for match in entries for entry in (match, {"input": "excluded", "kind": "code"})]
+        before = json.dumps(stored, ensure_ascii=False).encode()
+        self.history_path.write_bytes(before)
+        cursor, found = None, []
+        for n in range(6):
+            event = self.page(process, str(n) + "r" * 63, cursor=cursor, query="needle", kind="dict")
+            self.assertEqual(event["type"], "completed")
+            self.assertLessEqual(len(protocol.encode_frame(event)), protocol.MAX_FRAME_BYTES)
+            page = event["payload"]
+            self.assertEqual(page["total"], 6)
+            self.assertTrue(page["entries"])
+            found.extend(page["entries"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        self.assertIsNone(cursor)
+        self.assertEqual(found, entries)
+        self.assertEqual(self.history_path.read_bytes(), before)
+        self.finish_helper(process)
+
+    def test_filtered_load_is_fifo_after_started_add_and_before_clear(self):
+        process = self.start_blocked_add()
+        try:
+            self.send_message(process, "search", "request", operation="history_load",
+                              page_size=1, cursor=None, query="COMMITTED", kind="text")
+            self.assertEqual(self.receive(process)["type"], "accepted")
+            self.send_message(process, "clear", "request", operation="history_clear")
+            self.assertEqual(self.receive(process)["type"], "accepted")
+            self.assert_both_owned()
+        finally:
+            self.release()
+        page = self.terminal(process, "search")["payload"]
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["entries"][0]["input"], "committed")
+        self.assertTrue(self.terminal(process, "clear")["payload"]["cleared"])
+        self.assertFalse(self.history_path.exists())
+        self.finish_helper(process)
+        self.assert_both_released()
 
     def test_missing_add_config_coexistence_schema_cache_limit_and_reopen(self):
         process = self.spawn()
@@ -299,6 +418,8 @@ class TestHistoryIPCProcess(StateIPCProcessCase):
         self.history_path.chmod(0)
         try:
             self.assertEqual(self.page(process, "denied")["payload"], {"code": "history_io_failed"})
+            self.assertEqual(self.page(process, "filtered_denied", query="missing")["payload"],
+                             {"code": "history_io_failed"})
         finally:
             self.history_path.chmod(mode)
         directory_mode = self.directory.stat().st_mode & 0o777
@@ -312,6 +433,7 @@ class TestHistoryIPCProcess(StateIPCProcessCase):
         large = b" " * (history.MAX_HISTORY_FILE_BYTES + 1)
         self.history_path.write_bytes(large)
         self.assertEqual(self.page(process, "large")["payload"], {"code": "history_too_large"})
+        self.assertEqual(self.page(process, "filtered_large", query="missing")["payload"], {"code": "history_too_large"})
         self.assertEqual(self.add(process, "large_add")["payload"], {"code": "history_too_large"})
         self.assertEqual(self.history_path.read_bytes(), large)
         self.assert_both_owned()

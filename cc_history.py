@@ -12,6 +12,41 @@ class HistoryFormatError(ValueError):
     pass
 
 
+def history_entry_kind(entry):
+    kind = (entry or {}).get("kind")
+    if kind in ("text", "dict", "code", "ocr"):
+        return kind
+    if (entry or {}).get("is_code"):
+        return "code"
+    if (entry or {}).get("is_dict"):
+        return "dict"
+    return "text"
+
+
+def normalize_history_query(query=""):
+    return " ".join((query or "").split()).casefold()
+
+
+def filter_history_entries(entries, query="", kind="all"):
+    if kind not in ("all", "text", "dict", "code", "ocr"):
+        kind = "all"
+    query = normalize_history_query(query)
+    out = []
+    for entry in entries or []:
+        if kind != "all" and history_entry_kind(entry) != kind:
+            continue
+        if query:
+            hay = "\n".join([
+                entry.get("input", "") or "",
+                entry.get("output", "") or "",
+                entry.get("ts", "") or "",
+            ]).casefold()
+            if query not in hay:
+                continue
+        out.append(entry)
+    return out
+
+
 def read_history(path, *, strict=True):
     try:
         with open(path, "r", encoding="utf-8") as stream:

@@ -240,10 +240,14 @@ public final class HelperConnection {
 
     @discardableResult
     public func loadHistory(pageSize: Int = 100, cursor: JSONValue = .null,
+                            query: String = "", kind: String = "all",
                             id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
-        send(ClientMessage(id: id, type: "request", payload: [
+        var payload: [String: JSONValue] = [
             "operation": .string("history_load"), "page_size": .integer(Int64(pageSize)), "cursor": cursor
-        ]), timeout: timeout)
+        ]
+        if !query.isEmpty { payload["query"] = .string(query) }
+        if kind != "all" { payload["kind"] = .string(kind) }
+        send(ClientMessage(id: id, type: "request", payload: payload), timeout: timeout)
         return id
     }
 

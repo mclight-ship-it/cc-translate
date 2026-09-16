@@ -71,7 +71,7 @@ from cc_summary import (
 )
 from cc_request import RequestSnapshot
 from cc_storage import atomic_write_json as _atomic_write_json
-from cc_history import HistoryRepository, read_history as _read_history
+from cc_history import HistoryRepository, read_history as _read_history, filter_history_entries, history_entry_kind
 from cc_config import Config, plan_config_migration
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
@@ -421,17 +421,6 @@ def clear_history() -> None:
         log_error("clear_history", e)
 
 
-def history_entry_kind(entry):
-    kind = (entry or {}).get("kind")
-    if kind in ("text", "dict", "code", "ocr"):
-        return kind
-    if (entry or {}).get("is_code"):
-        return "code"
-    if (entry or {}).get("is_dict"):
-        return "dict"
-    return "text"
-
-
 def history_entry_tag(entry):
     return {
         "text": i18n.get("history.tag.text"),
@@ -447,26 +436,6 @@ def history_entry_preview(entry, limit=24):
         text = (entry.get("output") or "").strip()
     text = " ".join(text.split())
     return (text[:limit] if text else i18n.get("history.preview_empty"))
-
-
-def filter_history_entries(entries, query="", kind="all"):
-    if kind not in ("all", "text", "dict", "code", "ocr"):
-        kind = "all"
-    query = " ".join((query or "").split()).casefold()
-    out = []
-    for entry in entries or []:
-        if kind != "all" and history_entry_kind(entry) != kind:
-            continue
-        if query:
-            hay = "\n".join([
-                entry.get("input", "") or "",
-                entry.get("output", "") or "",
-                entry.get("ts", "") or "",
-            ]).casefold()
-            if query not in hay:
-                continue
-        out.append(entry)
-    return out
 
 
 # Diagnostics helpers live in diagnostics.py (pure, GUI-free, unit-tested).

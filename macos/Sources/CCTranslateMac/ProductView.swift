@@ -363,9 +363,10 @@ struct TranslationHistoryView: View {
     var useEntry: () -> Void
     @State private var selectedID: String?
     @State private var confirmClear = false
+    @FocusState private var searchFocused: Bool
 
     private var selectedRow: ProbeModel.HistoryRow? {
-        model.filteredHistory.first { $0.id == selectedID }
+        model.historyPage.first { $0.id == selectedID }
     }
 
     var body: some View {
@@ -381,7 +382,7 @@ struct TranslationHistoryView: View {
                 Button(model.text("Clear history…", "清除历史记录…"), role: .destructive) {
                     confirmClear = true
                 }
-                .disabled(model.historyBusy || !model.settingsReady)
+                .disabled(model.historyBusy || !model.settingsReady || model.settingsBusy)
             }
             .padding(18)
             Divider()
@@ -392,12 +393,17 @@ struct TranslationHistoryView: View {
         }
         .frame(minWidth: 640, minHeight: 440)
         .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            HistoryWindowCloseObserver(onClose: { model.closeHistorySearch() })
+                .frame(width: 0, height: 0).accessibilityHidden(true)
+        }
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             model.openProduct()
-            if model.historyPage.isEmpty && !model.historyBusy { model.loadHistory() }
+            if model.historyPhase == .idle && model.historyTotal == nil &&
+                model.historyPage.isEmpty && !model.historyBusy { model.loadHistory() }
         }
-        .onChange(of: model.filteredHistory.map(\.id)) { _, ids in
+        .onChange(of: model.historyPage.map(\.id)) { _, ids in
             if let selectedID, !ids.contains(selectedID) { self.selectedID = nil }
         }
         .confirmationDialog(model.text("Clear all saved history?", "清除所有已保存的历史记录？"),
@@ -418,12 +424,20 @@ struct TranslationHistoryView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                TextField(model.text("Search loaded history", "搜索已加载的历史记录"),
+                TextField(model.text("Search all history", "搜索全部历史记录"),
                           text: $model.historySearch)
                     .textFieldStyle(.plain)
-                    .accessibilityLabel(model.text("Search loaded history", "搜索已加载的历史记录"))
+                    .focused($searchFocused)
+                    .onSubmit { model.submitHistorySearch() }
+                    .accessibilityLabel(model.text("Search all history", "搜索全部历史记录"))
+                    .accessibilityHint(model.text("Search originals, translations, or dates. Press Return to search now.",
+                                                 "搜索原文、译文或日期。按 Return 立即搜索。"))
                 if !model.historySearch.isEmpty {
-                    Button { model.historySearch = "" } label: {
+                    Button {
+                        model.historySearch = ""
+                        model.submitHistorySearch()
+                        searchFocused = true
+                    } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
                     .buttonStyle(.plain)
@@ -434,21 +448,21 @@ struct TranslationHistoryView: View {
                                    in: RoundedRectangle(cornerRadius: 7))
             Picker(model.text("Type", "类型"), selection: $model.historyFilter) {
                 Text(model.text("All types", "所有类型")).tag("all")
-                ForEach(historyKinds, id: \.self) { kind in
+                ForEach(ProbeModel.historyKinds, id: \.self) { kind in
                     Text(resultKindName(kind, model: model)).tag(kind)
                 }
             }
-            Text(model.text("\(model.filteredHistory.count) shown · \(model.historyPage.count) loaded",
-                            "显示 \(model.filteredHistory.count) 条 · 已加载 \(model.historyPage.count) 条"))
-                .font(.caption).foregroundStyle(.secondary)
-            if model.hasNextHistoryPage {
-                Text(model.text("Search and filters cover loaded records only. Load more to include older records.",
-                                "搜索和筛选仅覆盖已加载的记录。加载更多可包含较早的记录。"))
+            if let total = model.historyTotal {
+                Text(model.text("\(model.historyPage.count) of \(total) matching records loaded",
+                                "已加载 \(model.historyPage.count) 条，共 \(total) 条匹配记录"))
                     .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else if !model.historyPage.isEmpty {
+                Text(model.text("\(model.historyPage.count) previously loaded · Total not current",
+                                "此前加载 \(model.historyPage.count) 条 · 总数尚未更新"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             List(selection: $selectedID) {
-                ForEach(model.filteredHistory) { row in
+                ForEach(model.historyPage) { row in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(row.input).font(.body).lineLimit(2)
                         Text(row.output).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -466,17 +480,15 @@ struct TranslationHistoryView: View {
             }
             .listStyle(.inset)
             .overlay {
-                if model.filteredHistory.isEmpty {
-                    Text(model.historyBusy ? model.text("Loading…", "正在加载…") :
-                         model.historyPage.isEmpty ? model.text("No records loaded.", "尚未加载任何记录。") :
-                         model.text("No matches in loaded records.", "已加载的记录中没有匹配项。"))
+                if model.historyPage.isEmpty {
+                    Text(emptyHistoryTitle)
                         .font(.callout).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).padding()
                         .allowsHitTesting(false)
                 }
             }
             HStack {
-                if model.historyBusy {
+                if model.historyPhase == .waiting || model.historyPhase == .loading || model.historyPhase == .clearing {
                     ProgressView().controlSize(.small)
                         .accessibilityLabel(model.text("Loading history", "正在加载历史记录"))
                 }
@@ -486,44 +498,32 @@ struct TranslationHistoryView: View {
             }
             if model.hasNextHistoryPage {
                 Button(model.text("Load more", "加载更多")) { model.loadHistory(next: true) }
-                    .disabled(model.historyBusy)
+                    .disabled(model.historyBusy || model.settingsBusy || model.historyPhase != .loaded)
                     .frame(maxWidth: .infinity)
             }
         }
         .padding(14)
     }
 
-    private var historyKinds: [String] {
-        Array(Set(["text", "code", "mixed"] + model.historyPage.map(\.kind) +
-                  (model.historyFilter == "all" ? [] : [model.historyFilter]))).sorted()
+    private var emptyHistoryTitle: String {
+        switch model.historyPhase {
+        case .waiting, .loading: return model.text("Searching all history…", "正在搜索全部历史记录…")
+        case .clearing: return model.text("Clearing all history…", "正在清除所有历史记录…")
+        case .failed: return model.text("History could not be loaded. Refresh to try again.", "无法加载历史记录，请刷新重试。")
+        case .idle, .loaded:
+            if model.historyTotal == 0 {
+                return model.historySearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.historyFilter == "all"
+                    ? model.text("No saved translations.", "尚无已保存的翻译。")
+                    : model.text("No matching translations. Try another search or type.", "没有匹配的翻译，请尝试其他搜索文字或类型。")
+            }
+            return model.text("Search or refresh to read saved history.", "搜索或刷新以读取已保存的历史记录。")
+        }
     }
 
     @ViewBuilder
     private var historyDetail: some View {
         if let row = selectedRow {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text(resultKindName(row.kind, model: model)).font(.headline)
-                    Spacer()
-                    Text(historyDate(row.timestamp)).font(.caption).foregroundStyle(.secondary)
-                }
-                Text(model.text("Original", "原文")).font(.subheadline.bold())
-                    .accessibilityAddTraits(.isHeader)
-                NativeResultText(text: row.input, formatted: false, streaming: false,
-                                 label: model.text("Saved original text", "已保存的原文"))
-                    .frame(minHeight: 80, maxHeight: 150)
-                Divider()
-                Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
-                    .accessibilityAddTraits(.isHeader)
-                NativeResultText(text: row.output, formatted: row.kind != "dict", streaming: false,
-                                 label: model.text("Saved translation", "已保存的翻译"))
-                    .frame(minHeight: 110)
-                ViewThatFits(in: .horizontal) {
-                    HStack { historyActions(row) }
-                    VStack(alignment: .leading, spacing: 8) { historyActions(row) }
-                }
-            }
-            .padding(18)
+            HistoryTranslationDetail(model: model, row: row, useEntry: useEntry)
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "clock").font(.largeTitle).foregroundStyle(.secondary)
@@ -535,9 +535,42 @@ struct TranslationHistoryView: View {
             .padding(24)
         }
     }
+}
+
+@MainActor
+struct HistoryTranslationDetail: View {
+    @ObservedObject var model: ProbeModel
+    let row: ProbeModel.HistoryRow
+    var useEntry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(resultKindName(row.kind, model: model)).font(.headline)
+                Spacer()
+                Text(historyDate(row.timestamp)).font(.caption).foregroundStyle(.secondary)
+            }
+            Text(model.text("Original", "原文")).font(.subheadline.bold())
+                .accessibilityAddTraits(.isHeader)
+            NativeResultText(text: row.input, formatted: false, streaming: false,
+                             label: model.text("Saved original text", "已保存的原文"))
+                .frame(minHeight: 80, maxHeight: 150)
+            Divider()
+            Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
+                .accessibilityAddTraits(.isHeader)
+            NativeResultText(text: row.output, formatted: !row.isLocalDictionary, streaming: false,
+                             label: model.text("Saved translation", "已保存的翻译"))
+                .frame(minHeight: 110)
+            ViewThatFits(in: .horizontal) {
+                HStack { historyActions }
+                VStack(alignment: .leading, spacing: 8) { historyActions }
+            }
+        }
+        .padding(18)
+    }
 
     @ViewBuilder
-    private func historyActions(_ row: ProbeModel.HistoryRow) -> some View {
+    private var historyActions: some View {
         Button(model.text("Copy result", "复制结果")) { model.copyText(row.output) }
             .disabled(row.output.isEmpty)
         Button(model.text("Copy bilingual", "复制双语")) {
@@ -818,11 +851,48 @@ private func resultKindName(_ kind: String, model: ProbeModel) -> String {
     switch kind {
     case "text": return model.text("Text", "文字")
     case "code": return model.text("Code", "代码")
+    case "ocr": return model.text("OCR", "文字识别")
     case "mixed": return model.text("Mixed", "混合")
     case "dict", "dictionary": return model.text("Dictionary", "词典")
     case "summary": return model.text("Summary", "摘要")
     default: return kind
     }
+}
+
+@MainActor
+private struct HistoryWindowCloseObserver: NSViewRepresentable {
+    var onClose: () -> Void
+
+    // Retained panels may keep their SwiftUI roots mounted after closing.
+    final class ObserverView: NSView {
+        var onClose: (() -> Void)?
+        private var observation: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observation { NotificationCenter.default.removeObserver(observation) }
+            observation = nil
+            if let window {
+                observation = NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification, object: window, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.onClose?() }
+                }
+            }
+        }
+
+        deinit {
+            if let observation { NotificationCenter.default.removeObserver(observation) }
+        }
+    }
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView(frame: .zero)
+        view.onClose = onClose
+        return view
+    }
+
+    func updateNSView(_ view: ObserverView, context: Context) { view.onClose = onClose }
 }
 
 private func historyDate(_ raw: String) -> String {

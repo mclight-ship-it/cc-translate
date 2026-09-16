@@ -299,14 +299,14 @@ private func validateJSONTree(_ value: JSONValue, maxDepth: Int, depth: Int = 1)
     }
 }
 
-enum HistoryDocument {
-    static func validRevision(_ value: JSONValue?) -> Bool {
+public enum HistoryDocument {
+    public static func validRevision(_ value: JSONValue?) -> Bool {
         guard let revision = value?.string else { return false }
         let bytes = Array(revision.utf8)
         return bytes.count == 64 && bytes.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
-    static func validateEntry(_ value: JSONValue) throws {
+    public static func validateEntry(_ value: JSONValue) throws {
         guard let entry = value.object else { throw ProbeError.invalidPayload }
         try validateJSONTree(value, maxDepth: 13)
         for key in ["ts", "input", "output", "kind", "sig"] {
@@ -317,6 +317,12 @@ enum HistoryDocument {
         for key in ["is_dict", "is_code"] {
             if let field = entry[key], field.bool == nil { throw ProbeError.invalidPayload }
         }
+    }
+
+    public static func validatePage(_ payload: [String: JSONValue], pageSize: Int, cursor: JSONValue) throws {
+        try HistoryPageRequest([
+            "operation": .string("history_load"), "page_size": .integer(Int64(pageSize)), "cursor": cursor
+        ]).validatePage(payload)
     }
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
@@ -346,9 +352,19 @@ private struct HistoryPageRequest {
     let revision: String?
 
     init(_ payload: [String: JSONValue]) throws {
-        guard Set(payload.keys) == ["operation", "page_size", "cursor"],
+        let required: Set<String> = ["operation", "page_size", "cursor"]
+        guard required.isSubset(of: Set(payload.keys)),
+              Set(payload.keys).isSubset(of: required.union(["query", "kind"])),
               let pageSize = payload["page_size"]?.integer, (1...100).contains(pageSize),
               let cursor = payload["cursor"] else { throw ProbeError.invalidPayload }
+        if let value = payload["query"] {
+            guard let query = value.string, query.utf8.count <= 24_000 else { throw ProbeError.invalidPayload }
+        }
+        if let value = payload["kind"] {
+            guard let kind = value.string, ["all", "text", "dict", "code", "ocr"].contains(kind) else {
+                throw ProbeError.invalidPayload
+            }
+        }
         self.pageSize = pageSize
         if cursor == .null {
             offset = 0

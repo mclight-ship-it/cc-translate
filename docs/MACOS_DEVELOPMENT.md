@@ -372,13 +372,20 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
 
 历史业务沿用同一FIFO与双owner连接，不新增请求路径、Server或Swift直接写文件：
 
-- `history_load`恰含`operation/page_size/cursor`，page_size为1..100严格整数；
+- `history_load`必含`operation/page_size/cursor`，page_size为1..100严格整数；
+  P3源码扩展可选`query`（默认空字符串，沿用24000 UTF-8字节预算）与`kind`
+  （默认all，可选all/text/dict/code/ocr）。不增加operation、配置前置或模型请求。
+  先完整读取并验证历史，再在全库input/output/ts内搜索及按类型筛选，最后分页；total是匹配总数。
+  复用Windows纯过滤函数：仅query合并空白并casefold，不改变历史空白/Unicode内容；
+  旧kind缺失或未知时按is_code、is_dict、text依次回退。
   cursor为null或`{revision,offset}`，revision为64小写hex、offset为1..10000严格整数。
   完成恰含`entries/revision/total/next_cursor`，保留原新记录在前的数组顺序。
   返回最大可放前缀，完整envelope/ID/seq/metadata/UTF-8/LF都计入64KiB，不套配置16KiB预算。
   完整尾页去掉cursor可能反而更小，必须单独验证，不据中间前缀超限就丢掉可读尾页。
 - revision绑定连接随机代次、成功add/clear次数和文件原字节hash；成功mutation、外部字节改变、
   新连接使旧cursor明确`history_cursor_expired`，配置save不影响历史cursor。不提供无限快照缓存。
+  P3筛选revision同时绑定归一化query和kind，改条件必须从null cursor开始；只改page_size不使cursor过期。
+  空query/all保留原revision算法、返回形状及默认请求字段。P3新源码须单独通过Mac验证，旧包不代验。
   非尾页非空且cursor offset连续；尾页恰好结束于total，绝不把超限/坏文件当空历史。
 - `history_add`恰含`operation/input/output/is_dict/is_code/kind/sig/limit`；
   input/output各最多24000 UTF-8字节，sig最多4096字节，kind为text/dict/code/ocr，

@@ -116,17 +116,15 @@ final class ProductRenderingTests: XCTestCase {
         let helper = try fixture.ready()
         let model = try XCTUnwrap(fixture.model)
         model.loadHistory()
-        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id), payload: [
-            "entries": .array([
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [
                 ProductTestHarness.historyEntry(
                     input: "Synthetic history sentence", output: "合成历史句子"),
                 ProductTestHarness.historyEntry(
                     input: "example", output: "A synthetic dictionary definition.", kind: "dict"),
                 ProductTestHarness.historyEntry(
                     input: "Another synthetic history sentence", output: "另一个合成历史句子")
-            ]),
-            "revision": .string("rendering-fixture"), "next_cursor": .null
-        ])
+            ], total: 3))
         let light = try render(
             TranslationHistoryView(model: model, useEntry: {}),
             named: "history-light", size: NSSize(width: 860, height: 680), scheme: .light)
@@ -137,6 +135,156 @@ final class ProductRenderingTests: XCTestCase {
         XCTAssertNotEqual(light, dark)
         XCTAssertEqual(model.historyPage.count, 3)
         XCTAssertTrue(helper.translations.isEmpty)
+    }
+
+    @MainActor
+    func testFullLibrarySearchResultsAndFilteredTotalAreReadableInBothAppearances() throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
+        model.historySearch = "remote"
+        model.historyFilter = "ocr"
+        model.submitHistorySearch()
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [
+                        ProductTestHarness.historyEntry(input: "Remote translation",
+                                                        output: "Found outside the first page.", kind: "ocr")
+                     ], total: 38, nextOffset: 1))
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                TranslationHistoryView(model: model, useEntry: {}),
+                named: "history-search-results-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 960, height: 680), scheme: scheme)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+            XCTAssertTrue(words.contains("remote"))
+            XCTAssertTrue(words.contains("outside"))
+            XCTAssertTrue(words.contains("38"))
+            XCTAssertTrue(words.contains("load more"))
+        }
+        XCTAssertEqual(helper.historyLoads.count, 1)
+        XCTAssertEqual(helper.historyLoads.last?.query, "remote")
+        XCTAssertEqual(helper.historyLoads.last?.kind, "ocr")
+        XCTAssertEqual(model.historyTotal, 38)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.historyClears.isEmpty, "Rendering never confirms the global destructive action.")
+    }
+
+    @MainActor
+    func testEmptyLibraryAndNoSearchMatchesRenderWithoutAutomaticReadReplay() throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
+        for query in ["", "no such word"] {
+            model.historySearch = query
+            model.submitHistorySearch()
+            helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                         payload: ProductTestHarness.historyPage(entries: [], total: 0))
+            let reads = helper.historyLoads.count
+            for scheme in [ColorScheme.light, .dark] {
+                let png = try render(
+                    TranslationHistoryView(model: model, useEntry: {}),
+                    named: "history-empty-\(query.isEmpty ? "library" : "search")-\(scheme == .light ? "light" : "dark")",
+                    size: NSSize(width: 860, height: 680), scheme: scheme)
+                let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+                let words = try LocalOCR.recognize(image).text.lowercased()
+                XCTAssertTrue(words.contains(query.isEmpty ? "no saved" : "no matching"))
+                XCTAssertTrue(words.contains("0"))
+            }
+            XCTAssertEqual(helper.historyLoads.count, reads)
+            XCTAssertEqual(model.historyPhase, .loaded)
+            XCTAssertEqual(model.historyTotal, 0)
+        }
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.historyClears.isEmpty)
+    }
+
+    @MainActor
+    func testHistoryDetailRendersLocalLiteralAndAIMarkdownBySignatureNotDictionaryKind() throws {
+        let fixture = try ProductTestHarness()
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
+        let local = "**literal meaning**\nSource: WordNet"
+        let ai = "**Model meaning**\n\nReadable model explanation."
+        model.historyFilter = "dict"
+        model.submitHistorySearch()
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [
+                        .object(["input": .string("local word"), "output": .string(local), "is_dict": .bool(true),
+                                 "sig": .string("local-dictionary|fixture|native-plain-v1:en_US")]),
+                        .object(["input": .string("AI word"), "output": .string(ai), "kind": .string("dict"),
+                                 "sig": .string("model-prompt-signature")])
+                     ], total: 2))
+        for row in model.historyPage {
+            for scheme in [ColorScheme.light, .dark] {
+                let png = try render(
+                    HistoryTranslationDetail(model: model, row: row, useEntry: {}),
+                    named: "history-detail-\(row.isLocalDictionary ? "local" : "ai")-\(scheme == .light ? "light" : "dark")",
+                    size: NSSize(width: 650, height: 500), scheme: scheme, inspect: { host in
+                        let expected = row.isLocalDictionary ? local : "Model meaning\n\nReadable model explanation."
+                        let rendered = self.textViews(in: host).first { $0.string == expected }
+                        XCTAssertNotNil(rendered)
+                        XCTAssertEqual(rendered?.isEditable, false)
+                        XCTAssertEqual(rendered?.isSelectable, true)
+                    })
+                let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+                let words = try LocalOCR.recognize(image).text.lowercased()
+                XCTAssertTrue(words.contains(row.isLocalDictionary ? "wordnet" : "explanation"))
+                XCTAssertTrue(words.contains("copy"))
+                XCTAssertTrue(words.contains("reuse"))
+            }
+        }
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.historyClears.isEmpty)
+    }
+
+    @MainActor
+    func testHistoryOwnWindowCloseNotificationCancelsDebounceButAnotherWindowDoesNot() async throws {
+        _ = NSApplication.shared
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
+        model.loadHistory()
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [], total: 0))
+        let host = NSHostingView(rootView: TranslationHistoryView(model: model, useEntry: {}))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 680),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                             styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        other.isReleasedWhenClosed = false
+        window.contentView = host
+        defer {
+            window.contentView = nil
+            window.close()
+            other.close()
+        }
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        model.historySearch = "survives unrelated close"
+        NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: other)
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(helper.historyLoads.count, 2)
+        XCTAssertEqual(helper.historyLoads.last?.query, "survives unrelated close")
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [], total: 0))
+        model.historySearch = "cancel on owning window close"
+        NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: window)
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(helper.historyLoads.count, 2)
+        XCTAssertEqual(model.historyPhase, .idle)
+        model.historySearch = "late binding after close"
+        model.historyFilter = "dict"
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(helper.historyLoads.count, 2)
+        XCTAssertEqual(model.historyPhase, .idle)
+        XCTAssertTrue(helper.historyClears.isEmpty)
     }
 
     @MainActor

@@ -29,6 +29,8 @@ final class ProductTestHelper: AppHelperClient {
         let id: String
         let pageSize: Int
         let cursor: JSONValue
+        let query: String
+        let kind: String
     }
 
     private let notice: (HelperNotice) -> Void
@@ -109,9 +111,9 @@ final class ProductTestHelper: AppHelperClient {
         operations.append("config.save")
         return id
     }
-    func loadHistory(pageSize: Int, cursor: JSONValue, id: String,
+    func loadHistory(pageSize: Int, cursor: JSONValue, query: String, kind: String, id: String,
                      timeout: TimeInterval) -> String {
-        historyLoads.append(History(id: id, pageSize: pageSize, cursor: cursor))
+        historyLoads.append(History(id: id, pageSize: pageSize, cursor: cursor, query: query, kind: kind))
         operations.append("history.load")
         return id
     }
@@ -285,6 +287,15 @@ final class ProductTestHarness {
         .object(["input": .string(input), "output": .string(output), "kind": .string(kind),
                  "ts": .string("2026-01-01T12:00:00Z")])
     }
+
+    nonisolated static func historyPage(entries: [JSONValue], total: Int,
+                                       revision: String = String(repeating: "a", count: 64),
+                                       nextOffset: Int? = nil) -> [String: JSONValue] {
+        ["entries": .array(entries), "revision": .string(revision), "total": .integer(Int64(total)),
+         "next_cursor": nextOffset.map {
+             .object(["offset": .integer(Int64($0)), "revision": .string(revision)])
+         } ?? .null]
+    }
 }
 
 final class ProductModelTests: XCTestCase {
@@ -378,11 +389,9 @@ final class ProductModelTests: XCTestCase {
         XCTAssertTrue(model.needsCLI)
         XCTAssertTrue(model.settingsReady)
         XCTAssertFalse(model.nativeTranslation)
-        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id), payload: [
-            "entries": .array([ProductTestHarness.historyEntry(
-                input: "Previously saved synthetic source", output: "Saved synthetic translation")]),
-            "revision": .string("local-history"), "next_cursor": .null
-        ])
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [ProductTestHarness.historyEntry(
+                        input: "Previously saved synthetic source", output: "Saved synthetic translation")], total: 1))
         let row = try XCTUnwrap(model.historyPage.first)
         model.reuseHistory(row)
         XCTAssertEqual(model.output, row.output)
@@ -1026,47 +1035,53 @@ final class ProductModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHistoryPagesAppendWithDistinctIdentityAndFilterOnlyLoadedEntries() throws {
+    func testHistoryPagesAppendWithStableConditionsAndSearchUsesServerResults() throws {
         let fixture = try ProductTestHarness()
         defer { fixture.cleanUp() }
         let helper = try fixture.ready()
         let model = try XCTUnwrap(fixture.model)
         model.loadHistory()
         let first = try XCTUnwrap(helper.historyLoads.last)
-        let cursor: JSONValue = .object(["offset": .integer(2), "revision": .string("synthetic")])
+        let cursor: JSONValue = .object(["offset": .integer(2), "revision": .string(String(repeating: "a", count: 64))])
         let repeated = ProductTestHarness.historyEntry(input: "Repeated source", output: "Repeated result")
-        helper.event("completed", id: first.id, payload: [
-            "entries": .array([repeated, repeated]), "revision": .string("synthetic"),
-            "next_cursor": cursor
-        ])
+        helper.event("completed", id: first.id,
+                     payload: ProductTestHarness.historyPage(entries: [repeated, repeated], total: 4, nextOffset: 2))
         XCTAssertEqual(model.historyPage.count, 2)
         XCTAssertTrue(model.hasNextHistoryPage)
         model.loadHistory(next: true)
         let second = try XCTUnwrap(helper.historyLoads.last)
         XCTAssertEqual(second.cursor, cursor)
+        XCTAssertEqual(second.query, "")
+        XCTAssertEqual(second.kind, "all")
         XCTAssertNotEqual(first.id, second.id)
-        helper.event("completed", id: second.id, payload: [
-            "entries": .array([
+        helper.event("completed", id: second.id, payload: ProductTestHarness.historyPage(entries: [
                 ProductTestHarness.historyEntry(input: "Synthetic word", output: "Fixture meaning", kind: "dict"),
                 repeated
-            ]),
-            "revision": .string("synthetic"), "next_cursor": .null
-        ])
+            ], total: 4))
 
         XCTAssertEqual(model.historyPage.count, 4)
         XCTAssertEqual(Set(model.historyPage.map(\.id)).count, 4)
         XCTAssertFalse(model.hasNextHistoryPage)
         XCTAssertFalse(model.historyBusy)
+        XCTAssertEqual(model.historyTotal, 4)
         model.historySearch = "FIXTURE MEANING"
-        XCTAssertEqual(model.filteredHistory.map(\.input), ["Synthetic word"])
+        XCTAssertTrue(model.filteredHistory.isEmpty, "Do not locally filter a previously loaded page.")
+        model.submitHistorySearch()
+        let query = try XCTUnwrap(helper.historyLoads.last)
+        XCTAssertEqual(query.query, "FIXTURE MEANING")
+        XCTAssertEqual(query.cursor, .null)
+        helper.event("completed", id: query.id, payload: ProductTestHarness.historyPage(entries: [
+            ProductTestHarness.historyEntry(input: "Previously unloaded match", output: "Fixture meaning", kind: "dict")
+        ], total: 1))
+        XCTAssertEqual(model.filteredHistory.map(\.input), ["Previously unloaded match"])
         model.historyFilter = "text"
         XCTAssertTrue(model.filteredHistory.isEmpty)
-        model.historySearch = "repeated"
-        XCTAssertEqual(model.filteredHistory.count, 3)
-        model.historySearch = ""
-        model.historyFilter = "dict"
-        XCTAssertEqual(model.filteredHistory.map(\.output), ["Fixture meaning"])
-        XCTAssertEqual(helper.historyLoads.count, 2)
+        XCTAssertEqual(helper.historyLoads.last?.kind, "text")
+        XCTAssertEqual(helper.historyLoads.last?.query, "FIXTURE MEANING")
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [], total: 0))
+        XCTAssertEqual(model.historyTotal, 0)
+        XCTAssertEqual(helper.historyLoads.count, 4)
         XCTAssertTrue(helper.translations.isEmpty)
     }
 
@@ -1076,18 +1091,19 @@ final class ProductModelTests: XCTestCase {
         defer { fixture.cleanUp() }
         let helper = try fixture.ready()
         fixture.model.loadHistory()
-        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id), payload: [
-            "entries": .array([ProductTestHarness.historyEntry(input: "Synthetic", output: "Saved")]),
-            "revision": .string("synthetic"),
-            "next_cursor": .object(["offset": .integer(1)])
-        ])
+        helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                     payload: ProductTestHarness.historyPage(entries: [
+                        ProductTestHarness.historyEntry(input: "Synthetic", output: "Saved")
+                     ], total: 2, nextOffset: 1))
         fixture.model.clearHistory()
         XCTAssertTrue(fixture.model.historyBusy)
-        helper.event("completed", id: try XCTUnwrap(helper.historyClears.last))
+        helper.event("completed", id: try XCTUnwrap(helper.historyClears.last),
+                     payload: ["cleared": .bool(true), "revision": .string(String(repeating: "b", count: 64))])
 
         XCTAssertTrue(fixture.model.historyPage.isEmpty)
         XCTAssertFalse(fixture.model.hasNextHistoryPage)
         XCTAssertFalse(fixture.model.historyBusy)
+        XCTAssertEqual(fixture.model.historyTotal, 0)
         fixture.model.loadHistory()
         XCTAssertEqual(helper.historyLoads.last?.cursor, .null)
         XCTAssertEqual(helper.historyClears.count, 1)

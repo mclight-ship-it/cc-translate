@@ -13,7 +13,8 @@ protocol AppHelperClient: AnyObject {
     func dictionary(_ request: DictionaryRequest, id: String, timeout: TimeInterval) -> String
     func loadConfiguration(id: String, timeout: TimeInterval) -> String
     func saveConfiguration(_ config: [String: JSONValue], id: String, timeout: TimeInterval) -> String
-    func loadHistory(pageSize: Int, cursor: JSONValue, id: String, timeout: TimeInterval) -> String
+    func loadHistory(pageSize: Int, cursor: JSONValue, query: String, kind: String,
+                     id: String, timeout: TimeInterval) -> String
     func clearHistory(id: String, timeout: TimeInterval) -> String
     func stop()
 }
@@ -30,7 +31,15 @@ extension AppHelperClient {
     }
     @discardableResult
     func loadHistory(pageSize: Int, cursor: JSONValue, id: String) -> String {
-        loadHistory(pageSize: pageSize, cursor: cursor, id: id, timeout: 20)
+        loadHistory(pageSize: pageSize, cursor: cursor, query: "", kind: "all", id: id, timeout: 20)
+    }
+    @discardableResult
+    func loadHistory(pageSize: Int, cursor: JSONValue, id: String, timeout: TimeInterval) -> String {
+        loadHistory(pageSize: pageSize, cursor: cursor, query: "", kind: "all", id: id, timeout: timeout)
+    }
+    @discardableResult
+    func loadHistory(pageSize: Int, cursor: JSONValue, query: String, kind: String, id: String) -> String {
+        loadHistory(pageSize: pageSize, cursor: cursor, query: query, kind: kind, id: id, timeout: 20)
     }
     @discardableResult
     func clearHistory(id: String) -> String { clearHistory(id: id, timeout: 20) }
