@@ -445,6 +445,10 @@ final class TranslationProtocolTests: XCTestCase {
             let payload: [String: JSONValue]
             switch operation {
             case "translate": payload = request
+            case "dictionary_lookup":
+                payload = request.merging(["operation": .string(operation)]) { _, new in new }
+            case "dictionary_install", "dictionary_discard_install":
+                payload = ["operation": .string(operation), "ticket": .string(String(repeating: "a", count: 32))]
             case "config_save": payload = ["operation": .string(operation), "config": .object([:])]
             case "history_load": payload = ["operation": .string(operation), "page_size": .integer(1), "cursor": .null]
             case "history_add":
