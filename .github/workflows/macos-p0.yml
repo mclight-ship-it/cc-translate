@@ -58,6 +58,14 @@ jobs:
         env:
           CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/ui-screenshots
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
+      - name: Retain native view renders, including failed-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cc-translate-native-ui-${{ github.sha }}
+          path: tools/macos/.build/ui-screenshots/*.png
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
       - name: Official pinned CLI version and native prewarm probes (no account or model)
@@ -117,7 +125,6 @@ jobs:
             tools/macos/.build/core-tests.json
             tools/macos/.build/integration-tests.json
             tools/macos/.build/codex-version-smoke.json
-            tools/macos/.build/ui-screenshots
 
   runtime:
     needs: p0

@@ -692,8 +692,12 @@ final class ProbeModel: ObservableObject {
                 if !directionEdited { direction = savedDirection }
                 if !modelEdited { modelProfile = profile }
                 loadingConfiguration = false
-                if direction == savedDirection { directionEdited = false }
-                if modelProfile == profile { modelEdited = false }
+                if direction == savedDirection && (draft == nil || draft?.direction == direction) {
+                    directionEdited = false
+                }
+                if modelProfile == profile && (draft == nil || draft?.model == modelProfile) {
+                    modelEdited = false
+                }
                 settingsReady = true
                 status = "Native settings loaded. Account and model access require an explicit translation."
                 if !needsCLI && !preparing && !active && output.isEmpty {

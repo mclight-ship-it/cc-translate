@@ -417,7 +417,7 @@ final class ProductModelTests: XCTestCase {
         let helper = try XCTUnwrap(fixture.helpers.first)
         model.input = "New unsent source"
         model.interfaceLanguage = "en"
-        model.direction = "to_zh"
+        model.direction = "auto"
         model.modelProfile = "auto-fast"
         helper.event("ready")
         try fixture.finishConfiguration(on: helper)
@@ -443,7 +443,7 @@ final class ProductModelTests: XCTestCase {
         XCTAssertEqual(request.origin, "selection")
         XCTAssertFalse(request.useCache)
         XCTAssertEqual(starts, 1)
-        XCTAssertEqual(model.direction, "to_zh", "Normalized loading must not clobber subsequent UI edits.")
+        XCTAssertEqual(model.direction, "auto", "Normalized loading must not clobber subsequent UI edits.")
         XCTAssertEqual(model.modelProfile, "auto-fast")
         XCTAssertEqual(model.interfaceLanguage, "en")
         helper.event("completed", id: request.id,
