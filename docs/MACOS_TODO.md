@@ -117,6 +117,16 @@ Python后端与Swift typed API、模型、菜单已配套；Windows针对性219�
 其中两张新原生结果图继续通过本地OCR检查正文与Actions文字，不以非空PNG代替可读性。
 本段只记录实现和验证计划，**尚未把新Swift编译、截图或同包三系统记为通过**。
 
+首轮源码`fa5c5e8` / [run35125217730](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125217730)
+真实编译全部Swift成功（43.32s）；36原产品模型、新8动作模型、6原生渲染（含动作可读性）及连接测试通过。
+总173项、15项既定构包前可选skip、1failure，未构包：新增协议测试误以为通用JSON编码器必须拒绝
+缺operation的对象；原契约是在register/send写管道前拒绝。修正为分别验证通用编码与请求注册，
+保留所有非法动作字段/类型/字节预算的拒绝断言，以及缺operation注册失败、零pending请求的断言，
+不为这个测试增加生产使用门槛。
+Windows首个正常hook曾1606/79.209s失败两项未改动用例（topmost瞬时状态、history矩阵末尾日志存在）；
+两项单独2/2.513s通过，不改断言后正常完整hook1606/74.922s通过并推送。
+原失败日志保留；未获取此次history日志的具体原因，不擅称WinError5，也不宣称原稳定性问题已修复。
+
 <a id="codex-protocol-checkpoint"></a>
 
 ## 当前检查点：官方通知时间戳修复与真实预热已通过三系统

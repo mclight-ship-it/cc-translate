@@ -73,11 +73,16 @@ final class ResultActionProtocolTests: XCTestCase {
             ["use_cache": .bool(true)], ["record_history": .bool(false)], ["unknown": .null]
         ]
         invalid += changes.map { valid.merging($0) { _, replacement in replacement } }
-        for payload in invalid {
+        for (index, payload) in invalid.enumerated() {
             var state = try connected()
             let request = ClientMessage(id: "invalid", type: "request", payload: payload)
-            XCTAssertThrowsError(try request.encoded())
-            XCTAssertThrowsError(try state.register(request))
+            if payload["operation"] == .string("result_action") {
+                XCTAssertThrowsError(try request.encoded(), "Action payload \(index)")
+            } else {
+                // Generic encoding also serves hello/diagnostics; registration requires an operation.
+                XCTAssertNoThrow(try request.encoded())
+            }
+            XCTAssertThrowsError(try state.register(request), "Request registration \(index)")
             XCTAssertFalse(state.hasPendingTranslation)
         }
     }
