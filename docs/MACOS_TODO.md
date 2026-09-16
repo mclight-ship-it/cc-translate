@@ -47,7 +47,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 - [x] 原生模型状态测试及真实SwiftUI渲染截图、同包Mac构建验证，具体源码/制品见下；
   不把HTML示意图或旧后端绿色当成新界面证据；手工键盘/VoiceOver/TCC仍待扩展。
 - [x] 六种结果操作追加闭环，保留原结果，不读缓存或写历史；验证见下。
-- [x] 本地词典优先首屏/原生下载管理已验证；继续P3截图/全库历史搜索及全部功能矩阵，
+- [x] 本地词典优先首屏/原生下载管理及全库历史搜索已验证；继续P3截图及全部功能矩阵，
   不因本界面切片结束而把整个移植标完成。
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
@@ -102,6 +102,62 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 上述64d80a0是前置界面包，**不包含结果动作**；下方4807f62已另行完成动作接线与验证。
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
+
+<a id="native-history-search"></a>
+
+### P3 全库历史搜索：已通过同包三系统，继续区域截图
+
+当前源码`eaf0c15af071fa40f250d7052d517ebbd6f2ef3c` /
+[run35157108608](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608)
+已接通完整历史快照搜索，不再只筛选已加载页。搜索原文、译文和时间戳，
+类型固定为文字/词典/代码/OCR；先全库过滤再分页，显示实际匹配总数。
+输入250ms合并，Return立即提交，类型立即切换；在途读串行，旧条件终态不覆盖新条件，
+分页绑定条件与实际数据revision，过期时明确刷新而非自动重放。
+关闭/退出/断连取消延迟意图；清空仍需明确确认，覆盖全库，不仅是当前筛选结果。
+本地词典历史保留字面释义，AI历史保留Markdown；Windows实际复用同一纯过滤函数。
+
+正常源码hook1705/88.187s与渲染修复hook1705/91.993s均通过；另独立targeted111/6.700s、
+原Windows历史UI helper4/0.014s。首源码`4bc4a59`的
+[run35156574433](https://github.com/mclight-ship-it/cc-translate/actions/runs/35156574433)
+真实watch退出1：Swift25.36s编译成功，249项中18项既定构包前skip，
+仅新历史详情渲染一方法4断言失败。实际PNG显示独立详情缺少生产父视图的背景，
+浅色黑字落在透明像素上；修复只给独立渲染fixture补相同windowBackgroundColor，
+不改生产、不删OCR/非空颜色断言，保留首次失败日志及31PNG。
+新源码的31张原生图已生成，浅色字面释义、深色AI Markdown及搜索空态已实际查看。
+**本轮实际watch退出0，API attempt1的3jobs/39steps全部success。**
+producer portable768/16.815s；Swift编译43.53s，249项中231通过、18项既定构包前可选skip，
+新增26历史模型、4原生渲染/窗口生命周期及2协议方法全部真实执行。
+对Git前后AST差分与日志逐方法核对，每系统新增5process/17core各一次passed，
+原17Foundation全部保留并扩展真实历史搜索链，构包后零skip/failure。
+
+| 同一个App的执行系统 | process | core | 后置Foundation |
+|---|---|---|---|
+| 15.7.9 / Xcode16.4 producer | 207 /346.682s | 553 /4.178s | 17 /88.995s |
+| 14.8.9 /独立harness Xcode16.2 | 207 /363.246s | 553 /5.194s | 17 /104.173s |
+| 26.6.2 /独立harness Xcode26.6 | 207 /368.664s | 553 /5.301s | 17 /90.654s |
+
+[完整App artifact10471459022](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10471459022)
+已独立核验：内层18,829,861 bytes，
+SHA-256 `9a42321555714e717d73dcf14a2cb23d3936cd625ce85c67392cc017109cfc23`，
+tree `1451edf48d083318999b7524943ee746e47cedf3c38ce610bddbd4f8965a84b1`；
+688库存/78资源/50source路径（49唯一）/6实际arm64 Mach-O/19运行时许可/14 required覆盖。
+源码逐字节等于固定Git提交，而非并行中的截图开发工作树；605个上游runtime普通文件及许可
+逐字节等于前置独立审计b86507f包。库存、模式、链接、资源和归档CRC均核验。
+14/26报告archive/tree完全相同，HTTPS证书/SQLite/取消/EOF/不可变/临时清理逐字段通过。
+独立审计脚本首次把coverage对象键数误当required数量，改读实际required数组后通过，
+不修改产物、许可或产品规则。
+
+词典原生下载/安装也在本源码真实重验67,948,544 bytes，URLSession1039.272ms；
+2次warmup后的10次模型意图到同源只读原生视图/离屏绘制P95及最大55.88675ms，
+满足该端点150ms目标；不是物理键盘、打包GUI进程或独立query+format10ms验收。
+官方0.146.0/0.154.0仅预热、无账号/模型请求。
+[31张原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10472180519)、
+[macOS14小报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10472196184)及
+[macOS26小报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10471794685)
+均来自同run。完整App保留到2026-09-23T22:30:46Z。
+
+区域截图Support、OCR文字后端和原生预览/明确发送界面已进入下一实现切片，
+本历史包不含这些后续未提交改动，不能借此绿色签收截图功能。无需用户再次说“继续”。
 
 <a id="native-result-actions"></a>
 
@@ -1228,8 +1284,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [ ] 同帧区域截图、多显示器坐标转换、Vision 语言与视觉 provider 明确发送。
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
-- [x] 分页历史/已加载记录搜索筛选、基础设置/主题/语言与独立诊断。
-- [ ] 历史全库搜索、完整设置/关于与第三方许可界面。
+- [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
+- [ ] 完整设置/关于与第三方许可界面。
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
 
 ## P4 — 等待 P3（可行性已在 P0 提前检查）

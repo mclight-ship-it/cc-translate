@@ -385,7 +385,8 @@ isolated/禁写字节码/是否从 bundle runtime 运行；不输出本机绝对
 - revision绑定连接随机代次、成功add/clear次数和文件原字节hash；成功mutation、外部字节改变、
   新连接使旧cursor明确`history_cursor_expired`，配置save不影响历史cursor。不提供无限快照缓存。
   P3筛选revision同时绑定归一化query和kind，改条件必须从null cursor开始；只改page_size不使cursor过期。
-  空query/all保留原revision算法、返回形状及默认请求字段。P3新源码须单独通过Mac验证，旧包不代验。
+  空query/all保留原revision算法、返回形状及默认请求字段。P3源码eaf0c15已另行通过同包三系统，
+  见[全库搜索证据](MACOS_TODO.md#native-history-search)，不是沿用旧历史业务包。
   非尾页非空且cursor offset连续；尾页恰好结束于total，绝不把超限/坏文件当空历史。
 - `history_add`恰含`operation/input/output/is_dict/is_code/kind/sig/limit`；
   input/output各最多24000 UTF-8字节，sig最多4096字节，kind为text/dict/code/ocr，
@@ -734,17 +735,17 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-当前新增本地词典优先首屏及下载/开关/删除/来源许可，六种结果动作保留。
-producer通过真实原生模型/渲染测试和21张截图检查，同一个App在15.7.9/14.8.9/26.6.2通过包内运行验证。
+当前新增全库历史搜索及类型筛选，保留本地词典下载/开关/删除/来源许可与六种结果动作。
+producer通过真实原生模型/渲染测试和31张截图检查，同一个App在15.7.9/14.8.9/26.6.2通过包内运行验证。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`b86507fd861e363b722fc11537045e0817dda251`；
-  [run35147996073](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10468966389)；
-  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10467946406)。
-- 内层`CCTranslateMac-P0.zip`：18,810,874 bytes；
-  SHA-256 `16e87b540606de1edd78d1f32ff019265cee69a6c72786de54161e8daf9cf4e8`。
-  artifact保留到2026-09-23T20:52:37Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`eaf0c15af071fa40f250d7052d517ebbd6f2ef3c`；
+  [run35157108608](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10471459022)；
+  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10472180519)。
+- 内层`CCTranslateMac-P0.zip`：18,829,861 bytes；
+  SHA-256 `9a42321555714e717d73dcf14a2cb23d3936cd625ce85c67392cc017109cfc23`。
+  artifact保留到2026-09-23T22:30:46Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
@@ -771,9 +772,12 @@ producer通过真实原生模型/渲染测试和21张截图检查，同一个App
    动作是明确的额外模型请求；结果追加到主结果后，不使用翻译缓存、不写历史，取消/失败保留主结果。
    精简/正式/摘要始终取主结果，其他动作取原始请求输入，不取后来编辑的输入或已有追加文本。
    旁边单独的`Retranslate / 重新翻译`是绕过本地词典/缓存的明确模型翻译，替换主结果并遵循历史开关。
-5. History可分页、搜索已加载记录、复用及确认清空；Settings可保存中英语言、系统/浅/深色、
+5. History可搜索全部已保存记录的原文、译文或日期，按文字/词典/代码/OCR筛选，
+   显示匹配总数并对匹配结果分页、复制及复用。无需先“加载更多”才能找到较早记录。
+   输入短暂合并后自动搜索，Return立即提交；清空仍需确认并删除全库，不限于当前匹配。
+   Settings可保存中英语言、系统/浅/深色、
    默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
-   搜索目前只覆盖已加载页，不冒充全库搜索。普通关闭窗口不退出，菜单可召回结果。
+   普通关闭窗口不退出，菜单可召回结果。分页时历史变化会提示刷新，不自动重放请求。
 6. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
    Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
    截图仍是本地OCR诊断，尚未接完整截图翻译；IME、VoiceOver、Spaces/多屏和TCC可集中补验，
@@ -791,6 +795,17 @@ producer通过真实原生模型/渲染测试和21张截图检查，同一个App
    本地结果不会自动补充AI，结果操作和重新翻译只有明确点击才请求模型。
 5. 关闭“优先使用本地词典”仅禁用；重新启用无需下载。可选测试确认删除后显示未安装，
    不删除翻译历史；下载中取消应恢复可再次下载的状态，不留下半安装词典。
+
+**全库历史集中测试（不需要新增模型请求）：**
+
+1. 打开历史，搜索一条较早保存记录的原文、译文片段或日期；不必先加载较早页。
+   如果已有记录不足一页，正常验证搜索/总数即可，不要求人为制造20次模型请求。
+2. 切换类型，清除搜索，连续输入后按Return，确认显示最新条件的匹配总数，
+   “加载更多”只追加该条件的记录；搜索无匹配时明确显示无匹配，不是读取错误。
+3. 选中本地词典与AI历史各一条，检查释义字面内容/AI格式、复制及复用；
+   搜索、翻页、复制和复用本身不会调用模型。
+4. 搜索过程中关闭历史，再从菜单重开；旧搜索不应覆盖新条件。确认清空是可选破坏性测试，
+   会永久删除所有历史，不只是当前筛选内容；不用为了验收删除真实记录。
 
 **失败只回报脱敏摘要：**固定source/run、芯片/系统版本、内层hash MATCH/MISMATCH、
 发生步骤、App版本探针显示的数字版本/固定分类、固定错误码、

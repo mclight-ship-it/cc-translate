@@ -16,7 +16,14 @@
 producer生产URLSession真实下载/安装67,948,544字节，意图到同源原生离屏绘制P95实测37.747ms，
 不是物理键盘或打包GUI进程验收。同一个App在15.7.9/14.8.9/26.6.2各202process/536core/17Foundation通过，
 run实际watch exit0，完整App已独立核验，保留21张原生截图。
-见[词典检查点与下载](MACOS_TODO.md#native-dictionary-checkpoint)。随后继续P3全库历史搜索；
+见[词典检查点与下载](MACOS_TODO.md#native-dictionary-checkpoint)。
+全库历史搜索源码`eaf0c15` / [run35157108608](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608)
+现已通过同包三系统各207process/553core/17Foundation；正常hook1705，
+新增26历史模型/4原生渲染与生命周期/2协议测试通过，31PNG及完整App已独立核验。
+搜索原文/译文/日期、类型过滤后分页，不要求先加载旧页；输入合并、迟到结果隔离和明确清空保持。
+首轮透明背景fixture导致的4渲染断言失败及修复如实保留于
+[全库搜索检查点](MACOS_TODO.md#native-history-search)。
+随后继续同帧区域截图、本地OCR预览及明确文字翻译；这些后续开发不包含在历史包里。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 
