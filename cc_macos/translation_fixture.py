@@ -20,12 +20,12 @@ def _root(root):
     return root
 
 
-def prepare(root, application_id, scenario="normal"):
+def prepare(root, application_id, scenario="normal", *, result_action=None, target_language=None):
     from cc_config import Config, plan_config_migration
     from cc_providers.codex_cli import build_codex_prompt
     from cc_storage import macos_user_paths
     from cc_macos.native_provider_fixture import create_cli
-    from cc_macos.translation import snapshot_for_translation
+    from cc_macos.translation import snapshot_for_translation, snapshot_for_result_action
 
     root = _root(root)
     if scenario not in SCENARIOS:
@@ -65,7 +65,12 @@ def prepare(root, application_id, scenario="normal"):
                "origin": "text", "use_cache": True, "record_history": True}
     normalized = Config(config)
     plan_config_migration(config, normalized)
-    snapshot = snapshot_for_translation(normalized, request)
+    if result_action is None:
+        snapshot = snapshot_for_translation(normalized, request)
+    else:
+        request = {"operation": "result_action", "action": result_action, "text": text,
+                   "app_language": "zh_CN", "target_language": target_language}
+        snapshot = snapshot_for_result_action(normalized, request)
     expected = {
         "prompt": build_codex_prompt(snapshot.request), "model": snapshot.selection.model,
         "task": snapshot.request.task, "output": output,
@@ -139,13 +144,17 @@ def main(arguments=None):
     action.add_argument("--verify", type=Path)
     parser.add_argument("--application-id")
     parser.add_argument("--scenario", choices=SCENARIOS, default="normal")
+    parser.add_argument("--result-action",
+                        choices=("concise", "formal", "summary", "explain_code", "as_text", "retranslate"))
+    parser.add_argument("--target-language")
     parser.add_argument("--require-cleanup", action="store_true")
     parser.add_argument("--require-descendant", action="store_true")
     arguments = parser.parse_args(arguments)
     if arguments.prepare is not None:
         if arguments.application_id is None:
             parser.error("--prepare requires --application-id")
-        result = prepare(arguments.prepare, arguments.application_id, arguments.scenario)
+        result = prepare(arguments.prepare, arguments.application_id, arguments.scenario,
+                         result_action=arguments.result_action, target_language=arguments.target_language)
     else:
         result = verify(arguments.verify, require_cleanup=arguments.require_cleanup,
                         require_descendant=arguments.require_descendant)

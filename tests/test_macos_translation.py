@@ -13,8 +13,11 @@ import unittest
 from unittest.mock import patch
 
 from cc_config import CFG, Config, DEFAULT_CONFIG
-from cc_direction import DIRECTION_MODES, direction_prompt, resolve_target_lang
-from cc_prompts import CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT, SYSTEM_SUFFIX
+from cc_direction import DIRECTION_MODES, LANGUAGES, direction_prompt, resolve_target_lang
+from cc_prompts import (
+    CODE_EXPLAIN_APPEND_PROMPT, CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT,
+    RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
+)
 from cc_summary import codex_summary_instruction
 from cc_providers.base import ProviderResult
 from cc_providers.darwin_process import ProcessError
@@ -35,6 +38,142 @@ OUTPUT = "Synthetic translated sentence."
 def request(**changes):
     return dict(operation="translate", text=TEXT, app_language="en_US", origin="text",
                 use_cache=True, record_history=True) | changes
+
+
+def action_request(action="concise", **changes):
+    return dict(operation="result_action", action=action, text=TEXT, app_language="en_US",
+                target_language="ja" if action == "retranslate" else None) | changes
+
+
+class ResultActionContracts(unittest.TestCase):
+    def test_exact_payload_accepts_only_the_six_explicit_actions(self):
+        for action in translation.RESULT_ACTIONS:
+            translation.validate_result_action_request(action_request(action))
+        invalid = (
+            action_request(extra=True), action_request(operation="translate"),
+            action_request(action="rewrite"), action_request(action=""), action_request(action=[]),
+            action_request(action={}), action_request(action=True),
+            action_request(text=None), action_request(text=1), action_request(text=[]),
+            action_request(text=""), action_request(text=" \t\r\n"),
+            action_request(app_language="fr"), action_request(app_language=[]),
+            action_request(app_language={}), action_request(app_language=True),
+            action_request(use_cache=True), action_request(record_history=True),
+            action_request(origin="text"),
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaisesRegex(ProtocolError, "^invalid_result_action$"):
+                translation.validate_result_action_request(payload)
+        for key in action_request():
+            payload = action_request()
+            del payload[key]
+            with self.subTest(missing=key), self.assertRaisesRegex(ProtocolError, "^invalid_result_action$"):
+                translation.validate_result_action_request(payload)
+        self.assertIn("invalid_result_action", translation.TRANSLATION_FAILURE_CODES)
+
+    def test_targets_are_required_only_for_retranslation_and_allow_every_shared_language(self):
+        for language in LANGUAGES:
+            translation.validate_result_action_request(action_request("retranslate", target_language=language))
+        for target in (None, "", "to_ja", "JA", "it", True, 1, [], {}):
+            with self.subTest(target=target), self.assertRaisesRegex(ProtocolError, "^invalid_result_action$"):
+                translation.validate_result_action_request(action_request("retranslate", target_language=target))
+        for action in translation.RESULT_ACTIONS[:-1]:
+            for target in ("ja", "", False, 0, [], {}):
+                with self.subTest(action=action, target=target), self.assertRaises(ProtocolError):
+                    translation.validate_result_action_request(action_request(action, target_language=target))
+
+    def test_utf8_input_limit_is_separate_from_translation_and_json_output_budgets(self):
+        for text in ("a" * 24000, "\u4e2d" * 8000, "\U0001f600" * 6000, "\0" * 24000):
+            translation.validate_result_action_request(action_request(text=text))
+            snapshot = translation.snapshot_for_result_action(Config(), action_request(text=text))
+            self.assertEqual(snapshot.request.user_text, text)
+        for text in ("a" * 24001, "\u4e2d" * 8001, "\U0001f600" * 6001, "\ud800"):
+            with self.subTest(size=len(text)), self.assertRaisesRegex(ProtocolError, "^invalid_result_action$"):
+                translation.validate_result_action_request(action_request(text=text))
+        with self.assertRaisesRegex(ProtocolError, "^invalid_translation$"):
+            translation.validate_translation_request(request(text="a" * 8193))
+
+    def test_actions_reuse_exact_prompts_without_classifier_dictionary_or_automatic_summary(self):
+        config = Config({CFG.SUMMARY_ENABLED: True})
+        prose = "This is synthetic prose with complete sentences for the summary contract. " * 8
+        for action in translation.RESULT_ACTIONS:
+            for text in ("hello", "def greeting():\n    return 42", prose):
+                with self.subTest(action=action, text=text[:10]), \
+                        patch.object(translation, "classify_selection", side_effect=AssertionError("classifier")), \
+                        patch.object(translation, "is_single_word", side_effect=AssertionError("dictionary")), \
+                        patch.object(translation, "is_summarizable_prose", side_effect=AssertionError("summary")), \
+                        patch.object(translation, "codex_summary_instruction", side_effect=AssertionError("summary")):
+                    snapshot = translation.snapshot_for_result_action(config, action_request(action, text=text))
+                expected = (RESULT_ACTION_PROMPTS[action][1] if action in RESULT_ACTION_PROMPTS
+                            else CODE_EXPLAIN_APPEND_PROMPT if action == "explain_code"
+                            else direction_prompt("to_ja" if action == "retranslate" else "auto",
+                                                  "en_US") + SYSTEM_SUFFIX)
+                self.assertEqual(snapshot.request.system_prompt, expected)
+                self.assertEqual(snapshot.request.user_text, text)
+                self.assertEqual((snapshot.request.task, snapshot.summarize, snapshot.dictionary),
+                                 ("text", False, False))
+                self.assertEqual(snapshot.kind, "text")
+                if action in RESULT_ACTION_PROMPTS or action == "explain_code":
+                    self.assertIsNone(snapshot.target_lang)
+
+    def test_retranslation_overrides_direction_for_all_languages_and_both_ui_languages(self):
+        for app_language in ("zh_CN", "en_US"):
+            for language in LANGUAGES:
+                snapshot = translation.snapshot_for_result_action(
+                    Config({CFG.DIRECTION: "to_fr"}),
+                    action_request("retranslate", target_language=language, app_language=app_language))
+                self.assertEqual(snapshot.direction, "to_" + language)
+                self.assertEqual(snapshot.target_lang, language)
+                self.assertEqual(snapshot.request.system_prompt,
+                                 direction_prompt("to_" + language, app_language) + SYSTEM_SUFFIX)
+
+    def test_as_text_obeys_config_direction_and_ui_language_without_dictionary_routing(self):
+        for direction in DIRECTION_MODES:
+            for app_language in ("zh_CN", "en_US"):
+                for text in ("hello", "\u4f60\u597d", "def hello():\n    return 42"):
+                    snapshot = translation.snapshot_for_result_action(
+                        Config({CFG.DIRECTION: direction}),
+                        action_request("as_text", text=text, app_language=app_language))
+                    self.assertEqual(snapshot.request.system_prompt, direction_prompt(direction, app_language) + SYSTEM_SUFFIX)
+                    self.assertEqual(snapshot.target_lang, resolve_target_lang(direction, app_language, text))
+                    self.assertEqual(snapshot.content_class, "text")
+        snapshot = translation.snapshot_for_result_action(
+            Config({CFG.LANGUAGE: "zh_CN"}), action_request("as_text", app_language="en_US"))
+        self.assertEqual(snapshot.app_language, "zh_CN")
+        self.assertEqual(snapshot.request.system_prompt, direction_prompt("auto", "zh_CN") + SYSTEM_SUFFIX)
+
+    def test_action_snapshot_freezes_model_config_input_and_metadata(self):
+        for action in translation.RESULT_ACTIONS:
+            for streaming in (False, True):
+                config = Config({CFG.CODEX_MODEL: "selected-model", CFG.CODEX_STREAMING_EXPERIMENTAL: streaming,
+                                 "future": {"x": [1]}})
+                payload = action_request(action)
+                snapshot = translation.snapshot_for_result_action(config, payload)
+                config[CFG.CODEX_MODEL] = "changed"
+                config[CFG.CODEX_STREAMING_EXPERIMENTAL] = not streaming
+                config["future"]["x"].append(2)
+                payload["text"], payload["action"] = "changed", "changed"
+                self.assertEqual(snapshot.config["future"]["x"], (1,))
+                self.assertEqual(snapshot.config[CFG.CODEX_MODEL], "selected-model")
+                self.assertEqual(snapshot.selection.model, "selected-model")
+                self.assertEqual(snapshot.request.model, "selected-model")
+                self.assertEqual(snapshot.input, TEXT)
+                self.assertEqual(snapshot.request.user_text, TEXT)
+                self.assertEqual(snapshot.request.timeout_seconds, 90 if streaming else 60)
+                self.assertEqual(snapshot.stream_enabled, streaming)
+                self.assertEqual(snapshot.action, "rewrite:" + action if action in RESULT_ACTION_PROMPTS else action)
+                self.assertEqual(snapshot.content_class, "mixed" if action == "explain_code" else "text")
+                with self.assertRaises(TypeError):
+                    snapshot.config[CFG.CODEX_MODEL] = "changed"
+
+    def test_actions_keep_provider_and_config_safety_checks(self):
+        for values, code in (({CFG.MODEL_PROVIDER: "claude_cli"}, "unsupported_provider"),
+                             ({CFG.DIRECTION: "unknown"}, "invalid_translation_settings"),
+                             ({CFG.CODEX_MODEL: "x" * 257}, "invalid_translation_settings"),
+                             ({CFG.MAX_CHARS: 0}, "invalid_translation_settings"),
+                             ({CFG.HISTORY_LIMIT: 0}, "invalid_translation_settings"),
+                             ({CFG.LANGUAGE: "unknown"}, "invalid_translation_settings")):
+            with self.subTest(values=values), self.assertRaisesRegex(translation.TranslationError, code):
+                translation.snapshot_for_result_action(Config(values), action_request())
 
 
 class TranslationContracts(unittest.TestCase):
@@ -196,6 +335,24 @@ assert not any(name in sys.modules for name in ("cc_core", "cc_providers", "tkin
                     if scenario == "streaming-migration":
                         self.assertIs(fixture["config"]["codex_streaming_experimental"], False)
 
+    def test_result_action_fixtures_keep_exact_expected_prompts_without_running_cli(self):
+        from cc_macos import translation_fixture
+        from cc_providers.codex_cli import build_codex_prompt
+
+        with tempfile.TemporaryDirectory(prefix=".action-fixture-", dir=Path.cwd()) as directory:
+            for action in translation.RESULT_ACTIONS:
+                with self.subTest(action=action):
+                    fixture = translation_fixture.prepare(
+                        Path(directory) / action, "synthetic", result_action=action,
+                        target_language="ja" if action == "retranslate" else None)
+                    snapshot = translation.snapshot_for_result_action(Config(fixture["config"]), fixture["request"])
+                    self.assertEqual(fixture["request"]["operation"], "result_action")
+                    self.assertEqual(fixture["expected"]["prompt"], build_codex_prompt(snapshot.request))
+                    self.assertEqual(fixture["expected"]["kind"], "text")
+                    self.assertIs(fixture["expected"]["summarize"], False)
+                    report = translation_fixture.verify(fixture["root"])
+                    self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
+
 
 class ScriptedProvider:
     def __init__(self, *args, **kwargs):
@@ -255,7 +412,7 @@ class EventOutput(io.BytesIO):
                     ("completed", "cancelled", "failed"))
 
 
-class TranslationServiceTests(_ConfigurationDirectory):
+class _TranslationDirectory(_ConfigurationDirectory):
     def setUp(self):
         super().setUp()
         self.provider = ScriptedProvider()
@@ -282,6 +439,8 @@ class TranslationServiceTests(_ConfigurationDirectory):
         return self.session.perform_history(
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
 
+
+class TranslationServiceTests(_TranslationDirectory):
     def test_termination_signal_only_marks_then_run_drains_execution_and_releases_owners(self):
         class Reader:
             def __init__(self, _stream, stopping):
@@ -392,7 +551,8 @@ class TranslationServiceTests(_ConfigurationDirectory):
     def test_ready_is_native_and_first_request_streams_records_then_hits_cache(self):
         ready = self.stdout.events[0]["payload"]
         self.assertEqual((ready["backend"], ready["fixture"]), ("native_appserver", False))
-        self.assertEqual(len(ready["capabilities"]), 6)
+        self.assertEqual(len(ready["capabilities"]), 7)
+        self.assertIn("result_action", ready["capabilities"])
         self.assertEqual(self.provider.requests, [])
         self.translate()
         self.assertTrue(self.stdout.terminal("translate"))
@@ -553,6 +713,288 @@ class TranslationServiceTests(_ConfigurationDirectory):
         self.assertTrue(self.stdout.terminal("translate"))
         self.assertEqual(self.stdout.result("translate")["payload"], {"code": "provider_failed", "submitted": True})
         self.assertNotIn("SYNTHETIC_PRIVATE", self.stdout.getvalue().decode())
+
+
+class ResultActionServiceTests(_TranslationDirectory):
+    def action(self, id_="action", action="concise", **changes):
+        self.server._handle(message(id_, "request", **action_request(action, **changes)))
+
+    def test_all_actions_stream_or_complete_with_exact_translation_terminal_and_no_history_access(self):
+        for streaming in (False, True):
+            # Isolate both execution paths; persisted settings currently migrate streaming to true.
+            config = self.config | {CFG.CODEX_STREAMING_EXPERIMENTAL: streaming, CFG.HISTORY_ENABLED: True}
+            for action in translation.RESULT_ACTIONS:
+                id_ = action + str(streaming)
+                with self.subTest(action=action, streaming=streaming), \
+                        patch.object(self.session, "perform", return_value={"config": config}), \
+                        patch.object(self.session._history, "find_cached", side_effect=AssertionError("cache read")), \
+                        patch.object(self.session, "_record", side_effect=AssertionError("history write")):
+                    self.action(id_, action)
+                    self.assertTrue(self.stdout.terminal(id_))
+                events = [e for e in self.stdout.events if e["id"] == id_]
+                self.assertEqual([e["type"] for e in events],
+                                 ["accepted", "started"] + (["delta"] if streaming else []) + ["completed"])
+                self.assertEqual([e["seq"] for e in events], list(range(len(events))))
+                self.assertEqual(events[0]["payload"], {"operation": "result_action"})
+                self.assertEqual(events[1]["payload"], {"operation": "result_action"})
+                if streaming:
+                    self.assertEqual(events[2]["payload"], {"text": OUTPUT, "submitted": True})
+                self.assertEqual(events[-1]["payload"], {
+                    "text": OUTPUT, "submitted": True, "cached": False, "kind": "text",
+                    "target_lang": "ja" if action == "retranslate" else "zh" if action == "as_text" else None,
+                    "summarize": False, "history": "disabled", "history_error": None,
+                })
+        self.assertEqual(len(self.provider.requests), 12)
+        self.assertEqual(self.history(), [])
+
+    def test_actions_neither_use_existing_translation_cache_nor_pollute_later_cache_or_history(self):
+        self.translate()
+        self.assertTrue(self.stdout.terminal("translate"))
+        existing = self.history()
+        self.provider.text, self.provider.chunks = "Action output", ["Action output"]
+        for action in translation.RESULT_ACTIONS:
+            with patch.object(self.session._history, "find_cached", side_effect=AssertionError("cache read")):
+                self.action(action, action)
+                self.assertTrue(self.stdout.terminal(action))
+            self.assertEqual(self.stdout.result(action)["payload"]["text"], "Action output")
+        self.assertEqual(self.history(), existing)
+        self.translate("cached")
+        self.assertTrue(self.stdout.terminal("cached"))
+        result = self.stdout.result("cached")["payload"]
+        self.assertEqual((result["text"], result["cached"], result["history"]), (OUTPUT, True, "unchanged"))
+        self.assertEqual(len(self.provider.requests), 7)
+        self.assertEqual(self.history(), existing)
+
+    def test_action_captures_selected_model_direction_streaming_and_text_until_provider_finishes(self):
+        self.provider.release.clear()
+        self.action(action="as_text")
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.server._handle(message("settings", "request", operation="config_save",
+                                        config=self.config | {CFG.CODEX_MODEL: "new-model", CFG.DIRECTION: "to_ko",
+                                                              CFG.CODEX_STREAMING_EXPERIMENTAL: False}))
+            self.assertTrue(self.stdout.terminal("settings"))
+        finally:
+            self.provider.release.set()
+        self.assertTrue(self.stdout.terminal("action"))
+        first = self.provider.requests[0]
+        self.assertEqual((first.model, first.user_text, first.timeout_seconds), ("synthetic", TEXT, 90))
+        self.assertEqual(first.system_prompt, direction_prompt("auto", "en_US") + SYSTEM_SUFFIX)
+        self.assertEqual(self.stdout.result("action")["payload"]["target_lang"], "zh")
+        self.action("next", "as_text")
+        self.assertTrue(self.stdout.terminal("next"))
+        second = self.provider.requests[1]
+        self.assertEqual((second.model, second.timeout_seconds), ("new-model", 90))
+        self.assertEqual(second.system_prompt, direction_prompt("to_ko", "en_US") + SYSTEM_SUFFIX)
+        self.assertEqual(self.stdout.result("next")["payload"]["target_lang"], "ko")
+        self.assertTrue(any(e["id"] == "next" and e["type"] == "delta" for e in self.stdout.events))
+
+    def test_partial_cancellation_waits_for_provider_drain_then_emits_one_cancelled_terminal(self):
+        emitted, release = threading.Event(), threading.Event()
+        def partial(captured, on_delta, cancel):
+            self.provider.requests.append(captured)
+            on_delta("Partial action")
+            emitted.set()
+            if not release.wait(3):
+                raise AssertionError("Synthetic drain gate was not released")
+            return ProviderResult(False, error_code="cancelled", metrics=(("turn_submitted", True),))
+        with patch.object(self.provider, "stream", side_effect=partial):
+            self.action()
+            try:
+                self.assertTrue(emitted.wait(1))
+                self.server._handle(message("cancel", "cancel", request_id="action"))
+                self.assertTrue(self.stdout.result("cancel")["payload"]["cancel_requested"])
+                self.assertIn("action", self.server._tasks)
+                self.assertFalse(any(e["id"] == "action" and e["type"] == "cancelled" for e in self.stdout.events))
+            finally:
+                release.set()
+            self.assertTrue(self.stdout.terminal("action"))
+        events = [e for e in self.stdout.events if e["id"] == "action"]
+        self.assertEqual([e["type"] for e in events], ["accepted", "started", "delta", "cancelled"])
+        self.assertEqual(events[-1]["payload"], {"submitted": True})
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.history(), [])
+        self.action("next", "formal")
+        self.assertTrue(self.stdout.terminal("next"))
+        self.assertEqual(self.stdout.result("next")["type"], "completed")
+
+    def test_cancellation_before_execution_is_determinate_and_never_calls_provider(self):
+        queued = []
+        with patch.object(self.server, "_start_translation",
+                          side_effect=lambda req, payload: queued.append((req, payload)) or True):
+            self.action()
+        self.server._handle(message("cancel", "cancel", request_id="action"))
+        self.server._translate(*queued[0])
+        self.assertEqual([(e["type"], e["payload"]) for e in self.stdout.events if e["id"] == "action"],
+                         [("accepted", {"operation": "result_action"}), ("cancelled", {})])
+        self.assertEqual(self.provider.requests, [])
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(self.provider, "stream", side_effect=AssertionError("provider call")):
+            result = self.session.result_action(action_request(), cancel, lambda _text: None, lambda: True)
+        self.assertEqual(result, ("cancelled", {"submitted": False}))
+
+    def test_cancel_at_finish_does_not_publish_success_or_record_action(self):
+        with patch.object(self.session, "_record", side_effect=AssertionError("history write")):
+            result = self.session.result_action(action_request(), threading.Event(), lambda _text: None, lambda: False)
+        self.assertEqual(result, ("cancelled", {"submitted": True}))
+        self.assertEqual(self.history(), [])
+
+    def test_committing_action_rejects_late_cancel_and_preserves_completed_result(self):
+        entered, release = threading.Event(), threading.Event()
+        send = self.server._send
+        def gated_send(request_, event, payload):
+            if request_.id == "action" and event == "completed":
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError("Synthetic completion gate was not released")
+            return send(request_, event, payload)
+        with patch.object(self.server, "_send", side_effect=gated_send):
+            self.action()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.server._handle(message("cancel", "cancel", request_id="action"))
+                self.assertFalse(self.stdout.result("cancel")["payload"]["cancel_requested"])
+                self.assertFalse(self.server._tasks["action"].cancel.is_set())
+            finally:
+                release.set()
+            self.assertTrue(self.stdout.terminal("action"))
+        self.assertEqual(self.stdout.result("action")["type"], "completed")
+        self.assertEqual(self.history(), [])
+
+    def test_cleanup_failure_has_priority_over_partial_action_cancellation(self):
+        def fail(_request, on_delta, cancel):
+            on_delta("Partial")
+            cancel.set()
+            return ProviderResult(False, error_code="group_cleanup_failed",
+                                  metrics=(("turn_submitted", True),))
+        with patch.object(self.provider, "stream", side_effect=fail):
+            self.action()
+            self.assertTrue(self.stdout.terminal("action"))
+        self.assertEqual(self.stdout.result("action")["payload"], {"code": "provider_cleanup_failed", "submitted": True})
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == "action"],
+                         ["accepted", "started", "delta", "failed"])
+        self.assertEqual(self.history(), [])
+
+    def test_unknown_transport_after_partial_does_not_fabricate_action_terminal_or_replay(self):
+        def unknown(captured, on_delta, _cancel):
+            self.provider.requests.append(captured)
+            on_delta("Partial")
+            raise ProcessError("PRIVATE_transport")
+        with patch.object(self.provider, "stream", side_effect=unknown):
+            self.action()
+            self.server._join_workers()
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == "action"],
+                         ["accepted", "started", "delta"])
+        self.assertEqual(self.stdout.result(RESERVED_ID)["payload"], {"code": "internal_error"})
+        self.assertTrue(self.server._stopping)
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertNotIn("PRIVATE", self.stderr.getvalue())
+        self.assertEqual(self.history(), [])
+
+    def test_known_failures_preserve_submission_and_fixed_error_categories_without_replay(self):
+        cases = (
+            ("appserver_version_unsupported", "provider_version_unsupported", False),
+            ("appserver_version_unreadable", "provider_version_unreadable", False),
+            ("appserver_version_prerelease", "provider_version_prerelease", False),
+            ("timeout", "translation_timeout", True),
+            ("rpc_timeout", "translation_timeout", True),
+            ("invalid_appserver_message", "provider_protocol_error", True),
+            ("PRIVATE_provider_failure", "provider_failed", True),
+        )
+        for index, (provider_code, code, submitted) in enumerate(cases):
+            result = ProviderResult(False, error_code=provider_code, metrics=(("turn_submitted", submitted),))
+            with self.subTest(code=provider_code), patch.object(self.provider, "stream", return_value=result) as stream:
+                self.action(str(index))
+                self.assertTrue(self.stdout.terminal(str(index)))
+            stream.assert_called_once()
+            self.assertEqual(self.stdout.result(str(index))["payload"], {"code": code, "submitted": submitted})
+        self.assertNotIn("PRIVATE", self.stdout.getvalue().decode())
+        self.assertEqual(self.history(), [])
+
+    def test_empty_oversize_invalid_unicode_and_nontext_outputs_fail_without_history(self):
+        cases = (
+            (["\ud800"], OUTPUT, "provider_protocol_error"),
+            ([], "\ud800", "provider_protocol_error"),
+            ([123], OUTPUT, "provider_protocol_error"),
+            ([], "", "translation_output_limit"),
+            ([], " ", "translation_output_limit"),
+            ([], None, "translation_output_limit"),
+            (["\0" * 4000], OUTPUT, "translation_output_limit"),
+            ([], "a" * 23999, "translation_output_limit"),
+        )
+        for index, (chunks, text, code) in enumerate(cases):
+            with self.subTest(index=index):
+                self.provider.chunks, self.provider.text = chunks, text
+                self.action(str(index))
+                self.assertTrue(self.stdout.terminal(str(index)))
+                self.assertEqual(self.stdout.result(str(index))["payload"], {"code": code, "submitted": True})
+        self.assertEqual(self.history(), [])
+
+    def test_exact_output_budget_splits_utf8_deltas_and_returns_full_action(self):
+        text = "\u4e2d" * 7999 + "a"
+        self.provider.chunks, self.provider.text = [text], text
+        self.action()
+        self.assertTrue(self.stdout.terminal("action"))
+        deltas = [e["payload"]["text"] for e in self.stdout.events if e["id"] == "action" and e["type"] == "delta"]
+        self.assertEqual("".join(deltas), text)
+        self.assertTrue(all(translation.text_bytes(value) <= 4096 for value in deltas))
+        self.assertEqual(self.stdout.result("action")["payload"]["text"], text)
+        self.assertEqual(self.history(), [])
+
+    def test_action_stream_budget_counts_envelopes_and_retains_room_for_terminal(self):
+        self.provider.chunks = ["x"] * 23000
+        id_ = "r" * 64
+        self.action(id_)
+        self.assertTrue(self.stdout.terminal(id_))
+        self.assertEqual(self.stdout.result(id_)["payload"], {"code": "translation_output_limit", "submitted": True})
+        self.assertLessEqual(len(self.stdout.getvalue()), translation.MAX_STREAM_BYTES + 512)
+        self.assertEqual(self.history(), [])
+
+    def test_corrupt_history_is_not_read_or_repaired_by_action(self):
+        path = self.directory / "history.json"
+        path.write_bytes(b"not-json")
+        self.action()
+        self.assertTrue(self.stdout.terminal("action"))
+        self.assertEqual(self.stdout.result("action")["type"], "completed")
+        self.assertEqual(self.stdout.result("action")["payload"]["history"], "disabled")
+        self.assertEqual(path.read_bytes(), b"not-json")
+        self.translate()
+        self.assertTrue(self.stdout.terminal("translate"))
+        self.assertEqual(self.stdout.result("translate")["payload"], {"code": "invalid_history", "submitted": False})
+        self.assertEqual(len(self.provider.requests), 1)
+
+    def test_corrupt_config_fails_before_action_provider_and_is_not_overwritten(self):
+        self.path.write_bytes(b"{broken")
+        self.action()
+        self.assertTrue(self.stdout.terminal("action"))
+        self.assertEqual(self.stdout.result("action")["payload"], {"code": "invalid_config", "submitted": False})
+        self.assertEqual(self.path.read_bytes(), b"{broken")
+        self.assertEqual(self.provider.requests, [])
+
+    def test_shutdown_cancels_action_and_drains_before_removing_active_task(self):
+        self.provider.release.clear()
+        self.action()
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.assertFalse(self.server._handle(message("shutdown", "shutdown")))
+            self.assertTrue(self.server._tasks["action"].cancel.is_set())
+            self.assertIn("action", self.server._tasks)
+        finally:
+            self.provider.release.set()
+        self.server._join_workers()
+        self.assertEqual(self.stdout.result("action")["type"], "cancelled")
+        self.assertFalse(self.server._workers)
+        self.assertEqual(self.history(), [])
+
+    def test_lost_stdout_cancels_action_without_replay_or_history(self):
+        self.stdout.break_on_delta = True
+        self.action()
+        self.server._join_workers()
+        self.assertTrue(self.server._pipe_closed)
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.history(), [])
+        self.assertNotIn("SYNTHETIC_PRIVATE", self.stderr.getvalue())
 
 
 if __name__ == "__main__":

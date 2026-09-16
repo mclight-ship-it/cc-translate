@@ -5,7 +5,8 @@ final class TranslationProtocolTests: XCTestCase {
     private let storage = ["config_load", "config_save", "history_load", "history_add", "history_clear"]
     private var ready: [String: JSONValue] {
         [
-            "protocol": .integer(1), "capabilities": .array((storage + ["translate"]).map(JSONValue.string)),
+            "protocol": .integer(1),
+            "capabilities": .array((storage + ["translate", "result_action"]).map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(false), "backend": .string("native_appserver")
         ]
     }
@@ -55,7 +56,7 @@ final class TranslationProtocolTests: XCTestCase {
         _ = try state.receive(event("t", 2, "completed", completion))
     }
 
-    func testTranslationHandshakeRequiresExactModeBackendAndSixCapabilities() throws {
+    func testTranslationHandshakeRequiresExactModeBackendAndSevenCapabilities() throws {
         var state = ProtocolState(mode: .translation)
         XCTAssertTrue(state.isBusiness)
         XCTAssertThrowsError(try state.register(ClientMessage(id: "t", type: "request", payload: request)))
@@ -71,6 +72,7 @@ final class TranslationProtocolTests: XCTestCase {
             ["fixture": .bool(true)], ["protocol": .bool(true)], ["protocol": .integer(2)],
             ["max_frame_bytes": .integer(1_048_576)], ["extra": .null],
             ["capabilities": .array(storage.map(JSONValue.string))],
+            ["capabilities": .array((storage + ["translate"]).map(JSONValue.string))],
             ["capabilities": .array((storage + ["config_load"]).map(JSONValue.string))],
             ["capabilities": .array((storage + ["fixture"]).map(JSONValue.string))],
             ["capabilities": .array((storage + ["translate", "translate"]).map(JSONValue.string))],

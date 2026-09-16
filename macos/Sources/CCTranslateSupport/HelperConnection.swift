@@ -207,6 +207,15 @@ public final class HelperConnection {
     }
 
     @discardableResult
+    public func resultAction(_ action: ResultAction, text: String, appLanguage: String,
+                             targetLanguage: String? = nil, id: String = UUID().uuidString,
+                             timeout: TimeInterval = 110) -> String {
+        send(action.request(text: text, appLanguage: appLanguage, targetLanguage: targetLanguage, id: id),
+             timeout: timeout)
+        return id
+    }
+
+    @discardableResult
     public func loadConfiguration(id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
         send(ClientMessage(id: id, type: "request", payload: ["operation": .string("config_load")]),
              timeout: timeout)

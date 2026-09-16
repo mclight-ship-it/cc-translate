@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from cc_macos import probes
 from cc_macos.protocol import (
-    MAX_FRAME_BYTES, MAX_TEXT_BYTES, ProtocolError, decode_frame, encode_frame,
+    MAX_FRAME_BYTES, MAX_TEXT_BYTES, MAX_RESULT_ACTION_TEXT_BYTES, ProtocolError, decode_frame, encode_frame,
     read_frame, validate_client,
 )
 from cc_macos.server import Server
@@ -301,6 +301,136 @@ class TestMacHelperProcess(unittest.TestCase):
             "status": "passed", "cli_simulated": True, "cache_verified": True, "reopen_verified": True})
         self.assertTrue(result["payload"]["python"]["bytecode_disabled"])
         self.assertEqual(helper.finish(), (0, b""))
+
+
+class TestMacResultActionProtocol(unittest.TestCase):
+    @staticmethod
+    def payload(**changes):
+        return {"operation": "result_action", "action": "concise", "text": "Synthetic primary result",
+                "app_language": "en_US", "target_language": None} | changes
+
+    def server(self, *, translation_enabled=True):
+        from cc_macos.translation import validate_result_action_request, validate_translation_request
+
+        config = Mock(translation_enabled=translation_enabled)
+        config.validate_result_action_request = validate_result_action_request
+        config.validate_translation_request = validate_translation_request
+        output = io.BytesIO()
+        server = Server(io.BytesIO(), output, io.StringIO(), configuration=config)
+        server._handle(message("hello", "hello"))
+        self.addCleanup(server._join_workers)
+        self.addCleanup(server._stop)
+        return server, config, output
+
+    @staticmethod
+    def events(output, id_):
+        return [event for raw in output.getvalue().splitlines()
+                if (event := decode_frame(raw + b"\n"))["id"] == id_]
+
+    def test_action_utf8_boundary_roundtrips_in_paired_version_one_envelope(self):
+        self.assertEqual((MAX_TEXT_BYTES, MAX_RESULT_ACTION_TEXT_BYTES), (8192, 24000))
+        for text in ("a" * MAX_RESULT_ACTION_TEXT_BYTES, "\u4e2d" * 8000, "\U0001f600" * 6000):
+            value = message("action", "request", **self.payload(text=text))
+            self.assertEqual(decode_frame(encode_frame(value)), value)
+            self.assertEqual(value["v"], 1)
+        with self.assertRaisesRegex(ProtocolError, "frame_too_large"):
+            encode_frame(message("action", "request", **self.payload(text="\0" * MAX_RESULT_ACTION_TEXT_BYTES)))
+
+    def test_native_ready_advertises_action_without_invoking_model(self):
+        server, config, output = self.server()
+        ready = self.events(output, "hello")[0]["payload"]
+        self.assertEqual(ready["capabilities"], [
+            "config_load", "config_save", "history_load", "history_add", "history_clear", "translate", "result_action",
+        ])
+        self.assertEqual((ready["backend"], ready["fixture"], ready["protocol"]), ("native_appserver", False, 1))
+        config.translate.assert_not_called()
+        config.result_action.assert_not_called()
+        self.assertFalse(server._tasks)
+
+    def test_diagnostic_and_configuration_only_connections_do_not_accept_actions(self):
+        server, config, output = self.server(translation_enabled=False)
+        self.assertNotIn("result_action", self.events(output, "hello")[0]["payload"]["capabilities"])
+        server._handle(message("action", "request", **self.payload()))
+        self.assertEqual(self.events(output, "action")[0]["payload"], {"code": "unsupported_operation"})
+        config.result_action.assert_not_called()
+        output = io.BytesIO()
+        diagnostic = Server(io.BytesIO(), output, io.StringIO())
+        diagnostic._handle(message("hello", "hello"))
+        diagnostic._handle(message("action", "request", **self.payload()))
+        self.assertEqual(self.events(output, "hello")[0]["payload"]["capabilities"], ["fixture", "runtime_probe"])
+        self.assertEqual(self.events(output, "action")[0]["payload"], {"code": "unsupported_operation"})
+
+    def test_malformed_action_is_fixed_failure_before_acceptance_or_provider_dispatch(self):
+        server, config, output = self.server()
+        for index, changes in enumerate((
+                {"action": "unknown"}, {"action": {}}, {"text": "a" * 24001},
+                {"text": "\u4e2d" * 8001}, {"app_language": []}, {"target_language": "en"},
+                {"action": "retranslate"}, {"action": "retranslate", "target_language": []},
+                {"use_cache": False}, {"record_history": False})):
+            server._handle(message(str(index), "request", **self.payload(**changes)))
+            self.assertEqual(self.events(output, str(index)), [{
+                "v": 1, "id": str(index), "seq": 0, "type": "failed",
+                "payload": {"code": "invalid_result_action"},
+            }])
+        config.result_action.assert_not_called()
+        config.translate.assert_not_called()
+        self.assertFalse(server._tasks)
+
+    def test_worker_routes_action_to_action_method_with_contiguous_events_and_cancel_event(self):
+        server, config, output = self.server()
+        completed = {"text": "Synthetic action output", "submitted": True, "cached": False, "kind": "text",
+                     "target_lang": None, "summarize": False, "history": "disabled", "history_error": None}
+        def action(payload, cancel, on_delta, begin_finish):
+            self.assertEqual(payload, self.payload())
+            self.assertIsInstance(cancel, threading.Event)
+            self.assertFalse(cancel.is_set())
+            on_delta("Synthetic action output")
+            self.assertTrue(begin_finish())
+            return "completed", completed
+        config.result_action.side_effect = action
+        server._handle(message("action", "request", **self.payload()))
+        server._join_workers()
+        events = self.events(output, "action")
+        self.assertEqual([event["type"] for event in events], ["accepted", "started", "delta", "completed"])
+        self.assertEqual([event["seq"] for event in events], [0, 1, 2, 3])
+        self.assertEqual(events[0]["payload"], {"operation": "result_action"})
+        self.assertEqual(events[1]["payload"], {"operation": "result_action"})
+        self.assertEqual(events[-1]["payload"], completed)
+        config.result_action.assert_called_once()
+        config.translate.assert_not_called()
+        config.perform.assert_not_called()
+        config.perform_history.assert_not_called()
+
+    def test_action_worker_start_failure_is_single_known_prestart_terminal(self):
+        server, config, output = self.server()
+        with patch("cc_macos.server.threading.Thread.start", side_effect=RuntimeError("PRIVATE")):
+            self.assertFalse(server._handle(message("action", "request", **self.payload())))
+        events = self.events(output, "action")
+        self.assertEqual([event["type"] for event in events], ["accepted", "failed"])
+        self.assertEqual(events[-1]["payload"], {"code": "worker_start_failed"})
+        config.result_action.assert_not_called()
+        self.assertFalse(server._tasks)
+        self.assertFalse(server._workers)
+
+    def test_cancelled_actions_keep_worker_capacity_until_drain_and_cannot_replay_id(self):
+        server, config, output = self.server()
+        requests = []
+        def start(request, _payload):
+            request.started = True
+            requests.append(request)
+            return True
+        with patch.object(server, "_start_translation", side_effect=start):
+            for index in range(4):
+                server._handle(message(str(index), "request", **self.payload()))
+            server._handle(message("cancel", "cancel", request_id="0"))
+            self.assertEqual(self.events(output, "cancel")[0]["payload"], {"cancel_requested": True})
+            self.assertTrue(requests[0].cancel.is_set())
+            self.assertFalse(requests[0].terminal)
+            server._handle(message("overflow", "request", **self.payload()))
+            self.assertEqual(self.events(output, "overflow")[0]["payload"], {"code": "busy"})
+            with self.assertRaisesRegex(ProtocolError, "^duplicate_id$"):
+                server._handle(message("0", "request", **self.payload()))
+        config.result_action.assert_not_called()
 
 
 class TestMacServerConcurrency(unittest.TestCase):

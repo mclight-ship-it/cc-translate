@@ -60,14 +60,18 @@ extension HelperIntegrationTests {
         return try XCTUnwrap(JSONValue.parse(bytes).object)
     }
 
-    private func translationContext(scenario: String = "normal") throws -> TranslationContext {
+    private func translationContext(scenario: String = "normal", resultAction: ResultAction? = nil,
+                                    targetLanguage: String? = nil) throws -> TranslationContext {
         let base = try configurationContext()
         do {
             let identifier = try base.runtime.configurationApplicationIdentifier()
-            let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: [
+            var arguments = [
                 "--prepare", base.home.appendingPathComponent("translation").path,
                 "--application-id", identifier, "--scenario", scenario
-            ])
+            ]
+            if let resultAction { arguments += ["--result-action", resultAction.rawValue] }
+            if let targetLanguage { arguments += ["--target-language", targetLanguage] }
+            let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: arguments)
             let home = URL(fileURLWithPath: try XCTUnwrap(fixture["home"]?.string), isDirectory: true)
             let environment = try XCTUnwrap(fixture["environment"]?.object)
                 .mapValues { try XCTUnwrap($0.string) }
@@ -206,6 +210,72 @@ extension HelperIntegrationTests {
         await fulfillment(of: [reopened.stopped], timeout: 10)
         XCTAssertTrue(reopened.failures.isEmpty)
         try verifyTranslation(context, turns: 1, cleanup: true)
+    }
+
+    @MainActor
+    func testBundledResultActionsUseNativeProviderWithoutReadingOrWritingHistory() async throws {
+        for action in ResultAction.allCases {
+            let target = action == .retranslate ? "ja" : nil
+            let scenario = action == .asText ? "dictionary" : action == .explainCode ? "code" : "normal"
+            let context = try translationContext(scenario: scenario, resultAction: action, targetLanguage: target)
+            defer { removeConfigurationHome(context.cleanupRoot) }
+            let session = ConfigurationNotices()
+            defer { session.connection.forceStop() }
+            startTranslation(session, context)
+            await fulfillment(of: [session.ready], timeout: 10)
+            assertNoTranslationCLI(context)
+            let saved = session.terminal("save")
+            session.connection.saveConfiguration(context.config, id: "save")
+            await fulfillment(of: [saved], timeout: 10)
+            session.assertOperation("save")
+            let historyBytes = Data("invalid synthetic history must not be read by result actions".utf8)
+            try historyBytes.write(to: context.historyFile)
+            for id in ["first_action", "second_action"] {
+                let terminal = session.terminal(id)
+                session.connection.resultAction(
+                    action, text: try XCTUnwrap(context.request["text"]?.string),
+                    appLanguage: "zh_CN", targetLanguage: target, id: id)
+                await fulfillment(of: [terminal], timeout: 25)
+                assertTranslation(session, context, id: id, history: "disabled")
+                XCTAssertEqual(session.result(id)?.payload["kind"], .string("text"))
+                XCTAssertEqual(try Data(contentsOf: context.historyFile), historyBytes)
+            }
+            try verifyTranslation(context, turns: 2, cleanup: false)
+            session.connection.stop()
+            await fulfillment(of: [session.stopped], timeout: 10)
+            XCTAssertTrue(session.failures.isEmpty)
+            try verifyTranslation(context, turns: 2, cleanup: true)
+        }
+    }
+
+    @MainActor
+    func testBundledResultActionCancellationDrainsOwnedGroupsWithoutHistory() async throws {
+        let context = try translationContext(scenario: "gated", resultAction: .summary)
+        defer { removeConfigurationHome(context.cleanupRoot) }
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        startTranslation(session, context)
+        await fulfillment(of: [session.ready], timeout: 10)
+        let saved = session.terminal("save")
+        session.connection.saveConfiguration(context.config, id: "save")
+        await fulfillment(of: [saved], timeout: 10)
+        let delta = session.firstDelta("action"), terminal = session.terminal("action")
+        session.connection.resultAction(.summary, text: try XCTUnwrap(context.request["text"]?.string),
+                                        appLanguage: "zh_CN", id: "action")
+        await fulfillment(of: [delta], timeout: 25)
+        XCTAssertNil(session.result("action"))
+        let cancelled = session.terminal("cancel")
+        session.connection.send(ClientMessage(id: "cancel", type: "cancel",
+                                              payload: ["request_id": .string("action")]))
+        await fulfillment(of: [cancelled, terminal], timeout: 15)
+        XCTAssertEqual(session.result("cancel")?.payload, ["cancel_requested": .bool(true)])
+        XCTAssertEqual(session.result("action")?.type, "cancelled")
+        XCTAssertEqual(session.result("action")?.payload, ["submitted": .bool(true)])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path))
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+        try verifyTranslation(context, turns: 1, cleanup: true, descendant: true)
     }
 
     @MainActor

@@ -5,8 +5,11 @@ import sys
 
 from cc_classify import classify_selection, is_single_word
 from cc_config import CFG
-from cc_direction import DIRECTION_MODES, direction_prompt, resolve_target_lang
-from cc_prompts import CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT, PROVIDER_PROMPT_REVISIONS, SYSTEM_SUFFIX
+from cc_direction import DIRECTION_MODES, LANGUAGES, direction_prompt, resolve_target_lang
+from cc_prompts import (
+    CODE_EXPLAIN_APPEND_PROMPT, CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT,
+    PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
+)
 from cc_providers.base import CODEX_PROVIDER, ProviderRequest, ProviderSelection
 from cc_providers.codex_darwin import DarwinCodexProvider
 from cc_providers.darwin_process import ProcessError
@@ -16,15 +19,19 @@ from cc_storage import macos_user_paths
 from cc_summary import SUMMARY_MIN_CHARS, codex_summary_instruction, is_summarizable_prose
 from .configuration import ConfigurationError, ConfigurationSession
 from .history import MAX_HISTORY_ENTRIES
-from .protocol import MAX_TEXT_BYTES, MAX_STREAM_BYTES, ProtocolError, decode_json_document
+from .protocol import (
+    MAX_TEXT_BYTES, MAX_RESULT_ACTION_TEXT_BYTES, MAX_STREAM_BYTES, ProtocolError,
+    decode_json_document,
+)
 
 
 CLI_ENVIRONMENT_KEY = "CC_TRANSLATE_CODEX_ENV"
 MAX_CLI_ENVIRONMENT_BYTES = 32_768
 MAX_OUTPUT_BYTES = 24_000
 MAX_DELTA_BYTES = 4_096
+RESULT_ACTIONS = ("concise", "formal", "summary", "explain_code", "as_text", "retranslate")
 TRANSLATION_FAILURE_CODES = {
-    "invalid_translation", "translation_unavailable", "unsupported_provider",
+    "invalid_translation", "invalid_result_action", "translation_unavailable", "unsupported_provider",
     "invalid_translation_settings", "translation_timeout", "translation_output_limit",
     "provider_version_unsupported", "provider_version_unreadable", "provider_version_prerelease",
     "provider_cleanup_failed", "provider_protocol_error",
@@ -73,17 +80,45 @@ def text_bytes(text):
     return len(json.dumps(text, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
-def snapshot_for_translation(config, payload):
-    validate_translation_request(payload)
+def validate_result_action_request(payload):
+    if set(payload) != {"operation", "action", "text", "app_language", "target_language"}:
+        raise ProtocolError("invalid_result_action")
+    if (payload["operation"] != "result_action"
+            or type(payload["action"]) is not str or payload["action"] not in RESULT_ACTIONS
+            or type(payload["text"]) is not str or not payload["text"].strip()
+            or payload["app_language"] not in ("zh_CN", "en_US")):
+        raise ProtocolError("invalid_result_action")
+    target = payload["target_language"]
+    if payload["action"] == "retranslate":
+        if type(target) is not str or target not in LANGUAGES:
+            raise ProtocolError("invalid_result_action")
+    elif target is not None:
+        raise ProtocolError("invalid_result_action")
+    try:
+        if len(payload["text"].encode("utf-8")) > MAX_RESULT_ACTION_TEXT_BYTES:
+            raise ProtocolError("invalid_result_action")
+    except UnicodeError:
+        raise ProtocolError("invalid_result_action") from None
+
+
+def _snapshot_settings(config, payload, *, result_action=False):
     if config[CFG.MODEL_PROVIDER] != CODEX_PROVIDER:
         raise TranslationError("unsupported_provider")
     text, model, direction = payload["text"], config[CFG.CODEX_MODEL], config[CFG.DIRECTION]
     language = config.get(CFG.LANGUAGE) or payload["app_language"]
     if (type(model) is not str or not model or len(model.encode("utf-8")) > 256
             or direction not in DIRECTION_MODES or language not in ("zh_CN", "en_US")
-            or config[CFG.MAX_CHARS] < 1 or len(text) > config[CFG.MAX_CHARS]
+            or config[CFG.MAX_CHARS] < 1
+            or not result_action and len(text) > config[CFG.MAX_CHARS]
             or not 1 <= config[CFG.HISTORY_LIMIT] <= MAX_HISTORY_ENTRIES):
         raise TranslationError("invalid_translation_settings")
+    return model, direction, language
+
+
+def snapshot_for_translation(config, payload):
+    validate_translation_request(payload)
+    model, direction, language = _snapshot_settings(config, payload)
+    text = payload["text"]
     content_class, dictionary = classify_selection(text), is_single_word(text)
     summarize = bool(config[CFG.SUMMARY_ENABLED] and content_class in ("text", "mixed")
                      and not dictionary and len(text) >= SUMMARY_MIN_CHARS and is_summarizable_prose(text))
@@ -108,6 +143,32 @@ def snapshot_for_translation(config, payload):
         dictionary=dictionary, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]))
 
 
+def snapshot_for_result_action(config, payload):
+    validate_result_action_request(payload)
+    # Primary results can exceed the translation input's configured character limit.
+    model, direction, language = _snapshot_settings(config, payload, result_action=True)
+    text, action = payload["text"], payload["action"]
+    target = None
+    content_class = "text"
+    if action in RESULT_ACTION_PROMPTS:
+        prompt = RESULT_ACTION_PROMPTS[action][1]
+    elif action == "explain_code":
+        prompt, content_class = CODE_EXPLAIN_APPEND_PROMPT, "mixed"
+    else:
+        if action == "retranslate":
+            direction = "to_" + payload["target_language"]
+        target = resolve_target_lang(direction, language, text)
+        prompt = direction_prompt(direction, language) + SYSTEM_SUFFIX
+    return RequestSnapshot(
+        request=ProviderRequest("text", model, prompt, text,
+                                timeout_seconds=90 if config[CFG.CODEX_STREAMING_EXPERIMENTAL] else 60),
+        selection=ProviderSelection(CODEX_PROVIDER, model), config=config, input=text,
+        origin="text", content_class=content_class, kind="text", sig="",
+        direction=direction, app_language=language, target_lang=target, summarize=False,
+        dictionary=False, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]),
+        action="rewrite:" + action if action in RESULT_ACTION_PROMPTS else action)
+
+
 def provider_failure(code):
     if "cleanup_failed" in code:
         return "provider_cleanup_failed"
@@ -127,6 +188,7 @@ def provider_failure(code):
 class TranslationSession(ConfigurationSession):
     translation_enabled = True
     validate_translation_request = staticmethod(validate_translation_request)
+    validate_result_action_request = staticmethod(validate_result_action_request)
 
     def __init__(self, home, application_id, command, environment):
         super().__init__(home, application_id)
@@ -186,6 +248,15 @@ class TranslationSession(ConfigurationSession):
 
     def translate(self, payload, cancel, on_delta, begin_finish):
         snapshot, cached = self._capture(payload)
+        return self._execute(snapshot, cached, payload["record_history"], cancel, on_delta, begin_finish)
+
+    def result_action(self, payload, cancel, on_delta, begin_finish):
+        with self._operations_lock:
+            config = self.perform({"operation": "config_load"})["config"]
+            snapshot = snapshot_for_result_action(config, payload)
+        return self._execute(snapshot, None, False, cancel, on_delta, begin_finish)
+
+    def _execute(self, snapshot, cached, record_history, cancel, on_delta, begin_finish):
         if cancel.is_set():
             return "cancelled", {"submitted": False}
         submitted, output, used_cache = False, cached, cached is not None
@@ -240,8 +311,11 @@ class TranslationSession(ConfigurationSession):
             raise TranslationError("translation_output_limit", bool(submitted))
         if not begin_finish():
             return "cancelled", {"submitted": bool(submitted)}
-        status, error = ("unchanged", None) if used_cache else self._record(
-            snapshot, output, payload["record_history"])
+        if snapshot.action != "translation":
+            status, error = "disabled", None
+        else:
+            status, error = ("unchanged", None) if used_cache else self._record(
+                snapshot, output, record_history)
         return "completed", {
             "text": output, "submitted": bool(submitted), "cached": used_cache,
             "kind": snapshot.kind, "target_lang": snapshot.target_lang, "summarize": snapshot.summarize,

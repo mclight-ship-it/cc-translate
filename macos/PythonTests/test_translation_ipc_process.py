@@ -125,10 +125,11 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.fixture_index = 0
         self.prepare()
 
-    def prepare(self, scenario="normal"):
+    def prepare(self, scenario="normal", *, result_action=None):
         self.fixture_index += 1
         self.fixture = translation_fixture.prepare(
-            self.barriers / ("translation-" + str(self.fixture_index)), self.identity, scenario)
+            self.barriers / ("translation-" + str(self.fixture_index)), self.identity, scenario,
+            result_action=result_action)
         self.home = Path(self.fixture["home"])
         self.root = Path(self.fixture["root"])
         self.directory = macos_user_paths(self.home, self.identity).application_support
@@ -170,6 +171,7 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.assertIs(ready["payload"]["fixture"], False)
         self.assertEqual(ready["payload"]["backend"], "native_appserver")
         self.assertIn("translate", ready["payload"]["capabilities"])
+        self.assertIn("result_action", ready["payload"]["capabilities"])
         if configure:
             self.configure(process)
         return process
@@ -423,6 +425,55 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.assertEqual([event["type"] for pid, event in self.events
                           if pid == process.pid and event["id"] == "translation"],
                          ["accepted", "cancelled"])
+
+    def test_result_action_queued_cancel_never_starts_provider_or_reads_history(self):
+        self.prepare(result_action="summary")
+        self.mode = "prestart"
+        process = self.start()
+        self.request(process)
+        self.assertEqual(self.receive(process)["type"], "accepted")
+        self.barrier()
+        self.send_message(process, "cancel", "cancel", request_id="translation")
+        self.assertEqual(self.receive(process)["payload"], {})
+        self.assertEqual(self.receive(process)["payload"], {"cancel_requested": True})
+        self.release()
+        self.stop(process)
+        self.no_cli()
+        self.assertFalse(self.history_path.exists())
+        self.assertEqual([event["type"] for pid, event in self.events
+                          if pid == process.pid and event["id"] == "translation"],
+                         ["accepted", "cancelled"])
+
+    def test_result_action_eof_drains_native_group_and_reopen_does_not_replay(self):
+        self.prepare("gated", result_action="summary")
+        process = self.start()
+        self.request(process)
+        self.until_delta(process)
+        process.stdin.close()
+        process.stdin = None
+        self.assertEqual(self.terminal(process, "translation")["payload"], {"submitted": True})
+        self.finish_helper(process)
+        self.assert_native_gone(descendant=True)
+        self.assertFalse(self.history_path.exists())
+        reopened = self.start(configure=False)
+        self.assertEqual(self.history(reopened), [])
+        self.assertEqual(len(self.turns()), 1)
+        self.stop(reopened)
+
+    def test_invalid_result_actions_are_determinate_before_provider_submission(self):
+        self.prepare(result_action="summary")
+        process = self.start()
+        for index, changes in enumerate((
+                {"action": "unsupported"}, {"target_language": "ja"}, {"target_language": False},
+                {"text": "x" * 24_001}, {"record_history": True})):
+            id_ = "invalid_" + str(index)
+            self.request(process, id_, **changes)
+            result = self.terminal(process, id_)
+            self.assertEqual((result["type"], result["seq"]), ("failed", 0))
+            self.assertEqual(result["payload"], {"code": "invalid_result_action"})
+        self.no_cli()
+        self.assertFalse(self.history_path.exists())
+        self.stop(process)
 
     def test_cancel_after_begin_finish_is_rejected_and_shutdown_waits_for_real_history_write(self):
         self.mode = "committing"

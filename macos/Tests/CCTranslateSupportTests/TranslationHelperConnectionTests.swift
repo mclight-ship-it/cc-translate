@@ -109,7 +109,7 @@ final class TranslationHelperConnectionTests: XCTestCase {
     private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-                (mode == .translation ? ["translate"] : [])
+                (mode == .translation ? ["translate", "result_action"] : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
@@ -219,6 +219,71 @@ final class TranslationHelperConnectionTests: XCTestCase {
             "operation": .string("translate"), "text": .string("selection"), "app_language": .string("en_US"),
             "origin": .string("selection"), "use_cache": .bool(false), "record_history": .bool(false)
         ]))
+    }
+
+    @MainActor
+    func testResultActionTypedAPIEncodesExactRequestAndStreamsWithoutHistory() async throws {
+        let action: [String: JSONValue] = ["operation": .string("result_action")]
+        var result = completion
+        result["target_lang"] = .null
+        let script = try connectedScript("""
+        \(readLine)
+        printf '%s' "$line" > "$HOME/action-request"
+        \(try emit("action", 0, "accepted", action))
+        \(try emit("action", 1, "started", action))
+        \(try emit("action", 2, "delta", ["text": .string("partial"), "submitted": .bool(true)]))
+        \(try emit("action", 3, "completed", result))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let terminal = notices.terminal("action")
+        XCTAssertEqual(notices.connection.resultAction(
+            .summary, text: "Primary result", appLanguage: "en_US", id: "action"), "action")
+        await fulfillment(of: [terminal], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        let captured = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("action-request")))
+        XCTAssertEqual(captured.object?["payload"], .object([
+            "operation": .string("result_action"), "action": .string("summary"),
+            "text": .string("Primary result"), "app_language": .string("en_US"), "target_language": .null
+        ]))
+        XCTAssertEqual(notices.events.filter { $0.id == "action" }.map(\.type),
+                       ["accepted", "started", "delta", "completed"])
+        XCTAssertEqual(notices.events.first { $0.id == "action" && $0.type == "completed" }?.payload, result)
+    }
+
+    @MainActor
+    func testResultActionEOFReportsUnknownAheadOfStorageWithoutReplay() async throws {
+        let action: [String: JSONValue] = ["operation": .string("result_action")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(readLine)
+        \(readLine)
+        \(try emit("action", 0, "accepted", action))
+        \(try emit("action", 1, "started", action))
+        exit 0
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        notices.connection.resultAction(.summary, text: "Primary result", appLanguage: "en_US", id: "action")
+        notices.connection.loadConfiguration(id: "config")
+        notices.connection.clearHistory(id: "history")
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.translationOutcomeUnknown])
+        XCTAssertEqual(notices.events.map(\.type), ["ready", "accepted", "started"])
+        XCTAssertFalse(notices.events.contains { $0.id == "action" && $0.isTerminal })
     }
 
     @MainActor

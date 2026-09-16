@@ -37,6 +37,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var monitorEnabled = false
     @Published private(set) var resultKind = "text"
     @Published private(set) var resultInput = ""
+    @Published private(set) var primaryResult = ""
     private(set) var translationOrigin = "text"
     @Published private(set) var historyPage: [HistoryRow] = []
     @Published private(set) var historyStatus = "History has not been read."
@@ -90,8 +91,18 @@ final class ProbeModel: ObservableObject {
         var useSavedDirection: Bool
         var useSavedModel: Bool
         var configurationSaved = false
+        var action: ActionDraft?
+    }
+    private struct ActionDraft {
+        let action: ResultAction
+        let targetLanguage: String?
+        let generation: UUID
+        let prefix: String
+        let title: String
     }
     private var draft: Draft?
+    private var activeAction: (id: String, content: ActionDraft)?
+    private var resultGeneration = UUID()
     private var presentationLoaded = false
     private var loadingConfiguration = false
     private var directionEdited = false
@@ -125,6 +136,29 @@ final class ProbeModel: ObservableObject {
     private var userCLI: [String: URL] = [:]
     var hasProcesses: Bool { connection != nil || cliRun != nil }
     var preparing: Bool { productPhase == .preparing }
+    var canRunResultAction: Bool {
+        !primaryResult.isEmpty && !active && !preparing && !stopping
+    }
+    static let targetLanguages = [
+        ("zh", "Simplified Chinese", "简体中文"), ("en", "English", "英语"),
+        ("ja", "Japanese", "日语"), ("ko", "Korean", "韩语"),
+        ("fr", "French", "法语"), ("de", "German", "德语"), ("es", "Spanish", "西班牙语")
+    ]
+    func resultActionTitle(_ action: ResultAction, targetLanguage: String? = nil) -> String {
+        switch action {
+        case .concise: return text("Make concise", "精简表达")
+        case .formal: return text("Make formal", "正式表达")
+        case .summary: return text("Summarize", "生成摘要")
+        case .explainCode: return text("Explain code", "解释代码")
+        case .asText: return text("Translate as text", "按普通文本翻译")
+        case .retranslate:
+            if let language = Self.targetLanguages.first(where: { $0.0 == targetLanguage }) {
+                let name = text(language.1, language.2)
+                return text("Translate to \(name)", "翻译为\(name)")
+            }
+            return text("Translate to…", "翻译为…")
+        }
+    }
     var preferredColorScheme: ColorScheme? {
         appearance == "dark" ? .dark : appearance == "light" ? .light : nil
     }
@@ -245,7 +279,8 @@ final class ProbeModel: ObservableObject {
             connectionMode = mode
             nativeTranslation = mode == .translation
             settingsReady = false
-            output = ""
+            if mode == .diagnostic || primaryResult.isEmpty { output = "" }
+            activeAction = nil
             latest.select(nil)
             status = "Starting bundled isolated Python; waiting for ready..."
             if mode == .translation {
@@ -312,6 +347,43 @@ final class ProbeModel: ObservableObject {
         resumeTranslation()
     }
 
+    func performResultAction(_ action: ResultAction, targetLanguage: String? = nil) {
+        guard !active, !preparing else {
+            productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
+            return
+        }
+        guard !primaryResult.isEmpty else {
+            failPreparation(text("Complete a translation or choose a history result first.",
+                                 "请先完成翻译或选择一条历史结果。"))
+            return
+        }
+        let source = action.usesOriginalInput ? resultInput : primaryResult
+        let language = usesChinese ? "zh_CN" : "en_US"
+        guard action.acceptsInput(text: source, appLanguage: language, targetLanguage: targetLanguage) else {
+            failPreparation(text("This result action needs valid text and a supported target language.",
+                                 "此操作需要有效文本及支持的目标语言。"))
+            return
+        }
+        let title = resultActionTitle(action, targetLanguage: targetLanguage)
+        draft = Draft(text: source, origin: translationOrigin, useCache: false,
+                      direction: direction, model: modelProfile, language: language,
+                      useSavedDirection: !settingsReady && !directionEdited,
+                      useSavedModel: !settingsReady && !modelEdited,
+                      action: ActionDraft(action: action, targetLanguage: targetLanguage,
+                                          generation: resultGeneration,
+                                          prefix: output + "\n\n---\n\n### " + title + "\n\n",
+                                          title: title))
+        productPhase = .preparing
+        productMessage = text("Preparing result action…", "正在准备结果操作…")
+        openProduct()
+        if needsCLI {
+            failPreparation(productMessage)
+            onConfigurationRequired?()
+            return
+        }
+        resumeTranslation()
+    }
+
     private func resumeTranslation() {
         guard var requested = draft, nativeTranslation, ready, settingsReady, !settingsBusy,
               !active, let connection = connection else { return }
@@ -332,23 +404,42 @@ final class ProbeModel: ObservableObject {
                               language: requested.language)
             return
         }
+        if let action = requested.action, action.generation != resultGeneration {
+            failPreparation(text("The displayed result changed. Choose an action on the current result.",
+                                 "显示的结果已更改，请对当前结果选择操作。"))
+            return
+        }
         draft = nil
         let id = UUID().uuidString
         latest.select(id)
         pending.insert(id)
         active = true
-        output = ""
         discardBufferedDelta()
         hideCurrentOutput = false
-        resultInput = requested.text
-        resultKind = "text"
         productPhase = .translating
-        productMessage = text("Translating…", "正在翻译…")
+        if let action = requested.action {
+            activeAction = (id, action)
+            output = action.prefix
+            productMessage = action.title + "…"
+        } else {
+            activeAction = nil
+            resultGeneration = UUID()
+            primaryResult = ""
+            output = ""
+            resultInput = requested.text
+            resultKind = "text"
+            productMessage = text("Translating…", "正在翻译…")
+        }
         onTranslationStarted?()
         status = "Translation requested. Uses the selected native CLI; no automatic retry."
-        _ = connection.translate(text: requested.text, appLanguage: requested.language,
-                                 origin: requested.origin, useCache: requested.useCache,
-                                 recordHistory: true, id: id, timeout: 110)
+        if let action = requested.action {
+            _ = connection.resultAction(action.action, text: requested.text, appLanguage: requested.language,
+                                        targetLanguage: action.targetLanguage, id: id, timeout: 110)
+        } else {
+            _ = connection.translate(text: requested.text, appLanguage: requested.language,
+                                     origin: requested.origin, useCache: requested.useCache,
+                                     recordHistory: true, id: id, timeout: 110)
+        }
     }
 
     private func failPreparation(_ message: String) {
@@ -442,6 +533,8 @@ final class ProbeModel: ObservableObject {
         input = row.input
         resultInput = row.input
         output = row.output
+        primaryResult = row.output
+        resultGeneration = UUID()
         resultKind = row.kind
         hideCurrentOutput = true
         productPhase = .completed
@@ -454,6 +547,8 @@ final class ProbeModel: ObservableObject {
         discardBufferedDelta()
         input = ""
         output = ""
+        primaryResult = ""
+        resultGeneration = UUID()
         resultInput = ""
         hideCurrentOutput = true
         productPhase = .idle
@@ -527,7 +622,8 @@ final class ProbeModel: ObservableObject {
             case "started": status = "Native request started; submission status is not yet known."
             case "delta":
                 if !hideCurrentOutput { bufferedDelta += event.payload["text"]?.string ?? "" }
-                if output.utf8.count + bufferedDelta.utf8.count > 65_536 {
+                let prefixBytes = activeAction?.content.prefix.utf8.count ?? 0
+                if output.utf8.count - prefixBytes + bufferedDelta.utf8.count > 65_536 {
                     error = .frameTooLarge
                     status = "Probe output limit exceeded; stopping helper."
                     stopHelper()
@@ -544,8 +640,20 @@ final class ProbeModel: ObservableObject {
             case "completed":
                 discardBufferedDelta()
                 if let text = event.payload["text"]?.string {
-                    if !hideCurrentOutput { output = text }
-                    if nativeTranslation {
+                    if let action = activeAction {
+                        if !hideCurrentOutput, action.id == event.id,
+                           action.content.generation == resultGeneration {
+                            output = action.content.prefix + text
+                            productPhase = .completed
+                            productMessage = self.text("Result action complete · Original result kept",
+                                                       "结果操作完成 · 已保留原结果")
+                        }
+                        status = "Result action completed. No cache read or history write."
+                    } else if nativeTranslation {
+                        if !hideCurrentOutput {
+                            output = text
+                            primaryResult = text
+                        }
                         let cached = event.payload["cached"] == .bool(true)
                         let history = event.payload["history"]?.string ?? ""
                         status = cached ? "Loaded matching cached translation." : "Native translation completed."
@@ -565,6 +673,7 @@ final class ProbeModel: ObservableObject {
                             }
                         }
                     } else {
+                        if !hideCurrentOutput { output = text }
                         status = "Completed SYNTHETIC FIXTURE - NOT translation."
                     }
                 } else {
@@ -583,6 +692,9 @@ final class ProbeModel: ObservableObject {
                     ? "Cancelled after possible CLI submission. Submission cannot be rolled back."
                     : "Cancelled before native submission."
                 if !hideCurrentOutput {
+                    if activeAction != nil {
+                        output += "\n\n[" + text("Result action cancelled", "结果操作已取消") + "]"
+                    }
                     productPhase = .cancelled
                     productMessage = text("Cancelled", "已取消")
                 }
@@ -590,13 +702,19 @@ final class ProbeModel: ObservableObject {
                 flushBufferedDelta()
                 status = event.safeFailureMessage
                 if !hideCurrentOutput {
+                    if activeAction != nil {
+                        output += "\n\n[" + text("Result action failed", "结果操作失败") + "]"
+                    }
                     productPhase = .failed
                     productMessage = event.safeFailureMessage
                 }
             default: break
             }
             if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
-            if event.isTerminal { resumeTranslation() }
+            if event.isTerminal {
+                activeAction = nil
+                resumeTranslation()
+            }
         case .failure(let error):
             flushBufferedDelta()
             self.error = error
@@ -604,7 +722,12 @@ final class ProbeModel: ObservableObject {
             active = false
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
             if error == .translationOutcomeUnknown {
-                status = "Translation outcome unknown. The CLI may have received the request and history may have changed. Not retried."
+                status = activeAction == nil
+                    ? "Translation outcome unknown. The CLI may have received the request and history may have changed. Not retried."
+                    : "Result action outcome unknown. The CLI may have received the request. Original result retained; no automatic retry."
+            }
+            if activeAction != nil, !hideCurrentOutput {
+                output += "\n\n[" + text("Result action interrupted", "结果操作已中断") + "]"
             }
             failPreparation(status)
             if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
@@ -616,6 +739,7 @@ final class ProbeModel: ObservableObject {
             connected = false
             ready = false
             active = false
+            activeAction = nil
             pending.removeAll()
             savedConfiguration = nil
             settingsReady = false
@@ -855,6 +979,9 @@ final class ProbeModel: ObservableObject {
         productPhase = .idle
         productMessage = ""
         resultInput = ""
+        primaryResult = ""
+        resultGeneration = UUID()
+        activeAction = nil
         translationOrigin = "text"
         hideCurrentOutput = true
         openAfterStop = false

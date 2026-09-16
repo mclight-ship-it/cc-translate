@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import CCTranslateSupport
 
 @MainActor
 struct TranslatorView: View {
@@ -216,11 +217,11 @@ struct TranslationResultView: View {
                 HStack(spacing: 8) {
                     copyButtons
                     Spacer(minLength: 8)
-                    translationAction
+                    resultActions
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) { copyButtons }
-                    translationAction
+                    resultActions
                 }
             }
         }
@@ -281,7 +282,7 @@ struct TranslationResultView: View {
         HStack(alignment: .top, spacing: 8) {
             if busy {
                 ProgressView().controlSize(.small)
-                    .accessibilityLabel(model.text("Translation in progress", "翻译进行中"))
+                    .accessibilityLabel(model.text("Request in progress", "正在处理请求"))
             } else if model.productPhase == .failed {
                 Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
                     .accessibilityHidden(true)
@@ -308,6 +309,32 @@ struct TranslationResultView: View {
         Button(model.text("Copy bilingual", "复制双语")) { model.copyBilingual() }
             .disabled(model.output.isEmpty)
             .help(model.text("Copy the original text and its result", "复制原文及其翻译结果"))
+    }
+
+    @ViewBuilder
+    private var resultActions: some View {
+        HStack(spacing: 8) {
+            Menu(model.text("Actions", "结果操作")) {
+                ForEach([ResultAction.concise, .formal, .summary], id: \.self) { action in
+                    Button(model.resultActionTitle(action)) { model.performResultAction(action) }
+                }
+                Divider()
+                Button(model.resultActionTitle(.explainCode)) { model.performResultAction(.explainCode) }
+                Button(model.resultActionTitle(.asText)) { model.performResultAction(.asText) }
+                Menu(model.resultActionTitle(.retranslate)) {
+                    ForEach(ProbeModel.targetLanguages.indices, id: \.self) { index in
+                        let language = ProbeModel.targetLanguages[index]
+                        Button(model.text(language.1, language.2)) {
+                            model.performResultAction(.retranslate, targetLanguage: language.0)
+                        }
+                    }
+                }
+            }
+            .disabled(!model.canRunResultAction)
+            .help(model.text("Add a result section without replacing the original or saving another history entry.",
+                             "追加结果区块，不替换原结果，也不新增历史记录。"))
+            translationAction
+        }
     }
 
     @ViewBuilder
@@ -721,8 +748,8 @@ struct TranslationSettingsView: View {
             }
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Text translation, streaming, cancellation, history, and Codex settings are available here. The full dictionary, screenshot translation, model management, login items, and app updates are not yet implemented in the product interface.",
-                            "此界面已支持文字翻译、流式输出、取消、历史记录和 Codex 设置。完整词典、截图翻译、模型管理、登录项和应用更新尚未在产品界面实现。"))
+            Text(model.text("Text translation, result actions, streaming, cancellation, history, and Codex settings are available here. The full dictionary, screenshot translation, model management, login items, and app updates are not yet implemented in the product interface.",
+                            "此界面已支持文字翻译、结果操作、流式输出、取消、历史记录和 Codex 设置。完整词典、截图翻译、模型管理、登录项和应用更新尚未在产品界面实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)
@@ -741,21 +768,16 @@ private struct DirectionPicker: View {
     @ObservedObject var model: ProbeModel
     @Binding var selection: String
 
-    private let languages = [
-        ("to_zh", "Simplified Chinese", "简体中文"), ("to_en", "English", "英语"),
-        ("to_ja", "Japanese", "日语"), ("to_ko", "Korean", "韩语"),
-        ("to_fr", "French", "法语"), ("to_de", "German", "德语"),
-        ("to_es", "Spanish", "西班牙语")
-    ]
+    private let languages = ProbeModel.targetLanguages
 
     var body: some View {
         Picker(model.text("Translate to", "翻译为"), selection: $selection) {
             Text(model.text("Auto", "自动")).tag("auto")
             ForEach(languages.indices, id: \.self) { index in
                 let language = languages[index]
-                Text(model.text(language.1, language.2)).tag(language.0)
+                Text(model.text(language.1, language.2)).tag("to_" + language.0)
             }
-            if selection != "auto" && !languages.contains(where: { $0.0 == selection }) {
+            if selection != "auto" && !languages.contains(where: { "to_" + $0.0 == selection }) {
                 Text(selection).tag(selection)
             }
         }

@@ -39,6 +39,8 @@ INTEGRATION_TESTS = (
     "testBundledTranslationConcurrentOptoutAndCancellationDrain",
     "testBundledTranslationCorruptionAndOutputBudgets",
     "testBundledTranslationCompetingHelpersForceStopAndReopen",
+    "testBundledResultActionsUseNativeProviderWithoutReadingOrWritingHistory",
+    "testBundledResultActionCancellationDrainsOwnedGroupsWithoutHistory",
 )
 
 

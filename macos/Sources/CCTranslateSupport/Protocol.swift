@@ -389,16 +389,49 @@ private struct HistoryPageRequest {
     }
 }
 
+public enum ResultAction: String, CaseIterable {
+    case concise, formal, summary
+    case explainCode = "explain_code"
+    case asText = "as_text"
+    case retranslate
+
+    public var usesOriginalInput: Bool {
+        switch self {
+        case .explainCode, .asText, .retranslate: return true
+        default: return false
+        }
+    }
+
+    public func request(text: String, appLanguage: String, targetLanguage: String? = nil,
+                        id: String = UUID().uuidString) -> ClientMessage {
+        ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("result_action"), "action": .string(rawValue),
+            "text": .string(text), "app_language": .string(appLanguage),
+            "target_language": targetLanguage.map(JSONValue.string) ?? .null
+        ])
+    }
+
+    public func acceptsInput(text: String, appLanguage: String, targetLanguage: String?) -> Bool {
+        !text.trimmingCharacters(in: TranslationDocument.whitespace).isEmpty &&
+            text.utf8.count <= TranslationDocument.maxTextBytes &&
+            ["zh_CN", "en_US"].contains(appLanguage) &&
+            (self == .retranslate ? TranslationDocument.targetLanguages.contains(targetLanguage ?? "") :
+                targetLanguage == nil)
+    }
+}
+
 enum TranslationDocument {
+    static let modelOperations: Set<String> = ["translate", "result_action"]
+    static let targetLanguages: Set<String> = ["zh", "en", "ja", "ko", "fr", "de", "es"]
     static let maxInputBytes = 8192
     static let maxDeltaBytes = 4096
     static let maxTextBytes = 24_000
     static let maxWireBytes = 1_048_576
-    private static let whitespace = CharacterSet.whitespacesAndNewlines.union(
+    static let whitespace = CharacterSet.whitespacesAndNewlines.union(
         CharacterSet(charactersIn: "\u{001c}\u{001d}\u{001e}\u{001f}")
     )
     static let failureCodes: Set<String> = [
-        "invalid_translation", "translation_unavailable", "unsupported_provider",
+        "invalid_translation", "invalid_result_action", "translation_unavailable", "unsupported_provider",
         "invalid_translation_settings", "translation_timeout", "translation_output_limit",
         "provider_version_unsupported", "provider_version_unreadable", "provider_version_prerelease",
         "provider_cleanup_failed", "provider_protocol_error", "provider_failed"
@@ -411,6 +444,19 @@ enum TranslationDocument {
     ]
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
+        if payload["operation"] == .string("result_action") {
+            guard Set(payload.keys) == ["operation", "action", "text", "app_language", "target_language"],
+                  let rawAction = payload["action"]?.string,
+                  let action = ResultAction(rawValue: rawAction),
+                  let text = payload["text"]?.string,
+                  let language = payload["app_language"]?.string,
+                  let target = payload["target_language"],
+                  target == .null || target.string != nil,
+                  action.acceptsInput(text: text, appLanguage: language, targetLanguage: target.string) else {
+                throw ProbeError.invalidPayload
+            }
+            return
+        }
         guard Set(payload.keys) == ["operation", "text", "app_language", "origin", "use_cache", "record_history"],
               payload["operation"] == .string("translate"),
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
@@ -422,7 +468,8 @@ enum TranslationDocument {
         }
     }
 
-    static func validateCompletion(_ payload: [String: JSONValue], streamed: Bool) throws {
+    static func validateCompletion(_ payload: [String: JSONValue], streamed: Bool,
+                                   resultAction: Bool = false) throws {
         guard Set(payload.keys) == ["text", "submitted", "cached", "kind", "target_lang",
                                     "summarize", "history", "history_error"],
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
@@ -430,7 +477,7 @@ enum TranslationDocument {
               let cached = payload["cached"]?.bool,
               let kind = payload["kind"]?.string, ["text", "dict", "code"].contains(kind),
               payload["target_lang"] == .null ||
-                ["zh", "en", "ja", "ko", "fr", "de", "es"].contains(payload["target_lang"]?.string ?? ""),
+                targetLanguages.contains(payload["target_lang"]?.string ?? ""),
               payload["summarize"]?.bool != nil,
               let history = payload["history"]?.string,
               ["recorded", "disabled", "unchanged", "failed"].contains(history),
@@ -444,6 +491,12 @@ enum TranslationDocument {
             }
         } else {
             guard payload["history_error"] == .null else { throw ProbeError.invalidPayload }
+        }
+        if resultAction {
+            guard payload["cached"] == .bool(false), payload["summarize"] == .bool(false),
+                  payload["history"] == .string("disabled"), payload["history_error"] == .null else {
+                throw ProbeError.invalidPayload
+            }
         }
     }
 }
@@ -460,7 +513,7 @@ public struct ClientMessage {
     }
 
     public func encoded() throws -> Data {
-        if payload["operation"] == .string("translate") {
+        if TranslationDocument.modelOperations.contains(payload["operation"]?.string ?? "") {
             try TranslationDocument.validateRequest(payload)
         }
         if payload["operation"] == .string("config_save"), let config = payload["config"] {
@@ -546,6 +599,7 @@ private enum HelperFailureCode: String {
     case historyCursorExpired = "history_cursor_expired"
     case stateIOFailed = "state_io_failed"
     case invalidTranslation = "invalid_translation"
+    case invalidResultAction = "invalid_result_action"
     case translationUnavailable = "translation_unavailable"
     case unsupportedProvider = "unsupported_provider"
     case invalidTranslationSettings = "invalid_translation_settings"
@@ -578,6 +632,7 @@ public struct ProtocolState {
         var terminal = false
         var wireBytes = 0
         var deltaText = ""
+        var isModelRequest: Bool { TranslationDocument.modelOperations.contains(operation ?? "") }
     }
     private var entries: [String: Entry] = [:]
     public private(set) var ready = false
@@ -597,7 +652,7 @@ public struct ProtocolState {
         }
     }
     public var hasPendingTranslation: Bool {
-        entries.values.contains { !$0.terminal && $0.operation == "translate" }
+        entries.values.contains { !$0.terminal && $0.isModelRequest }
     }
     var pendingOutcomeUnknown: ProbeError? {
         if hasPendingTranslation { return .translationOutcomeUnknown }
@@ -612,7 +667,7 @@ public struct ProtocolState {
         switch mode {
         case .diagnostic: return ["fixture", "runtime_probe"]
         case .configuration: return Self.businessOperations
-        case .translation: return Self.businessOperations.union(["translate"])
+        case .translation: return Self.businessOperations.union(TranslationDocument.modelOperations)
         }
     }
     public init(mode: Mode = .diagnostic) { self.mode = mode }
@@ -645,7 +700,7 @@ public struct ProtocolState {
                 throw ProbeError.invalidPayload
             }
             switch operation {
-            case "translate":
+            case "translate", "result_action":
                 _ = try message.encoded()
             case "config_load":
                 guard Set(payload.keys) == ["operation"] else { throw ProbeError.invalidPayload }
@@ -690,7 +745,7 @@ public struct ProtocolState {
                                    cancellationTarget: target,
                                    cancellationEligible: targetEntry.map {
                                        $0.type == "request" && !$0.terminal &&
-                                           (!$0.started || (mode == .translation && $0.operation == "translate"))
+                                           (!$0.started || (mode == .translation && $0.isModelRequest))
                                    } ?? false, historyPage: historyPage)
         if message.type == "shutdown" { closing = true }
     }
@@ -712,7 +767,7 @@ public struct ProtocolState {
         guard var entry = entries[id] else { throw ProbeError.invalidID }
         guard seq == entry.sequence else { throw ProbeError.invalidSequence }
         guard !entry.terminal else { throw ProbeError.invalidTransition }
-        if entry.operation == "translate" {
+        if entry.isModelRequest {
             guard frame.count + 1 <= TranslationDocument.maxWireBytes - entry.wireBytes else {
                 throw ProbeError.invalidPayload
             }
@@ -747,15 +802,15 @@ public struct ProtocolState {
                   payload["operation"]?.string == entry.operation else {
                 throw ProbeError.invalidTransition
             }
-            if entry.operation != "translate" {
+            if !entry.isModelRequest {
                 guard !entries.values.contains(where: {
                     $0.type == "request" && !$0.terminal && $0.order < entry.order &&
-                        (mode == .configuration || $0.operation != "translate")
+                        (mode == .configuration || !$0.isModelRequest)
                 }) else { throw ProbeError.invalidTransition }
             }
             entry.started = true
         case "delta":
-            if entry.operation == "translate" {
+            if entry.isModelRequest {
                 guard entry.started, seq >= 2, Set(payload.keys) == ["text", "submitted"],
                       let text = payload["text"]?.string, !text.isEmpty,
                       payload["submitted"] == .bool(true),
@@ -776,9 +831,11 @@ public struct ProtocolState {
             switch entry.type {
             case "request":
                 guard entry.accepted else { throw ProbeError.invalidTransition }
-                if entry.operation == "translate" {
+                if entry.isModelRequest {
                     guard entry.started, seq >= 2 else { throw ProbeError.invalidTransition }
-                    try TranslationDocument.validateCompletion(payload, streamed: !entry.deltaText.isEmpty)
+                    try TranslationDocument.validateCompletion(
+                        payload, streamed: !entry.deltaText.isEmpty,
+                        resultAction: entry.operation == "result_action")
                 } else if isBusiness {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     switch entry.operation {
@@ -819,7 +876,7 @@ public struct ProtocolState {
                         throw ProbeError.invalidTransition
                     }
                     // A translation can finish or emit in-flight deltas before its cancel ack arrives.
-                    if request.operation != "translate" || !request.started {
+                    if !request.isModelRequest || !request.started {
                         guard !request.started, !request.terminal || request.cancelled else {
                             throw ProbeError.invalidTransition
                         }
@@ -837,7 +894,7 @@ public struct ProtocolState {
             guard entry.type == "request", entry.accepted else {
                 throw ProbeError.invalidTransition
             }
-            if entry.operation == "translate", entry.started {
+            if entry.isModelRequest, entry.started {
                 guard seq >= 2, Set(payload.keys) == ["submitted"],
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
@@ -845,7 +902,7 @@ public struct ProtocolState {
                 guard !entry.started, payload.isEmpty else { throw ProbeError.invalidTransition }
             }
         case "failed":
-            if entry.operation == "translate", entry.started {
+            if entry.isModelRequest, entry.started {
                 guard seq >= 2, Set(payload.keys) == ["code", "submitted"],
                       let code = payload["code"]?.string,
                       TranslationDocument.failureCodes.union(TranslationDocument.storageFailureCodes).contains(code),
@@ -876,7 +933,7 @@ public struct ProtocolState {
                         throw ProbeError.invalidTransition
                     }
                 } else if entry.accepted {
-                    guard entry.started, entry.operation == "translate" || seq == 2 else {
+                    guard entry.started, entry.isModelRequest || seq == 2 else {
                         throw ProbeError.invalidTransition
                     }
                 }

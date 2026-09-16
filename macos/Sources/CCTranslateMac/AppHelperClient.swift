@@ -8,6 +8,8 @@ protocol AppHelperClient: AnyObject {
     func send(_ message: ClientMessage, timeout: TimeInterval)
     func translate(text: String, appLanguage: String, origin: String, useCache: Bool,
                    recordHistory: Bool, id: String, timeout: TimeInterval) -> String
+    func resultAction(_ action: ResultAction, text: String, appLanguage: String,
+                      targetLanguage: String?, id: String, timeout: TimeInterval) -> String
     func loadConfiguration(id: String, timeout: TimeInterval) -> String
     func saveConfiguration(_ config: [String: JSONValue], id: String, timeout: TimeInterval) -> String
     func loadHistory(pageSize: Int, cursor: JSONValue, id: String, timeout: TimeInterval) -> String

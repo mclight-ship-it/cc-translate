@@ -419,15 +419,24 @@ SHA-256为`bb607badc1cb5de1c489d9c21431a9304f3d365e08d96375c64448bf7bc71741`。
 CLI环境是严格string→string JSON（最大32768 UTF-8字节），经私有
 `CC_TRANSLATE_CODEX_ENV`传递，HOME必须等于显式home且必须有PATH；不放argv、不从环境补值，
 也不将CLI环境直接变成helper的加载器环境。默认诊断模式不创建业务目录/读取配置/启动CLI。
-启用时获取config/history双owner，provider构造不spawn；首次translate才执行native CLI。
+启用时获取config/history双owner，provider构造不spawn；首次translate或明确结果操作才执行native CLI。
 
-协议版本仍为1，新增mode的ready为`fixture:false`、`backend:native_appserver`及六项能力：
-原config/history五操作加translate，不把业务称synthetic。translate精确接收
+协议版本仍为1，当前实现的ready为`fixture:false`、`backend:native_appserver`及七项能力：
+原config/history五操作加translate/result_action，不把业务称synthetic。translate精确接收
 `operation/text/app_language/origin/use_cache/record_history`；text非空白、UTF-8最多8192字节，
 language只zh_CN/en_US，origin只text/selection，两个布尔不接受整数替代。
 配置决定Codex profile/方向/summary/限额；payload不接受每请求path、env、model或服务端timeout覆盖。
 Swift API的timeout只控制客户端等待，不改写执行快照的服务端预算。
 原load的streaming强制迁移保持，所以磁盘false不代表已提供非流式设置开关。
+
+`result_action`精确接收`operation/action/text/app_language/target_language`，
+action为concise/formal/summary/explain_code/as_text/retranslate；text非空白、原始UTF-8最多24000字节，
+以容纳合法主结果，不沿用翻译输入的较小字符限额。仅retranslate要求支持的目标语言代码，
+其余target_language必须null。动作复用共享prompt/RequestSnapshot和原provider执行链，
+无cache查询或history读写，返回cached:false、kind:text、summarize:false、history:disabled。
+target_lang仅as_text/retranslate具体化。Swift将其作为模型请求处理取消、总线预算和unknown优先级；
+结果以请求ID/显示代际追加，不覆盖主结果，也不将追加文本反复作为下一次改写输入。
+尚未取得此下一源码的完整Mac验证；上方64d80a0包只包含前一个已验证界面切片。
 
 共享摘要规则已原样抽取，Windows真实重导出/消费者及patch seams保持；
 helper捕获完整不可变RequestSnapshot，复用分类、方向、prompt及原cache签名字节。

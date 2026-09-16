@@ -49,6 +49,38 @@ final class ProductRenderingTests: XCTestCase {
     }
 
     @MainActor
+    func testAppendedResultActionKeepsPrimaryAndReadableNativeControls() throws {
+        let fixture = try ProductTestHarness()
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
+        model.interfaceLanguage = "en"
+        model.reuseHistory(.init(id: "action-render", input: "Synthetic original", output: "Original."))
+        model.performResultAction(.summary)
+        let action = try XCTUnwrap(helper.resultActions.last)
+        helper.event("completed", id: action.id, payload: [
+            "text": .string("Short summary."), "submitted": .bool(true), "cached": .bool(false),
+            "kind": .string("text"), "target_lang": .null, "summarize": .bool(false),
+            "history": .string("disabled"), "history_error": .null
+        ])
+        for scheme in [ColorScheme.light, .dark] {
+            let imageData = try render(
+                TranslationResultView(model: model, compact: true),
+                named: "result-action-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 420, height: 360), scheme: scheme)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: imageData)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+            XCTAssertTrue(words.contains("original"))
+            XCTAssertTrue(words.contains("summary"))
+            XCTAssertTrue(words.contains("actions"))
+        }
+        XCTAssertEqual(model.primaryResult, "Original.")
+        XCTAssertTrue(model.output.hasSuffix("Short summary."))
+        XCTAssertEqual(helper.resultActions.count, 1)
+        XCTAssertTrue(helper.translations.isEmpty)
+    }
+
+    @MainActor
     func testTranslatorRendersEmptyPreparingAndFailureStatesWithoutCLIExecution() throws {
         let fixture = try ProductTestHarness()
         defer { fixture.cleanUp() }

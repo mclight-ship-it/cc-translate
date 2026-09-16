@@ -14,6 +14,13 @@ final class ProductTestHelper: AppHelperClient {
         let useCache: Bool
         let recordHistory: Bool
     }
+    struct Action {
+        let id: String
+        let action: ResultAction
+        let text: String
+        let language: String
+        let targetLanguage: String?
+    }
     struct Save {
         let id: String
         let config: [String: JSONValue]
@@ -29,6 +36,7 @@ final class ProductTestHelper: AppHelperClient {
     private(set) var operations: [String] = []
     private(set) var messages: [ClientMessage] = []
     private(set) var translations: [Translation] = []
+    private(set) var resultActions: [Action] = []
     private(set) var configurationLoads: [String] = []
     private(set) var configurationSaves: [Save] = []
     private(set) var historyLoads: [History] = []
@@ -56,6 +64,13 @@ final class ProductTestHelper: AppHelperClient {
         translations.append(Translation(id: id, text: text, language: appLanguage, origin: origin,
                                         useCache: useCache, recordHistory: recordHistory))
         operations.append("translate")
+        return id
+    }
+    func resultAction(_ action: ResultAction, text: String, appLanguage: String,
+                      targetLanguage: String?, id: String, timeout: TimeInterval) -> String {
+        resultActions.append(Action(id: id, action: action, text: text, language: appLanguage,
+                                    targetLanguage: targetLanguage))
+        operations.append("result_action")
         return id
     }
     func loadConfiguration(id: String, timeout: TimeInterval) -> String {

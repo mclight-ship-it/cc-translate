@@ -221,8 +221,10 @@ class Server:
                 if request.terminal:
                     return
                 request.started = True
-                self._send(request, "started", {"operation": "translate"})
-            event, result = self._configuration.translate(payload, request.cancel, delta, begin_finish)
+                self._send(request, "started", {"operation": payload["operation"]})
+            execute = (self._configuration.result_action if payload["operation"] == "result_action"
+                       else self._configuration.translate)
+            event, result = execute(payload, request.cancel, delta, begin_finish)
             self._send(request, event, result)
         except ConfigurationError as error:
             self._send(request, "failed", {"code": error.code, "submitted": error.submitted})
@@ -254,9 +256,12 @@ class Server:
     def _payload_error(self, payload: dict) -> str | None:
         operation = payload.get("operation")
         if self._configuration is not None:
-            if operation == "translate" and self._translation_enabled:
+            if operation in ("translate", "result_action") and self._translation_enabled:
                 try:
-                    self._configuration.validate_translation_request(payload)
+                    validate = (self._configuration.validate_result_action_request
+                                if operation == "result_action"
+                                else self._configuration.validate_translation_request)
+                    validate(payload)
                 except ProtocolError as error:
                     return error.code
                 return None
@@ -316,7 +321,7 @@ class Server:
             capabilities = (["fixture", "runtime_probe"] if self._configuration is None
                             else ["config_load", "config_save", *HISTORY_OPERATIONS])
             if self._translation_enabled:
-                capabilities.append("translate")
+                capabilities.extend(("translate", "result_action"))
             self._send(control, "ready", {
                 "protocol": VERSION, "capabilities": capabilities,
                 "max_frame_bytes": MAX_FRAME_BYTES, "fixture": self._configuration is None,
@@ -356,7 +361,7 @@ class Server:
                     self._send(control, "failed", {"code": "busy"})
                     return True
                 self._tasks[id_] = control
-                control.translating = payload["operation"] == "translate"
+                control.translating = payload["operation"] in ("translate", "result_action")
                 self._send(control, "accepted", {"operation": payload["operation"]})
                 if self._pipe_closed:
                     self._tasks.pop(id_, None)
