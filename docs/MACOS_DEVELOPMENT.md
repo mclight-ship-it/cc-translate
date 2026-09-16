@@ -1,12 +1,12 @@
 # macOS 原生客户端开发指南
 
-**当前检查点：正式原生产品界面及结果操作已验证，移植尚未完成。**
-源码`4807f62` / [run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)
-已交付独立翻译/结果/设置/历史窗口、直接翻译操作及菜单栏工作流，
-不是原诊断窗口；六种动作追加到原结果后，不查询缓存或新增历史。
-真实Swift编译、36原模型/8动作模型/6原生渲染、16张截图及同包三系统193/504/15验证通过。
-下一源码已完成本地词典纯核心、配置连接及原生界面接线，新Mac验证仍待执行，
-不借用上述包的绿灯；随后仍有P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
+**当前检查点：原生界面、结果操作及无Codex本地词典；移植尚未完成。**
+源码`b86507f` / [run35147996073](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073)
+保留独立翻译/结果/设置/历史窗口、直接翻译和菜单栏，增加原生下载、离线查词及词典管理。
+本地命中不请求模型、不自动补充AI；六种明确选择的AI动作仍追加到原结果后。
+producer已通过真实URLSession下载67,948,544字节及随包安装，原生离屏绘制P95为37.747ms；
+同一个App在macOS15.7.9/14.8.9/26.6.2各202process/536core/17Foundation通过，run实际watch exit0。
+前置界面/动作包`4807f62`已验证；后续仍有P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
 界面采用现有SwiftUI/AppKit与系统语义色，不改成HTML/WebView原型。
 
 前置协议检查点已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
@@ -466,7 +466,7 @@ EOF/shutdown停止接新请求并drain；4807f62仅translation入口捕获SIGTER
 原172/410/9全部保留。首轮无App前置上下文错误、正常Windows hook及完整制品审计见
 [当前检查点](MACOS_TODO.md#translation-ipc-checkpoint)，不以初次13个可选skip替代后置执行。
 
-### 下一源码：无Codex本地词典（实现整合中，尚未取得新Mac绿灯）
+### 无Codex本地词典：原生下载、首屏与管理
 
 纯lookup/artifact/presentation模块不导入Windows默认路径、Tk或provider；Windows保留兼容facade，
 原format-v8及自动AI补充行为不变。Mac的本地命中不调用CLI、不自动补充AI。
@@ -507,12 +507,18 @@ pending模型仍优先unknown，其次dictionaryOutcomeUnknown，再config/histo
 两种业务连接的故障宽限均为EOF30秒→TERM30秒→KILL，diagnostic仍为3秒/1秒。
 SIGKILL/崩溃清理、完整真人GUI及性能目标不能由这些接口代码推定通过。
 
-Windows最终针对性390项通过（39.676s，含产品性能证据解析）；新Mac目标为同包202process/536core/17Foundation，
-目前仅完成接线与清单验证。新增两Foundation使用外置固定词库验证无CLI安装/查词/历史/失败保留/删除，
-并记录八次明确标注非GUI的warm往返。另有producer后置同源model/原生视图+随包helper测试，
-两次warmup后测十次意图到离屏paint，记录150ms目标met/measured_miss；XCTest成功不等于目标达成，
-也不测物理键盘、打包GUI进程或独立10ms查询+格式化。源码编译、实际运行与截图尚待新证据。
-CI的Python固定输入获取不等于产品URLSession验证，词库不放进App或用户下载的App制品。
+源码`b86507f`的正常Windows完整hook1687项通过（85.703s）；最终针对性132项/15.475s，
+另以隔离复制Core路径实跑536项/12.126s，不让子进程回退checkout。
+同一个producer App在15.7.9/14.8.9/26.6.2各202process/536core/17后置Foundation通过，零失败/skip。
+新增两Foundation使用外置固定词库验证无CLI安装/查词/历史/失败保留/删除，
+并记录八次明确标注非GUI的warm往返。另一个后置产品测试使用生产URLSession和实际随包helper，
+真实下载67,948,544字节（CI网络622.187ms，不承诺用户网速），校验安装后进行两次warmup及十次绘制测量。
+意图到同源SwiftUI/AppKit离屏绘制P95/最大37.747ms，实测达到此端点的150ms目标，来源OCR可见。
+这不是物理键盘或打包GUI进程的完整首屏验收，也没有独立测量10ms查询+格式化。
+21张合成数据原生截图包含浅/深词典管理、完整字面义项、长文滚动及AI词典Markdown回归；
+历史仅对local-dictionary签名采用字面呈现，不把AI词典格式一并移除。
+CI的Python固定输入获取与这次真实URLSession测试分别记录；词库不放入App制品。
+完整失败经过、同包结果和独立App核验见[词典检查点](MACOS_TODO.md#native-dictionary-checkpoint)。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
@@ -721,21 +727,21 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-同一个App已在免费macOS15.7.9/14.8.9/26.6.2 arm64完成合成端到端；
-producer另通过真实原生模型/渲染测试和16张截图检查，六种结果动作已接入。
+当前新增本地词典优先首屏及下载/开关/删除/来源许可，六种结果动作保留。
+producer通过真实原生模型/渲染测试和21张截图检查，同一个App在15.7.9/14.8.9/26.6.2通过包内运行验证。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`4807f62a79c222b7fde75052d5e8cbd023b664cb`；
-  [run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459632452)；
-  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459243089)。
-- 内层`CCTranslateMac-P0.zip`：18,719,555 bytes；
-  SHA-256 `5e371baeb464eea5de94712d80b0cf9a6034137f2546e173a1bdf3dc9b04bc14`。
-  artifact保留到2026-09-23T17:14:08Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`b86507fd861e363b722fc11537045e0817dda251`；
+  [run35147996073](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10468966389)；
+  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10467946406)。
+- 内层`CCTranslateMac-P0.zip`：18,810,874 bytes；
+  SHA-256 `16e87b540606de1edd78d1f32ff019265cee69a6c72786de54161e8daf9cf4e8`。
+  artifact保留到2026-09-23T20:52:37Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包已有正式翻译、结果动作、设置和历史界面；完整移植仍在继续，尚无本地词典优先首屏。
+  本包已有正式翻译、结果动作、设置、历史和本地词典界面；完整移植仍在继续。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
@@ -747,16 +753,17 @@ producer另通过真实原生模型/渲染测试和16张截图检查，六种结
    不清quarantine、关闭Gatekeeper/SIP、重签或运行包内二进制。
 2. 菜单栏显示`CC`，点`Translate… / 翻译…`打开输入/结果双栏窗口。
    打开窗口会连接随包helper、读取设置，但不会调用模型；不需要Start、Enable或先保存一遍设置。
-   如果CLI没有自动找到，按提示在Settings选一次现有Codex可执行文件，之后记住。
-   即使暂时没有CLI，设置与历史仍可打开；版本检查收在可选详情里，不是正常使用步骤。
+   如需AI翻译而CLI没有自动找到，按提示在Settings选一次现有Codex可执行文件，之后记住。
+   没有CLI也可以下载/使用本地词典、打开设置与历史；版本检查不是本地查词前置。
 3. 输入文字，选择方向/模式，点`Translate / 翻译`或Cmd+Return。
-   这是明确使用所选CLI账号的模型请求，可能计费；测试时使用无敏感内容的短句。
+   已安装并开启词典时，单词本地命中直接显示释义、不调用CLI或模型。
+   未命中的正常AI翻译才明确使用所选CLI账号，可能计费；测试时使用无敏感内容的短句。
    支持流式结果、取消、选择文字、复制、复制双语；重新翻译明确不使用缓存。
    结果未知或可能已提交时不自动重放；不要把unknown理解成未执行或未计费。
 4. 结果下方`Actions / 结果操作`可精简、正式表达、摘要、解释代码、按文本翻译或指定语言翻译。
    动作是明确的额外模型请求；结果追加到主结果后，不使用翻译缓存、不写历史，取消/失败保留主结果。
    精简/正式/摘要始终取主结果，其他动作取原始请求输入，不取后来编辑的输入或已有追加文本。
-   旁边单独的`Retranslate / 重新翻译`仍是替换主结果的一次正常翻译，遵循当前历史开关。
+   旁边单独的`Retranslate / 重新翻译`是绕过本地词典/缓存的明确模型翻译，替换主结果并遵循历史开关。
 5. History可分页、搜索已加载记录、复用及确认清空；Settings可保存中英语言、系统/浅/深色、
    默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
    搜索目前只覆盖已加载页，不冒充全库搜索。普通关闭窗口不退出，菜单可召回结果。
@@ -764,6 +771,19 @@ producer另通过真实原生模型/渲染测试和16张截图检查，六种结
    Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
    截图仍是本地OCR诊断，尚未接完整截图翻译；IME、VoiceOver、Spaces/多屏和TCC可集中补验，
    不阻止继续开发其他功能。
+
+**本地词典集中测试（无需改动已可用的Codex配置）：**
+
+1. Settings → 离线词典 → 下载词典；约68MB，仅首次下载需要网络。完成后显示已启用，
+   词典数据库存于App自己的用户数据目录，不写进应用包；不用Python、命令行或登录模型账号。
+2. 回翻译窗口依次输入`hello`、`ran`、`中国`、`中國`；点翻译，检查完整释义、可用读音和来源，
+   底部应显示本地词典/没有模型请求。`ran`覆盖词形，`中國`覆盖别名；不要期望每个词都有读音。
+3. 复制结果及双语、从历史复用词典结果；本地释义不应显示内部`[[cc-*]]`标记，
+   也不应因释义恰好含Markdown字符而丢掉原文。已开启历史时首个新结果记录，缓存命中不重复追加。
+4. 断网后重复上述已安装词典查询仍应命中；此时不要使用AI动作或用未收录内容测试“离线AI”。
+   本地结果不会自动补充AI，结果操作和重新翻译只有明确点击才请求模型。
+5. 关闭“优先使用本地词典”仅禁用；重新启用无需下载。可选测试确认删除后显示未安装，
+   不删除翻译历史；下载中取消应恢复可再次下载的状态，不留下半安装词典。
 
 **失败只回报脱敏摘要：**固定source/run、芯片/系统版本、内层hash MATCH/MISMATCH、
 发生步骤、App版本探针显示的数字版本/固定分类、固定错误码、

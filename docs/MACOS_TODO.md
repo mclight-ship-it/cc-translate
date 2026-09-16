@@ -47,7 +47,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 - [x] 原生模型状态测试及真实SwiftUI渲染截图、同包Mac构建验证，具体源码/制品见下；
   不把HTML示意图或旧后端绿色当成新界面证据；手工键盘/VoiceOver/TCC仍待扩展。
 - [x] 六种结果操作追加闭环，保留原结果，不读缓存或写历史；验证见下。
-- [ ] 后续继续P2词典优先首屏，再补P3截图/管理/全部功能矩阵；
+- [x] 本地词典优先首屏/原生下载管理已验证；继续P3截图/全库历史搜索及全部功能矩阵，
   不因本界面切片结束而把整个移植标完成。
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
@@ -158,28 +158,69 @@ tree `65ffc349934f7e6ed48ef94acd894f220d06626c010efc20b15db5a2583f475a`。
 
 <a id="native-local-dictionary"></a>
 
-### 下一源码：本地词典首屏与管理（整合中，未取得新Mac绿灯）
+<a id="native-dictionary-checkpoint"></a>
+
+### 本地词典首屏与管理：b86507f检查点
 
 纯lookup/artifact/presentation及configuration-only六项操作已接线；Mac不需要Codex即可命中，
 不自动补充AI。Windows保留原默认路径/facade/format-v8及补充行为。
 URLSession使用session-bound ticket的初始不存在路径，核心验证固定pin、fsync/replace后启用；
-原生界面/URLSession接线已配套，但尚未Mac编译，不把“后端查到词”当作完整产品。
+原生界面及生产URLSession已经真实Mac编译与后置下载验证，不把“后端查到词”当作完整产品。
 本地文本保留全部义项/读音/来源许可，独立native-plain-v1语言签名；缓存/历史错误显式显示，
 不阻挡已确认的本地定义、不修复坏历史、不当成miss提交模型。
 
-父最终联合验证390项/39.676s通过，包含Windows词典消费者、纯核心、native配置/历史/IPC及打包与证据工具。
-清单为202process/536core/17后置Foundation（原15保留、新2实际固定词库/无CLI方法）；
-当前未执行新的Mac编译/同包矩阵。新增9个Swift词典协议和3个连接测试也尚待Mac执行。
+源码`b86507fd861e363b722fc11537045e0817dda251` /
+[run35147996073](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073)。
+最终Windows针对性132项/15.475s、隔离复制Core实跑536项/12.126s、
+正常privacy/compile/完整hook1687项/85.703s通过；早前跨Windows词典消费者联合390项也通过。
+本run实际watch exit0，API attempt1、3jobs/39steps全部success；同包三系统各202process/536core/17后置Foundation，
+无失败/skip，producer另实跑1个原生下载/绘制产品测试。
+Swift编译39.08s，217个测试为199pass+18构包前可选skip；后置Foundation及产品测试均零skip。
+新增9个Swift协议、21个词典模型、6个下载、3个连接、2个渲染、2个Foundation及1个产品测试已接线执行。
 父整合补齐queued取消清理失败的seq1终态，与实际Python server回归配套，不放宽其他协议断言。
 配置业务入口现在也合作处理SIGTERM；关闭仍先drain，不用取消确认或超时假称清理完成。
 固定词库GitHub元数据已实核size/hash；开发机既有忽略数据只读复用，没有重新下载或安装。
-CI将外置获取测试数据并保留八次warm往返测量，不能冒充URLSession、完整GUI或150ms首屏证据。
-另加producer后置真实helper/同源原生model到离屏paint十次测量及OCR，目标达成单独记录；
-失败/skip/缺失/重复/自相矛盾测量会被证据解析器拒绝，150ms miss不因XCTest成功而消失。
+CI外置Python测试数据获取与产品URLSession分别记录；后者实际下载67,948,544字节，CI传输622.187ms，
+随后真实随包校验安装并启用，零CLI候选/模型提交。网络速度不作用户承诺，不计入warm显示耗时。
+两次warmup后十次意图到同源原生视图离屏paint，P95/最大37.747ms，实测满足此端点150ms目标，
+来源OCR可见。物理键盘/打包GUI进程/独立10ms查询格式化没有据此宣称通过。
+失败/skip/缺失/重复/自相矛盾测量由独立日志解析拒绝，不用XCTest绿灯代替数值。
 父修正本地字典literal呈现的来源判定，历史从local-dictionary签名恢复，AI词典仍保留原Markdown格式。
 
-阶段代码不在4807f62包内。下一步完成界面接线、Mac编译/真实执行/截图和制品核验后再交付新包；
-随后继续P3等剩余功能，不等待用户再次发送“继续”。
+| 同一个App的实际系统 | process | core | 后置Foundation |
+|---|---:|---:|---:|
+| 15.7.9，producer Xcode16.4 | 202 / 384.170s | 536 / 5.819s | 17 / 106.623s |
+| 14.8.9，独立harness Xcode16.2 | 202 / 333.930s | 536 / 3.390s | 17 / 83.074s |
+| 26.6.2，独立harness Xcode26.6 | 202 / 344.436s | 536 / 3.836s | 17 / 84.638s |
+
+父从该源码AST及完整日志逐名核验：新9process和32core在每系统各一次passed，17Foundation完整保留。
+producer portable751项/16.212s；三系统八次warm Foundation往返分别2.294–5.403、1.446–1.812、
+1.283–1.432ms，仅是往返，不冒充独立IPC、查询格式化或GUI分项。
+[Mac14报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10467969481)、
+[Mac26报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10468937061)
+均独立读取并比对相同archive/tree/source、helper清理与不可变字段。
+
+[完整App artifact10468966389](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10468966389)
+内层18,810,874字节，SHA-256 `16e87b540606de1edd78d1f32ff019265cee69a6c72786de54161e8daf9cf4e8`，
+tree `fce9adf9ee83a8ff612c82f9050e068ae99411286ddf6ce0580528735aa4c76e`。
+父已独立核验完整ZIP的CRC/权限/软链接、688库存、78资源、50源码路径（49唯一Git源码）、
+6个实际arm64 Mach-O及最低系统头、19运行时许可/14必需覆盖；
+605个上游运行时普通文件及许可逐字节等于前置已独立审计4807f62，不重复下载上游归档。
+词库本体和Windows facade未混入App。[21张原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35147996073/artifacts/10467946406)
+保留浅/深色完整义项、词典管理、长文滚动及AI词典格式回归；合成截图不是真人GUI/TCC签收。
+核验后仅删除本地临时完整App ZIP及两份审计脚本，保留原始日志、JSON证据与21张PNG。
+
+本轮失败及修复保留，未降低断言或绕hook：
+- 首次合成URL字面量触发privacy；改用URLComponents构造测试身份，不加扫描豁免。
+- 35143650643没有runner执行：job env不支持runner.temp；改为step内RUNNER_TEMP/GITHUB_ENV并同步测试。
+- 35144208996在Swift编译发现dictionary校验放错JSONValue作用域，移到ClientMessage，与其他请求一致。
+- 35144794911编译成功，仅worker失败测试漏填新增词典参数；补真实必填字段，保留失败断言。
+- 35145246205产品测试错误解析尚不存在的staging文件；改验已有父目录，保留范围和不覆盖检查。
+- 35146057890原生绘制P95为42.781ms，但仅复制fixture且最终Core测试包导入失败，不当新包绿灯；
+  已按既有独立模块约定修复导入，子进程改用实际Core路径；536项隔离验证后再加入生产URLSession实测。
+- Windows正常hook曾再现旧history WinError5/日志断言；单测及正常完整重跑通过，不宣称已修复根因。
+
+随后继续P3全库历史搜索等剩余功能；Python后端已恢复独立实施，不等待用户再发送“继续”。
 
 <a id="codex-protocol-checkpoint"></a>
 
@@ -1180,13 +1221,13 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
 - [x] 原生结果/输入、流式合并刷新、选择滚动、取消、迟到事件隔离；同包自动化见上。
 - [x] 普通翻译/代码解释/摘要/重译/复制及六种追加动作闭环。
-- [ ] 本地词典优先首屏及无Codex查词/安装管理闭环。
+- [x] 本地词典优先首屏及无Codex查词/安装管理闭环；b86507f同包三系统及原生下载/绘制证据见上。
 - [ ] 真人IME、键盘、VoiceOver与多屏交互矩阵，不将合成渲染当完整交互签收。
 - [ ] 来源按钮稳定 identity，按下时异步更新不吞 click。
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [ ] 同帧区域截图、多显示器坐标转换、Vision 语言与视觉 provider 明确发送。
-- [ ] URLSession 下载；核心校验安装/删除互斥；离线/损坏/取消。
+- [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/已加载记录搜索筛选、基础设置/主题/语言与独立诊断。
 - [ ] 历史全库搜索、完整设置/关于与第三方许可界面。
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。

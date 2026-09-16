@@ -12,8 +12,12 @@
 同一个App在三系统各193process/504core/15Foundation通过，完整制品已独立字节核验。
 动作保留原结果、追加区块，不读翻译缓存或写历史；取消/失败/未知结果不自动重放。
 [下载与正常使用](MACOS_DEVELOPMENT.md#native-translation-user-check)不再沿用旧诊断操作步骤。
-下一源码已接本地词典纯核心及无Codex后台，正在整合词典首屏/管理；387项针对性测试通过，
-新Mac编译/同包矩阵及性能仍待验证，不把后端通过当界面已验。随后继续P3；可实现部分不等待完整权限矩阵，
+本地词典源码`b86507f`已接原生下载/管理及无Codex首屏，正常完整hook1687通过；
+producer生产URLSession真实下载/安装67,948,544字节，意图到同源原生离屏绘制P95实测37.747ms，
+不是物理键盘或打包GUI进程验收。同一个App在15.7.9/14.8.9/26.6.2各202process/536core/17Foundation通过，
+run实际watch exit0，完整App已独立核验，保留21张原生截图。
+见[词典检查点与下载](MACOS_TODO.md#native-dictionary-checkpoint)。随后继续P3全库历史搜索；
+可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 
 ## 前置检查点：官方 app-server 通知信封兼容已验证
