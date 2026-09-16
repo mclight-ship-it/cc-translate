@@ -1,10 +1,11 @@
 # macOS 原生客户端开发指南
 
-**当前检查点：正式原生产品界面已实现并验证，移植尚未完成。**
-源码`64d80a0` / [run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)
+**当前检查点：正式原生产品界面及结果操作已验证，移植尚未完成。**
+源码`4807f62` / [run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)
 已交付独立翻译/结果/设置/历史窗口、直接翻译操作及菜单栏工作流，
-不是原诊断窗口。真实Swift编译、36项产品模型/5项原生渲染、14张截图及同包三系统验证通过。
-下一源码正在接结果动作，随后仍有词典和P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
+不是原诊断窗口；六种动作追加到原结果后，不查询缓存或新增历史。
+真实Swift编译、36原模型/8动作模型/6原生渲染、16张截图及同包三系统193/504/15验证通过。
+下一源码正在拆分本地词典纯核心，随后仍有原生接线和P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
 界面采用现有SwiftUI/AppKit与系统语义色，不改成HTML/WebView原型。
 
 前置协议检查点已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
@@ -436,7 +437,7 @@ action为concise/formal/summary/explain_code/as_text/retranslate；text非空白
 无cache查询或history读写，返回cached:false、kind:text、summarize:false、history:disabled。
 target_lang仅as_text/retranslate具体化。Swift将其作为模型请求处理取消、总线预算和unknown优先级；
 结果以请求ID/显示代际追加，不覆盖主结果，也不将追加文本反复作为下一次改写输入。
-尚未取得此下一源码的完整Mac验证；上方64d80a0包只包含前一个已验证界面切片。
+此动作链已在4807f62同包三系统验证；64d80a0只包含前一个界面切片，不代作动作证据。
 
 共享摘要规则已原样抽取，Windows真实重导出/消费者及patch seams保持；
 helper捕获完整不可变RequestSnapshot，复用分类、方向、prompt及原cache签名字节。
@@ -669,25 +670,25 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
 同一个App已在免费macOS15.7.9/14.8.9/26.6.2 arm64完成合成端到端；
-producer另通过真实原生模型/渲染测试和14张截图检查。
+producer另通过真实原生模型/渲染测试和16张截图检查，六种结果动作已接入。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`64d80a0a93b8df9eb22299c5d1b52b9cd1a98f88`；
-  [run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456888448)；
-  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456432367)。
-- 内层`CCTranslateMac-P0.zip`：18,699,652 bytes；
-  SHA-256 `ad375c545ce0d192130877f82c90d70e5af8ea68061f4973103f343ecba055b5`。
-  artifact保留到2026-09-23T16:08:07Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`4807f62a79c222b7fde75052d5e8cbd023b664cb`；
+  [run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459632452)；
+  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459243089)。
+- 内层`CCTranslateMac-P0.zip`：18,719,555 bytes；
+  SHA-256 `5e371baeb464eea5de94712d80b0cf9a6034137f2546e173a1bdf3dc9b04bc14`。
+  artifact保留到2026-09-23T17:14:08Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包已有正式翻译、结果、设置和历史界面；完整移植仍在继续，尚无词典优先首屏或完整结果动作。
+  本包已有正式翻译、结果动作、设置和历史界面；完整移植仍在继续，尚无本地词典优先首屏。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
 
-1. 从固定artifact取出内层zip，用系统`/usr/bin/shasum -a 256`只读校验上述内层值。
+1. 从固定artifact取出内层zip；如需核对下载，可用系统`/usr/bin/shasum -a 256`比对上述内层值。
    先退出旧Mac测试App；如“应用程序”里有同名包，停止并自行妥善移开旧测试副本，不覆盖正在运行的包。
    解压内层并从Finder正常打开。仅适用的未识别/未公证提示，可由用户按Apple官方单App
    “系统设置 → 隐私与安全性 → 仍要打开”流程决定；恶意软件、损坏/修改、组织策略或没有该入口时停止。
@@ -700,10 +701,14 @@ producer另通过真实原生模型/渲染测试和14张截图检查。
    这是明确使用所选CLI账号的模型请求，可能计费；测试时使用无敏感内容的短句。
    支持流式结果、取消、选择文字、复制、复制双语；重新翻译明确不使用缓存。
    结果未知或可能已提交时不自动重放；不要把unknown理解成未执行或未计费。
-4. History可分页、搜索已加载记录、复用及确认清空；Settings可保存中英语言、系统/浅/深色、
+4. 结果下方`Actions / 结果操作`可精简、正式表达、摘要、解释代码、按文本翻译或指定语言翻译。
+   动作是明确的额外模型请求；结果追加到主结果后，不使用翻译缓存、不写历史，取消/失败保留主结果。
+   精简/正式/摘要始终取主结果，其他动作取原始请求输入，不取后来编辑的输入或已有追加文本。
+   旁边单独的`Retranslate / 重新翻译`仍是替换主结果的一次正常翻译，遵循当前历史开关。
+5. History可分页、搜索已加载记录、复用及确认清空；Settings可保存中英语言、系统/浅/深色、
    默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
    搜索目前只覆盖已加载页，不冒充全库搜索。普通关闭窗口不退出，菜单可召回结果。
-5. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
+6. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
    Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
    截图仍是本地OCR诊断，尚未接完整截图翻译；IME、VoiceOver、Spaces/多屏和TCC可集中补验，
    不阻止继续开发其他功能。

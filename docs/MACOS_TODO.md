@@ -46,7 +46,8 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   诊断移到次级独立连接，不干扰已经跑通的翻译。
 - [x] 原生模型状态测试及真实SwiftUI渲染截图、同包Mac构建验证，具体源码/制品见下；
   不把HTML示意图或旧后端绿色当成新界面证据；手工键盘/VoiceOver/TCC仍待扩展。
-- [ ] 后续继续P2词典优先首屏、解释/摘要等完整结果动作，再补P3截图/管理/全部功能矩阵；
+- [x] 六种结果操作追加闭环，保留原结果，不读缓存或写历史；验证见下。
+- [ ] 后续继续P2词典优先首屏，再补P3截图/管理/全部功能矩阵；
   不因本界面切片结束而把整个移植标完成。
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
@@ -98,11 +99,13 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 [14张原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456432367)
 另存独立制品。没有新增独立reviewer签收；实现/测试代理不冒充独立审查。
 
-后续结果动作的Python/Swift接线正在下一源码中实施；**本包不包含尚未提交的结果动作**。
+上述64d80a0是前置界面包，**不包含结果动作**；下方4807f62已另行完成动作接线与验证。
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
-### 下一源码：结果操作接线（实现中，尚未借用上面包的绿灯）
+<a id="native-result-actions"></a>
+
+### 当前结果操作检查点：已通过同包三系统，继续本地词典
 
 已接六种原生结果操作：精简、正式表达、摘要、解释代码、按普通文本翻译、指定语言翻译。
 前三者使用不可变主结果，后三者使用原始请求输入；UI后续编辑或已有追加区块不改变输入来源。
@@ -112,10 +115,9 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 沿用共享prompt/RequestSnapshot/原native进程组及同一流式预算，未增加CLI版本使用门槛。
 
 Python后端与Swift typed API、模型、菜单已配套；Windows针对性219项通过，
-包含普通翻译/配置回归、fixture和打包清单。Mac计划193process/504core/15Foundation，
-保留原13Foundation并新增真实动作/取消闭环；新增Swift模型/协议/连接/渲染测试待真实CI执行。
-其中两张新原生结果图继续通过本地OCR检查正文与Actions文字，不以非空PNG代替可读性。
-本段只记录实现和验证计划，**尚未把新Swift编译、截图或同包三系统记为通过**。
+包含普通翻译/配置回归、fixture和打包清单。Mac193process/504core/15Foundation已实际通过，
+保留原13Foundation并新增真实动作/取消闭环；新增Swift模型/协议/连接/渲染测试也已执行。
+其中两张新原生结果图通过本地OCR检查正文与Actions文字，已实际查看，不以非空PNG代替可读性。
 
 首轮源码`fa5c5e8` / [run35125217730](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125217730)
 真实编译全部Swift成功（43.32s）；36原产品模型、新8动作模型、6原生渲染（含动作可读性）及连接测试通过。
@@ -126,6 +128,37 @@ Python后端与Swift typed API、模型、菜单已配套；Windows针对性219�
 Windows首个正常hook曾1606/79.209s失败两项未改动用例（topmost瞬时状态、history矩阵末尾日志存在）；
 两项单独2/2.513s通过，不改断言后正常完整hook1606/74.922s通过并推送。
 原失败日志保留；未获取此次history日志的具体原因，不擅称WinError5，也不宣称原稳定性问题已修复。
+
+最终源码`4807f62a79c222b7fde75052d5e8cbd023b664cb` /
+[run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)
+真实watch退出0，API核对attempt1、3jobs/35steps全部success。
+正常privacy/full hook1606/75.010s；producer portable709/10.360s；
+Swift编译24.90s，173项中158通过、15项构包前可选skip、零failure。
+包含原36产品模型、新8动作模型、新6动作协议及2动作连接测试、6原生渲染与16张PNG。
+
+| 同一App的执行系统 | 真实合成进程 | 核心 | 构包后Foundation |
+|---|---|---|---|
+| 15.7.9 / Xcode16.4 producer | 193，零fail/error/skip | 504，storage fixture通过 | 15，零fail/skip |
+| 14.8.9 / Xcode16.2 | 193，零fail/error/skip | 504，storage fixture通过 | 同15方法，零fail/skip |
+| 26.6.2 / Xcode26.6 | 193，零fail/error/skip | 504，storage fixture通过 | 同15方法，零fail/skip |
+
+新Foundation逐个运行六种动作、每种明确请求两次，验证真实native合成CLI的prompt、非缓存提交，
+即使历史文件故意损坏也不读取/覆写它；另验取消后的自有组及后代清理。
+新进程测试实际覆盖动作queued取消、EOF与无重放、非法动作提交前确定失败。
+[完整App artifact10459632452](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459632452)
+已独立读取archive逐字节核验；18,719,555 bytes，SHA-256
+`5e371baeb464eea5de94712d80b0cf9a6034137f2546e173a1bdf3dc9b04bc14`；
+tree `65ffc349934f7e6ed48ef94acd894f220d06626c010efc20b15db5a2583f475a`。
+684库存/74资源/46Core路径（45唯一）/6实际arm64 Mach-O/19许可/14 required覆盖，
+605个上游保留Python普通文件与自有process-support dylib分别核对。
+三系统archive/tree一致、包未修改；HTTPS证书/SQLite/取消/EOF/临时清理均通过。
+官方0.146.0/0.154.0只做版本与initialize/initialized/hooks/list预热，无账号/模型调用。
+[16张真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459243089)
+另存制品；合成测试与截图不代替真人键盘/VoiceOver/IME/TCC或真实账号验证，没有新增独立reviewer签收。
+
+下一步已开始开源本地词典的纯核心拆分，沿用固定数据库/许可与Windows查词语义，
+再接配置连接上的无Codex查词及原生下载管理；不会把命中词典自动变成模型调用。
+此下一阶段代码不在4807f62包内，完整移植仍未结束。
 
 <a id="codex-protocol-checkpoint"></a>
 
@@ -1124,14 +1157,17 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 
 ## P2 — 正在实施正式原生主流程
 - [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
-- [ ] 原生结果/输入、IME、流式合并刷新、选择滚动、取消、迟到事件隔离。
-- [ ] 词典/普通翻译/代码解释/摘要/重译/复制完整闭环。
+- [x] 原生结果/输入、流式合并刷新、选择滚动、取消、迟到事件隔离；同包自动化见上。
+- [x] 普通翻译/代码解释/摘要/重译/复制及六种追加动作闭环。
+- [ ] 本地词典优先首屏及无Codex查词/安装管理闭环。
+- [ ] 真人IME、键盘、VoiceOver与多屏交互矩阵，不将合成渲染当完整交互签收。
 - [ ] 来源按钮稳定 identity，按下时异步更新不吞 click。
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [ ] 同帧区域截图、多显示器坐标转换、Vision 语言与视觉 provider 明确发送。
 - [ ] URLSession 下载；核心校验安装/删除互斥；离线/损坏/取消。
-- [ ] 历史/搜索/筛选、设置/主题/语言、关于/完整第三方许可、诊断。
+- [x] 分页历史/已加载记录搜索筛选、基础设置/主题/语言与独立诊断。
+- [ ] 历史全库搜索、完整设置/关于与第三方许可界面。
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
 
 ## P4 — 等待 P3（可行性已在 P0 提前检查）

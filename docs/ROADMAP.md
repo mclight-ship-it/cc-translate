@@ -6,15 +6,16 @@
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。
-正式界面源码`64d80a0` /
-[run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)
-已通过正常完整hook1573、真实Swift编译、36项模型/5项原生渲染、14张截图检查，
-同一个App在三系统各190process/478core/13Foundation通过，完整制品已独立字节核验。
+当前界面与六种结果动作源码`4807f62` /
+[run35125864397](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397)
+已通过正常完整hook1606、真实Swift编译、36原模型/8动作模型/6原生渲染、16张截图检查，
+同一个App在三系统各193process/504core/15Foundation通过，完整制品已独立字节核验。
+动作保留原结果、追加区块，不读翻译缓存或写历史；取消/失败/未知结果不自动重放。
 [下载与正常使用](MACOS_DEVELOPMENT.md#native-translation-user-check)不再沿用旧诊断操作步骤。
-下一源码继续完整结果动作，再做词典首屏和P3剩余功能；可实现部分不等待完整权限矩阵，
+下一源码已开始本地词典纯核心拆分，再接无Codex的词典首屏/管理和P3剩余功能；可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 
-## 当前检查点：官方 app-server 通知信封兼容已验证
+## 前置检查点：官方 app-server 通知信封兼容已验证
 
 新版测试反馈在模型提交前发生协议错误。已用隔离的官方0.146.0、
 仅initialize/initialized/hooks/list复现客户端漏收`emittedAtMs`的问题。
