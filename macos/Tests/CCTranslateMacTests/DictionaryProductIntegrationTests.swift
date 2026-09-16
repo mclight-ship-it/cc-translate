@@ -10,12 +10,16 @@ private enum DictionaryProductTestError: Error {
     case readinessTimeout, lookupFailed, viewTimeout, shutdownTimeout
 }
 
-// Copies only externally supplied, pinned fixture bytes. This is not a URLSession/network measurement.
+// Check the explicit fixture identity, then exercise the production URLSession downloader.
 @MainActor
-private final class PinnedDictionaryFixtureCopier: DictionaryDownloading {
+private final class VerifiedNativeDictionaryDownloader: DictionaryDownloading {
     let asset: URL
     let home: URL
-    private(set) var copies = 0
+    private let downloader = DictionaryDownloader()
+    private(set) var starts = 0
+    private(set) var receivedBytes: Int64 = 0
+    private(set) var expectedBytes: Int64 = 0
+    private(set) var downloadMilliseconds: Double?
     private(set) var failure: Error?
 
     init(asset: URL, home: URL) { self.asset = asset; self.home = home }
@@ -50,11 +54,17 @@ private final class PinnedDictionaryFixtureCopier: DictionaryDownloading {
             guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == ticket.sha256 else {
                 throw DictionaryProductTestError.assetDigestMismatch
             }
-            try FileManager.default.copyItem(at: asset, to: ticket.path)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ticket.path.path)
-            copies += 1
-            progress(ticket.size)
-            completion(.success(()))
+            starts += 1
+            expectedBytes = ticket.size
+            let started = DispatchTime.now().uptimeNanoseconds
+            downloader.start(ticket, progress: { bytes in
+                self.receivedBytes = bytes
+                progress(bytes)
+            }, completion: { result in
+                self.downloadMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+                if case .failure(let error) = result { self.failure = error }
+                completion(result)
+            })
         } catch {
             failure = error
             completion(.failure(.fileIO))
@@ -62,7 +72,7 @@ private final class PinnedDictionaryFixtureCopier: DictionaryDownloading {
     }
 
     func cancel() {
-        // Setup copying is synchronous on the main actor; no writer survives start's completion.
+        downloader.cancel()
     }
 }
 
@@ -107,7 +117,7 @@ final class DictionaryProductIntegrationTests: XCTestCase {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("cc-dictionary-product-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
-        let copier = PinnedDictionaryFixtureCopier(asset: URL(fileURLWithPath: asset), home: home)
+        let downloader = VerifiedNativeDictionaryDownloader(asset: URL(fileURLWithPath: asset), home: home)
         let notices = DictionaryProductNotices()
         let model = ProbeModel(persistsPreferences: false, makeConnection: { callback in
             let id = UUID()
@@ -120,7 +130,7 @@ final class DictionaryProductIntegrationTests: XCTestCase {
             notices.connections.append(connection)
             return connection
         }, runtimeProvider: { runtime }, locateCandidates: { _, _ in [] },
-           dictionaryDownloader: copier, homeDirectory: home)
+           dictionaryDownloader: downloader, homeDirectory: home)
         model.interfaceLanguage = "en"
         model.onConfigurationRequired = { XCTFail("The real pinned entry must not require Codex setup.") }
         _ = NSApplication.shared
@@ -142,12 +152,12 @@ final class DictionaryProductIntegrationTests: XCTestCase {
                 throw DictionaryProductTestError.readinessTimeout
             }
             model.dictionary.download()
-            guard await eventually(timeout: 65, {
-                copier.failure != nil ||
+            guard await eventually(timeout: 180, {
+                downloader.failure != nil ||
                     (model.dictionary.status?.state == .ready && model.dictionary.status?.enabled == true &&
                      !model.dictionary.busy && model.settingsReady && !model.settingsBusy)
-            }), copier.failure == nil else {
-                XCTFail("Pinned fixture setup failed: \(model.dictionary.messageEnglish); \(String(describing: copier.failure))")
+            }), downloader.failure == nil else {
+                XCTFail("Native dictionary download/install failed: \(model.dictionary.messageEnglish); \(String(describing: downloader.failure))")
                 throw DictionaryProductTestError.readinessTimeout
             }
             model.saveSettings(history: false)
@@ -225,7 +235,10 @@ final class DictionaryProductIntegrationTests: XCTestCase {
                 "goal_is_asserted": .bool(false),
                 "query_format_goal_ms": .integer(10), "query_format_directly_measured": .bool(false),
                 "query_format_note": .string("terminal samples include Swift scheduling, framing and IPC; not isolated query/format time"),
-                "setup_and_install_included": .bool(false), "network_download_measured": .bool(false),
+                "setup_and_install_included": .bool(false), "network_download_measured": .bool(true),
+                "installation_transport": .string("native_URLSession_HTTPS"),
+                "native_download_bytes": .integer(downloader.receivedBytes),
+                "native_download_ms": .number(try XCTUnwrap(downloader.downloadMilliseconds)),
                 "history_enabled": .bool(false), "cache_hits": .bool(false), "cli_candidates": .integer(0),
                 "poll_interval_ms": .integer(1), "ocr_source_visible": .bool(sourceVisible),
                 "os": .string(ProcessInfo.processInfo.operatingSystemVersionString)
@@ -236,7 +249,9 @@ final class DictionaryProductIntegrationTests: XCTestCase {
             XCTAssertTrue(notices.configurationOnly)
             XCTAssertNil(notices.failure)
             XCTAssertEqual(notices.connections.count, 1)
-            XCTAssertEqual(copier.copies, 1)
+            XCTAssertEqual(downloader.starts, 1)
+            XCTAssertGreaterThan(downloader.receivedBytes, 0)
+            XCTAssertEqual(downloader.receivedBytes, downloader.expectedBytes)
         } catch {
             do { try await cleanup(model, notices: notices, window: window, home: home) }
             catch { XCTFail("Dictionary product cleanup failed: \(error)") }

@@ -21,7 +21,9 @@ class DictionaryProductEvidenceTests(unittest.TestCase):
             "unit": "ms", "warmup_intents": 2, "warm_intents": 10,
             "native_view_goal_ms": 150, "goal_is_asserted": False,
             "query_format_goal_ms": 10, "query_format_directly_measured": False,
-            "setup_and_install_included": False, "network_download_measured": False,
+            "setup_and_install_included": False, "network_download_measured": True,
+            "installation_transport": "native_URLSession_HTTPS",
+            "native_download_ms": 30.0, "native_download_bytes": 67_948_544,
             "history_enabled": False, "cache_hits": False, "cli_candidates": 0,
             "poll_interval_ms": 1, "ocr_source_visible": True,
             "native_paint_samples": [milliseconds] * 10, "intent_to_lookup_terminal_samples": [2.0] * 10,
@@ -57,7 +59,9 @@ class DictionaryProductEvidenceTests(unittest.TestCase):
                 {"native_paint_p95": 1.0}, {"native_paint_max": False},
                 {"intent_to_lookup_terminal_samples": [30.0] * 10},
                 {"full_gui": True}, {"query_format_directly_measured": True}, {"ocr_source_visible": False},
-                {"native_view_goal_result": "measured_miss"}, {"warm_intents": True}):
+                {"native_view_goal_result": "measured_miss"}, {"warm_intents": True},
+                {"native_download_ms": float("inf")}, {"native_download_bytes": 0},
+                {"network_download_measured": False}, {"installation_transport": "fixture_copy"}):
             with self.subTest(changes=changes), self.assertRaises(bundle.BundleError):
                 runtime.dictionary_product_result(self.log(self.measurement() | changes))
 

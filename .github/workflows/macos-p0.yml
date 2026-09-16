@@ -81,7 +81,7 @@ jobs:
           python3 -B tools/macos/codex_version_smoke.py
           --app tools/macos/.build/CCTranslateMac-P0.app
           --report tools/macos/.build/codex-version-smoke.json
-      - name: Bundled dictionary to same-source native model and offscreen paint (not packaged GUI or keyboard)
+      - name: Native URLSession dictionary install and model-to-offscreen-paint (not packaged GUI or keyboard)
         env:
           CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
         shell: bash

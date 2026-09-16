@@ -210,12 +210,16 @@ def dictionary_product_result(text):
         "unit": "ms", "warmup_intents": 2, "warm_intents": 10,
         "native_view_goal_ms": 150, "goal_is_asserted": False,
         "query_format_goal_ms": 10, "query_format_directly_measured": False,
-        "setup_and_install_included": False, "network_download_measured": False,
+        "setup_and_install_included": False, "network_download_measured": True,
+        "installation_transport": "native_URLSession_HTTPS",
         "history_enabled": False, "cache_hits": False, "cli_candidates": 0,
         "poll_interval_ms": 1, "ocr_source_visible": True,
     }
     need(all(type(measurement.get(key)) is type(value) and measurement[key] == value
              for key, value in expected.items()), "dictionary product measurement scope mismatch")
+    duration, downloaded = measurement.get("native_download_ms"), measurement.get("native_download_bytes")
+    need(type(duration) in (int, float) and math.isfinite(duration) and duration >= 0 and
+         type(downloaded) is int and downloaded > 0, "native dictionary download measurement invalid")
     for key in ("native_paint_samples", "intent_to_lookup_terminal_samples"):
         samples = measurement.get(key)
         need(isinstance(samples, list) and len(samples) == 10 and

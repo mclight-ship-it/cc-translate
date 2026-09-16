@@ -21,8 +21,12 @@ from cc_macos import configuration, dictionary
 from cc_macos.dictionary_probe import create_fixture
 from cc_macos.protocol import ProtocolError
 from cc_macos.server import Server
-from tests.test_macos_configuration import _ConfigurationDirectory, message
-from tests.test_macos_translation import EventOutput
+if __package__:
+    from .test_macos_configuration import _ConfigurationDirectory, message
+    from .test_macos_translation import EventOutput
+else:
+    from test_macos_configuration import _ConfigurationDirectory, message
+    from test_macos_translation import EventOutput
 
 
 def lookup_request(**changes):
@@ -610,7 +614,8 @@ sys.meta_path.insert(0, Guard())
 import cc_macos.dictionary, cc_macos.server
 assert not blocked.intersection(sys.modules)
 """
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(Path.cwd())],
+        core = Path(configuration.__file__).resolve().parent.parent
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(core)],
                                 cwd=self.home, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
