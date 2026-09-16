@@ -2,7 +2,8 @@ import XCTest
 @testable import CCTranslateSupport
 
 final class TranslationProtocolTests: XCTestCase {
-    private let storage = ["config_load", "config_save", "history_load", "history_add", "history_clear"]
+    private let storage = ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
+        DictionaryRequest.operations.sorted()
     private var ready: [String: JSONValue] {
         [
             "protocol": .integer(1),

@@ -34,7 +34,7 @@ final class ProtocolTests: XCTestCase {
             "capabilities": .array([
                 .string("config_load"), .string("config_save"), .string("history_load"),
                 .string("history_add"), .string("history_clear")
-            ]),
+            ] + DictionaryRequest.operations.sorted().map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(false)
         ]
     }
@@ -378,14 +378,14 @@ final class ProtocolTests: XCTestCase {
         _ = try state.receive(event(message.id, 1, "started", operation))
     }
 
-    func testHistoryRequiresReadyAndExactlyFiveBusinessCapabilities() throws {
+    func testHistoryRequiresReadyAndExactBusinessCapabilities() throws {
         var starting = ProtocolState(mode: .configuration)
         XCTAssertThrowsError(try starting.register(historyLoad("before_hello")))
         try starting.register(ClientMessage(id: "hello", type: "hello"))
         XCTAssertThrowsError(try starting.register(historyLoad("before_ready")))
         let capabilities = [
             "config_load", "config_save", "history_load", "history_add", "history_clear"
-        ].map(JSONValue.string)
+        ].map(JSONValue.string) + DictionaryRequest.operations.sorted().map(JSONValue.string)
         for invalid in [
             Array(capabilities.prefix(2)), Array(capabilities.dropLast()),
             capabilities + [.string("fixture")],

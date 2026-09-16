@@ -61,11 +61,14 @@ def decode_config_file(stream):
 
 
 class ConfigurationSession:
+    dictionary_enabled = True
+
     def __init__(self, home, application_id):
         self.home = home
         self.application_id = application_id
         self._owner = None
         self._history = None
+        self._dictionary = None
         self._closed = False
         self._operations_lock = threading.RLock()
 
@@ -87,6 +90,8 @@ class ConfigurationSession:
             directory.mkdir(parents=True, exist_ok=True)
             self._owner = MacConfigOwner(self.home, self.application_id)
             self._history = HistoryService(directory)
+            from .dictionary import DictionaryService
+            self._dictionary = DictionaryService(self, directory)
             opened = True
         except ConfigInUseError as error:
             raise ConfigurationError("config_in_use") from error
@@ -117,6 +122,36 @@ class ConfigurationSession:
         with self._operations_lock:
             return self._perform(payload)
 
+    def dictionary_config(self):
+        """Capture the normalized view without committing a migration before cancellation."""
+        with self._operations_lock:
+            if self._closed or self._owner is None:
+                raise ConfigurationError("config_unavailable")
+            try:
+                self._owner._ensure_open()
+                try:
+                    stream = open(self._owner.path, "r", encoding="utf-8")
+                except FileNotFoundError:
+                    raw = {}
+                else:
+                    with stream:
+                        raw = decode_config_file(stream)
+                config = normalize_config(raw)
+                plan_config_migration(raw, config)
+                validate_config(config)
+                return config
+            except OSError:
+                raise ConfigurationError("config_io_failed") from None
+            except (ValueError, TypeError, OverflowError):
+                raise ConfigurationError("invalid_config") from None
+            except ConfigForkError:
+                raise ConfigurationError("config_unavailable") from None
+
+    def perform_dictionary(self, payload, cancel, begin_finish):
+        if self._dictionary is None:
+            raise ConfigurationError("dictionary_unavailable")
+        return self._dictionary.perform(payload, cancel, begin_finish)
+
     def _perform(self, payload):
         if self._closed or self._owner is None:
             raise ConfigurationError("config_unavailable")
@@ -138,8 +173,12 @@ class ConfigurationSession:
             raise ConfigurationError("config_unavailable") from error
 
     def close(self):
-        with self._operations_lock:
-            self._close()
+        try:
+            if self._dictionary is not None:
+                self._dictionary.close()
+        finally:
+            with self._operations_lock:
+                self._close()
 
     def _close(self):
         self._closed = True

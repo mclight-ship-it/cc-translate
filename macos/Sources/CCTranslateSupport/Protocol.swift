@@ -7,7 +7,7 @@ public enum ProbeError: String, Error, LocalizedError {
     case handshakeTimeout, requestTimeout, helperEOF, helperExited, helperProtocolError
     case stderrLimit, shuttingDown, cliTimeout, cliOutputLimit, cliFailed, cliCancelled
     case permissionDenied, secureInput, noDisplay, captureFailed, noImage, ocrFailed
-    case configurationOutcomeUnknown, historyOutcomeUnknown, translationOutcomeUnknown
+    case configurationOutcomeUnknown, historyOutcomeUnknown, translationOutcomeUnknown, dictionaryOutcomeUnknown
     case translationUnavailable = "translation_unavailable"
     case configInUse = "config_in_use"
     case configUnavailable = "config_unavailable"
@@ -78,6 +78,9 @@ public enum JSONValue: Equatable {
     }
 
     public func encoded() throws -> Data {
+        if DictionaryRequest.operations.contains(payload["operation"]?.string ?? "") {
+            try DictionaryDocument.validateRequest(payload)
+        }
         let value = foundation
         // Foundation can raise an Objective-C exception for NaN instead of a Swift error.
         guard JSONSerialization.isValidJSONObject([value]) else { throw ProbeError.invalidJSON }
@@ -611,6 +614,14 @@ private enum HelperFailureCode: String {
     case providerCleanupFailed = "provider_cleanup_failed"
     case providerProtocolError = "provider_protocol_error"
     case providerFailed = "provider_failed"
+    case invalidDictionary = "invalid_dictionary"
+    case dictionaryUnavailable = "dictionary_unavailable"
+    case dictionaryIOFailed = "dictionary_io_failed"
+    case dictionaryBusy = "dictionary_busy"
+    case invalidDictionaryTicket = "invalid_dictionary_ticket"
+    case dictionaryInstallFailed = "dictionary_install_failed"
+    case dictionaryOutputLimit = "dictionary_output_limit"
+    case dictionaryCleanupFailed = "dictionary_cleanup_failed"
 }
 
 public struct ProtocolState {
@@ -633,6 +644,8 @@ public struct ProtocolState {
         var wireBytes = 0
         var deltaText = ""
         var isModelRequest: Bool { TranslationDocument.modelOperations.contains(operation ?? "") }
+        var isDictionaryRequest: Bool { DictionaryRequest.operations.contains(operation ?? "") }
+        var cancellableAfterStart: Bool { isModelRequest || isDictionaryRequest }
     }
     private var entries: [String: Entry] = [:]
     public private(set) var ready = false
@@ -654,8 +667,12 @@ public struct ProtocolState {
     public var hasPendingTranslation: Bool {
         entries.values.contains { !$0.terminal && $0.isModelRequest }
     }
+    public var hasPendingDictionary: Bool {
+        entries.values.contains { !$0.terminal && $0.isDictionaryRequest }
+    }
     var pendingOutcomeUnknown: ProbeError? {
         if hasPendingTranslation { return .translationOutcomeUnknown }
+        if hasPendingDictionary { return .dictionaryOutcomeUnknown }
         if hasPendingConfiguration { return .configurationOutcomeUnknown }
         if hasPendingHistory { return .historyOutcomeUnknown }
         return nil
@@ -666,8 +683,9 @@ public struct ProtocolState {
     private var operations: Set<String> {
         switch mode {
         case .diagnostic: return ["fixture", "runtime_probe"]
-        case .configuration: return Self.businessOperations
-        case .translation: return Self.businessOperations.union(TranslationDocument.modelOperations)
+        case .configuration: return Self.businessOperations.union(DictionaryRequest.operations)
+        case .translation:
+            return Self.businessOperations.union(DictionaryRequest.operations).union(TranslationDocument.modelOperations)
         }
     }
     public init(mode: Mode = .diagnostic) { self.mode = mode }
@@ -702,6 +720,8 @@ public struct ProtocolState {
             switch operation {
             case "translate", "result_action":
                 _ = try message.encoded()
+            case let operation where DictionaryRequest.operations.contains(operation):
+                try DictionaryDocument.validateRequest(payload)
             case "config_load":
                 guard Set(payload.keys) == ["operation"] else { throw ProbeError.invalidPayload }
             case "config_save":
@@ -745,7 +765,7 @@ public struct ProtocolState {
                                    cancellationTarget: target,
                                    cancellationEligible: targetEntry.map {
                                        $0.type == "request" && !$0.terminal &&
-                                           (!$0.started || (mode == .translation && $0.isModelRequest))
+                                           (!$0.started || $0.cancellableAfterStart)
                                    } ?? false, historyPage: historyPage)
         if message.type == "shutdown" { closing = true }
     }
@@ -805,7 +825,7 @@ public struct ProtocolState {
             if !entry.isModelRequest {
                 guard !entries.values.contains(where: {
                     $0.type == "request" && !$0.terminal && $0.order < entry.order &&
-                        (mode == .configuration || !$0.isModelRequest)
+                        !$0.isModelRequest && $0.isDictionaryRequest == entry.isDictionaryRequest
                 }) else { throw ProbeError.invalidTransition }
             }
             entry.started = true
@@ -836,6 +856,9 @@ public struct ProtocolState {
                     try TranslationDocument.validateCompletion(
                         payload, streamed: !entry.deltaText.isEmpty,
                         resultAction: entry.operation == "result_action")
+                } else if entry.isDictionaryRequest {
+                    guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
+                    try DictionaryDocument.validateCompletion(payload, operation: entry.operation)
                 } else if isBusiness {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     switch entry.operation {
@@ -875,8 +898,8 @@ public struct ProtocolState {
                           request.type == "request", request.accepted else {
                         throw ProbeError.invalidTransition
                     }
-                    // A translation can finish or emit in-flight deltas before its cancel ack arrives.
-                    if !request.isModelRequest || !request.started {
+                    // Independently running jobs may finish before their cancel acknowledgement arrives.
+                    if !request.cancellableAfterStart || !request.started {
                         guard !request.started, !request.terminal || request.cancelled else {
                             throw ProbeError.invalidTransition
                         }
@@ -885,7 +908,8 @@ public struct ProtocolState {
                 }
             case "shutdown":
                 guard seq == 0, payload.isEmpty else { throw ProbeError.invalidPayload }
-                if isBusiness, hasPendingConfiguration || hasPendingHistory || hasPendingTranslation {
+                if isBusiness, hasPendingConfiguration || hasPendingHistory ||
+                    hasPendingTranslation || hasPendingDictionary {
                     throw ProbeError.invalidTransition
                 }
             default: throw ProbeError.invalidTransition
@@ -898,6 +922,8 @@ public struct ProtocolState {
                 guard seq >= 2, Set(payload.keys) == ["submitted"],
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
+            } else if entry.isDictionaryRequest, entry.started {
+                guard seq == 2, payload.isEmpty else { throw ProbeError.invalidTransition }
             } else {
                 guard !entry.started, payload.isEmpty else { throw ProbeError.invalidTransition }
             }
@@ -914,6 +940,7 @@ public struct ProtocolState {
             if isBusiness, entry.type == "shutdown" {
                 guard seq == 0,
                       payload["code"] == .string("state_io_failed") ||
+                        payload["code"] == .string("dictionary_cleanup_failed") ||
                         (mode == .translation && payload["code"] == .string("provider_cleanup_failed")) else {
                     throw ProbeError.invalidPayload
                 }
@@ -928,7 +955,9 @@ public struct ProtocolState {
                 }
             }
             if isBusiness, entry.type == "request" {
-                if payload["code"] == .string("worker_start_failed") {
+                if payload["code"] == .string("worker_start_failed") ||
+                    (entry.isDictionaryRequest && !entry.started &&
+                     payload["code"] == .string("dictionary_cleanup_failed")) {
                     guard entry.accepted, !entry.started, seq == 1 else {
                         throw ProbeError.invalidTransition
                     }

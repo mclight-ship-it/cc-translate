@@ -109,7 +109,7 @@ final class TranslationHelperConnectionTests: XCTestCase {
     private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-                (mode == .translation ? ["translate", "result_action"] : [])
+                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action"] : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
@@ -418,15 +418,15 @@ final class TranslationHelperConnectionTests: XCTestCase {
         }
     }
 
-    func testTranslationTerminationGracePreservesNativeCleanupAndLegacyBounds() {
-        let native = HelperConnection.terminationGrace(for: .translation)
-        XCTAssertEqual(native.eof, 30)
-        XCTAssertEqual(native.term, 30)
-        for mode in [ProtocolState.Mode.diagnostic, .configuration] {
-            let legacy = HelperConnection.terminationGrace(for: mode)
-            XCTAssertEqual(legacy.eof, 3)
-            XCTAssertEqual(legacy.term, 1)
+    func testBusinessTerminationGraceAllowsNativeCleanupAndDictionaryCommit() {
+        for mode in [ProtocolState.Mode.translation, .configuration] {
+            let business = HelperConnection.terminationGrace(for: mode)
+            XCTAssertEqual(business.eof, 30)
+            XCTAssertEqual(business.term, 30)
         }
+        let diagnostic = HelperConnection.terminationGrace(for: .diagnostic)
+        XCTAssertEqual(diagnostic.eof, 3)
+        XCTAssertEqual(diagnostic.term, 1)
     }
 
     @MainActor
@@ -564,5 +564,95 @@ final class TranslationHelperConnectionTests: XCTestCase {
         await fulfillment(of: [notices.stopped], timeout: 10)
         XCTAssertTrue(notices.failures.isEmpty)
         XCTAssertEqual(notices.events.last { $0.id == "t" }?.payload, ["submitted": .bool(true)])
+    }
+
+    @MainActor
+    func testDictionaryLookupUsesConfigurationTransportAndExactTypedRequest() async throws {
+        let request = DictionaryRequest.lookup(text: "run", appLanguage: "en_US", origin: "selection",
+                                               useCache: true, recordHistory: false)
+        let expected = String(decoding: try ClientMessage(id: "lookup", type: "request", payload: request.payload)
+            .encoded().dropLast(), as: UTF8.self).replacingOccurrences(of: "'", with: "'\\''")
+        let local: [String: JSONValue] = [
+            "text": .string("run\nverb\n1. Synthetic definition.\nSources: Fixture, Test license"),
+            "submitted": .bool(false), "cached": .bool(false), "kind": .string("dict"),
+            "target_lang": .null, "summarize": .bool(false), "history": .string("disabled"),
+            "history_error": .null
+        ]
+        let operation: [String: JSONValue] = ["operation": .string(request.operation)]
+        let script = try connectedScript("""
+        case "$*" in *--codex-command*) exit 91 ;; esac
+        \(readLine)
+        [ "$line" = '\(expected)' ]
+        \(try emit("lookup", 0, "accepted", operation))
+        \(try emit("lookup", 1, "started", operation))
+        \(try emit("lookup", 2, "completed", ["status": .string("hit"), "result": .object(local)]))
+        \(shutdown)
+        """, mode: .configuration)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let terminal = notices.terminal("lookup")
+        notices.connection.dictionary(request, id: "lookup")
+        await fulfillment(of: [terminal], timeout: 10)
+        let response = try XCTUnwrap(notices.events.last { $0.id == "lookup" })
+        XCTAssertEqual(try DictionaryLookupResult(payload: response.payload).result, local)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testDictionaryCancellationDrainsNonModelTerminalBeforeShutdown() async throws {
+        let operation: [String: JSONValue] = ["operation": .string("dictionary_lookup")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("lookup", 0, "accepted", operation))
+        \(try emit("lookup", 1, "started", operation))
+        \(readLine)
+        \(try emit("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        \(try emit("lookup", 2, "cancelled"))
+        \(shutdown)
+        """, mode: .configuration)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("lookup")
+        let terminal = notices.terminal("lookup")
+        notices.connection.dictionary(.lookup(text: "run", appLanguage: "en_US", origin: "text",
+                                              useCache: true, recordHistory: true), id: "lookup")
+        await fulfillment(of: [started], timeout: 10)
+        let cancel = notices.terminal("cancel")
+        notices.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("lookup")]))
+        await fulfillment(of: [cancel, terminal], timeout: 10)
+        XCTAssertEqual(notices.events.last { $0.id == "lookup" }?.payload, [:])
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testDictionaryEOFReportsLocalUnknownWithoutModelSubmissionOrReplay() async throws {
+        let operation: [String: JSONValue] = ["operation": .string("dictionary_status")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("status", 0, "accepted", operation))
+        \(try emit("status", 1, "started", operation))
+        """, mode: .configuration)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        notices.connection.dictionary(.status, id: "status")
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.dictionaryOutcomeUnknown])
+        XCTAssertEqual(notices.events.filter { $0.id == "status" }.map(\.type), ["accepted", "started"])
     }
 }

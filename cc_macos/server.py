@@ -14,6 +14,7 @@ from typing import BinaryIO, TextIO
 from .probes import ProbeCancelled, ProbeError, runtime_probe
 from .configuration import ConfigurationError, startup_configuration, validate_save
 from .history import HISTORY_OPERATIONS, validate_history_request
+from .dictionary import DICTIONARY_OPERATIONS, DictionaryCancelled, validate_dictionary_request
 from .protocol import (
     MAX_FRAME_BYTES, MAX_IDS, MAX_TEXT_BYTES, MAX_STREAM_BYTES, RESERVED_ID, VERSION,
     PipeFrameReader, ProtocolError, encode_frame, read_frame, valid_id, validate_client,
@@ -40,6 +41,7 @@ class _Request:
     terminal: bool = False
     started: bool = False
     translating: bool = False
+    dictionary: bool = False
     committing: bool = False
     wire_bytes: int = 0
 
@@ -59,9 +61,13 @@ class Server:
         self._worker_failed = False
         self._configuration = configuration
         self._translation_enabled = getattr(configuration, "translation_enabled", False) is True
+        self._dictionary_enabled = getattr(configuration, "dictionary_enabled", False) is True
         self._configuration_queue = queue.Queue()
         self._configuration_worker = None
         self._queue_stopped = False
+        self._dictionary_queue = queue.Queue()
+        self._dictionary_worker = None
+        self._dictionary_queue_stopped = False
         self._stop_event = threading.Event()
         self._read_stop = _ReadStop(self._stop_event)
         self._shutdown = None
@@ -106,7 +112,9 @@ class Server:
             self._stopping = True
             self._stop_event.set()
             for request in self._tasks.values():
-                if request.translating and request.started and not request.committing:
+                if request.dictionary and not request.committing:
+                    request.cancel.set()
+                elif request.translating and request.started and not request.committing:
                     request.cancel.set()
                 elif self._configuration is None or not request.started:
                     request.cancel.set()
@@ -114,6 +122,9 @@ class Server:
             if self._configuration_worker is not None and not self._queue_stopped:
                 self._queue_stopped = True
                 self._configuration_queue.put(None)
+            if self._dictionary_worker is not None and not self._dictionary_queue_stopped:
+                self._dictionary_queue_stopped = True
+                self._dictionary_queue.put(None)
 
     def _join_workers(self) -> None:
         with self._lock:
@@ -177,6 +188,59 @@ class Server:
                 return False
             self._configuration_worker = worker
         self._configuration_queue.put((request, payload))
+        return True
+
+    def _dictionary_loop(self):
+        try:
+            while True:
+                job = self._dictionary_queue.get()
+                if job is None:
+                    return
+                request, payload = job
+                def begin_finish():
+                    with self._lock:
+                        if request.cancel.is_set() or request.terminal:
+                            return False
+                        request.committing = True
+                        return True
+                try:
+                    with self._lock:
+                        if not request.cancel.is_set():
+                            request.started = True
+                            self._send(request, "started", {"operation": payload["operation"]})
+                    result = self._configuration.perform_dictionary(payload, request.cancel, begin_finish)
+                    self._send(request, "completed", result)
+                except DictionaryCancelled:
+                    self._send(request, "cancelled", {})
+                except ConfigurationError as error:
+                    self._send(request, "failed", {"code": error.code})
+                except (ProtocolError, OSError):
+                    self._worker_failed = True
+                    self._log("internal_error")
+                    self._send(_Request(RESERVED_ID), "failed", {"code": "internal_error"})
+                    self._stop()
+                finally:
+                    with self._lock:
+                        self._tasks.pop(request.id, None)
+        finally:
+            with self._lock:
+                self._workers.discard(threading.current_thread())
+
+    def _queue_dictionary(self, request, payload):
+        if self._dictionary_worker is None:
+            worker = threading.Thread(target=self._dictionary_loop, name="cc-macos-dictionary", daemon=False)
+            self._workers.add(worker)
+            try:
+                worker.start()
+            except RuntimeError:
+                self._workers.discard(worker)
+                self._tasks.pop(request.id, None)
+                self._worker_failed = True
+                self._log("worker_start_failed")
+                self._send(request, "failed", {"code": "worker_start_failed"})
+                return False
+            self._dictionary_worker = worker
+        self._dictionary_queue.put((request, payload))
         return True
 
     def _perform(self, request: _Request, payload: dict) -> None:
@@ -256,6 +320,12 @@ class Server:
     def _payload_error(self, payload: dict) -> str | None:
         operation = payload.get("operation")
         if self._configuration is not None:
+            if operation in DICTIONARY_OPERATIONS and self._dictionary_enabled:
+                try:
+                    validate_dictionary_request(payload)
+                except ProtocolError as error:
+                    return error.code
+                return None
             if operation in ("translate", "result_action") and self._translation_enabled:
                 try:
                     validate = (self._configuration.validate_result_action_request
@@ -322,6 +392,8 @@ class Server:
                             else ["config_load", "config_save", *HISTORY_OPERATIONS])
             if self._translation_enabled:
                 capabilities.extend(("translate", "result_action"))
+            if self._dictionary_enabled:
+                capabilities.extend(DICTIONARY_OPERATIONS)
             self._send(control, "ready", {
                 "protocol": VERSION, "capabilities": capabilities,
                 "max_frame_bytes": MAX_FRAME_BYTES, "fixture": self._configuration is None,
@@ -345,10 +417,10 @@ class Server:
                 target = self._tasks.get(payload["request_id"])
                 active = (target is not None and not target.terminal
                           and (self._configuration is None or not target.started
-                               or target.translating and not target.committing))
+                               or (target.translating or target.dictionary) and not target.committing))
                 if active:
                     target.cancel.set()
-                    if not target.started:
+                    if not target.started and not target.dictionary:
                         self._send(target, "cancelled", {})
                 self._send(control, "completed", {"cancel_requested": active})
         elif type_ == "request":
@@ -362,6 +434,7 @@ class Server:
                     return True
                 self._tasks[id_] = control
                 control.translating = payload["operation"] in ("translate", "result_action")
+                control.dictionary = payload["operation"] in DICTIONARY_OPERATIONS
                 self._send(control, "accepted", {"operation": payload["operation"]})
                 if self._pipe_closed:
                     self._tasks.pop(id_, None)
@@ -369,6 +442,8 @@ class Server:
                 if self._configuration is not None:
                     if control.translating:
                         return self._start_translation(control, payload)
+                    if control.dictionary:
+                        return self._queue_dictionary(control, payload)
                     return self._queue_configuration(control, payload)
                 worker = threading.Thread(target=self._perform, args=(control, payload),
                                           name="cc-macos-probe", daemon=True)
@@ -427,7 +502,7 @@ def main(arguments=None) -> int:
         sys.stderr.write("cc_macos:invalid_startup\n")
         return 2
     server = Server(sys.stdin.buffer, sys.stdout.buffer, sys.stderr, configuration=configuration)
-    if not server._translation_enabled:
+    if not server._translation_enabled and not server._dictionary_enabled:
         return server.run()
     previous = signal.signal(signal.SIGTERM, server.request_termination)
     try:

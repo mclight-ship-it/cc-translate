@@ -11,6 +11,57 @@ import zipfile
 from tools.macos import bundle, runtime_matrix as runtime, smoke
 
 
+class DictionaryProductEvidenceTests(unittest.TestCase):
+    def measurement(self, milliseconds=20.0):
+        return {
+            "scope": "same_source_model_and_retained_swiftui_appkit_view_with_bundled_configuration_helper",
+            "source_cohort": "current Swift package model/view; helper from CC_TRANSLATE_APP; not the packaged GUI process",
+            "endpoint": "explicit_model_translate_to_matching_read_only_nstextview_and_offscreen_bitmap_paint",
+            "physical_keyboard": False, "full_gui": False, "onscreen_presentation": False,
+            "unit": "ms", "warmup_intents": 2, "warm_intents": 10,
+            "native_view_goal_ms": 150, "goal_is_asserted": False,
+            "query_format_goal_ms": 10, "query_format_directly_measured": False,
+            "setup_and_install_included": False, "network_download_measured": False,
+            "history_enabled": False, "cache_hits": False, "cli_candidates": 0,
+            "poll_interval_ms": 1, "ocr_source_visible": True,
+            "native_paint_samples": [milliseconds] * 10, "intent_to_lookup_terminal_samples": [2.0] * 10,
+            "native_paint_p95": milliseconds, "native_paint_max": milliseconds,
+            "native_view_goal_result": "met" if milliseconds <= 150 else "measured_miss",
+        }
+
+    def log(self, measurement):
+        case = "Test Case '-[CCTranslateMacTests.DictionaryProductIntegrationTests " + runtime.PRODUCT_DICTIONARY_METHOD + "]' "
+        return (case + "started.\nCC_TRANSLATE_DICTIONARY_PRODUCT_TIMINGS " + json.dumps(measurement) + "\n" +
+                case + "passed (1.0 seconds).\nExecuted 1 test, with 0 failures\n")
+
+    def test_measured_goal_miss_is_reported_without_promoting_test_success_to_latency_success(self):
+        for latency in (20.0, 170.0):
+            value = self.measurement(latency)
+            report = runtime.dictionary_product_result(self.log(value))
+            self.assertEqual(report["measurement"], value)
+            self.assertEqual(report["tests_run"], 1)
+            self.assertFalse(report["measurement"]["full_gui"])
+
+    def test_missing_duplicate_or_skipped_product_execution_is_rejected(self):
+        log = self.log(self.measurement())
+        for invalid in (log.replace("passed", "skipped"), log.replace("Executed 1 test", "Executed 2 tests"),
+                        log.replace("with 0 failures", "with 1 test skipped and 0 failures"),
+                        log.replace("CC_TRANSLATE_DICTIONARY_PRODUCT_TIMINGS", "NOT_MEASURED"), log + log):
+            with self.subTest(invalid=invalid), self.assertRaises(bundle.BundleError):
+                runtime.dictionary_product_result(invalid)
+
+    def test_invalid_samples_scope_and_inconsistent_goal_cannot_become_evidence(self):
+        for changes in (
+                {"native_paint_samples": []}, {"native_paint_samples": [True] * 10},
+                {"native_paint_samples": [float("nan")] * 10},
+                {"native_paint_p95": 1.0}, {"native_paint_max": False},
+                {"intent_to_lookup_terminal_samples": [30.0] * 10},
+                {"full_gui": True}, {"query_format_directly_measured": True}, {"ocr_source_visible": False},
+                {"native_view_goal_result": "measured_miss"}, {"warm_intents": True}):
+            with self.subTest(changes=changes), self.assertRaises(bundle.BundleError):
+                runtime.dictionary_product_result(self.log(self.measurement() | changes))
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -172,15 +223,24 @@ class RuntimeMatrixTests(unittest.TestCase):
             "testBundledTranslationCompetingHelpersForceStopAndReopen",
             "testBundledResultActionsUseNativeProviderWithoutReadingOrWritingHistory",
             "testBundledResultActionCancellationDrainsOwnedGroupsWithoutHistory",
+            "testBundledDictionaryInstallLookupCacheHistoryAndLiveOptoutWithoutCLI",
+            "testBundledDictionaryInvalidStagingDiscardDisableDeleteAndReopenWithoutCLI",
         ))
         methods = "\n".join("Test Case '-[CCTranslateSupportTests.HelperIntegrationTests " + method + "]' " + outcome
                             for method in runtime.INTEGRATION_TESTS for outcome in ("started", "passed"))
-        summary = "Executed 15 tests, with 0 failures (0 unexpected)"
-        result = runtime.integration_result(methods + "\n" + summary)
-        self.assertEqual(result, {"tests_run": 15, "failures": 0, "skipped": 0,
-                                  "methods": list(runtime.INTEGRATION_TESTS)})
+        timing = {"scope": "config_only_foundation_helper_round_trip_not_gui", "unit": "ms",
+                  "samples": [2.5] * 8, "use_cache": False, "record_history": False}
+        measurements = "CC_TRANSLATE_DICTIONARY_TIMINGS " + json.dumps(timing)
+        summary = "Executed 17 tests, with 0 failures (0 unexpected)"
+        result = runtime.integration_result(methods + "\n" + measurements + "\n" + summary)
+        self.assertEqual(result, {"tests_run": 17, "failures": 0, "skipped": 0,
+                                  "methods": list(runtime.INTEGRATION_TESTS), "dictionary_warm_lookup": timing})
         for text in ("0 tests passed", summary, methods,
                      methods + "\nExecuted 0 tests, with 0 failures",
+                     methods + "\nExecuted 17 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 17 tests, with 1 failures",
+                     methods + "\nExecuted 16 tests, with 0 failures",
+                     methods + "\nExecuted 15 tests, with 0 failures",
                      methods + "\nExecuted 15 tests, with 1 test skipped and 0 failures",
                      methods + "\nExecuted 15 tests, with 1 failures",
                      methods + "\nExecuted 14 tests, with 0 failures",
@@ -198,7 +258,19 @@ class RuntimeMatrixTests(unittest.TestCase):
                      methods + "\n" + methods + "\n" + summary,
                      methods.replace(runtime.INTEGRATION_TESTS[0], "testUnexpected") + "\n" + summary):
             with self.subTest(text=text), self.assertRaises(bundle.BundleError):
-                runtime.integration_result(text)
+                runtime.integration_result(text + "\n" + measurements)
+        with self.assertRaises(bundle.BundleError):
+            runtime.integration_result(methods + "\n" + summary)
+        for wrong in ({**timing, "scope": "full_gui_latency"},
+                      {**timing, "samples": [True] * 8},
+                      {**timing, "samples": [float("nan")] * 8},
+                      {**timing, "samples": [2.5] * 7},
+                      {**timing, "record_history": True}):
+            with self.subTest(timing=wrong), self.assertRaises(bundle.BundleError):
+                runtime.integration_result(methods + "\nCC_TRANSLATE_DICTIONARY_TIMINGS " +
+                                           json.dumps(wrong) + "\n" + summary)
+        with self.assertRaises(bundle.BundleError):
+            runtime.integration_result(methods + "\n" + measurements + "\n" + measurements + "\n" + summary)
 
     def test_harness_reuses_original_integration_and_support_without_app_target(self):
         harness = self.root / "harness"

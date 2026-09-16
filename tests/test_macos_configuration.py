@@ -359,7 +359,9 @@ class ConfigurationSchedulingTests(_ConfigurationDirectory):
         server, output, _ = self.server()
         ready = self.events(output)[0]
         self.assertEqual(ready["payload"]["capabilities"],
-                         ["config_load", "config_save", "history_load", "history_add", "history_clear"])
+                         ["config_load", "config_save", "history_load", "history_add", "history_clear",
+                          "dictionary_status", "dictionary_lookup", "dictionary_prepare_install",
+                          "dictionary_install", "dictionary_discard_install", "dictionary_delete"])
         self.assertIs(ready["payload"]["fixture"], False)
         for id_, payload in (("fixture", {"operation": "fixture", "text": "no"}),
                              ("path", {"operation": "config_load", "path": "private"}),

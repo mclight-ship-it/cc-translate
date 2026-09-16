@@ -21,6 +21,7 @@ from tools.macos import bundle, smoke
 
 
 SHARED_CORE_FILES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
+                     "cc_dictionary_lookup.py", "cc_dictionary_artifact_core.py", "cc_dictionary_presentation.py",
                      "cc_result_rules.py", "cc_storage.py", "cc_history.py", "cc_config.py",
                      "cc_config_store.py", "cc_request.py", "cc_summary.py")
 CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
@@ -254,6 +255,7 @@ class MachORulesTests(ProjectDirectory):
                     "Helpers/python/lib/libCCProcessSupport.dylib"]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
+                     "Resources/Core/cc_macos/dictionary.py",
                      "Resources/Core/cc_macos/config_fixture.py",
                      "Resources/Core/cc_macos/catalog_fixture.py",
                      "Resources/Core/cc_macos/catalog_process_fixture.py",
@@ -618,6 +620,12 @@ class SmokeContractTests(unittest.TestCase):
         self.assertNotRegex(workflow, r"(?m)^\s*uses: .*@(main|master|v\d+)\s*$")
         self.assertNotIn("codesign", workflow)
         self.assertNotIn("notarytool", workflow)
+        self.assertEqual(workflow.count(
+            'CC_TRANSLATE_DICTIONARY_TEST_ASSET: ${{ runner.temp }}/cc-translate-dictionary-fixture.sqlite3'), 2)
+        self.assertEqual(workflow.count('--download-to "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --allow-download'), 2)
+        uploads = workflow[workflow.index("      - name: Retain synthetic development artifact"):]
+        self.assertNotIn("path: ${{ runner.temp }}", uploads)
+        self.assertNotIn("cc-translate-dictionary-fixture.sqlite3\n            tools/", uploads)
 
 
 class HelperBundleIntegrationTests(ProjectDirectory):
@@ -640,6 +648,11 @@ class HelperBundleIntegrationTests(ProjectDirectory):
                 (core / "cc_providers" / name).read_bytes(),
                 (bundle.ROOT / "cc_providers" / name).read_bytes())
         self.assertFalse(list(core.rglob("__pycache__")))
+        self.assertFalse(list(core.rglob("*.sqlite3")), "The optional pinned database is not an app resource")
+        for name in ("cc_dictionary.py", "cc_dictionary_artifact.py", "cc_core.py", "cc_rich.py"):
+            self.assertFalse((core / name).exists(), "Do not package Windows facades for native dictionary tests")
+        self.assertEqual((core / "cc_macos/dictionary.py").read_bytes(),
+                         (bundle.ROOT / "cc_macos/dictionary.py").read_bytes())
 
     def test_missing_shared_core_module_blocks_packaging(self):
         for index, missing in enumerate(SHARED_CORE_FILES):

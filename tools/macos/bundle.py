@@ -30,6 +30,7 @@ BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
+                       "cc_dictionary_lookup.py", "cc_dictionary_artifact_core.py", "cc_dictionary_presentation.py",
                        "cc_result_rules.py", "cc_storage.py", "cc_history.py", "cc_config.py",
                        "cc_config_store.py", "cc_request.py", "cc_summary.py")
 PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
@@ -503,6 +504,7 @@ def audit_bundle(app, lock, environment=None):
         "Helpers/python/lib/libCCProcessSupport.dylib",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
         "Resources/Core/cc_macos/dictionary_probe.py",
+        "Resources/Core/cc_macos/dictionary.py",
         "Resources/Core/cc_macos/config_fixture.py",
         "Resources/Core/cc_macos/catalog_fixture.py",
         "Resources/Core/cc_macos/catalog_process_fixture.py",

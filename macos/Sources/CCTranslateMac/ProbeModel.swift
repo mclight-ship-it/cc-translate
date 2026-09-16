@@ -23,6 +23,29 @@ final class ProbeModel: ObservableObject {
     @Published var direction = "auto" {
         didSet { if !loadingConfiguration { directionEdited = true } }
     }
+
+    func refreshDictionary() {
+        let reconcile = dictionary.phase == .unknown
+        dictionary.requestStatusWhenReady()
+        openProduct()
+        if reconcile && ready && !settingsBusy { loadSettings() }
+        else if ready && settingsReady && !settingsBusy { dictionary.connectionReady() }
+    }
+
+    func setDictionaryEnabled(_ enabled: Bool) {
+        guard ready, settingsReady, !settingsBusy, !dictionary.busy, dictionary.phase != .unknown,
+              var config = savedConfiguration, let connection else {
+            dictionary.report("Wait for the current settings or dictionary operation to finish.",
+                              "请等待当前设置或词典操作完成。")
+            return
+        }
+        config["local_dictionary_enabled"] = .bool(enabled)
+        settingsBusy = true
+        let id = UUID().uuidString
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+        dictionary.requestStatusWhenReady()
+    }
     @Published var modelProfile = "auto-fast" {
         didSet { if !loadingConfiguration { modelEdited = true } }
     }
@@ -36,6 +59,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var needsCLI = false
     @Published private(set) var monitorEnabled = false
     @Published private(set) var resultKind = "text"
+    @Published private(set) var isLocalDictionaryResult = false
     @Published private(set) var resultInput = ""
     @Published private(set) var primaryResult = ""
     private(set) var translationOrigin = "text"
@@ -47,25 +71,31 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
     @Published var cliName = "codex"
     @Published private(set) var candidates: [CLICandidate] = []
+    @Published private(set) var cliChangeDeferred = false
     @Published var selectedCLI = "" {
         didSet {
             if selectedCLI != oldValue {
                 cliStatus = "Selection changed; not executed. Run --version explicitly. Authentication: unknown."
-                if connected && connectionMode != .diagnostic {
-                    draft = nil
-                    if preparing || active {
-                        productPhase = .cancelled
-                        productMessage = text("Connection changed; translation cancelled.",
-                                              "连接已更改，翻译已取消。")
+                if connected && connectionMode != .diagnostic && !locatingForUpgrade {
+                    if dictionary.ownsInstallation {
+                        cliChangeDeferred = true
+                    } else {
+                        draft = nil
+                        if preparing || active {
+                            productPhase = .cancelled
+                            productMessage = text("Connection changed; translation cancelled.",
+                                                  "连接已更改，翻译已取消。")
+                        }
+                        openAfterStop = true
+                        stopHelper()
                     }
-                    openAfterStop = true
-                    stopHelper()
                 }
             }
         }
     }
     @Published private(set) var cliStatus = "Not located. Authentication: unknown."
     @Published private(set) var cliBusy = false
+    let dictionary: DictionaryModel
     let screen = ScreenProbe()
     let monitor = PassiveCopyMonitor()
     var onSelection: ((SelectionResult) -> Void)?
@@ -80,6 +110,7 @@ final class ProbeModel: ObservableObject {
         let output: String
         var kind = "text"
         var timestamp = ""
+        var signature = ""
     }
     private struct Draft {
         let text: String
@@ -91,6 +122,7 @@ final class ProbeModel: ObservableObject {
         var useSavedDirection: Bool
         var useSavedModel: Bool
         var configurationSaved = false
+        var lookupFinished = false
         var action: ActionDraft?
     }
     private struct ActionDraft {
@@ -101,6 +133,9 @@ final class ProbeModel: ObservableObject {
         let title: String
     }
     private var draft: Draft?
+    private var dictionaryLookup: (id: String, draft: Draft, cancelled: Bool)?
+    private var upgradingForDraft = false
+    private var locatingForUpgrade = false
     private var activeAction: (id: String, content: ActionDraft)?
     private var resultGeneration = UUID()
     private var presentationLoaded = false
@@ -113,11 +148,14 @@ final class ProbeModel: ObservableObject {
     private var hideCurrentOutput = false
     private var bufferedDelta = ""
     private var renderUpdate: DispatchWorkItem?
+    private var dictionaryObservation: AnyCancellable?
     private let preferences: UserDefaults?
     private let persistsPreferences: Bool
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
     private let runtimeProvider: () throws -> BundleRuntime
     private let locateCandidates: (String, URL?) -> [CLICandidate]
+    private let writeClipboard: (String) -> Bool
+    private let homeDirectory: URL?
     private var savedConfiguration: [String: JSONValue]?
     private var configLoadID: String?
     private var configSaveID: String?
@@ -134,7 +172,7 @@ final class ProbeModel: ObservableObject {
     private var cliRun: CLIVersionRun?
     private var cliGeneration = UUID()
     private var userCLI: [String: URL] = [:]
-    var hasProcesses: Bool { connection != nil || cliRun != nil }
+    var hasProcesses: Bool { connection != nil || cliRun != nil || dictionary.busy }
     var preparing: Bool { productPhase == .preparing }
     var canRunResultAction: Bool {
         !primaryResult.isEmpty && !active && !preparing && !stopping
@@ -181,7 +219,14 @@ final class ProbeModel: ObservableObject {
          }, runtimeProvider: @escaping () throws -> BundleRuntime = { try BundleRuntime() },
          locateCandidates: @escaping (String, URL?) -> [CLICandidate] = {
              CLILocator.candidates(name: $0, userURL: $1)
-         }) {
+         }, dictionaryDownloader: DictionaryDownloading? = nil,
+         writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil) {
+        dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
+        self.homeDirectory = homeDirectory
+        self.writeClipboard = writeClipboard ?? {
+            NSPasteboard.general.clearContents()
+            return NSPasteboard.general.setString($0, forType: .string)
+        }
         self.preferences = preferences
         self.persistsPreferences = persistsPreferences
         self.makeConnection = makeConnection
@@ -191,6 +236,23 @@ final class ProbeModel: ObservableObject {
         monitor.onStop = { [weak self] reason in
             self?.monitorStatus = reason
             self?.monitorEnabled = false
+        }
+        dictionary.send = { [weak self] request, id in
+            guard let self, let connection = self.connection, self.error == nil,
+                  self.connectionMode != .diagnostic else { return false }
+            _ = connection.dictionary(request, id: id, timeout: 60)
+            return true
+        }
+        dictionary.onConfigurationChanged = { [weak self] in self?.loadSettings() }
+        dictionary.canInstall = { [weak self] in
+            guard let self else { return false }
+            return self.ready && self.settingsReady && !self.settingsBusy && !self.stopping
+        }
+        dictionaryObservation = dictionary.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        dictionary.onSettled = { [weak self] in
+            self?.resumeTranslation()
+            self?.resumeDeferredCLIConnection()
+            self?.notifyStoppedIfIdle()
         }
     }
 
@@ -223,8 +285,7 @@ final class ProbeModel: ObservableObject {
     func openProduct() {
         loadPresentation()
         if connected {
-            if connectionMode == .configuration && selectedCLI.isEmpty { return }
-            if connectionMode != .translation {
+            if connectionMode == .diagnostic || error != nil {
                 openAfterStop = true
                 stopHelper()
             }
@@ -234,16 +295,10 @@ final class ProbeModel: ObservableObject {
         if !candidates.contains(where: { $0.url.path == selectedCLI && $0.executable }) {
             locateCLI()
         }
-        guard !selectedCLI.isEmpty else {
-            needsCLI = true
-            productMessage = text("Choose your Codex executable in Settings to get started.",
-                                  "在设置中选择 Codex，即可开始翻译。")
-            startConnection(mode: .configuration)
-            return
-        }
-        needsCLI = false
+        needsCLI = selectedCLI.isEmpty
         persistPresentation()
-        startNativeTranslation()
+        if needsCLI { startConnection(mode: .configuration) }
+        else { startNativeTranslation() }
     }
 
     func startHelper() {
@@ -284,7 +339,7 @@ final class ProbeModel: ObservableObject {
             latest.select(nil)
             status = "Starting bundled isolated Python; waiting for ready..."
             if mode == .translation {
-                let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                let home = homeDirectory ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
                 var environment = ProcessInfo.processInfo.environment
                 environment["HOME"] = home.path
                 let inheritedPath = environment["PATH"].map { ":" + $0 } ?? ""
@@ -294,7 +349,7 @@ final class ProbeModel: ObservableObject {
                     codexCommand: URL(fileURLWithPath: selectedCLI), environment: environment)
             } else if mode == .configuration {
                 connection.startConfiguration(runtime: runtime,
-                                              home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
+                                              home: homeDirectory ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
             } else {
                 connection.start(runtime: runtime)
             }
@@ -338,11 +393,6 @@ final class ProbeModel: ObservableObject {
         productPhase = .preparing
         productMessage = text("Preparing translation…", "正在准备翻译…")
         openProduct()
-        if needsCLI {
-            failPreparation(productMessage)
-            onConfigurationRequired?()
-            return
-        }
         if active { requestCancellation() }
         resumeTranslation()
     }
@@ -376,17 +426,65 @@ final class ProbeModel: ObservableObject {
         productPhase = .preparing
         productMessage = text("Preparing result action…", "正在准备结果操作…")
         openProduct()
-        if needsCLI {
-            failPreparation(productMessage)
-            onConfigurationRequired?()
-            return
-        }
         resumeTranslation()
     }
 
     private func resumeTranslation() {
-        guard var requested = draft, nativeTranslation, ready, settingsReady, !settingsBusy,
-              !active, let connection = connection else { return }
+        guard var requested = draft, connectionMode != .diagnostic, ready, settingsReady, !settingsBusy,
+              !active, !stopping, !dictionary.committing, let connection = connection else { return }
+        if requested.action == nil, requested.useCache, !requested.lookupFinished {
+            let id = UUID().uuidString
+            draft = nil
+            dictionaryLookup = (id, requested, false)
+            latest.select(id)
+            pending.insert(id)
+            active = true
+            hideCurrentOutput = false
+            productPhase = .preparing
+            productMessage = text("Checking the local dictionary…", "正在查询本地词典…")
+            onTranslationStarted?()
+            _ = connection.dictionary(.lookup(text: requested.text, appLanguage: requested.language,
+                                               origin: requested.origin, useCache: true, recordHistory: true),
+                                      id: id, timeout: 25)
+            return
+        }
+        if cliChangeDeferred {
+            if dictionary.ownsInstallation {
+                productMessage = text("Waiting for the dictionary operation before using the selected Codex. You can cancel the download.",
+                                      "等待词典操作完成后使用所选 Codex。你可以取消下载。")
+            } else {
+                cliChangeDeferred = false
+                openAfterStop = true
+                stopHelper()
+            }
+            return
+        }
+        if !nativeTranslation {
+            // A known local miss (or an explicit model action) may upgrade this one immutable intent.
+            locatingForUpgrade = true
+            if !candidates.contains(where: { $0.executable && $0.url.path == selectedCLI }) { locateCLI() }
+            locatingForUpgrade = false
+            guard candidates.contains(where: { $0.executable && $0.url.path == selectedCLI }) else {
+                needsCLI = true
+                failPreparation(requested.lookupFinished
+                    ? text("No local dictionary result. Choose Codex in Settings to use model translation.",
+                           "本地词典没有结果。请在设置中选择 Codex 以使用模型翻译。")
+                    : text("This model request needs Codex. Choose an installation in Settings.",
+                           "此模型请求需要 Codex，请在设置中选择安装路径。"))
+                onConfigurationRequired?()
+                return
+            }
+            needsCLI = false
+            if dictionary.ownsInstallation {
+                productMessage = text("Waiting for the dictionary operation before model translation. You can cancel the download.",
+                                      "等待词典操作完成后进行模型翻译。你可以取消下载。")
+                return
+            }
+            upgradingForDraft = true
+            openAfterStop = true
+            stopHelper()
+            return
+        }
         let savedLanguage = savedConfiguration?["language"]?.string
         if savedConfiguration?["direction"] != .string(requested.direction) ||
             savedConfiguration?["codex_model"] != .string(requested.model) ||
@@ -428,6 +526,7 @@ final class ProbeModel: ObservableObject {
             output = ""
             resultInput = requested.text
             resultKind = "text"
+            isLocalDictionaryResult = false
             productMessage = text("Translating…", "正在翻译…")
         }
         onTranslationStarted?()
@@ -446,6 +545,15 @@ final class ProbeModel: ObservableObject {
         draft = nil
         productPhase = .failed
         productMessage = message
+    }
+
+    private func resumeDeferredCLIConnection() {
+        guard cliChangeDeferred, !dictionary.busy, !dictionary.ownsInstallation,
+              dictionary.phase != .unknown, !active, !preparing, draft == nil,
+              ready, !settingsBusy, !stopping else { return }
+        cliChangeDeferred = false
+        openAfterStop = true
+        stopHelper()
     }
 
     func translateSelection(_ selection: SelectionResult) {
@@ -475,6 +583,11 @@ final class ProbeModel: ObservableObject {
     }
 
     func saveSettings(history: Bool? = nil) {
+        guard !dictionary.committing else {
+            dictionary.report("Wait for the dictionary commit to finish before changing settings.",
+                              "请等待词典提交完成，再更改设置。")
+            return
+        }
         saveConfiguration(history: history ?? historyEnabled, direction: direction, model: modelProfile)
     }
 
@@ -536,6 +649,7 @@ final class ProbeModel: ObservableObject {
         primaryResult = row.output
         resultGeneration = UUID()
         resultKind = row.kind
+        isLocalDictionaryResult = row.signature.hasPrefix("local-dictionary|")
         hideCurrentOutput = true
         productPhase = .completed
         productMessage = text("From history", "来自历史记录")
@@ -548,6 +662,7 @@ final class ProbeModel: ObservableObject {
         input = ""
         output = ""
         primaryResult = ""
+        isLocalDictionaryResult = false
         resultGeneration = UUID()
         resultInput = ""
         hideCurrentOutput = true
@@ -557,8 +672,7 @@ final class ProbeModel: ObservableObject {
 
     func copyText(_ text: String) {
         guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        if !NSPasteboard.general.setString(text, forType: .string) {
+        if !writeClipboard(text) {
             status = "Could not copy the result."
             historyStatus = status
         }
@@ -582,9 +696,11 @@ final class ProbeModel: ObservableObject {
             productMessage = text("Cancelled", "已取消")
         }
         requestCancellation()
+        resumeDeferredCLIConnection()
     }
 
     private func requestCancellation() {
+        if dictionaryLookup != nil { dictionaryLookup?.cancelled = true }
         guard let id = latest.id, pending.contains(id), let connection = connection else { return }
         status = "Cancellation requested; waiting for the original request's terminal event."
         connection.send(ClientMessage(
@@ -593,26 +709,30 @@ final class ProbeModel: ObservableObject {
     }
 
     func stopHelper() {
+        guard !stopping else { return }
         stopping = true
         ready = false
         if error == nil { status = "Stopping helper..." }
-        connection?.stop()
+        let stoppingConnection = connection
+        dictionary.prepareToStop { stoppingConnection?.stop() }
     }
 
     private func receive(_ notice: HelperNotice) {
         switch notice {
         case .event(let event):
+            if dictionary.handle(event) { return }
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
                 ready = true
                 status = nativeTranslation
                     ? "Native connection ready. CLI/account/model availability is not yet verified."
-                    : connectionMode == .configuration ? "Settings and history ready; translation needs a Codex installation."
+                    : connectionMode == .configuration ? "Local dictionary, settings, and history connection ready."
                     : "Ready: fixture + runtime_probe. Fixture is NOT translation."
                 if connectionMode != .diagnostic { loadSettings() }
                 return
             }
             if handleBusinessEvent(event) { return }
+            if handleDictionaryLookup(event) { return }
             if event.isTerminal { pending.remove(event.id) }
             // The transport validated seq/terminal rules even for events hidden here.
             guard latest.accepts(event) else { return }
@@ -714,28 +834,47 @@ final class ProbeModel: ObservableObject {
             if event.isTerminal {
                 activeAction = nil
                 resumeTranslation()
+                resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            let hadLocalLookup = dictionaryLookup != nil
+            let hadSeparateModelRequest = active && !hadLocalLookup && nativeTranslation
+            upgradingForDraft = false
+            cliChangeDeferred = false
+            openAfterStop = false
+            dictionaryLookup = nil
             flushBufferedDelta()
             self.error = error
             ready = false
             active = false
+            dictionary.connectionLost()
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
             if error == .translationOutcomeUnknown {
                 status = activeAction == nil
                     ? "Translation outcome unknown. The CLI may have received the request and history may have changed. Not retried."
                     : "Result action outcome unknown. The CLI may have received the request. Original result retained; no automatic retry."
+            } else if error == .dictionaryOutcomeUnknown {
+                status = hadLocalLookup
+                    ? text("Local dictionary outcome unknown. History may have changed. No model fallback or automatic retry.",
+                           "本地词典查询结果未知，历史记录可能已更改。不会回退到模型或自动重试。")
+                    : text("Dictionary operation outcome unknown. Refresh dictionary status; installation will not be replayed.",
+                           "词典操作结果未知。请刷新词典状态，不会重试安装。")
+                if hadSeparateModelRequest {
+                    status += text(" A separate model request may also have been submitted; it will not be retried.",
+                                   " 独立的模型请求也可能已提交，不会重试。")
+                }
             }
             if activeAction != nil, !hideCurrentOutput {
                 output += "\n\n[" + text("Result action interrupted", "结果操作已中断") + "]"
             }
             failPreparation(status)
-            if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
+            if nativeTranslation || hadLocalLookup { onTranslationResult?(status + "\n\n" + output) }
         case .stopped:
             discardBufferedDelta()
             let reopen = openAfterStop
             openAfterStop = false
             stopping = false
+            cliChangeDeferred = false
             connected = false
             ready = false
             active = false
@@ -757,6 +896,8 @@ final class ProbeModel: ObservableObject {
             historyCursor = .null
             hasNextHistoryPage = false
             connection = nil
+            dictionaryLookup = nil
+            dictionary.connectionLost()
             if !reopen, draft != nil {
                 failPreparation(text("Connection closed. Translate again when you are ready.",
                                      "连接已关闭，准备好后可重新翻译。"))
@@ -764,7 +905,10 @@ final class ProbeModel: ObservableObject {
             if error == nil { status = "Helper stopped." }
             if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
             notifyStoppedIfIdle()
-            if reopen { openProduct() }
+            let upgrade = reopen && upgradingForDraft && draft != nil && error == nil
+            upgradingForDraft = false
+            if upgrade { startNativeTranslation() }
+            else if reopen { openProduct() }
         }
     }
 
@@ -779,6 +923,66 @@ final class ProbeModel: ObservableObject {
         renderUpdate?.cancel()
         renderUpdate = nil
         bufferedDelta = ""
+    }
+
+    private func handleDictionaryLookup(_ event: ServerEvent) -> Bool {
+        guard let lookup = dictionaryLookup, event.id == lookup.id else { return false }
+        guard event.isTerminal else { return true }
+        dictionaryLookup = nil
+        pending.remove(event.id)
+        if latest.id == event.id { latest.select(nil) }
+        active = false
+        if lookup.cancelled || hideCurrentOutput {
+            if draft == nil && !hideCurrentOutput {
+                productPhase = .cancelled
+                productMessage = text("Local lookup cancelled. No model request was sent.",
+                                      "本地查询已取消，未发送模型请求。")
+            }
+            resumeTranslation()
+            resumeDeferredCLIConnection()
+            return true
+        }
+        guard event.type == "completed" else {
+            draft = nil
+            productPhase = event.type == "cancelled" ? .cancelled : .failed
+            productMessage = event.type == "cancelled"
+                ? text("Local lookup cancelled. No model request was sent.", "本地查询已取消，未发送模型请求。")
+                : text("Local lookup failed: \(event.safeFailureCode). Not sent to a model.",
+                       "本地查询失败：\(event.safeFailureCode)。未发送给模型。")
+            onTranslationResult?(productMessage)
+            resumeDeferredCLIConnection()
+            return true
+        }
+        do {
+            let result = try DictionaryLookupResult(payload: event.payload)
+            if let value = result.result, let resultText = value["text"]?.string {
+                discardBufferedDelta()
+                resultInput = lookup.draft.text
+                resultKind = "dict"
+                isLocalDictionaryResult = true
+                resultGeneration = UUID()
+                output = resultText
+                primaryResult = resultText
+                activeAction = nil
+                productPhase = .completed
+                productMessage = text("Local dictionary · No model request", "本地词典 · 未请求模型")
+                if value["history"] == .string("failed") {
+                    productMessage += text(" · History was not saved", " · 历史记录未保存")
+                }
+                status = productMessage
+                onTranslationResult?(productMessage + "\n\n" + output)
+            } else {
+                var requested = lookup.draft
+                requested.lookupFinished = true
+                draft = requested
+                resumeTranslation()
+            }
+        } catch {
+            failPreparation(text("Invalid local dictionary response. Nothing was sent to a model.",
+                                 "本地词典响应无效，未发送给模型。"))
+        }
+        resumeDeferredCLIConnection()
+        return true
     }
 
     private func handleBusinessEvent(_ event: ServerEvent) -> Bool {
@@ -834,7 +1038,9 @@ final class ProbeModel: ObservableObject {
             }
             configLoadID = nil
             configSaveID = nil
+            if settingsReady { dictionary.connectionReady() }
             resumeTranslation()
+            resumeDeferredCLIConnection()
             if historyRequested && settingsReady {
                 historyRequested = false
                 loadHistory()
@@ -856,7 +1062,8 @@ final class ProbeModel: ObservableObject {
                     HistoryRow(id: "\(revision)-\(offset + index)", input: value.object?["input"]?.string ?? "",
                                output: value.object?["output"]?.string ?? "",
                                kind: value.object?["kind"]?.string ?? "text",
-                               timestamp: value.object?["ts"]?.string ?? "")
+                               timestamp: value.object?["ts"]?.string ?? "",
+                               signature: value.object?["sig"]?.string ?? "")
                 }
                 historyPage = historyAppending ? historyPage + rows : rows
                 historyCursor = event.payload["next_cursor"] ?? .null
@@ -976,6 +1183,8 @@ final class ProbeModel: ObservableObject {
     func closePanel() {
         discardBufferedDelta()
         draft = nil
+        cliChangeDeferred = false
+        isLocalDictionaryResult = false
         productPhase = .idle
         productMessage = ""
         resultInput = ""

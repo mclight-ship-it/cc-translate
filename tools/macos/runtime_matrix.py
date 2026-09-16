@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -41,6 +42,8 @@ INTEGRATION_TESTS = (
     "testBundledTranslationCompetingHelpersForceStopAndReopen",
     "testBundledResultActionsUseNativeProviderWithoutReadingOrWritingHistory",
     "testBundledResultActionCancellationDrainsOwnedGroupsWithoutHistory",
+    "testBundledDictionaryInstallLookupCacheHistoryAndLiveOptoutWithoutCLI",
+    "testBundledDictionaryInvalidStagingDiscardDisableDeleteAndReopenWithoutCLI",
 )
 
 
@@ -162,14 +165,84 @@ def integration_result(text):
     need(bool(matches), "XCTest integration not discovered")
     need(all(int(total) == len(INTEGRATION_TESTS) and int(skipped or 0) == 0 and int(failed) == 0
              for total, skipped, failed in matches), "XCTest integration failed/skipped/wrong count")
+    timings = re.findall(r"(?m)^CC_TRANSLATE_DICTIONARY_TIMINGS (\{[^\n]+\})\s*$", text)
+    need(len(timings) == 1, "dictionary warm lookup measurements missing or duplicated")
+    timing = json.loads(timings[0])
+    need(isinstance(timing, dict) and
+         set(timing) == {"scope", "unit", "samples", "use_cache", "record_history"} and
+         timing["scope"] == "config_only_foundation_helper_round_trip_not_gui" and
+         timing["unit"] == "ms" and timing["use_cache"] is False and timing["record_history"] is False,
+         "dictionary measurement scope mismatch")
+    samples = timing["samples"]
+    need(isinstance(samples, list) and len(samples) == 8 and
+         all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in samples),
+         "dictionary measurement samples invalid")
     return {"tests_run": len(INTEGRATION_TESTS), "failures": 0, "skipped": 0,
-            "methods": list(INTEGRATION_TESTS)}
+            "methods": list(INTEGRATION_TESTS), "dictionary_warm_lookup": timing}
 
 
 def verify_integration(args):
     verify_checkout(args.source_sha)
     report = integration_result((args.directory / "integration-tests.log").read_text(encoding="utf-8"))
     bundle.write_json(args.directory / "integration-tests.json", report)
+
+
+PRODUCT_DICTIONARY_METHOD = "testBundledWarmDictionaryIntentToNativePaintReportsMeasuredGoal"
+
+
+def dictionary_product_result(text):
+    for outcome in ("started", "passed"):
+        methods = re.findall(
+            r"Test Case '-\[CCTranslateMacTests\.DictionaryProductIntegrationTests (\w+)\]' " + outcome, text)
+        need(methods == [PRODUCT_DICTIONARY_METHOD], "dictionary product test missing or duplicated")
+    totals = re.findall(r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text)
+    need(bool(totals) and all(int(total) == 1 and int(skipped or 0) == 0 and int(failed) == 0
+                             for total, skipped, failed in totals), "dictionary product test failed/skipped")
+    markers = re.findall(r"(?m)^CC_TRANSLATE_DICTIONARY_PRODUCT_TIMINGS (\{[^\n]+\})\s*$", text)
+    need(len(markers) == 1, "dictionary product timing missing or duplicated")
+    measurement = json.loads(markers[0])
+    need(isinstance(measurement, dict), "dictionary product measurement is not an object")
+    expected = {
+        "scope": "same_source_model_and_retained_swiftui_appkit_view_with_bundled_configuration_helper",
+        "source_cohort": "current Swift package model/view; helper from CC_TRANSLATE_APP; not the packaged GUI process",
+        "endpoint": "explicit_model_translate_to_matching_read_only_nstextview_and_offscreen_bitmap_paint",
+        "physical_keyboard": False, "full_gui": False, "onscreen_presentation": False,
+        "unit": "ms", "warmup_intents": 2, "warm_intents": 10,
+        "native_view_goal_ms": 150, "goal_is_asserted": False,
+        "query_format_goal_ms": 10, "query_format_directly_measured": False,
+        "setup_and_install_included": False, "network_download_measured": False,
+        "history_enabled": False, "cache_hits": False, "cli_candidates": 0,
+        "poll_interval_ms": 1, "ocr_source_visible": True,
+    }
+    need(all(type(measurement.get(key)) is type(value) and measurement[key] == value
+             for key, value in expected.items()), "dictionary product measurement scope mismatch")
+    for key in ("native_paint_samples", "intent_to_lookup_terminal_samples"):
+        samples = measurement.get(key)
+        need(isinstance(samples, list) and len(samples) == 10 and
+             all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in samples),
+             "dictionary product samples invalid")
+    samples = sorted(measurement["native_paint_samples"])
+    p95, maximum = samples[math.ceil(len(samples) * 0.95) - 1], samples[-1]
+    need(all(type(measurement.get(key)) in (int, float) for key in ("native_paint_p95", "native_paint_max")) and
+         measurement["native_paint_p95"] == p95 and measurement["native_paint_max"] == maximum,
+         "dictionary product percentiles do not match samples")
+    goal = "met" if p95 <= 150 else "measured_miss"
+    need(measurement.get("native_view_goal_result") == goal, "dictionary product goal result mismatch")
+    need(all(terminal <= painted for terminal, painted in
+             zip(measurement["intent_to_lookup_terminal_samples"], measurement["native_paint_samples"])),
+         "dictionary product endpoints out of order")
+    return {"tests_run": 1, "failures": 0, "skipped": 0, "measurement": measurement}
+
+
+def verify_dictionary_product(args):
+    verify_checkout(args.source_sha)
+    source = ROOT / "macos/Tests/CCTranslateMacTests/DictionaryProductIntegrationTests.swift"
+    need(re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8")) == [PRODUCT_DICTIONARY_METHOD],
+         "dictionary product source test inventory changed")
+    report = dictionary_product_result((args.directory / "dictionary-product-tests.log").read_text(encoding="utf-8"))
+    report.update(source_sha=args.source_sha, run_id=args.run_id,
+                  producer_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+    bundle.write_json(args.directory / "dictionary-product-tests.json", report)
 
 
 def seal(args):
@@ -257,7 +330,7 @@ def run_runtime(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("seal", "run", "integration"))
+    parser.add_argument("command", choices=("seal", "run", "integration", "dictionary-product"))
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--run-id", required=True)
@@ -277,6 +350,8 @@ def main(argv=None):
             seal(args)
         elif args.command == "integration":
             verify_integration(args)
+        elif args.command == "dictionary-product":
+            verify_dictionary_product(args)
         else:
             run_runtime(args)
     except (bundle.BundleError, OSError, ValueError, KeyError, zipfile.BadZipFile,

@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock, mock_open, patch
 
 from cc_dictionary import (
     DEVELOPMENT_DICTIONARY_PATH,
@@ -86,6 +87,49 @@ class DictionaryFixture:
 
 
 class TestDictionaryNormalization(unittest.TestCase):
+    def test_windows_facade_reexports_the_same_portable_value_types_and_normalizer(self):
+        import cc_dictionary as windows
+        import cc_dictionary_lookup as portable
+        for name in ("DictionaryEntry", "DictionaryResult", "DictionarySense",
+                     "DictionaryStoreError", "normalize_query"):
+            self.assertIs(getattr(windows, name), getattr(portable, name))
+        self.assertEqual((windows.QUERY_VERSION, windows.HIGH_CONFIDENCE), ("query-v1", 0.90))
+
+    def test_windows_default_custom_and_development_paths_keep_store_patch_seam(self):
+        import cc_dictionary as windows
+        custom = os.path.join(os.getcwd(), "synthetic-custom.sqlite3")
+        with patch.object(windows, "DictionaryStore") as store:
+            windows.LocalDictionary()
+            store.assert_called_once_with(windows.DEFAULT_DICTIONARY_PATH, windows.ARTIFACT_SHA256)
+            store.reset_mock()
+            windows.LocalDictionary(custom)
+            store.assert_called_once_with(custom, None)
+            store.reset_mock()
+            with patch("builtins.open", mock_open(read_data="e" * 64 + "  artifact.sqlite3\n")) as opened:
+                windows.LocalDictionary(windows.DEVELOPMENT_DICTIONARY_PATH)
+            opened.assert_called_once_with(windows.DEFAULT_DICTIONARY_HASH_PATH, "r", encoding="ascii")
+            store.assert_called_once_with(windows.DEVELOPMENT_DICTIONARY_PATH, "e" * 64)
+            store.reset_mock()
+            with patch("builtins.open", side_effect=FileNotFoundError()):
+                windows.LocalDictionary(windows.DEVELOPMENT_DICTIONARY_PATH)
+            store.assert_called_once_with(windows.DEVELOPMENT_DICTIONARY_PATH, "")
+
+    def test_windows_normalizer_version_and_instance_store_patch_seams_remain_live(self):
+        import cc_dictionary as windows
+        store = Mock()
+        store.status.cache_version = "synthetic-version"
+        store.lookup.return_value = {"exact": [], "form": [], "alias": []}
+        with patch.object(windows, "DictionaryStore", return_value=store):
+            dictionary = windows.LocalDictionary("synthetic.sqlite3")
+        with patch.object(windows, "normalize_query", return_value="normalized") as normalize, \
+                patch.object(windows, "QUERY_VERSION", "patched-query"):
+            self.assertIsNone(dictionary.lookup("original"))
+            normalize.assert_called_once_with("original")
+            store.lookup.assert_called_once_with("normalized")
+            self.assertEqual(dictionary.cache_version, "patched-query:synthetic-version")
+        dictionary.close_thread()
+        store.close_thread.assert_called_once_with()
+
     def test_nfkc_casefold_and_trim(self):
         self.assertEqual(normalize_query("  ＡＢＣ  "), "abc")
         self.assertEqual(normalize_query("Straße"), "strasse")

@@ -25,6 +25,7 @@ PROCESS_TEST_MODULES = (
     "test_darwin_rpc_process",
     "test_native_provider_process",
     "test_translation_ipc_process",
+    "test_dictionary_ipc_process",
 )
 CORE_TEST_MODULES = (
     "test_classify",
@@ -48,10 +49,11 @@ CORE_TEST_MODULES = (
     "test_summary_rules",
     "test_macos_translation",
     "test_codex_version",
+    "test_macos_dictionary",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 193, "core": 504}
+MINIMUM_TEST_COUNTS = {"process": 202, "core": 536}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
@@ -74,6 +76,11 @@ PROCESS_BUNDLE_MODULES = (
     "cc_macos.translation",
     "cc_macos.translation_fixture",
     "cc_summary",
+    "cc_dictionary_store",
+    "cc_dictionary_lookup",
+    "cc_dictionary_artifact_core",
+    "cc_dictionary_presentation",
+    "cc_macos.dictionary",
 )
 CORE_BUNDLE_MODULES = (
     "cc_classify",
@@ -99,6 +106,10 @@ CORE_BUNDLE_MODULES = (
     "cc_macos.translation",
     "cc_macos.translation_fixture",
     "cc_macos.native_provider_fixture",
+    "cc_dictionary_lookup",
+    "cc_dictionary_artifact_core",
+    "cc_dictionary_presentation",
+    "cc_macos.dictionary",
 )
 BUNDLE_MODULES = {"process": PROCESS_BUNDLE_MODULES, "core": CORE_BUNDLE_MODULES}
 

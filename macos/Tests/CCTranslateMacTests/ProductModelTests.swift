@@ -37,6 +37,8 @@ final class ProductTestHelper: AppHelperClient {
     private(set) var messages: [ClientMessage] = []
     private(set) var translations: [Translation] = []
     private(set) var resultActions: [Action] = []
+    private(set) var dictionaryRequests: [(request: DictionaryRequest, id: String)] = []
+    var automaticDictionaryReplies = true
     private(set) var configurationLoads: [String] = []
     private(set) var configurationSaves: [Save] = []
     private(set) var historyLoads: [History] = []
@@ -72,6 +74,29 @@ final class ProductTestHelper: AppHelperClient {
                                     targetLanguage: targetLanguage))
         operations.append("result_action")
         return id
+    }
+    func dictionary(_ request: DictionaryRequest, id: String, timeout: TimeInterval) -> String {
+        dictionaryRequests.append((request, id))
+        operations.append(request.operation)
+        if automaticDictionaryReplies {
+            MainActor.assumeIsolated {
+                switch request {
+                case .lookup:
+                    event("completed", id: id, payload: ["status": .string("disabled"), "result": .null])
+                case .status:
+                    event("completed", id: id, payload: Self.dictionaryStatus())
+                default: break
+                }
+            }
+        }
+        return id
+    }
+
+    static func dictionaryStatus(installed: Bool = false, enabled: Bool = false) -> [String: JSONValue] {
+        ["state": .string(installed ? "ready" : "not_installed"), "enabled": .bool(enabled),
+         "size": .integer(4), "sha256": .string(String(repeating: "a", count: 64)),
+         "data_version": .string("fixture-v1"), "download_url": .string("https://example.invalid/dictionary"),
+         "entry_count": .integer(installed ? 1 : 0)]
     }
     func loadConfiguration(id: String, timeout: TimeInterval) -> String {
         configurationLoads.append(id)
@@ -121,6 +146,7 @@ final class ProductTestHarness {
         var runtimeRequests = 0
         var locatorRequests = 0
         var canLocateCLI = false
+        var copiedText: [String] = []
     }
 
     let root: URL
@@ -133,13 +159,15 @@ final class ProductTestHarness {
     var helpers: [ProductTestHelper] { calls.helpers }
     var runtimeRequests: Int { calls.runtimeRequests }
     var locatorRequests: Int { calls.locatorRequests }
+    var copiedText: [String] { calls.copiedText }
     var canLocateCLI: Bool {
         get { calls.canLocateCLI }
         set { calls.canLocateCLI = newValue }
     }
     var model: ProbeModel!
 
-    init(savedCLI: Bool = true, autodetectFixture: Bool = false) throws {
+    init(savedCLI: Bool = true, autodetectFixture: Bool = false,
+         dictionaryDownloader: DictionaryDownloading? = nil) throws {
         let identifier = UUID().uuidString
         root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".fixtures-\(identifier)", isDirectory: true)
@@ -196,7 +224,8 @@ final class ProductTestHarness {
                 let alternate = CLILocator.candidates(name: name, userURL: alternateExecutable)
                     .filter { $0.url == alternateExecutable }
                 return candidates + alternate
-            })
+            }, dictionaryDownloader: dictionaryDownloader,
+            writeClipboard: { calls.copiedText.append($0); return true })
     }
 
     func cleanUp() {
@@ -218,6 +247,29 @@ final class ProductTestHarness {
         -> ProductTestHelper {
         if helpers.isEmpty { model.openProduct() }
         let helper = try XCTUnwrap(helpers.last)
+        helper.event("ready")
+        try finishConfiguration(on: helper, configuration: configuration)
+        if model.preparing && helper.stopCount > 0 {
+            helper.stopped()
+            let upgraded = try XCTUnwrap(helpers.last)
+            XCTAssertFalse(upgraded === helper)
+            upgraded.event("ready")
+            try finishConfiguration(on: upgraded, configuration: configuration)
+            return upgraded
+        }
+        return helper
+    }
+
+    @discardableResult
+    func localReady(configuration: [String: JSONValue] = ProductTestHarness.configuration(),
+                    automaticReplies: Bool = false) throws -> ProductTestHelper {
+        // Start without a discoverable CLI; tests can expose the fixture CLI for a later fallback.
+        let discoverable = canLocateCLI
+        canLocateCLI = false
+        model.openProduct()
+        canLocateCLI = discoverable
+        let helper = try XCTUnwrap(helpers.last)
+        helper.automaticDictionaryReplies = automaticReplies
         helper.event("ready")
         try finishConfiguration(on: helper, configuration: configuration)
         return helper
@@ -308,7 +360,7 @@ final class ProductModelTests: XCTestCase {
         XCTAssertTrue(model.settingsReady)
         XCTAssertFalse(model.nativeTranslation)
         XCTAssertEqual(configurationRequests, 1)
-        XCTAssertEqual(helper.operations, ["start.configuration", "config.load"])
+        XCTAssertEqual(helper.operations, ["start.configuration", "config.load", "dictionary_lookup"])
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertTrue(helper.configurationSaves.isEmpty)
         XCTAssertFalse(model.cliBusy)
@@ -352,14 +404,14 @@ final class ProductModelTests: XCTestCase {
     }
 
     @MainActor
-    func testChoosingCLIUpgradesConfigurationOnlyConnectionAfterDrainWithoutReplay() throws {
+    func testChoosingCLIUpgradesConnectionAfterDrainWithoutModelInvocationOrReplay() throws {
         let fixture = try ProductTestHarness(savedCLI: false)
         defer { fixture.cleanUp() }
         let model = try XCTUnwrap(fixture.model)
         model.input = "Synthetic source attempted without a CLI"
         model.translate()
         let configuration = try fixture.ready()
-        XCTAssertEqual(configuration.operations, ["start.configuration", "config.load"])
+        XCTAssertEqual(configuration.operations, ["start.configuration", "config.load", "dictionary_lookup"])
         XCTAssertTrue(configuration.translations.isEmpty)
 
         fixture.canLocateCLI = true
@@ -371,7 +423,7 @@ final class ProductModelTests: XCTestCase {
         let translation = try fixture.ready()
 
         XCTAssertEqual(fixture.helpers.count, 2)
-        XCTAssertEqual(translation.operations, ["start.translation", "config.load"])
+        XCTAssertEqual(translation.operations, ["start.translation", "config.load", "dictionary_status"])
         XCTAssertEqual(translation.selectedExecutable, fixture.executable)
         XCTAssertTrue(model.nativeTranslation)
         XCTAssertFalse(model.needsCLI)
@@ -399,9 +451,11 @@ final class ProductModelTests: XCTestCase {
         XCTAssertTrue(helper.translations.isEmpty)
         model.input = "Edited after clicking"
         try fixture.finishConfiguration(on: helper)
-        let request = try XCTUnwrap(helper.translations.first)
+        XCTAssertEqual(helper.stopCount, 0)
+        let provider = helper
+        let request = try XCTUnwrap(provider.translations.first)
 
-        XCTAssertEqual(helper.operations, ["start.translation", "config.load", "translate"])
+        XCTAssertEqual(provider.operations, ["start.translation", "config.load", "dictionary_lookup", "translate"])
         XCTAssertEqual(request.text, "Synthetic clicked source")
         XCTAssertEqual(request.language, "en_US")
         XCTAssertEqual(request.origin, "text")
@@ -411,9 +465,9 @@ final class ProductModelTests: XCTestCase {
         XCTAssertEqual(model.input, "Edited after clicking")
         XCTAssertEqual(model.productPhase, .translating)
         XCTAssertTrue(model.active)
-        helper.event("accepted", id: request.id)
-        helper.event("started", id: request.id)
-        XCTAssertEqual(helper.translations.count, 1)
+        provider.event("accepted", id: request.id)
+        provider.event("started", id: request.id)
+        XCTAssertEqual(provider.translations.count, 1)
     }
 
     @MainActor
@@ -422,6 +476,7 @@ final class ProductModelTests: XCTestCase {
         defer { fixture.cleanUp() }
         let model = try XCTUnwrap(fixture.model)
         model.loadPresentation()
+        let helper = try fixture.ready()
         model.interfaceLanguage = "zh"
         model.direction = "to_en"
         model.modelProfile = "auto"
@@ -429,14 +484,10 @@ final class ProductModelTests: XCTestCase {
         var starts = 0
         model.onTranslationStarted = { starts += 1 }
         model.translate(origin: "selection", useCache: false)
-        let helper = try XCTUnwrap(fixture.helpers.first)
         model.input = "New unsent source"
         model.interfaceLanguage = "en"
         model.direction = "auto"
         model.modelProfile = "auto-fast"
-        helper.event("ready")
-        try fixture.finishConfiguration(on: helper)
-
         let save = try XCTUnwrap(helper.configurationSaves.first)
         XCTAssertEqual(save.config["direction"], .string("to_en"))
         XCTAssertEqual(save.config["codex_model"], .string("auto"))
@@ -885,7 +936,7 @@ final class ProductModelTests: XCTestCase {
         let replacement = try fixture.ready()
 
         XCTAssertEqual(fixture.helpers.count, 2)
-        XCTAssertEqual(replacement.operations, ["start.translation", "config.load", "translate"])
+        XCTAssertEqual(replacement.operations, ["start.translation", "config.load", "dictionary_status", "dictionary_lookup", "translate"])
         XCTAssertEqual(replacement.translations.first?.text, "Explicit synthetic product request")
     }
 
@@ -918,9 +969,9 @@ final class ProductModelTests: XCTestCase {
         XCTAssertEqual(current.operations, ["start.translation"])
         current.event("ready")
         try fixture.finishConfiguration(on: current)
-
-        XCTAssertEqual(current.translations.count, 1)
-        XCTAssertEqual(current.translations.first?.text, "New explicitly clicked source")
+        let provider = current
+        XCTAssertEqual(provider.translations.count, 1)
+        XCTAssertEqual(provider.translations.first?.text, "New explicitly clicked source")
         XCTAssertEqual(old.translations.count, 1)
     }
 
@@ -945,6 +996,7 @@ final class ProductModelTests: XCTestCase {
         let replacement = try fixture.ready()
         XCTAssertEqual(fixture.helpers.count, 2)
         XCTAssertEqual(replacement.selectedExecutable, fixture.alternateExecutable)
+        XCTAssertTrue(model.nativeTranslation)
         XCTAssertEqual(fixture.preferences.string(forKey: "selectedCodexPath"), fixture.alternateExecutable.path)
         XCTAssertTrue(replacement.translations.isEmpty)
         XCTAssertEqual(model.productPhase, .idle,

@@ -5,7 +5,8 @@
 已交付独立翻译/结果/设置/历史窗口、直接翻译操作及菜单栏工作流，
 不是原诊断窗口；六种动作追加到原结果后，不查询缓存或新增历史。
 真实Swift编译、36原模型/8动作模型/6原生渲染、16张截图及同包三系统193/504/15验证通过。
-下一源码正在拆分本地词典纯核心，随后仍有原生接线和P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
+下一源码已完成本地词典纯核心、配置连接及原生界面接线，新Mac验证仍待执行，
+不借用上述包的绿灯；随后仍有P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
 界面采用现有SwiftUI/AppKit与系统语义色，不改成HTML/WebView原型。
 
 前置协议检查点已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
@@ -422,7 +423,7 @@ CLI环境是严格string→string JSON（最大32768 UTF-8字节），经私有
 也不将CLI环境直接变成helper的加载器环境。默认诊断模式不创建业务目录/读取配置/启动CLI。
 启用时获取config/history双owner，provider构造不spawn；首次translate或明确结果操作才执行native CLI。
 
-协议版本仍为1，当前实现的ready为`fixture:false`、`backend:native_appserver`及七项能力：
+协议版本仍为1，4807f62已交付的ready为`fixture:false`、`backend:native_appserver`及七项能力：
 原config/history五操作加translate/result_action，不把业务称synthetic。translate精确接收
 `operation/text/app_language/origin/use_cache/record_history`；text非空白、UTF-8最多8192字节，
 language只zh_CN/en_US，origin只text/selection，两个布尔不接受整数替代。
@@ -456,14 +457,62 @@ cache命中submitted=false、history=unchanged；history=failed必须有固定st
 queued取消可以确定未执行；started翻译的取消终态必须等native实际清理。
 开始不可逆历史提交后不撤销写入；保存失败仍交付翻译文本并显式标history=failed。
 丢响应/超时/强停时pending翻译优先报告translationOutcomeUnknown，不假称回滚、不自动重放。
-EOF/shutdown停止接新请求并drain；仅translation入口捕获SIGTERM，handler只置标志，
+EOF/shutdown停止接新请求并drain；4807f62仅translation入口捕获SIGTERM，handler只置标志，
 正常循环清理自有native组及双owner后退出143。Swift普通stop不自动强杀；
 故障为关闭stdin→30秒→SIGTERM→30秒→SIGKILL，forceStop直接SIGTERM后留30秒。
 这些界限不承诺SIGKILL、崩溃或脱离组后代的回收，不引入guardian或按进程名杀用户CLI。
 
-新包实测同包15.7.9/14.8.9/26.6.2、185process/458core/13Foundation；
+初始translation接线历史包实测同包15.7.9/14.8.9/26.6.2、185process/458core/13Foundation；
 原172/410/9全部保留。首轮无App前置上下文错误、正常Windows hook及完整制品审计见
 [当前检查点](MACOS_TODO.md#translation-ipc-checkpoint)，不以初次13个可选skip替代后置执行。
+
+### 下一源码：无Codex本地词典（实现整合中，尚未取得新Mac绿灯）
+
+纯lookup/artifact/presentation模块不导入Windows默认路径、Tk或provider；Windows保留兼容facade，
+原format-v8及自动AI补充行为不变。Mac的本地命中不调用CLI、不自动补充AI。
+已有有效CLI时可复用原translation连接（构造不执行CLI）；没有CLI时使用configuration连接，
+查词先于CLI设置提示。已知miss/disabled/unavailable/ineligible才沿原明确翻译意图继续；
+取消、失败或unknown不是miss，不能据此提交模型。
+
+两种业务连接各增加以下六项能力，因此configuration为11项，translation为13项；diagnostic不变：
+
+| 操作 | 除operation外的请求字段 | completed |
+|---|---|---|
+| `dictionary_status` | 无 | state、enabled、size、sha256、data_version、download_url、entry_count |
+| `dictionary_lookup` | text、app_language、origin、use_cache、record_history；复用翻译输入约束 | status、result；仅hit有结果，其余result=null |
+| `dictionary_prepare_install` | 无 | ticket、path、url、size、sha256、data_version |
+| `dictionary_install` | ticket | 校验/提交完成后state=ready、enabled=true的完整status |
+| `dictionary_discard_install` | ticket | discarded=true |
+| `dictionary_delete` | 无 | deleted布尔、enabled=false |
+
+固定数据为dictionary-v1、67,948,544 bytes、SHA-256
+`3695295d07268725e555471217351c74e4f9375b8152974760fe12b926e1830e`。
+prepare只注册本连接的随机ticket及**尚不存在**的本App dictionary目录直属路径；
+客户端不传自定义路径、URL或pin。URLSession完成有界下载后不覆盖地移动到该路径；
+核心验证大小/hash/schema/版本、fsync并原子replace，之后才合并最新配置开启本地词典。
+下载期间不占config/history FIFO。传输失败/取消走显式discard；已提交install的失败或正常取消
+消费ticket并清理自己的staging。cleanup_failed保留清理责任，不假称回滚，关闭时继续尝试。
+禁用保留数据库；删除必须显式确认。
+
+查词沿用NFKC/trim/casefold、exact→form→alias及原置信度策略；原生纯文本完整保留分组义项、
+来源提供的读音及来源/版本/许可，不显示或复制内部rich markers。缓存签名独立为native-plain-v1加语言，
+先查实际词典再查缓存，缓存命中不重复历史，落历史前读取最新已提交开关。
+历史关闭不读缓存；缓存/历史损坏时本地命中仍显示，并明确history=failed，不修复损坏历史或改调模型。
+本地结果恒为submitted=false、kind=dict、target_lang=null、summarize=false。
+
+词典使用独立串行worker，与config/history分属FIFO。accepted→started→唯一终态，无模型delta；
+cancel确认不等于清理完成。queued取消若清理失败可在未started时以seq1返回dictionary_cleanup_failed。
+pending模型仍优先unknown，其次dictionaryOutcomeUnknown，再config/history；不把本地失败说成已计费。
+本轮显式configuration和translation入口均以只置标志的SIGTERM handler走正常取消/drain；
+两种业务连接的故障宽限均为EOF30秒→TERM30秒→KILL，diagnostic仍为3秒/1秒。
+SIGKILL/崩溃清理、完整真人GUI及性能目标不能由这些接口代码推定通过。
+
+Windows最终针对性390项通过（39.676s，含产品性能证据解析）；新Mac目标为同包202process/536core/17Foundation，
+目前仅完成接线与清单验证。新增两Foundation使用外置固定词库验证无CLI安装/查词/历史/失败保留/删除，
+并记录八次明确标注非GUI的warm往返。另有producer后置同源model/原生视图+随包helper测试，
+两次warmup后测十次意图到离屏paint，记录150ms目标met/measured_miss；XCTest成功不等于目标达成，
+也不测物理键盘、打包GUI进程或独立10ms查询+格式化。源码编译、实际运行与截图尚待新证据。
+CI的Python固定输入获取不等于产品URLSession验证，词库不放进App或用户下载的App制品。
 
 诊断最多 4 个并行任务，超限在该请求上返回 `failed/busy`。取消只作用于目标请求；
 控制请求的完成不等于模型取消成功。每个业务请求恰好一个终态；完成与取消竞态由核心串行决定。
@@ -592,6 +641,9 @@ export MACOSX_DEPLOYMENT_TARGET=14.0
 python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle
 /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
 python3 tools/macos/bundle.py build --development
+export CC_TRANSLATE_DICTIONARY_TEST_ASSET="$PWD/tools/macos/.staging/dictionary-fixture.sqlite3"
+python3 -B tools/macos/dictionary_fixture.py \
+  --download-to "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --allow-download
 CC_TRANSLATE_APP="$PWD/tools/macos/.build/CCTranslateMac-P0.app" \
   /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
   --filter HelperIntegrationTests

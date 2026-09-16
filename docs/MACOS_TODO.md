@@ -156,9 +156,30 @@ tree `65ffc349934f7e6ed48ef94acd894f220d06626c010efc20b15db5a2583f475a`。
 [16张真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35125864397/artifacts/10459243089)
 另存制品；合成测试与截图不代替真人键盘/VoiceOver/IME/TCC或真实账号验证，没有新增独立reviewer签收。
 
-下一步已开始开源本地词典的纯核心拆分，沿用固定数据库/许可与Windows查词语义，
-再接配置连接上的无Codex查词及原生下载管理；不会把命中词典自动变成模型调用。
-此下一阶段代码不在4807f62包内，完整移植仍未结束。
+<a id="native-local-dictionary"></a>
+
+### 下一源码：本地词典首屏与管理（整合中，未取得新Mac绿灯）
+
+纯lookup/artifact/presentation及configuration-only六项操作已接线；Mac不需要Codex即可命中，
+不自动补充AI。Windows保留原默认路径/facade/format-v8及补充行为。
+URLSession使用session-bound ticket的初始不存在路径，核心验证固定pin、fsync/replace后启用；
+原生界面/URLSession接线已配套，但尚未Mac编译，不把“后端查到词”当作完整产品。
+本地文本保留全部义项/读音/来源许可，独立native-plain-v1语言签名；缓存/历史错误显式显示，
+不阻挡已确认的本地定义、不修复坏历史、不当成miss提交模型。
+
+父最终联合验证390项/39.676s通过，包含Windows词典消费者、纯核心、native配置/历史/IPC及打包与证据工具。
+清单为202process/536core/17后置Foundation（原15保留、新2实际固定词库/无CLI方法）；
+当前未执行新的Mac编译/同包矩阵。新增9个Swift词典协议和3个连接测试也尚待Mac执行。
+父整合补齐queued取消清理失败的seq1终态，与实际Python server回归配套，不放宽其他协议断言。
+配置业务入口现在也合作处理SIGTERM；关闭仍先drain，不用取消确认或超时假称清理完成。
+固定词库GitHub元数据已实核size/hash；开发机既有忽略数据只读复用，没有重新下载或安装。
+CI将外置获取测试数据并保留八次warm往返测量，不能冒充URLSession、完整GUI或150ms首屏证据。
+另加producer后置真实helper/同源原生model到离屏paint十次测量及OCR，目标达成单独记录；
+失败/skip/缺失/重复/自相矛盾测量会被证据解析器拒绝，150ms miss不因XCTest成功而消失。
+父修正本地字典literal呈现的来源判定，历史从local-dictionary签名恢复，AI词典仍保留原Markdown格式。
+
+阶段代码不在4807f62包内。下一步完成界面接线、Mac编译/真实执行/截图和制品核验后再交付新包；
+随后继续P3等剩余功能，不等待用户再次发送“继续”。
 
 <a id="codex-protocol-checkpoint"></a>
 

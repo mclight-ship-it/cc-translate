@@ -180,11 +180,15 @@ final class ProductRenderingTests: XCTestCase {
             TranslationResultView(model: model, compact: true),
             named: "result-compact-dark", size: NSSize(width: 460, height: 420), scheme: .dark)
         model.reuseHistory(ProbeModel.HistoryRow(
-            id: "synthetic-word", input: "example", output: "An illustrative synthetic instance.",
+            id: "synthetic-word", input: "example", output: "**An illustrative synthetic instance.**",
             kind: "dict"))
         _ = try render(
             TranslationResultView(model: model, compact: true),
-            named: "result-dictionary-light", size: NSSize(width: 460, height: 420), scheme: .light)
+            named: "result-dictionary-light", size: NSSize(width: 460, height: 420), scheme: .light,
+            inspect: { host in
+                XCTAssertTrue(self.textViews(in: host).contains { $0.string == "An illustrative synthetic instance." },
+                              "AI dictionary history retains Markdown presentation.")
+            })
 
         XCTAssertNotEqual(full, compact)
         XCTAssertEqual(model.resultKind, "dict")
@@ -192,11 +196,80 @@ final class ProductRenderingTests: XCTestCase {
         XCTAssertEqual(model.permissions, "Not checked.")
     }
 
+    @MainActor
+    func testLocalDictionarySensesAndSourcesAreReadableAndLiteralInBothAppearances() throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.localReady()
+        fixture.model.input = "example"
+        fixture.model.translate()
+        helper.event("completed", id: try XCTUnwrap(helper.dictionaryRequests.last?.id),
+                     payload: DictionaryModelTests.hit())
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                TranslationResultView(model: fixture.model, compact: true),
+                named: "local-dictionary-senses-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 620, height: 510), scheme: scheme, inspect: { host in
+                    let view = self.textViews(in: host).first { $0.string == DictionaryModelTests.senses }
+                    XCTAssertNotNil(view)
+                    XCTAssertEqual(view?.isEditable, false)
+                    XCTAssertEqual(view?.isSelectable, true)
+                })
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let recognized = try LocalOCR.recognize(image).text.lowercased()
+            XCTAssertTrue(recognized.contains("representative"))
+            XCTAssertTrue(recognized.contains("imitate"))
+            XCTAssertTrue(recognized.contains("wordnet"))
+            XCTAssertTrue(recognized.contains("copy"))
+        }
+        let literal = "example\n**literal markers** <source>\n" + String(repeating: "Complete sense.\n", count: 1000)
+        fixture.model.reuseHistory(.init(id: "literal", input: "example", output: literal, kind: "dict",
+                                        signature: "local-dictionary|fixture|native-plain-v1:en_US"))
+        _ = try render(TranslationResultView(model: fixture.model, compact: true),
+                       named: "local-dictionary-complete-scroll", size: NSSize(width: 420, height: 360),
+                       scheme: .light, inspect: { host in
+            XCTAssertTrue(self.textViews(in: host).contains { $0.string == literal },
+                          "Complete senses must remain selectable; Markdown-like source text is never removed.")
+        })
+        XCTAssertTrue(helper.translations.isEmpty)
+    }
+
+    @MainActor
+    func testDictionarySettingsRenderWithoutDownloadsOrDeletionUntilExplicitAction() throws {
+        let downloader = RecordingDictionaryDownloader()
+        let fixture = try ProductTestHarness(savedCLI: false, dictionaryDownloader: downloader)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.localReady()
+        fixture.model.refreshDictionary()
+        helper.event("completed", id: try XCTUnwrap(helper.dictionaryRequests.last?.id),
+                     payload: ProductTestHelper.dictionaryStatus(installed: true, enabled: true))
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                Form { DictionarySettingsSection(model: fixture.model, dictionary: fixture.model.dictionary) }
+                    .formStyle(.grouped),
+                named: "local-dictionary-settings-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 650, height: 700), scheme: scheme)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let text = try LocalOCR.recognize(image).text.lowercased()
+            XCTAssertTrue(text.contains("dictionary"))
+            XCTAssertTrue(text.contains("delete"))
+            XCTAssertTrue(text.contains("license"))
+        }
+        XCTAssertTrue(downloader.tickets.isEmpty)
+        XCTAssertFalse(helper.dictionaryRequests.contains { $0.request == .delete || $0.request == .prepareInstall })
+        XCTAssertTrue(helper.configurationSaves.isEmpty)
+    }
+
+    @MainActor
+    private func textViews(in view: NSView) -> [NSTextView] {
+        (view as? NSTextView).map { [$0] } ?? view.subviews.flatMap { textViews(in: $0) }
+    }
+
     // This paints the actual SwiftUI/AppKit view in memory. It is not a screen capture,
     // human GUI acceptance test, or evidence of Accessibility/Screen Recording permission.
     @MainActor
     private func render<Content: View>(_ content: Content, named name: String, size: NSSize,
-                                      scheme: ColorScheme) throws -> Data {
+                                      scheme: ColorScheme, inspect: ((NSView) -> Void)? = nil) throws -> Data {
         _ = NSApplication.shared
         let host = NSHostingView(rootView: content.environment(\.colorScheme, scheme))
         let appearance = try XCTUnwrap(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
@@ -214,6 +287,7 @@ final class ProductRenderingTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
+        inspect?(host)
         XCTAssertEqual(host.bounds.size, size)
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         appearance.performAsCurrentDrawingAppearance {

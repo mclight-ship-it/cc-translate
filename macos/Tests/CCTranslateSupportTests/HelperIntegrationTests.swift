@@ -1,6 +1,297 @@
 import XCTest
 import Darwin
+import CryptoKit
 @testable import CCTranslateSupport
+
+extension HelperIntegrationTests {
+    private func dictionaryDigest(_ file: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer {
+            do { try handle.close() }
+            catch { XCTFail("Dictionary fixture file handle cleanup failed") }
+        }
+        var hash = SHA256()
+        while let bytes = try handle.read(upToCount: 1024 * 1024), !bytes.isEmpty {
+            hash.update(data: bytes)
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    @MainActor
+    private func dictionaryOperation(_ session: ConfigurationNotices, _ request: DictionaryRequest,
+                                     id: String = UUID().uuidString) async throws -> [String: JSONValue] {
+        let terminal = session.terminal(id)
+        session.connection.dictionary(request, id: id, timeout: 40)
+        await fulfillment(of: [terminal], timeout: 45)
+        session.assertOperation(id)
+        let result = try XCTUnwrap(session.result(id))
+        guard result.type == "completed" else { throw ProbeError.invalidPayload }
+        return result.payload
+    }
+
+    @MainActor
+    private func dictionaryConfiguration(_ session: ConfigurationNotices) async throws -> [String: JSONValue] {
+        let id = UUID().uuidString, terminal = session.terminal(id)
+        session.connection.loadConfiguration(id: id)
+        await fulfillment(of: [terminal], timeout: 10)
+        session.assertOperation(id)
+        return try XCTUnwrap(session.result(id)?.payload["config"]?.object)
+    }
+
+    @MainActor
+    private func saveDictionaryConfiguration(_ session: ConfigurationNotices,
+                                            _ configuration: [String: JSONValue]) async throws {
+        let id = UUID().uuidString, terminal = session.terminal(id)
+        session.connection.saveConfiguration(configuration, id: id)
+        await fulfillment(of: [terminal], timeout: 10)
+        session.assertOperation(id)
+    }
+
+    @MainActor
+    private func dictionaryHistory(_ session: ConfigurationNotices) async throws -> [[String: JSONValue]] {
+        let id = UUID().uuidString, terminal = session.terminal(id)
+        session.connection.loadHistory(id: id)
+        await fulfillment(of: [terminal], timeout: 10)
+        session.assertOperation(id)
+        return try session.historyEntries(id)
+    }
+
+    @MainActor
+    private func installDictionaryFixture(_ session: ConfigurationNotices, home: URL) async throws
+        -> (ticket: DictionaryInstallTicket, installed: URL) {
+        let payload = try await dictionaryOperation(session, .prepareInstall)
+        let ticket = try DictionaryInstallTicket(payload: payload)
+        let directory = ticket.path.deletingLastPathComponent()
+        XCTAssertTrue(directory.resolvingSymlinksInPath().path.hasPrefix(
+            home.resolvingSymlinksInPath().path + "/"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ticket.path.path),
+                       "Prepare reserves a session ticket, not a fake completed download.")
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["CC_TRANSLATE_DICTIONARY_TEST_ASSET"],
+                                 "Postbuild dictionary tests require the externally acquired pinned asset; never skip.")
+        XCTAssertFalse(path.isEmpty)
+        let source = URL(fileURLWithPath: path)
+        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+        XCTAssertEqual(attributes[.type] as? FileAttributeType, .typeRegular)
+        XCTAssertEqual((attributes[.size] as? NSNumber)?.int64Value, ticket.size)
+        XCTAssertEqual(try dictionaryDigest(source), ticket.sha256)
+        // The CI utility supplies the already-downloaded bytes. This is not URLSession evidence.
+        try FileManager.default.copyItem(at: source, to: ticket.path)
+        let installedPayload = try await dictionaryOperation(session, .install(ticket: ticket.ticket))
+        let status = try DictionaryStatus(payload: installedPayload)
+        XCTAssertEqual(status.state, .ready)
+        XCTAssertTrue(status.enabled)
+        XCTAssertGreaterThan(status.entryCount, 0)
+        XCTAssertEqual(status.sha256, ticket.sha256)
+        XCTAssertEqual(status.size, ticket.size)
+        XCTAssertEqual(status.dataVersion, ticket.dataVersion)
+        XCTAssertEqual(status.downloadURL, ticket.url)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ticket.path.path),
+                       "Successful installation must consume the owned staging file.")
+        let installed = directory.appendingPathComponent("cc_dictionary.sqlite3")
+        XCTAssertEqual(try dictionaryDigest(installed), ticket.sha256)
+        return (ticket, installed)
+    }
+
+    @MainActor
+    private func dictionaryLookup(_ session: ConfigurationNotices, text: String = "\u{4f60}\u{597d}",
+                                  useCache: Bool = true, recordHistory: Bool = true) async throws
+        -> DictionaryLookupResult {
+        let payload = try await dictionaryOperation(session, .lookup(
+            text: text, appLanguage: "en_US", origin: "text",
+            useCache: useCache, recordHistory: recordHistory))
+        return try DictionaryLookupResult(payload: payload)
+    }
+
+    @MainActor
+    func testBundledDictionaryInstallLookupCacheHistoryAndLiveOptoutWithoutCLI() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        let history = context.config.deletingLastPathComponent().appendingPathComponent("history.json")
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        session.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [session.ready], timeout: 10)
+        guard case let .array(capabilities)? = session.events.first?.payload["capabilities"] else {
+            return XCTFail("Configuration-only dictionary capabilities are required.")
+        }
+        XCTAssertFalse(capabilities.contains(.string("translate")), "This helper has no CLI provider.")
+        let initial = try DictionaryStatus(payload: await dictionaryOperation(session, .status))
+        XCTAssertEqual(initial.state, .notInstalled)
+        XCTAssertFalse(initial.enabled)
+        let disabled = try await dictionaryLookup(session)
+        XCTAssertEqual(disabled.status, "disabled")
+        XCTAssertNil(disabled.result)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.path))
+        _ = try await installDictionaryFixture(session, home: context.home)
+        var configuration = try await dictionaryConfiguration(session)
+        XCTAssertEqual(configuration["local_dictionary_enabled"], .bool(true))
+
+        let first = try await dictionaryLookup(session)
+        XCTAssertEqual(first.status, "hit")
+        let result = try XCTUnwrap(first.result)
+        let text = try XCTUnwrap(result["text"]?.string)
+        XCTAssertTrue(text.contains("\u{4f60}\u{597d}"))
+        XCTAssertTrue(text.contains("n\u{01d0} h\u{01ce}o"), "The real pinned entry must render readable pinyin.")
+        XCTAssertTrue(text.contains("CC-CEDICT"), "Readable output must attribute its dictionary source.")
+        XCTAssertTrue(text.contains("CC BY-SA"), "Readable output must retain source licensing.")
+        XCTAssertTrue(text.contains("\n"))
+        XCTAssertFalse(text.hasPrefix("{"), "Dictionary output must be readable text, not a dumped DTO.")
+        XCTAssertEqual(result["submitted"], .bool(false))
+        XCTAssertEqual(result["kind"], .string("dict"))
+        XCTAssertEqual(result["target_lang"], .null)
+        XCTAssertEqual(result["summarize"], .bool(false))
+        XCTAssertEqual(result["cached"], .bool(false))
+        XCTAssertEqual(result["history"], .string("recorded"))
+        let entries = try await dictionaryHistory(session)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?["output"], .string(text))
+        let originalHistory = try Data(contentsOf: history)
+
+        let cached = try await dictionaryLookup(session)
+        XCTAssertEqual(cached.result?["cached"], .bool(true))
+        XCTAssertEqual(cached.result?["history"], .string("unchanged"))
+        XCTAssertEqual(cached.result?["text"], .string(text))
+        XCTAssertEqual(try Data(contentsOf: history), originalHistory, "Cache hits must not duplicate history.")
+
+        var samples: [Double] = []
+        for _ in 0..<8 {
+            let start = ProcessInfo.processInfo.systemUptime
+            let warm = try await dictionaryLookup(session, useCache: false, recordHistory: false)
+            samples.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            XCTAssertEqual(warm.status, "hit")
+            XCTAssertEqual(warm.result?["cached"], .bool(false))
+            XCTAssertEqual(warm.result?["history"], .string("disabled"))
+        }
+        let timing = try JSONValue.object([
+            "scope": .string("config_only_foundation_helper_round_trip_not_gui"),
+            "unit": .string("ms"), "samples": .array(samples.map(JSONValue.number)),
+            "use_cache": .bool(false), "record_history": .bool(false)
+        ]).encoded()
+        print("CC_TRANSLATE_DICTIONARY_TIMINGS " + String(decoding: timing, as: UTF8.self))
+        XCTAssertEqual(try Data(contentsOf: history), originalHistory)
+
+        configuration["history_enabled"] = .bool(false)
+        try await saveDictionaryConfiguration(session, configuration)
+        let optedOut = try await dictionaryLookup(session)
+        XCTAssertEqual(optedOut.status, "hit")
+        XCTAssertEqual(optedOut.result?["cached"], .bool(false))
+        XCTAssertEqual(optedOut.result?["history"], .string("disabled"))
+        XCTAssertEqual(try Data(contentsOf: history), originalHistory)
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        reopened.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let lookup = try await dictionaryLookup(reopened, text: "hello")
+        XCTAssertEqual(lookup.status, "hit")
+        XCTAssertEqual(lookup.result?["submitted"], .bool(false))
+        XCTAssertEqual(lookup.result?["history"], .string("disabled"))
+        XCTAssertEqual(try Data(contentsOf: history), originalHistory)
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty)
+    }
+
+    @MainActor
+    func testBundledDictionaryInvalidStagingDiscardDisableDeleteAndReopenWithoutCLI() async throws {
+        let context = try configurationContext()
+        defer { removeConfigurationHome(context.home) }
+        let history = context.config.deletingLastPathComponent().appendingPathComponent("history.json")
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        session.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [session.ready], timeout: 10)
+        let fixture = try await installDictionaryFixture(session, home: context.home)
+        let settings = try Data(contentsOf: context.config)
+        let neighbor = fixture.installed.deletingLastPathComponent().appendingPathComponent("unrelated-fixture")
+        let neighborBytes = Data("Unrelated synthetic file: never delete as ticket cleanup.".utf8)
+        try neighborBytes.write(to: neighbor)
+
+        for sameSize in [false, true] {
+            let prepared = try await dictionaryOperation(session, .prepareInstall)
+            let ticket = try DictionaryInstallTicket(payload: prepared)
+            XCTAssertEqual(ticket.path.deletingLastPathComponent(), fixture.installed.deletingLastPathComponent())
+            if sameSize {
+                try FileManager.default.copyItem(at: fixture.installed, to: ticket.path)
+                let file = try FileHandle(forWritingTo: ticket.path)
+                defer {
+                    do { try file.close() }
+                    catch { XCTFail("Invalid dictionary staging handle cleanup failed") }
+                }
+                try file.seek(toOffset: 0)
+                try file.write(contentsOf: Data("NotSQLite".utf8))
+                let attributes = try FileManager.default.attributesOfItem(atPath: ticket.path.path)
+                XCTAssertEqual((attributes[.size] as? NSNumber)?.int64Value, ticket.size)
+            } else {
+                try Data("Invalid staged fixture".utf8).write(to: ticket.path)
+            }
+            let id = UUID().uuidString, rejected = session.terminal(id)
+            session.connection.dictionary(.install(ticket: ticket.ticket), id: id, timeout: 40)
+            await fulfillment(of: [rejected], timeout: 45)
+            session.assertHistoryFailure(id, code: "dictionary_install_failed")
+            XCTAssertEqual(try dictionaryDigest(fixture.installed), fixture.ticket.sha256)
+            XCTAssertEqual(try Data(contentsOf: context.config), settings)
+            XCTAssertEqual(try Data(contentsOf: neighbor), neighborBytes)
+        }
+
+        let discardPayload = try await dictionaryOperation(session, .prepareInstall)
+        let discardTicket = try DictionaryInstallTicket(payload: discardPayload)
+        try Data("Synthetic cancelled producer staging".utf8).write(to: discardTicket.path)
+        let discard = try await dictionaryOperation(session, .discardInstall(ticket: discardTicket.ticket))
+        XCTAssertEqual(discard, ["discarded": .bool(true)])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: discardTicket.path.path))
+        XCTAssertEqual(try Data(contentsOf: neighbor), neighborBytes)
+        XCTAssertEqual(try dictionaryDigest(fixture.installed), fixture.ticket.sha256)
+        XCTAssertEqual(try Data(contentsOf: context.config), settings)
+
+        var configuration = try await dictionaryConfiguration(session)
+        configuration["local_dictionary_enabled"] = .bool(false)
+        try await saveDictionaryConfiguration(session, configuration)
+        let status = try DictionaryStatus(payload: await dictionaryOperation(session, .status))
+        XCTAssertEqual(status.state, .ready)
+        XCTAssertFalse(status.enabled)
+        XCTAssertEqual(try dictionaryDigest(fixture.installed), fixture.ticket.sha256)
+        let disabled = try await dictionaryLookup(session)
+        XCTAssertEqual(disabled.status, "disabled")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.path))
+
+        let abandonedPayload = try await dictionaryOperation(session, .prepareInstall)
+        let abandoned = try DictionaryInstallTicket(payload: abandonedPayload)
+        try Data("Owned unfinished download".utf8).write(to: abandoned.path)
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path.path))
+        XCTAssertEqual(try Data(contentsOf: neighbor), neighborBytes)
+        XCTAssertTrue(session.failures.isEmpty)
+
+        let reopened = ConfigurationNotices()
+        defer { reopened.connection.forceStop() }
+        reopened.connection.startConfiguration(runtime: context.runtime, home: context.home)
+        await fulfillment(of: [reopened.ready], timeout: 10)
+        let retained = try DictionaryStatus(payload: await dictionaryOperation(reopened, .status))
+        XCTAssertEqual(retained.state, .ready)
+        XCTAssertFalse(retained.enabled)
+        let deletion = try await dictionaryOperation(reopened, .delete)
+        XCTAssertEqual(deletion, ["deleted": .bool(true), "enabled": .bool(false)])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.installed.path))
+        XCTAssertEqual(try Data(contentsOf: neighbor), neighborBytes)
+        let repeated = try await dictionaryOperation(reopened, .delete)
+        XCTAssertEqual(repeated, ["deleted": .bool(false), "enabled": .bool(false)])
+        let missing = try DictionaryStatus(payload: await dictionaryOperation(reopened, .status))
+        XCTAssertEqual(missing.state, .notInstalled)
+        XCTAssertFalse(missing.enabled)
+        let deletedConfiguration = try await dictionaryConfiguration(reopened)
+        XCTAssertEqual(deletedConfiguration["local_dictionary_enabled"], .bool(false))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.path),
+                       "Install, failed install, discard, disable and delete must not write translation history.")
+        reopened.connection.stop()
+        await fulfillment(of: [reopened.stopped], timeout: 10)
+        XCTAssertTrue(reopened.failures.isEmpty)
+    }
+}
 
 extension HelperIntegrationTests {
     private struct TranslationContext {
@@ -783,11 +1074,12 @@ final class HelperIntegrationTests: XCTestCase {
         await fulfillment(of: [session.ready], timeout: 10)
         XCTAssertEqual(session.events.first?.payload["fixture"], .bool(false))
         guard case let .array(capabilities)? = session.events.first?.payload["capabilities"] else {
-            return XCTFail("Business readiness must expose all five capabilities")
+            return XCTFail("Business readiness must expose storage and dictionary capabilities")
         }
         XCTAssertEqual(Set(capabilities.compactMap(\.string)),
-                       ["config_load", "config_save", "history_load", "history_add", "history_clear"])
-        XCTAssertEqual(capabilities.count, 5)
+                       Set(["config_load", "config_save", "history_load", "history_add", "history_clear"])
+                        .union(DictionaryRequest.operations))
+        XCTAssertEqual(capabilities.count, 11)
         let missing = session.terminal("missing_history")
         session.connection.loadHistory(id: "missing_history")
         await fulfillment(of: [missing], timeout: 10)

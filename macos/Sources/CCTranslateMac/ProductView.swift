@@ -24,8 +24,8 @@ struct TranslatorView: View {
             if model.needsCLI {
                 HStack(spacing: 10) {
                     Image(systemName: "terminal").accessibilityHidden(true)
-                    Text(model.text("Choose Codex once to start translating.",
-                                    "选择 Codex 后即可开始翻译。"))
+                    Text(model.text("The local dictionary works offline. Choose Codex for model translation.",
+                                    "本地词典可离线使用。模型翻译需要选择 Codex。"))
                     Spacer(minLength: 8)
                     Button(model.text("Open Settings", "打开设置"), action: showSettings)
                 }
@@ -198,7 +198,8 @@ struct TranslationResultView: View {
             }
             ZStack {
                 NativeResultText(text: model.output, formatted: formatted, streaming: busy,
-                                 label: model.text("Translation result", "翻译结果"))
+                                 label: model.text("Translation result", "翻译结果"),
+                                 verbatimPrefix: model.isLocalDictionaryResult ? model.primaryResult : nil)
                 if model.output.isEmpty {
                     emptyState
                 }
@@ -514,7 +515,7 @@ struct TranslationHistoryView: View {
                 Divider()
                 Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
                     .accessibilityAddTraits(.isHeader)
-                NativeResultText(text: row.output, formatted: true, streaming: false,
+                NativeResultText(text: row.output, formatted: row.kind != "dict", streaming: false,
                                  label: model.text("Saved translation", "已保存的翻译"))
                     .frame(minHeight: 110)
                 ViewThatFits(in: .horizontal) {
@@ -572,6 +573,7 @@ struct TranslationSettingsView: View {
                 }
             }
             translationSection
+            DictionarySettingsSection(model: model, dictionary: model.dictionary)
             codexSection
             shortcutSection
             aboutSection
@@ -579,7 +581,7 @@ struct TranslationSettingsView: View {
         .formStyle(.grouped)
         .frame(minWidth: 530, minHeight: 460)
         .preferredColorScheme(model.preferredColorScheme)
-        .onAppear { model.openProduct() }
+        .onAppear { model.refreshDictionary() }
         .onChange(of: model.interfaceLanguage) { _, _ in model.persistPresentation() }
         .onChange(of: model.appearance) { _, _ in model.persistPresentation() }
     }
@@ -607,18 +609,18 @@ struct TranslationSettingsView: View {
                 get: { model.direction },
                 set: { model.direction = $0; model.saveSettings() }
             ))
-            .disabled(model.settingsBusy || busy)
+            .disabled(model.settingsBusy || busy || model.dictionary.committing)
             ModelPicker(model: model, selection: Binding(
                 get: { model.modelProfile },
                 set: { model.modelProfile = $0; model.saveSettings() }
             ))
-            .disabled(model.settingsBusy || busy)
+            .disabled(model.settingsBusy || busy || model.dictionary.committing)
             if model.settingsReady {
                 Toggle(model.text("Save translation history", "保存翻译历史记录"), isOn: Binding(
                     get: { model.historyEnabled },
                     set: { model.saveSettings(history: $0) }
                 ))
-                .disabled(model.settingsBusy)
+                .disabled(model.settingsBusy || model.dictionary.committing)
                 .help(model.text("Turning this off cancels an active translation but does not delete existing history.",
                                  "关闭此选项会取消正在进行的翻译，但不会删除已有历史记录。"))
             } else {
@@ -650,6 +652,13 @@ struct TranslationSettingsView: View {
     private var codexSection: some View {
         Section {
             LabeledContent(model.text("Provider", "服务")) { Text("Codex CLI") }
+            if model.cliChangeDeferred {
+                Label(model.text("The selected Codex will apply after the dictionary operation finishes.",
+                                 "词典操作完成后会应用所选 Codex。"),
+                      systemImage: "clock")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text(model.text("Current executable", "当前可执行文件")).font(.subheadline)
                 Text(model.selectedCLI.isEmpty ?
@@ -748,8 +757,8 @@ struct TranslationSettingsView: View {
             }
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Text translation, result actions, streaming, cancellation, history, and Codex settings are available here. The full dictionary, screenshot translation, model management, login items, and app updates are not yet implemented in the product interface.",
-                            "此界面已支持文字翻译、结果操作、流式输出、取消、历史记录和 Codex 设置。完整词典、截图翻译、模型管理、登录项和应用更新尚未在产品界面实现。"))
+            Text(model.text("Text translation, local dictionary, result actions, history, and Codex settings are available here. Screenshot translation, model management, login items, and app updates are not yet implemented in the product interface.",
+                            "此界面已支持文字翻译、本地词典、结果操作、历史记录和 Codex 设置。截图翻译、模型管理、登录项和应用更新尚未在产品界面实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)
@@ -830,11 +839,13 @@ private struct NativeResultText: NSViewRepresentable {
     var formatted: Bool
     var streaming: Bool
     var label: String
+    var verbatimPrefix: String? = nil
 
     final class Coordinator {
         var source = ""
         var renderedRich = false
         var requestedRich = true
+        var verbatimPrefix: String?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -875,7 +886,8 @@ private struct NativeResultText: NSViewRepresentable {
         let rich = formatted && !streaming &&
             (context.coordinator.renderedRich || selected.length == 0 || modeChanged)
         context.coordinator.requestedRich = formatted
-        guard context.coordinator.source != text || context.coordinator.renderedRich != rich else { return }
+        guard context.coordinator.source != text || context.coordinator.renderedRich != rich ||
+                context.coordinator.verbatimPrefix != verbatimPrefix else { return }
         let origin = scroll.contentView.bounds.origin
         let atBottom = view.bounds.height - scroll.contentView.bounds.maxY <= 28
         let continuing = !context.coordinator.source.isEmpty && text.hasPrefix(context.coordinator.source)
@@ -883,10 +895,17 @@ private struct NativeResultText: NSViewRepresentable {
             let suffix = String(text.dropFirst(context.coordinator.source.count))
             storage.append(Self.plain(suffix))
         } else {
-            storage.setAttributedString(rich ? Self.styled(text) : Self.plain(text))
+            if rich, let verbatimPrefix, text.hasPrefix(verbatimPrefix) {
+                let content = NSMutableAttributedString(attributedString: Self.plain(verbatimPrefix))
+                content.append(Self.styled(String(text.dropFirst(verbatimPrefix.count))))
+                storage.setAttributedString(content)
+            } else {
+                storage.setAttributedString(rich ? Self.styled(text) : Self.plain(text))
+            }
         }
         context.coordinator.source = text
         context.coordinator.renderedRich = rich
+        context.coordinator.verbatimPrefix = verbatimPrefix
         let location = min(selected.location, storage.length)
         let preservedSelection = NSRange(location: location, length: min(selected.length, storage.length - location))
         if !NSEqualRanges(view.selectedRange(), preservedSelection) {

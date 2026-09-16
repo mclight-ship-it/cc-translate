@@ -235,6 +235,7 @@ class TranslationContracts(unittest.TestCase):
                         patch.object(server.signal, "signal", return_value=signal.SIG_DFL) as install:
                     instance = factory.return_value
                     instance._translation_enabled = enabled
+                    instance._dictionary_enabled = False
                     if failed:
                         instance.run.side_effect = RuntimeError("synthetic")
                         with self.assertRaisesRegex(RuntimeError, "synthetic"):
@@ -551,8 +552,11 @@ class TranslationServiceTests(_TranslationDirectory):
     def test_ready_is_native_and_first_request_streams_records_then_hits_cache(self):
         ready = self.stdout.events[0]["payload"]
         self.assertEqual((ready["backend"], ready["fixture"]), ("native_appserver", False))
-        self.assertEqual(len(ready["capabilities"]), 7)
+        self.assertEqual(len(ready["capabilities"]), 13)
         self.assertIn("result_action", ready["capabilities"])
+        self.assertEqual(ready["capabilities"][-6:], [
+            "dictionary_status", "dictionary_lookup", "dictionary_prepare_install",
+            "dictionary_install", "dictionary_discard_install", "dictionary_delete"])
         self.assertEqual(self.provider.requests, [])
         self.translate()
         self.assertTrue(self.stdout.terminal("translate"))

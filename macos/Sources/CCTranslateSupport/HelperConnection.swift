@@ -216,6 +216,13 @@ public final class HelperConnection {
     }
 
     @discardableResult
+    public func dictionary(_ request: DictionaryRequest, id: String = UUID().uuidString,
+                           timeout: TimeInterval = 30) -> String {
+        send(ClientMessage(id: id, type: "request", payload: request.payload), timeout: timeout)
+        return id
+    }
+
+    @discardableResult
     public func loadConfiguration(id: String = UUID().uuidString, timeout: TimeInterval = 20) -> String {
         send(ClientMessage(id: id, type: "request", payload: ["operation": .string("config_load")]),
              timeout: timeout)
@@ -449,9 +456,9 @@ public final class HelperConnection {
     }
 
     static func terminationGrace(for mode: ProtocolState.Mode) -> (eof: TimeInterval, term: TimeInterval) {
-        // Native version/config/catalog probes and their separately owned CLI groups
-        // must unwind before killing the helper that still owns those groups.
-        mode == .translation ? (30, 30) : (3, 1)
+        // Business helpers must drain owned CLI groups and dictionary validation/commit
+        // before escalation, even when no model connection was opened.
+        mode == .diagnostic ? (3, 1) : (30, 30)
     }
 
     private func scheduleTermination() {
