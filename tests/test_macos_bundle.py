@@ -620,9 +620,12 @@ class SmokeContractTests(unittest.TestCase):
         self.assertNotRegex(workflow, r"(?m)^\s*uses: .*@(main|master|v\d+)\s*$")
         self.assertNotIn("codesign", workflow)
         self.assertNotIn("notarytool", workflow)
-        self.assertEqual(workflow.count(
-            'CC_TRANSLATE_DICTIONARY_TEST_ASSET: ${{ runner.temp }}/cc-translate-dictionary-fixture.sqlite3'), 2)
-        self.assertEqual(workflow.count('--download-to "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --allow-download'), 2)
+        self.assertNotIn('CC_TRANSLATE_DICTIONARY_TEST_ASSET: ${{ runner.temp }}', workflow)
+        self.assertEqual(workflow.count('fixture="$RUNNER_TEMP/cc-translate-dictionary-fixture.sqlite3"'), 2)
+        self.assertEqual(workflow.count('echo "CC_TRANSLATE_DICTIONARY_TEST_ASSET=$fixture" >> "$GITHUB_ENV"'), 2)
+        self.assertEqual(workflow.count('--download-to "$fixture" --allow-download'), 2)
+        self.assertEqual(workflow.count("--filter DictionaryProductIntegrationTests"), 1)
+        self.assertIn("dictionary-product-tests.json", workflow)
         uploads = workflow[workflow.index("      - name: Retain synthetic development artifact"):]
         self.assertNotIn("path: ${{ runner.temp }}", uploads)
         self.assertNotIn("cc-translate-dictionary-fixture.sqlite3\n            tools/", uploads)
