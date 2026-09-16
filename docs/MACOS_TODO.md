@@ -34,7 +34,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 <a id="codex-protocol-checkpoint"></a>
 
-## 当前修复：官方通知时间戳导致提交前协议误拒绝
+## 当前检查点：官方通知时间戳修复与真实预热已通过三系统
 
 用户在版本兼容包报告`provider_protocol_error`且明确未提交模型。
 隔离临时HOME的官方0.146.0在本地只执行initialize/initialized/hooks/list即可复现：
@@ -43,7 +43,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 不需要账号或模型即可证明此客户端缺陷；尚未取得用户所选CLI数字版本，
 不声称已在用户Mac上确认唯一根因。
 
-修复应只接受官方定义的可选时间戳及其类型，保留未知字段、工具/hook、身份、
+修复只接受官方定义的可选时间戳及其类型，保留未知字段、工具/hook、身份、
 重复事件、取消和结果未知的严格校验。新增回归先在未修改生产上实际失败，
 原2tests/4fail与真实二进制的无敏感值响应形状已留证。
 官方0.146/0.154源码均定义`ServerNotificationEnvelope.emitted_at_ms: Option<i64>`：
@@ -52,9 +52,45 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 本地修复后已接收真实带时间戳的启动通知；其后Windows系统启用的hook仍被Mac策略拒绝，
 这是预期保护，不以跳过该hook把Windows预检冒充Mac成功。
 最终针对性206/15.106s通过，包含新增5个核心方法；同包最低门槛190process/478core/原13Foundation。
-CI将把两份固定官方CLI检查从仅`--version`扩展到真实native prewarm，
+CI已把两份固定官方CLI检查从仅`--version`扩展到真实native prewarm，
 并明确禁止发送thread/start或turn/start；旧version-only绿色不覆盖本次协议缺陷。
-新源码、同包三系统和新制品尚待验证，不把下面旧包称为此问题的修复包。
+
+**源码 `3ee680a98141badc8b7499eff6716c7223aa41d4` /
+[run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)**：
+真实watch exit0，API确认attempt1全部3jobs/34steps success。
+正常privacy/8文件compile/完整hook **1573/90.758s OK**；
+既有Tk teardown stderr及拒绝隐式HTTPS的负例输出保留，旧WinError5未宣称解决。
+生产仅native envelope的8行变更；无Swift行为修改，无关闭协议保护或自动重放。
+
+| 实际系统 | 包内process | 包内core | 后置Foundation |
+|---|---:|---:|---:|
+| 15.7.9 / Xcode16.4 producer | 190 / 338.948s | 478 / 3.391s | 13 / 56.495s |
+| 14.8.9 / Xcode16.2 harness | 190 / 322.816s | 478 / 3.767s | 13 / 51.260s |
+| 26.6.2 / Xcode26.6 harness | 190 / 332.598s | 478 / 5.280s | 13 / 53.724s |
+
+以上零failure/error/skip；新增2process/5core方法三系统各passed一次，13Foundation逐名核对。
+producer portable676/9.950s；普通Swift113=100pass+13无App可选skip，后置13真实执行另计。
+**官方0.146.0和0.154.0的固定arm64二进制在producer均真实通过版本读取及native prewarm**：
+使用本App随包Python/原进程监督/临时HOME，无账号；精确只发
+initialize/initialized/hooks/list，turn_submitted=false，关闭后临时目录已清理。
+这弥补了旧版只测版本号的缺口，但仍不是官方模型翻译或用户GUI验收。
+
+新制品与独立字节核验：
+- [App10449458171](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280/artifacts/10449458171)，
+  有效至2026-09-23T13:54:28Z；内层`CCTranslateMac-P0.zip` **18,504,081 bytes**。
+- SHA-256：`f9022a0474c10476444696f3d89052be8b3596bd2a9cf0adc17db3d81cb5e10f`；
+  tree：`27718d8cb9941dd6eef8386aca5826edb2fac2021cfeaf88dbb20572b9933414`。
+- 14/26小报告10450196719/10449883887：使用同一15构建App，不重建或重签产品。
+- 684库存/74资源/46Core源码路径（45唯一Git路径）逐字节对应source；
+  6实际arm64 Mach-O的load commands/最低OS/rpath/依赖与producer报告匹配。
+  runtime许可证：lock最低10项、实际coverage要求14项、包内19文件均验证，三种口径分开；
+  606 vendor runtime文件/链接与前置包相同，原605 full-build覆盖声明保留。
+- 三系统HTTPS证书/SQLite/storage/取消/EOF/不可变均通过。
+  下载ZIP和3个临时验证脚本已精确删除，原始失败/成功日志、小JSON、官方预热及审计证据保留。
+
+用户改用[新包最小步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)测试一次合成翻译即可，
+不需重装/降级/重新登录现有合适CLI。尚未收到本新包的实机结果，不继承旧包观察，
+也不承诺所有更高版本/账号/模型均兼容。
 
 <a id="codex-version-checkpoint"></a>
 

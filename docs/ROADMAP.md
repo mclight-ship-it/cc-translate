@@ -2,13 +2,18 @@
 
 本文件仅记录产品方向，不包含本机环境或内部工作记录。
 
-## 当前修复：官方 app-server 通知信封兼容
+## 当前检查点：官方 app-server 通知信封兼容已验证
 
 新版测试反馈在模型提交前发生协议错误。已用隔离的官方0.146.0、
 仅initialize/initialized/hooks/list复现客户端漏收`emittedAtMs`的问题。
-修复官方字段而非关闭严格校验；真实官方CI检查将覆盖native prewarm，
-不再仅以版本输出作为协议证据。新源码/三系统/制品验证中，
-进度见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)；不要求用户重装或降级CLI。
+修复官方字段而非关闭严格校验。源码**3ee680a** /
+[run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)
+已通过正常Windows完整hook1573、同包三系统各190process/478core/13Foundation，
+完整App独立字节核验完成。官方0.146.0/0.154.0在producer真实native prewarm也通过，
+不再仅以版本输出作为协议证据；严格没有thread/turn/账号/模型调用。
+见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)及
+[新包与最小步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)；
+不要求用户重装或降级CLI，真实模型/新GUI仍需用户验证。
 
 ## 前置检查点：Codex 版本兼容与诊断修复已验证
 

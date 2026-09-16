@@ -1,9 +1,13 @@
 # macOS 原生客户端开发指南
 
-当前正在修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题。
-官方0.146.0在隔离HOME、不发thread/turn的真实预检中已复现；
-这不是版本太旧，也不应要求用户反复改安装。新的实际协议预检与包证据完成前，
-下方旧下载包不代表该缺陷已修复，详见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)。
+当前已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
+源码`3ee680a98141badc8b7499eff6716c7223aa41d4` /
+[run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)。
+官方0.146.0/0.154.0在Mac producer均实际通过版本读取及native prewarm，
+严格仅initialize/initialized/hooks/list，无thread/turn/账号/模型调用。
+正常Windows完整hook1573、同包三系统各190process/478core/13Foundation通过，
+完整App已独立核验；这不是要求用户反复改安装，详见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)。
+当前[下载包及步骤](#native-translation-user-check)已切换到本次修复；旧3ef包不覆盖本缺陷。
 
 前置版本兼容修复已验证：源码`3efebbfabb7a6af16772d313ca3a5789a0988b64` /
 [run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)。
@@ -645,16 +649,17 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 ### 当前 native 翻译开发包：下一轮最小用户操作
 
-这是版本兼容/诊断修复后的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
+这是通知时间戳协议修复后的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
 macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；另在producer实际检查官方0.146.0/0.154.0
-二进制的`--version`。官方账号/模型与GUI操作仍不属于该证据。
+二进制的`--version`及native预热握手，严格禁止thread/start和turn/start。
+官方账号/模型与GUI操作仍不属于该证据。
 
-- 源码：`3efebbfabb7a6af16772d313ca3a5789a0988b64`；
-  [run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)；
-  [artifact10407398182](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967/artifacts/10407398182)。
-- 内层`CCTranslateMac-P0.zip`：18,503,830 bytes；
-  SHA-256 `d15b1b32841f28f8645dd38c24a2d715f2aa551a536bca8ab593c6eca4f80372`。
-  artifact保留到2026-09-22T16:46:19Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`3ee680a98141badc8b7499eff6716c7223aa41d4`；
+  [run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)；
+  [artifact10449458171](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280/artifacts/10449458171)。
+- 内层`CCTranslateMac-P0.zip`：18,504,081 bytes；
+  SHA-256 `f9022a0474c10476444696f3d89052be8b3596bd2a9cf0adc17db3d81cb5e10f`。
+  artifact保留到2026-09-23T13:54:28Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
@@ -662,6 +667,10 @@ macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；另在producer实际检�
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **最小顺序：**
+
+如果刚在3ef版本兼容包遇到提交前协议错误，只需正常退出并换成本新包，保留现有符合要求的CLI、
+路径和账号；不要重复安装或登录。版本探针与上一包外观相同，以固定来源/内层hash确认拿到新包，
+然后按第3–4步主动测试一条无敏感内容的合成翻译；无需为本修复重新申请AX/OCR权限。
 
 1. 从固定artifact取出内层zip，用系统`/usr/bin/shasum -a 256`只读校验上述内层值。
    先退出旧Mac测试App；如“应用程序”里有同名包，停止并自行妥善移开旧测试副本，不覆盖正在运行的包。
