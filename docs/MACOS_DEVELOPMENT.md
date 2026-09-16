@@ -8,6 +8,8 @@
 正常Windows完整hook1573、同包三系统各190process/478core/13Foundation通过，
 完整App已独立核验；这不是要求用户反复改安装，详见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)。
 当前[下载包及步骤](#native-translation-user-check)已切换到本次修复；旧3ef包不覆盖本缺陷。
+2026-09-16 本轮交接后用户确认翻译通过、目前测试可用，翻译主流程已有实际使用的正向反馈。
+以此为可用基线继续开发；无需为继续正常使用重复版本/权限前置检查，扩展验证另行安排。
 
 前置版本兼容修复已验证：源码`3efebbfabb7a6af16772d313ca3a5789a0988b64` /
 [run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)。
@@ -652,7 +654,8 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 这是通知时间戳协议修复后的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
 macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；另在producer实际检查官方0.146.0/0.154.0
 二进制的`--version`及native预热握手，严格禁止thread/start和turn/start。
-官方账号/模型与GUI操作仍不属于该证据。
+官方账号/模型与GUI操作不属于上述自动化证据；本轮交接后已另收到用户翻译通过的实测反馈，
+不将该简短反馈扩大为完整GUI/TCC或所有模型兼容性验收。
 
 - 源码：`3ee680a98141badc8b7499eff6716c7223aa41d4`；
   [run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)；

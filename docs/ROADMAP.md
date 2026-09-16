@@ -13,7 +13,8 @@
 不再仅以版本输出作为协议证据；严格没有thread/turn/账号/模型调用。
 见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)及
 [新包与最小步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)；
-不要求用户重装或降级CLI，真实模型/新GUI仍需用户验证。
+不要求用户重装或降级CLI。2026-09-16 本轮交接后用户确认翻译通过、目前测试可用，
+主流程成为当前可用基线；后续优先保住主流程并减少使用障碍，扩展GUI/兼容性验证不作为使用门槛。
 
 ## 前置检查点：Codex 版本兼容与诊断修复已验证
 
