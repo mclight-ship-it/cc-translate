@@ -78,9 +78,6 @@ public enum JSONValue: Equatable {
     }
 
     public func encoded() throws -> Data {
-        if DictionaryRequest.operations.contains(payload["operation"]?.string ?? "") {
-            try DictionaryDocument.validateRequest(payload)
-        }
         let value = foundation
         // Foundation can raise an Objective-C exception for NaN instead of a Swift error.
         guard JSONSerialization.isValidJSONObject([value]) else { throw ProbeError.invalidJSON }
@@ -516,6 +513,9 @@ public struct ClientMessage {
     }
 
     public func encoded() throws -> Data {
+        if DictionaryRequest.operations.contains(payload["operation"]?.string ?? "") {
+            try DictionaryDocument.validateRequest(payload)
+        }
         if TranslationDocument.modelOperations.contains(payload["operation"]?.string ?? "") {
             try TranslationDocument.validateRequest(payload)
         }
