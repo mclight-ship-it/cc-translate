@@ -87,9 +87,13 @@ def _native_message(line):
             raise ValueError("invalid_envelope")
     except (ValueError, TypeError, RecursionError):
         raise CodexAppServerProtocolError("invalid_appserver_json") from None
-    if not set(message) <= {"id", "method", "params", "result", "error", "jsonrpc"}:
+    if not set(message) <= {"id", "method", "params", "result", "error", "jsonrpc", "emittedAtMs"}:
         raise CodexAppServerProtocolError("invalid_appserver_message")
     if "jsonrpc" in message and message["jsonrpc"] != "2.0":
+        raise CodexAppServerProtocolError("invalid_appserver_message")
+    # Official ServerNotificationEnvelope metadata is Option<i64>, not a deadline.
+    timestamp = message.get("emittedAtMs")
+    if timestamp is not None and (type(timestamp) is not int or not -(2 ** 63) <= timestamp < 2 ** 63):
         raise CodexAppServerProtocolError("invalid_appserver_message")
     return message
 
@@ -259,7 +263,7 @@ class _NativeTransport(CodexAppServerTransport):
                     else:
                         self._turn_id = value["id"]
         else:
-            if not set(message) <= {"method", "params", "jsonrpc"}:
+            if not set(message) <= {"method", "params", "jsonrpc", "emittedAtMs"}:
                 raise CodexAppServerProtocolError("invalid_appserver_message")
             if type(message.get("method")) is not str:
                 raise CodexAppServerProtocolError("invalid_appserver_message")

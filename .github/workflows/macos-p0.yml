@@ -58,7 +58,7 @@ jobs:
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
-      - name: Official pinned CLI version-only probes (no account or model)
+      - name: Official pinned CLI version and native prewarm probes (no account or model)
         run: >-
           python3 -B tools/macos/codex_version_smoke.py
           --app tools/macos/.build/CCTranslateMac-P0.app

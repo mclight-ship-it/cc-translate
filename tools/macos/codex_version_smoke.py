@@ -1,4 +1,4 @@
-"""Explicit CI-only official CLI --version smoke; never login or invoke a model."""
+"""CI-only official CLI version and native prewarm smoke; never start a model turn."""
 
 import argparse
 import hashlib
@@ -25,8 +25,8 @@ import json, os, sys
 from pathlib import Path
 core, command, home, expected = sys.argv[1:]
 sys.path.insert(0, core)
-from cc_providers import codex_catalog, darwin_process
-for module in (codex_catalog, darwin_process):
+from cc_providers import codex_catalog, codex_darwin, darwin_process
+for module in (codex_catalog, codex_darwin, darwin_process):
     if Path(module.__file__).resolve().parent != Path(core) / "cc_providers":
         raise RuntimeError("version_smoke_source_mismatch")
 environment = {"HOME": home, "CODEX_HOME": str(Path(home) / ".codex"),
@@ -37,7 +37,32 @@ output = darwin_process.capture_output(
 version = codex_catalog.parse_codex_version(output)
 if version is None or version.text != expected or not version.supported:
     raise RuntimeError("official_version_smoke_failed")
-print(json.dumps({"version": version.text, "meets_minimum": version.supported}))
+Path(environment["CODEX_HOME"]).mkdir()
+errors = []
+provider = codex_darwin.DarwinCodexProvider(
+    command, str(Path(home) / "work"), environment=environment,
+    catalog_cache_dir=str(Path(home) / "cache"),
+    log_error=lambda _where, _error: errors.append(True))
+methods = []
+send = provider._transport._send
+def preflight_send(proc, method, params=None, request_id=None):
+    if method not in ("initialize", "initialized", "hooks/list"):
+        raise RuntimeError("official_preflight_non_preflight_request")
+    methods.append(method)
+    return send(proc, method, params, request_id)
+provider._transport._send = preflight_send
+try:
+    result = provider.warm_up(None)
+    if not result.ok:
+        raise RuntimeError("official_preflight_failed:" + result.error_code)
+    if (errors or dict(result.metrics).get("turn_submitted") is not False
+            or methods != ["initialize", "initialized", "hooks/list"]):
+        raise RuntimeError("official_preflight_contract_failed")
+finally:
+    provider.shutdown()
+print(json.dumps({"version": version.text, "meets_minimum": version.supported,
+                  "native_prewarm": "passed", "turn_submitted": False,
+                  "requests": methods}))
 """
 
 
@@ -91,14 +116,16 @@ def verify(app):
             completed = subprocess.run(
                 [str(python), "-I", "-B", "-c", PROBE, str(core), str(binary), str(home), version],
                 env=environment, cwd=home, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
             if completed.returncode or completed.stderr:
                 raise ValueError("official_version_smoke_process_failed")
             result = json.loads(completed.stdout)
-            if result != {"version": version, "meets_minimum": True}:
+            if result != {"version": version, "meets_minimum": True,
+                          "native_prewarm": "passed", "turn_submitted": False,
+                          "requests": ["initialize", "initialized", "hooks/list"]}:
                 raise ValueError("official_version_smoke_report_invalid")
             results.append(dict(result, archive_sha256=digest))
-    return {"status": "passed", "operation": "--version",
+    return {"status": "passed", "operation": "--version and native prewarm",
             "account_or_model_called": False, "temporary_files_removed": True,
             "versions": results}
 

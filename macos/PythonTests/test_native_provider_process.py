@@ -139,6 +139,28 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertIs(dict(result.metrics)["turn_submitted"], submitted)
         self.assertNotIn("SYNTHETIC_PRIVATE", repr(result))
 
+    def test_timestamped_startup_and_stream_notifications_preserve_owned_reuse(self):
+        provider = self.create("timestamped")
+        warm = provider.warm_up("synthetic")
+        self.assertTrue(warm.ok, warm.error_code)
+        self.assertIs(dict(warm.metrics)["turn_submitted"], False)
+        self.assertEqual(self.methods(), ["initialize", "initialized", "hooks/list"])
+        for _ in range(2):
+            deltas = []
+            result = provider.stream(self.request(), deltas.append)
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual((result.text, deltas), (native_provider_fixture.TEXT,
+                                                    [native_provider_fixture.TEXT]))
+        self.assertEqual(self.methods().count("turn/start"), 2)
+        self.assertEqual(len({record["pid"] for record in self.rpc()}), 1)
+        self.assert_finished()
+
+    def test_malformed_timestamp_fails_before_thread_without_retry(self):
+        provider = self.create("invalid_timestamp")
+        self.assert_failure(provider.complete(self.request()), "invalid_appserver_message", submitted=False)
+        self.assertEqual(self.methods(), ["initialize", "initialized", "hooks/list"])
+        self.assert_finished()
+
     def test_prewarm_complete_stream_and_catalog_reuse_without_exec(self):
         provider = self.create()
         warm = provider.warm_up("synthetic")

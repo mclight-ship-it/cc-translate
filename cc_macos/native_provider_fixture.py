@@ -252,7 +252,15 @@ def _serve():
             elif mode == "response_params":
                 responses[0]["params"] = {}
         if not config_probe and method == "hooks/list":
-            if mode == "hooks":
+            if mode in ("timestamped", "invalid_timestamp"):
+                responses.insert(0, {
+                    "method": "remoteControl/status/changed",
+                    "params": {"status": "disabled", "serverName": "synthetic",
+                               "installationId": "synthetic", "environmentId": None},
+                    "emittedAtMs": (1789560000000 if mode == "timestamped" else
+                                    "SYNTHETIC_PRIVATE_TIMESTAMP"),
+                })
+            elif mode == "hooks":
                 responses[0]["result"]["data"][0]["hooks"] = [{"enabled": True}]
             elif mode == "defender_hook":
                 responses[0]["result"]["data"][0]["hooks"] = [{
@@ -317,6 +325,8 @@ def _serve():
                     "source": "system", "handlerType": "command",
                     "eventName": "SessionStart", "sourcePath": None}}}
         for response in responses:
+            if mode == "timestamped" and "method" in response:
+                response["emittedAtMs"] = 1789560000000
             encoded = json.dumps(response, ensure_ascii=False)
             if not config_probe and mode == "blank_crlf":
                 sys.stdout.write("\n\r\n \t\r\n" + encoded + "\r\n")

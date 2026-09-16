@@ -1,6 +1,11 @@
 # macOS 原生客户端开发指南
 
-当前版本兼容修复已验证：源码`3efebbfabb7a6af16772d313ca3a5789a0988b64` /
+当前正在修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题。
+官方0.146.0在隔离HOME、不发thread/turn的真实预检中已复现；
+这不是版本太旧，也不应要求用户反复改安装。新的实际协议预检与包证据完成前，
+下方旧下载包不代表该缺陷已修复，详见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)。
+
+前置版本兼容修复已验证：源码`3efebbfabb7a6af16772d313ca3a5789a0988b64` /
 [run34996120967](https://github.com/mclight-ship-it/cc-translate/actions/runs/34996120967)。
 稳定版 Codex `>= 0.146.0` 可进入运行时协议/目录验证，不再使用精确版本白名单。
 显式版本探针显示安全解析的数字版本和最低要求；无法识别、过旧和预发布不会混为同一结论。

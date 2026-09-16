@@ -539,6 +539,72 @@ class TestDarwinCodexProvider(unittest.TestCase):
             with self.subTest(message=message):
                 self.malformed_response(message)
 
+    def test_official_timestamped_startup_notification_allows_prewarm_and_reuse(self):
+        def responses(proc, request):
+            replies = reply_messages(request, proc.cwd)
+            if request["method"] == "hooks/list":
+                replies.insert(0, {
+                    "method": "remoteControl/status/changed",
+                    "params": {"status": "disabled", "serverName": "synthetic",
+                               "installationId": "synthetic", "environmentId": None},
+                    "emittedAtMs": 1789560000000,
+                })
+            return replies
+        self.responses = responses
+        provider = self.provider()
+        warm = provider.warm_up("synthetic")
+        self.assertTrue(warm.ok, warm.error_code)
+        self.assertIs(dict(warm.metrics)["turn_submitted"], False)
+        self.assertEqual(self.methods(self.processes[0]), ["initialize", "initialized", "hooks/list"])
+        for _ in range(2):
+            result = provider.complete(self.request())
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual(result.text, TEXT)
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(self.processes[0]).count("turn/start"), 2)
+
+    def test_timestamp_does_not_allow_unknown_or_unsafe_startup_notifications(self):
+        for method, code in (("synthetic/unknown", "unknown_appserver_event"),
+                             ("hook/started", "unsafe_tool_event"),
+                             ("command/exec/outputDelta", "unsafe_tool_event")):
+            with self.subTest(method=method):
+                self.malformed_response(
+                    {"method": method, "params": {}, "emittedAtMs": 1789560000000}, code)
+
+    def test_notification_timestamp_accepts_nullable_signed_i64_without_affecting_stream(self):
+        for timestamp in (None, -(2 ** 63), -1, 0, 1789560000000, 2 ** 63 - 1):
+            def responses(proc, request):
+                replies = reply_messages(request, proc.cwd)
+                if request["method"] == "initialize":
+                    replies.insert(0, {"method": "warning", "params": {}})
+                for message in replies:
+                    if "method" in message:
+                        message["emittedAtMs"] = timestamp
+                return replies
+            self.responses = responses
+            with self.subTest(timestamp=timestamp):
+                deltas = []
+                result = self.provider().stream(self.request(), deltas.append)
+                self.assertTrue(result.ok, result.error_code)
+                self.assertEqual((result.text, deltas), (TEXT, [TEXT]))
+                self.assertIs(dict(result.metrics)["turn_submitted"], True)
+
+    def test_invalid_notification_timestamp_is_rejected_before_submission(self):
+        for timestamp in (True, False, 1.0, 0.5, "1789560000000", [], {}, 2 ** 63, -(2 ** 63) - 1):
+            with self.subTest(timestamp=timestamp):
+                self.malformed_response({"method": "warning", "params": {}, "emittedAtMs": timestamp})
+
+    def test_timestamp_is_notification_only_and_cannot_hide_duplicate_or_response_fields(self):
+        for message in ({"id": 1, "result": {}, "emittedAtMs": 1},
+                        {"id": 1, "error": {}, "emittedAtMs": None},
+                        {"method": "warning", "params": {}, "result": {}, "emittedAtMs": 1},
+                        {"method": "warning", "params": {}, "extra": None, "emittedAtMs": 1}):
+            with self.subTest(message=message):
+                self.malformed_response(message)
+        self.malformed_response(
+            '{"method":"warning","params":{},"emittedAtMs":1,"emittedAtMs":2}',
+            "invalid_appserver_json")
+
     def test_response_cannot_smuggle_notification_params(self):
         for extra in ({}, None, {"SYNTHETIC_PRIVATE": "notification"}):
             with self.subTest(extra=extra):

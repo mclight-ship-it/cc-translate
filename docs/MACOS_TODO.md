@@ -32,9 +32,33 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 此授权不包含 master、Release、签名私钥或付费额度。Mac 工程证据已允许并行 P1 纯核心。
 勾选只表示本行完成，不代表整个阶段通过；实现和验证分开。
 
+<a id="codex-protocol-checkpoint"></a>
+
+## 当前修复：官方通知时间戳导致提交前协议误拒绝
+
+用户在版本兼容包报告`provider_protocol_error`且明确未提交模型。
+隔离临时HOME的官方0.146.0在本地只执行initialize/initialized/hooks/list即可复现：
+官方启动通知含顶层`emittedAtMs`，native envelope白名单漏了该字段，
+因此把本来允许的状态通知误判为`invalid_appserver_message`。
+不需要账号或模型即可证明此客户端缺陷；尚未取得用户所选CLI数字版本，
+不声称已在用户Mac上确认唯一根因。
+
+修复应只接受官方定义的可选时间戳及其类型，保留未知字段、工具/hook、身份、
+重复事件、取消和结果未知的严格校验。新增回归先在未修改生产上实际失败，
+原2tests/4fail与真实二进制的无敏感值响应形状已留证。
+官方0.146/0.154源码均定义`ServerNotificationEnvelope.emitted_at_ms: Option<i64>`：
+只允许notification角色，缺失/null/有符号64位整数合法，不接受bool/小数/字符串/越界值，
+不把该时间戳作为deadline或身份。response/request字段规则保持。
+本地修复后已接收真实带时间戳的启动通知；其后Windows系统启用的hook仍被Mac策略拒绝，
+这是预期保护，不以跳过该hook把Windows预检冒充Mac成功。
+最终针对性206/15.106s通过，包含新增5个核心方法；同包最低门槛190process/478core/原13Foundation。
+CI将把两份固定官方CLI检查从仅`--version`扩展到真实native prewarm，
+并明确禁止发送thread/start或turn/start；旧version-only绿色不覆盖本次协议缺陷。
+新源码、同包三系统和新制品尚待验证，不把下面旧包称为此问题的修复包。
+
 <a id="codex-version-checkpoint"></a>
 
-## 当前检查点：Codex 最低版本与诊断修复已通过三系统
+## 前置检查点：Codex 最低版本与诊断修复已通过三系统
 
 用户在前置开发包遇到 `provider_version_unsupported`，更换 CLI/路径后仍报告失败。
 尚未收到该次实际版本输出，不能认定用户安装错误，也不能把下面的修复当作其真机已通过。
