@@ -157,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
             )
             panel.title = "CC Translate"
-            panel.contentMinSize = NSSize(width: 660, height: 480)
+            panel.contentMinSize = NSSize(width: 660, height: 540)
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.delegate = self

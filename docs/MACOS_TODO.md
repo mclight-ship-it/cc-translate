@@ -59,6 +59,12 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 修复保留点击快照和后续编辑的区别，并扩展同一断言覆盖方向回到旧默认值的情况；
 截图另存独立artifact，即使后续测试失败也可检查，不降低测试/构包条件。
 
+修复源码`92bf5eb`/[run35117011234](https://github.com/mclight-ship-it/cc-translate/actions/runs/35117011234)
+的Swift步骤已通过，原生截图artifact`10454599431`包含14张实际SwiftUI/AppKit合成数据渲染。
+人工查看发现浅色未激活窗口的突出式Translate按钮白底白字；改为始终可读的系统按钮，
+并用现有本地OCR验证截图底部确实可读出Translate，不只验证PNG不是空白。
+主窗口同时改成均衡双栏，最小尺寸660×540也纳入截图；这项后续源码改动不能借用92bf5eb绿灯。
+
 <a id="codex-protocol-checkpoint"></a>
 
 ## 当前检查点：官方通知时间戳修复与真实预热已通过三系统

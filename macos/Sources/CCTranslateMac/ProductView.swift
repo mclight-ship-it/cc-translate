@@ -32,13 +32,14 @@ struct TranslatorView: View {
                 .padding(12)
                 .background(Color(nsColor: .controlBackgroundColor))
             }
-            HSplitView {
+            HStack(spacing: 0) {
                 editor.frame(minWidth: 270, maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
                 TranslationResultView(model: model)
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 660, minHeight: 480)
+        .frame(minWidth: 660, minHeight: 540)
         .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
@@ -153,7 +154,8 @@ struct TranslatorView: View {
                     Button { model.translate() } label: {
                         Label(model.text("Translate", "翻译"), systemImage: "arrow.right")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!canTranslate)
                 }
@@ -518,7 +520,7 @@ struct TranslationHistoryView: View {
             model.reuseHistory(row)
             useEntry()
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.bordered)
         .help(model.text("Open this record in the translator without sending it.",
                          "在翻译窗口打开此记录，不会立即发送。"))
     }
@@ -749,7 +751,7 @@ private struct DirectionPicker: View {
 
     var body: some View {
         Picker(model.text("Translate to", "翻译为"), selection: $selection) {
-            Text(model.text("Auto · EN → ZH, otherwise EN", "自动 · 中 → 英，其他 → 中")).tag("auto")
+            Text(model.text("Auto", "自动")).tag("auto")
             ForEach(languages.indices, id: \.self) { index in
                 let language = languages[index]
                 Text(model.text(language.1, language.2)).tag(language.0)
@@ -759,6 +761,8 @@ private struct DirectionPicker: View {
             }
         }
         .accessibilityLabel(model.text("Translation direction", "翻译方向"))
+        .help(model.text("Auto: English to Chinese; other languages to English.",
+                         "自动模式：中文译为英文，其他语言译为中文。"))
     }
 }
 

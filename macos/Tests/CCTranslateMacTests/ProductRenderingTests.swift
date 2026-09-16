@@ -24,12 +24,23 @@ final class ProductRenderingTests: XCTestCase {
             named: "translator-dark", size: NSSize(width: 1120, height: 760), scheme: .dark)
         _ = try render(
             TranslatorView(model: model, showHistory: {}, showSettings: {}),
-            named: "translator-narrow-light", size: NSSize(width: 780, height: 660), scheme: .light)
+            named: "translator-narrow-light", size: NSSize(width: 660, height: 540), scheme: .light)
         _ = try render(
             TranslatorView(model: model, showHistory: {}, showSettings: {}),
-            named: "translator-narrow-dark", size: NSSize(width: 780, height: 660), scheme: .dark)
+            named: "translator-narrow-dark", size: NSSize(width: 660, height: 540), scheme: .dark)
 
         XCTAssertNotEqual(light, dark, "The actual native view must respond to its color scheme.")
+        for imageData in [light, dark] {
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: imageData))
+            let image = try XCTUnwrap(bitmap.cgImage)
+            let footer = try XCTUnwrap(image.cropping(to: CGRect(
+                x: 0, y: Double(image.height) * 0.8,
+                width: Double(image.width) * 0.5, height: Double(image.height) * 0.2)))
+            let visibleWords = try LocalOCR.recognize(footer).text.lowercased()
+                .components(separatedBy: CharacterSet.letters.inverted)
+            XCTAssertTrue(visibleWords.contains("translate"),
+                          "The primary Translate action must stay readable in light and dark inactive windows.")
+        }
         XCTAssertEqual(model.output, "用于原生布局验证的合成句子。")
         XCTAssertTrue(fixture.helpers.allSatisfy { $0.translations.isEmpty })
         XCTAssertFalse(model.cliBusy)
