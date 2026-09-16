@@ -20,7 +20,6 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
       MACOSX_DEPLOYMENT_TARGET: "14.0"
-      CC_TRANSLATE_DICTIONARY_TEST_ASSET: ${{ runner.temp }}/cc-translate-dictionary-fixture.sqlite3
     steps:
       - name: Check out development sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -71,9 +70,12 @@ jobs:
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
-        run: >-
-          python3 -B tools/macos/dictionary_fixture.py
-          --download-to "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --allow-download
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/cc-translate-dictionary-fixture.sqlite3"
+          python3 -B tools/macos/dictionary_fixture.py --download-to "$fixture" --allow-download
+          echo "CC_TRANSLATE_DICTIONARY_TEST_ASSET=$fixture" >> "$GITHUB_ENV"
       - name: Official pinned CLI version and native prewarm probes (no account or model)
         run: >-
           python3 -B tools/macos/codex_version_smoke.py
@@ -161,7 +163,6 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       MACOSX_DEPLOYMENT_TARGET: "14.0"
       PRODUCER_ARTIFACT_ID: ${{ needs.p0.outputs.artifact_id }}
-      CC_TRANSLATE_DICTIONARY_TEST_ASSET: ${{ runner.temp }}/cc-translate-dictionary-fixture.sqlite3
     steps:
       - name: Check out the same workflow source SHA
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -203,9 +204,12 @@ jobs:
           test -x CCTranslateMac-P0.app/Contents/MacOS/CCTranslateMac
           test "$(readlink CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3)" = python3.12
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
-        run: >-
-          python3 -B tools/macos/dictionary_fixture.py
-          --download-to "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --allow-download
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/cc-translate-dictionary-fixture.sqlite3"
+          python3 -B tools/macos/dictionary_fixture.py --download-to "$fixture" --allow-download
+          echo "CC_TRANSLATE_DICTIONARY_TEST_ASSET=$fixture" >> "$GITHUB_ENV"
       - name: Run the immutable producer app with this OS and a separate integration harness
         run: >-
           tools/macos/.build/received/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
