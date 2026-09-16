@@ -25,7 +25,7 @@ private final class ResultPanel: ProductPanel {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem?
     private var inputPanel: NSPanel?
     private var resultPanel: NSPanel?
@@ -115,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         main.addItem(appItem)
         let file = NSMenu(title: model.text("File", "文件"))
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: file)
+        add(model.text("Translate text", "翻译当前文字"), action: #selector(submitInput), key: "\r", to: file)
         add(model.text("History…", "历史记录…"), action: #selector(openHistory), key: "y", to: file)
         file.addItem(NSMenuItem(title: model.text("Close", "关闭"), action: #selector(NSWindow.performClose(_:)),
                                keyEquivalent: "w"))
@@ -176,6 +177,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func translateSelection() {
         model.translateSelection(SelectionProbe.read(target: menuTarget))
     }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(submitInput) {
+            let composing = (inputPanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+            return inputPanel?.isKeyWindow == true && !composing && !model.active && !model.preparing &&
+                !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                model.input.utf8.count <= 8192
+        }
+        return true
+    }
+
+    @objc private func submitInput() { model.translate() }
 
     @objc private func toggleMonitor() {
         if model.monitorEnabled {

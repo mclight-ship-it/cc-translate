@@ -156,7 +156,6 @@ struct TranslatorView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!canTranslate)
                 }
             }

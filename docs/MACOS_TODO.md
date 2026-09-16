@@ -65,6 +65,12 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 并用现有本地OCR验证截图底部确实可读出Translate，不只验证PNG不是空白。
 主窗口同时改成均衡双栏，最小尺寸660×540也纳入截图；这项后续源码改动不能借用92bf5eb绿灯。
 
+后续`7d5accd`/[run35118179544](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118179544)
+实际编译通过（34.02秒），36项模型全通过，但新增可读性断言真实失败，保留了失败截图。
+检查确认仅换buttonStyle不足：SwiftUI的Return快捷键仍让按钮进入默认动作配色。
+Cmd+Return改走标准AppKit菜单命令，按钮不再被SwiftUI隐式当作默认Return动作；
+菜单只在输入窗口可提交且IME不在组词时启用，原可读性断言继续保留。
+
 <a id="codex-protocol-checkpoint"></a>
 
 ## 当前检查点：官方通知时间戳修复与真实预热已通过三系统
