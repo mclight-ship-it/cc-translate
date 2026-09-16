@@ -1,19 +1,20 @@
 # macOS 原生客户端开发指南
 
-**当前实施：正式原生产品界面（P2），移植尚未完成。**
-用户已验证下面的翻译链路，但现有诊断窗口不等于产品界面。
-正接入独立翻译/结果/设置/历史窗口、直接翻译操作及菜单栏工作流；
-下一步仍有词典、完整结果动作和P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
+**当前检查点：正式原生产品界面已实现并验证，移植尚未完成。**
+源码`64d80a0` / [run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)
+已交付独立翻译/结果/设置/历史窗口、直接翻译操作及菜单栏工作流，
+不是原诊断窗口。真实Swift编译、36项产品模型/5项原生渲染、14张截图及同包三系统验证通过。
+下一源码正在接结果动作，随后仍有词典和P3–P6，见[当前实施清单](MACOS_TODO.md#native-product-ui)。
 界面采用现有SwiftUI/AppKit与系统语义色，不改成HTML/WebView原型。
 
-当前已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
+前置协议检查点已修复官方启动通知的`emittedAtMs`被native envelope误拒绝的问题：
 源码`3ee680a98141badc8b7499eff6716c7223aa41d4` /
 [run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)。
 官方0.146.0/0.154.0在Mac producer均实际通过版本读取及native prewarm，
 严格仅initialize/initialized/hooks/list，无thread/turn/账号/模型调用。
 正常Windows完整hook1573、同包三系统各190process/478core/13Foundation通过，
 完整App已独立核验；这不是要求用户反复改安装，详见[协议检查点](MACOS_TODO.md#codex-protocol-checkpoint)。
-当前[下载包及步骤](#native-translation-user-check)已切换到本次修复；旧3ef包不覆盖本缺陷。
+当前[下载包及步骤](#native-translation-user-check)已切换到上述正式界面包，保留协议修复。
 2026-09-16 本轮交接后用户确认翻译通过、目前测试可用，翻译主流程已有实际使用的正向反馈。
 以此为可用基线继续开发；无需为继续正常使用重复版本/权限前置检查，扩展验证另行安排。
 
@@ -655,63 +656,48 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 
 <a id="native-translation-user-check"></a>
 
-### 当前 native 翻译开发包：下一轮最小用户操作
+### 当前正式原生界面开发包：下载与使用
 
-这是通知时间戳协议修复后的固定候选包，**没有继承下方旧包实机报告**。现已用同一个App在免费
-macOS15.7.9/14.8.9/26.6.2 arm64执行合成端到端；另在producer实际检查官方0.146.0/0.154.0
-二进制的`--version`及native预热握手，严格禁止thread/start和turn/start。
-官方账号/模型与GUI操作不属于上述自动化证据；本轮交接后已另收到用户翻译通过的实测反馈，
-不将该简短反馈扩大为完整GUI/TCC或所有模型兼容性验收。
+这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
+同一个App已在免费macOS15.7.9/14.8.9/26.6.2 arm64完成合成端到端；
+producer另通过真实原生模型/渲染测试和14张截图检查。
+旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`3ee680a98141badc8b7499eff6716c7223aa41d4`；
-  [run35103974280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280)；
-  [artifact10449458171](https://github.com/mclight-ship-it/cc-translate/actions/runs/35103974280/artifacts/10449458171)。
-- 内层`CCTranslateMac-P0.zip`：18,504,081 bytes；
-  SHA-256 `f9022a0474c10476444696f3d89052be8b3596bd2a9cf0adc17db3d81cb5e10f`。
-  artifact保留到2026-09-23T13:54:28Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`64d80a0a93b8df9eb22299c5d1b52b9cd1a98f88`；
+  [run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456888448)；
+  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456432367)。
+- 内层`CCTranslateMac-P0.zip`：18,699,652 bytes；
+  SHA-256 `ad375c545ce0d192130877f82c90d70e5af8ea68061f4973103f343ecba055b5`。
+  artifact保留到2026-09-23T16:08:07Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包**有显式native调用能力**，不再是只有fixture；但不是完整翻译产品，也未验证真实账户可用。
+  本包已有正式翻译、结果、设置和历史界面；完整移植仍在继续，尚无词典优先首屏或完整结果动作。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
-**最小顺序：**
-
-如果刚在3ef版本兼容包遇到提交前协议错误，只需正常退出并换成本新包，保留现有符合要求的CLI、
-路径和账号；不要重复安装或登录。版本探针与上一包外观相同，以固定来源/内层hash确认拿到新包，
-然后按第3–4步主动测试一条无敏感内容的合成翻译；无需为本修复重新申请AX/OCR权限。
+**正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
 
 1. 从固定artifact取出内层zip，用系统`/usr/bin/shasum -a 256`只读校验上述内层值。
    先退出旧Mac测试App；如“应用程序”里有同名包，停止并自行妥善移开旧测试副本，不覆盖正在运行的包。
    解压内层并从Finder正常打开。仅适用的未识别/未公证提示，可由用户按Apple官方单App
    “系统设置 → 隐私与安全性 → 仍要打开”流程决定；恶意软件、损坏/修改、组织策略或没有该入口时停止。
    不清quarantine、关闭Gatekeeper/SIP、重签或运行包内二进制。
-2. 顶部应仅出现`CC Dev`，不自动弹窗、申请权限或调用模型。
-   `Open input / diagnostics...` → `Bundled core` → `Start bundled helper`，
-   先做synthetic fixture、offline及明确点击HTTPS探针；这是诊断，不是翻译。
-   完成后`Stop helper`，不把同一连接同时当诊断和native业务。
-3. **只有用户愿意使用其CLI账号时才继续。**使用官方稳定Codex CLI `>= 0.146.0`，
-   无需把现有新版降级到0.146.0。先停止旧连接，再在`CLI locator`选择Codex及实际可执行文件，
-   明确点击`Run selected --version (5s limit)`。新包显示`Detected Codex version`及
-   `Version policy`，满足最低要求时为`meets minimum`；只显示数字版本/固定分类，不显示原始输出。
-   `too old`、`prerelease`、`unrecognized`分别处理，不把无法识别说成版本太旧。
-   若仍只看到旧版“All CLI output discarded”而没有版本字段，先确认打开的是这个新包。
-   探针不证明登录/模型权限或协议兼容。已有合适CLI就保留；安装/登录由用户按官方流程完成，
-   不一律要求Node/Homebrew，不在聊天交凭据，不由测试包自动安装或登录。
-4. `Translate` → `Enable native Codex`。这一步明确创建本App的Application Support状态，
-   加载设置但不调用模型。使用一段自行输入的合成短句；明确点击`Translate`会使用该CLI账号，
-   可能产生模型费用，仅在用户愿意时执行。观察流式结果/固定错误；`Copy result`只在点击时写剪贴板。
-   错误、超时或unknown不要自动/反复重发。版本过旧为`provider_version_unsupported`，
-   无法识别为`provider_version_unreadable`，预发布为`provider_version_prerelease`；
-   这些真实版本预检失败未提交模型。协议错误若带submitted，不能假称未执行或建议重放。
-5. 如需同轮验证状态：关闭history开关，等保存及读回完成后再发一条合成请求；
-   历史不应新增。重新开启、完成一条后在History读取，再退出重开核对。清空需明确确认，
-   会请求取消当前翻译；已开始写入不能倒退，但清空操作等待该写入。只使用合成内容。
-6. 最后集中做权限/焦点：先在诊断中分别请求AX/Input Monitoring并用TextEdit合成选区验证三态；
-   native已启用时，可用菜单`Translate current AX selection`。被动Cmd+C翻译需在Permissions/AX
-   另外开启选区翻译开关；确认用户复制仍正常，AX unknown不读旧剪贴板。
-   屏幕按钮仍是同帧本地OCR，不上传/自动翻译。拒绝权限、IME/Spaces/多屏可另集中复验，
-   不把本轮自动化当这些真人结果。
+2. 菜单栏显示`CC`，点`Translate… / 翻译…`打开输入/结果双栏窗口。
+   打开窗口会连接随包helper、读取设置，但不会调用模型；不需要Start、Enable或先保存一遍设置。
+   如果CLI没有自动找到，按提示在Settings选一次现有Codex可执行文件，之后记住。
+   即使暂时没有CLI，设置与历史仍可打开；版本检查收在可选详情里，不是正常使用步骤。
+3. 输入文字，选择方向/模式，点`Translate / 翻译`或Cmd+Return。
+   这是明确使用所选CLI账号的模型请求，可能计费；测试时使用无敏感内容的短句。
+   支持流式结果、取消、选择文字、复制、复制双语；重新翻译明确不使用缓存。
+   结果未知或可能已提交时不自动重放；不要把unknown理解成未执行或未计费。
+4. History可分页、搜索已加载记录、复用及确认清空；Settings可保存中英语言、系统/浅/深色、
+   默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
+   搜索目前只覆盖已加载页，不冒充全库搜索。普通关闭窗口不退出，菜单可召回结果。
+5. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
+   Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
+   截图仍是本地OCR诊断，尚未接完整截图翻译；IME、VoiceOver、Spaces/多屏和TCC可集中补验，
+   不阻止继续开发其他功能。
 
 **失败只回报脱敏摘要：**固定source/run、芯片/系统版本、内层hash MATCH/MISMATCH、
 发生步骤、App版本探针显示的数字版本/固定分类、固定错误码、

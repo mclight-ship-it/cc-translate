@@ -39,13 +39,13 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 2026-09-16 用户已确认普通翻译链路成功，同时明确指出产品界面尚未完成，要求继续按计划实施。
 此前“正常使用”的交接过早：可用的是后端链路，不是全部Mac产品。当前进入P2，未完成P2–P6。
 
-- [ ] 独立原生翻译窗口：输入/结果、方向选择、一键翻译、流式取消、双语复制/重新翻译，
+- [x] 独立原生翻译窗口：输入/结果、方向选择、一键翻译、流式取消、双语复制/重新翻译，
   默认不再进入诊断页，不要求手动Start/Enable/Save一串前置步骤。
-- [ ] 菜单栏入口、可选择/复制的稳定结果浮窗、结果召回、关闭窗口不退出。
-- [ ] 独立设置/历史界面：记住CLI选择、自动定位、中英语言/系统深浅色、历史分页追加/复用；
+- [x] 菜单栏入口、可选择/复制的稳定结果浮窗、结果召回、关闭窗口不退出。
+- [x] 独立设置/历史界面：记住CLI选择、自动定位、中英语言/系统深浅色、历史分页追加/复用；
   诊断移到次级独立连接，不干扰已经跑通的翻译。
-- [ ] 原生模型状态测试及真实SwiftUI渲染截图；同包Mac构建验证后再记录具体源码/制品，
-  不把HTML示意图或旧后端绿色当成新界面证据。
+- [x] 原生模型状态测试及真实SwiftUI渲染截图、同包Mac构建验证，具体源码/制品见下；
+  不把HTML示意图或旧后端绿色当成新界面证据；手工键盘/VoiceOver/TCC仍待扩展。
 - [ ] 后续继续P2词典优先首屏、解释/摘要等完整结果动作，再补P3截图/管理/全部功能矩阵；
   不因本界面切片结束而把整个移植标完成。
 
@@ -70,6 +70,37 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 检查确认仅换buttonStyle不足：SwiftUI的Return快捷键仍让按钮进入默认动作配色。
 Cmd+Return改走标准AppKit菜单命令，按钮不再被SwiftUI隐式当作默认Return动作；
 菜单只在输入窗口可提交且IME不在组词时启用，原可读性断言继续保留。
+
+**正式界面切片已验证：**源码`64d80a0a93b8df9eb22299c5d1b52b9cd1a98f88` /
+[run35118820999](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999)，
+实际watch退出0，API核对attempt1、3jobs/35steps全部success。
+正常privacy/full hook1573/80.780s；producer portable676/10.603s；
+全部Swift编译36.95s，154项中141通过、13项既定构包前可选skip，
+其中新36项产品模型及5项原生渲染均通过。14张真实合成数据PNG中，
+浅色/深色主界面及660×540最小尺寸已实际查看；浅色Translate可读性OCR断言通过。
+这不是HTML示意图，也不冒充真人IME/键盘/VoiceOver、Finder/TCC或真实账号模型验证。
+
+| 同一App的执行系统 | 真实合成进程 | 核心 | 构包后Foundation |
+|---|---|---|---|
+| 15.7.9 / Xcode16.4 producer | 190，零fail/error/skip | 478，storage fixture通过 | 13，零fail/skip |
+| 14.8.9 / Xcode16.2 | 190，零fail/error/skip | 478，storage fixture通过 | 同13方法，零fail/skip |
+| 26.6.2 / Xcode26.6 | 190，零fail/error/skip | 478，storage fixture通过 | 同13方法，零fail/skip |
+
+[完整App artifact10456888448](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456888448)
+已独立读取内层archive并比对Git源码字节、资源、许可及Mach-O头：
+18,699,652 bytes；SHA-256
+`ad375c545ce0d192130877f82c90d70e5af8ea68061f4973103f343ecba055b5`；
+tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
+684库存/74资源/46Core路径（45唯一）/6实际arm64 Mach-O/19运行时许可/14 required覆盖。
+605个保留Python普通文件与另加的自有process-support dylib分别计数，不混为上游运行时。
+三系统archive/tree相同、包未修改，HTTPS证书/SQLite/取消/EOF/临时清理报告均通过。
+官方0.146.0/0.154.0预热仍只调用initialize/initialized/hooks/list，无账号/模型调用。
+[14张原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35118820999/artifacts/10456432367)
+另存独立制品。没有新增独立reviewer签收；实现/测试代理不冒充独立审查。
+
+后续结果动作的Python/Swift接线正在下一源码中实施；**本包不包含尚未提交的结果动作**。
+词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
+不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
 <a id="codex-protocol-checkpoint"></a>
 
