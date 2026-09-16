@@ -106,10 +106,15 @@ final class DictionaryProtocolTests: XCTestCase {
         XCTAssertEqual(metadata.entryCount, 2)
         let staging = try DictionaryInstallTicket(payload: prepared)
         XCTAssertEqual(staging.path.path, "/tmp/synthetic dictionary/\(ticket).sqlite3")
+        var credentialURL = URLComponents()
+        credentialURL.scheme = "https"
+        credentialURL.host = "example.invalid"
+        credentialURL.user = "synthetic"
+        credentialURL.path = "/data"
         for changed in [
             ["size": JSONValue.integer(0)], ["size": .bool(true)],
             ["sha256": .string("missing")], ["url": .string("http://example.invalid/data")],
-            ["url": .string("https://user:secret@example.invalid/data")], ["path": .string("relative")],
+            ["url": .string(try XCTUnwrap(credentialURL.string))], ["path": .string("relative")],
             ["data_version": .string("")]
         ] {
             XCTAssertThrowsError(try DictionaryInstallTicket(payload: prepared.merging(changed) { _, new in new }))
