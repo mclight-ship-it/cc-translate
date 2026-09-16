@@ -221,7 +221,8 @@ final class ProductRenderingTests: XCTestCase {
         for row in model.historyPage {
             for scheme in [ColorScheme.light, .dark] {
                 let png = try render(
-                    HistoryTranslationDetail(model: model, row: row, useEntry: {}),
+                    HistoryTranslationDetail(model: model, row: row, useEntry: {})
+                        .background(Color(nsColor: .windowBackgroundColor)),
                     named: "history-detail-\(row.isLocalDictionary ? "local" : "ai")-\(scheme == .light ? "light" : "dark")",
                     size: NSSize(width: 650, height: 500), scheme: scheme, inspect: { host in
                         let expected = row.isLocalDictionary ? local : "Model meaning\n\nReadable model explanation."
