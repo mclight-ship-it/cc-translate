@@ -6,7 +6,8 @@ import XCTest
 @testable import CCTranslateSupport
 
 private enum DictionaryProductTestError: Error {
-    case invalidAsset, readinessTimeout, lookupFailed, viewTimeout, shutdownTimeout
+    case invalidAsset, invalidDestination, destinationExists, assetDigestMismatch
+    case readinessTimeout, lookupFailed, viewTimeout, shutdownTimeout
 }
 
 // Copies only externally supplied, pinned fixture bytes. This is not a URLSession/network measurement.
@@ -24,10 +25,16 @@ private final class PinnedDictionaryFixtureCopier: DictionaryDownloading {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: asset.path)
             guard attributes[.type] as? FileAttributeType == .typeRegular,
-                  (attributes[.size] as? NSNumber)?.int64Value == ticket.size,
-                  ticket.path.resolvingSymlinksInPath().path.hasPrefix(home.resolvingSymlinksInPath().path + "/"),
-                  !FileManager.default.fileExists(atPath: ticket.path.path) else {
+                  (attributes[.size] as? NSNumber)?.int64Value == ticket.size else {
                 throw DictionaryProductTestError.invalidAsset
+            }
+            // The reserved file does not exist yet; resolve its existing parent, as in the Foundation harness.
+            let directory = ticket.path.deletingLastPathComponent().resolvingSymlinksInPath()
+            guard directory.path.hasPrefix(home.resolvingSymlinksInPath().path + "/") else {
+                throw DictionaryProductTestError.invalidDestination
+            }
+            guard !FileManager.default.fileExists(atPath: ticket.path.path) else {
+                throw DictionaryProductTestError.destinationExists
             }
             let handle = try FileHandle(forReadingFrom: asset)
             var hash = SHA256()
@@ -41,7 +48,7 @@ private final class PinnedDictionaryFixtureCopier: DictionaryDownloading {
                 throw error
             }
             guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == ticket.sha256 else {
-                throw DictionaryProductTestError.invalidAsset
+                throw DictionaryProductTestError.assetDigestMismatch
             }
             try FileManager.default.copyItem(at: asset, to: ticket.path)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ticket.path.path)
@@ -136,9 +143,10 @@ final class DictionaryProductIntegrationTests: XCTestCase {
             }
             model.dictionary.download()
             guard await eventually(timeout: 65, {
-                model.dictionary.status?.state == .ready && model.dictionary.status?.enabled == true &&
-                    !model.dictionary.busy && model.settingsReady && !model.settingsBusy
-            }) else {
+                copier.failure != nil ||
+                    (model.dictionary.status?.state == .ready && model.dictionary.status?.enabled == true &&
+                     !model.dictionary.busy && model.settingsReady && !model.settingsBusy)
+            }), copier.failure == nil else {
                 XCTFail("Pinned fixture setup failed: \(model.dictionary.messageEnglish); \(String(describing: copier.failure))")
                 throw DictionaryProductTestError.readinessTimeout
             }
