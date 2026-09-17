@@ -209,6 +209,35 @@ UTF-8用Swift解码再逐字节回验，保留literal U+FEFF并拒绝非法序�
 原46方法及已有断言保留，编码矩阵8→11、非法UTF-8矩阵1→6，并增加相反表示顺序的双item场景；
 新源码尚待实际Mac编译和执行。下次同App消费者也将运行7项新复制读取测试，不只在producer运行。
 
+上述接线已提交为`c7745ec924d057c9a1cfaf8dae7772ebd8950d9d`，
+[run35284938518](https://github.com/mclight-ship-it/cc-translate/actions/runs/35284938518)
+实际watch退出1：producer和同App macOS14完整通过，macOS26被后台promise线程警告检查拦截。
+**这次不是功能断言失败：**三个系统的46项纯文本粘贴及7项新复制读取都各自实际通过，
+UTF-8前缀/多编码/真实provider回调身份没有再出现此前失败；但15和26各记录4条
+`NSPasteboard: synchronous promise fulfillment requested from a background thread`。
+14没有该警告、报告`passed/complete`；26报告`NOT PASSED/plain-text-paste-harness`，
+finally的`bundle_unchanged=true`仍不代表完成后置审计。继续核实并修正AppKit线程用法，
+不通过删除警告检查或让主界面等待阻塞provider来冒充解决。
+
+producer编译53.03s，653项Swift/23构包前skip/0fail/347.912s；37项新P2与18项来源方法
+逐一核对本次原始日志，start/pass均各一次。portable882/16.627s；
+三系统process/core/Foundation为：
+
+| 系统 | process | core | Foundation |
+|---|---:|---:|---:|
+| 15 | 232/521.880s | 648/5.461s | 21/189.444s |
+| 14 | 232/495.082s | 648/5.204s | 21/176.658s |
+| 26 | 232/534.176s | 648/5.065s | 21/193.642s |
+
+46项粘贴耗时15/14/26为0.390/0.191/0.611s，7项新读取为0.054/0.055/0.068s，均零失败。
+正常privacy/full hook1825/95.034s通过，没有借重试声称修复旧Windows间歇访问拒绝。
+完整工程App artifact10524287554已独立核验：19,404,250 bytes，
+archive `288ce7589c31ef8efdf81faffbf3d13c132b2a0d92f8c7881aaad6a5076f23e3`，
+tree `4a4615a9b15d2cc2f0bf22615c5610fe2454c17aebe814f65d3aa28c7b1692d5`；
+690库存/80资源/52源码路径（51唯一）/6实际Mach-O/19许可，27文件同源harness。
+112张本源码PNG清单/尺寸/CRC通过，已直接查看中文来源弹窗及仅输出历史。
+14/26小报告artifact10524398847/10525096426及原始日志保留，**未推广为推荐包**。
+
 <a id="native-dictionary-sources-checkpoint"></a>
 
 ### 词典来源与许可按钮：18项新增原生测试通过，完整新包仍待验收
@@ -265,7 +294,9 @@ Windows编辑器没有发现可执行native测试，不称为Mac编译通过。
 支持UTF-8/UTF-16/TSV/Mac Roman，不再限定仅UTF-8。最终UTF-8仍最多8192字节，
 原始预算16386字节包含UTF-16的BOM，带/不带BOM均允许8192个ASCII字符。
 7个原读取方法扩展原字节、编码、相反表示顺序、非法序列和边界回归，库存不再增加。
-之后仍需实际原生编译、方法发现及同包验收；不是全局快捷键/TCC真人验收。
+上述c7745ec已实际编译并执行37项新增方法；两个消费者的7项私有剪贴板读取均通过。
+15状态机/8监听/7App方法的证据来自producer，不冒充三系统全部重复执行。
+完整包仍受主动粘贴的线程警告问题阻挡；不是全局快捷键/TCC真人验收。
 
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；

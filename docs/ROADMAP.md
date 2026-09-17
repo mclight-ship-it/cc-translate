@@ -98,10 +98,15 @@ producer和同App14完整通过；26仅粘贴阶段仍有C promise身份错误�
 说明固定优先级不足，原断言继续保留并修复。237完整App已独立审计，仍不推荐；
 同包三系统232process/648core/21Foundation全部通过，不拿独立阶段替代整体验收。
 P2双Cmd+C关联回退另有37项新原生测试，父已审阅并接上共享多编码读取、
-同包consumer私有剪贴板验证，离线回归68通过；它未完成Mac编译/验收，不在237的App中。
+同包consumer私有剪贴板验证，离线回归68通过；实际Mac结果见下，不在237的App中。
 237的26失败进一步归因已更正：case5读取完整25字节UTF-8，前缀丢失在Foundation解码，
 不是取了UTF-16别名。后续共享解码采用Swift逐字节回验，promise测试改用真实AppKit
 回调身份检查，原46方法和C eager字节oracle保留；同包消费者新增7项fresh-copy读取验证。
+接线源码c7745ec/run35284938518已实际运行：653原生测试/23构包前skip/零失败，
+37项新P2和18项来源方法各自真实通过；同App三系统的46粘贴/7新读取也均通过。
+不过15/26出现后台AppKit promise线程警告，26被原有检查拒绝，完整run退出1；
+14完成全部后置审计。继续修线程用法，不删警告检查冒充解决；工程包未替换推荐包。
+同时继续P3原生文字大小设置，默认保持现有字号，覆盖主界面/历史/截图；该后续实现不在c7745ec中。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
