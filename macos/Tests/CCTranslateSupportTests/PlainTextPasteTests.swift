@@ -223,8 +223,10 @@ private final class PastePromiseState {
         case .replaceOwner:
             let clear = PasteboardClear(board)
             guard clear == noErr else { return clear }
+            _ = PasteboardSynchronize(board)
             let put = PasteboardPutItemFlavor(board, item, "public.utf8-plain-text" as CFString,
                                              Data("new provider owner".utf8) as CFData, PasteboardFlavorFlags(rawValue: 0))
+            _ = PasteboardSynchronize(board)
             return put == noErr ? OSStatus(badPasteboardSyncErr) : put
         }
     }
@@ -907,7 +909,8 @@ final class PlainTextPasteTests: XCTestCase {
         XCTAssertTrue(text.setString("keep with file", forType: .string))
         let file = NSPasteboardItem()
         XCTAssertTrue(file.setString("file:///synthetic/never-opened.txt", forType: .fileURL))
-        try publish(board, items: [text, file])
+        board.clearContents()
+        XCTAssertTrue(board.writeObjects([text, file]))
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
