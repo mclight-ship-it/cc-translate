@@ -593,8 +593,15 @@ class TestNativeProviderProcess(unittest.TestCase):
         cancel.set()
         self.assert_failure(provider.complete(self.request(), cancel), "cancelled", submitted=False)
         self.assert_failure(provider.complete(ProviderRequest(
-            "image", "synthetic", "", "synthetic", image_paths=("synthetic.png",))),
+            "image", "synthetic", "", "synthetic",
+            image_paths=(str(self.root / "never-read.png"),)), cancel),
+            "cancelled", submitted=False)
+        self.assert_failure(provider.complete(ProviderRequest(
+            "audio", "synthetic", "", "synthetic")),
             "unsupported_task", submitted=False)
+        with self.assertRaisesRegex(ValueError, "^absolute_provider_path_required$"):
+            provider.complete(ProviderRequest(
+                "image", "synthetic", "", "synthetic", image_paths=("synthetic.png",)))
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.rpc(), [])
         self.assertFalse((self.root / "cache").exists())
