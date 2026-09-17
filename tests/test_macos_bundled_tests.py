@@ -102,6 +102,28 @@ class RuntimeTests(ProjectDirectory):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_translation_fixture_config_saves_use_distinct_wire_ids(self):
+        source = bundled_tests.test_directory("process") / "test_translation_ipc_process.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        method = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.FunctionDef) and node.name == "configure")
+        namespace = {}
+        exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
+        fixture = SimpleNamespace(configuration_index=0, fixture={"config": {"codex_model": "synthetic"}},
+                                  send_message=Mock(), terminal=Mock(return_value={"payload": {"saved": True}}),
+                                  assertEqual=self.assertEqual)
+        process = object()
+        for enabled in (True, False):
+            namespace["configure"](fixture, process, history_enabled=enabled)
+        sent = fixture.send_message.call_args_list
+        ids = [call.args[1] for call in sent]
+        self.assertEqual(len(set(ids)), 2)
+        self.assertEqual([call.args for call in fixture.terminal.call_args_list],
+                         [(process, id_) for id_ in ids])
+        self.assertEqual([call.kwargs for call in sent], [
+            {"operation": "config_save", "config": {"codex_model": "synthetic", "history_enabled": enabled}}
+            for enabled in (True, False)])
+
     def test_complete_original_suite_inventory_and_test_count_floors(self):
         self.assertEqual(bundled_tests.PROCESS_TEST_MODULES, (
             "test_codex_config_process", "test_codex_catalog_process", "test_history_owner_process",

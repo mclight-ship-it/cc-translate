@@ -126,6 +126,7 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         super().setUp()
         self.barriers = self.home
         self.fixture_index = 0
+        self.configuration_index = 0
         self.prepare()
 
     def prepare(self, scenario="normal", *, result_action=None, origin="text"):
@@ -179,9 +180,11 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
             self.assertFalse((self.root / name).exists(), name)
 
     def configure(self, process, **changes):
-        self.send_message(process, "save", "request", operation="config_save",
+        self.configuration_index += 1
+        request_id = "save-" + str(self.configuration_index)
+        self.send_message(process, request_id, "request", operation="config_save",
                           config={**self.fixture["config"], **changes})
-        self.assertEqual(self.terminal(process, "save")["payload"], {"saved": True})
+        self.assertEqual(self.terminal(process, request_id)["payload"], {"saved": True})
 
     def start(self, *, configure=True):
         process = self.spawn()
