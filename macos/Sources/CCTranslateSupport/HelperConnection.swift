@@ -216,6 +216,13 @@ public final class HelperConnection {
     }
 
     @discardableResult
+    public func modelCatalog(id: String = UUID().uuidString, timeout: TimeInterval = 40) -> String {
+        send(ClientMessage(id: id, type: "request", payload: ["operation": .string(ModelCatalogDocument.operation)]),
+             timeout: timeout)
+        return id
+    }
+
+    @discardableResult
     public func dictionary(_ request: DictionaryRequest, id: String = UUID().uuidString,
                            timeout: TimeInterval = 30) -> String {
         send(ClientMessage(id: id, type: "request", payload: request.payload), timeout: timeout)

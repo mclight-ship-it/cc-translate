@@ -109,7 +109,7 @@ final class TranslationHelperConnectionTests: XCTestCase {
     private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action"] : [])
+                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "model_catalog"] : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
@@ -692,5 +692,185 @@ final class TranslationHelperConnectionTests: XCTestCase {
         await fulfillment(of: [notices.stopped], timeout: 10)
         XCTAssertEqual(notices.failures, [.dictionaryOutcomeUnknown])
         XCTAssertEqual(notices.events.filter { $0.id == "status" }.map(\.type), ["accepted", "started"])
+    }
+
+    @MainActor
+    func testCatalogConvenienceSendsOnlyExplicitReadOnlyRequestAndAllowsLaterTranslation() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        let result: [String: JSONValue] = ["models": .array([
+            .object(["id": .string("model-e\u{0301}"), "name": .string("Synthetic"), "description": .string("")])
+        ])]
+        let script = try connectedScript("""
+        \(readLine)
+        printf '%s\\n' "$line" > "$HOME/catalog-request.json"
+        \(try emit("catalog", 0, "accepted", catalog))
+        \(try emit("catalog", 1, "started", catalog))
+        \(try emit("catalog", 2, "completed", result))
+        \(readLine)
+        \(try emit("t", 0, "accepted", operation))
+        \(try emit("t", 1, "started", operation))
+        \(try emit("t", 2, "completed", completion))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.home.appendingPathComponent("catalog-request.json").path))
+        let listed = notices.terminal("catalog")
+        XCTAssertEqual(notices.connection.modelCatalog(id: "catalog"), "catalog")
+        await fulfillment(of: [listed], timeout: 10)
+        let request = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("catalog-request.json")))
+        XCTAssertEqual(request, .object(["v": .integer(1), "id": .string("catalog"), "type": .string("request"),
+                                         "payload": .object(catalog)]))
+        let events = notices.events.filter { $0.id == "catalog" }
+        XCTAssertEqual(events.map(\.type), ["accepted", "started", "completed"])
+        XCTAssertTrue(events.allSatisfy { $0.payload["submitted"] == nil })
+        let models = try CodexModelEntry.decode(payload: XCTUnwrap(events.last?.payload))
+        XCTAssertTrue(try XCTUnwrap(models.first).matchesID("model-e\u{0301}"))
+        let translated = notices.terminal("t")
+        notices.connection.translate(text: "synthetic", appLanguage: "en_US", id: "t")
+        await fulfillment(of: [translated], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.last { $0.id == "t" }?.payload, completion)
+    }
+
+    @MainActor
+    func testCatalogFailureIsDeterminateAndNextExplicitRefreshIsNotReplayed() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        for code in ["model_catalog_failed", "model_catalog_too_large"] {
+            let script = try connectedScript("""
+            \(readLine)
+            printf '%s\\n' "$line" >> "$HOME/catalog-requests.jsonl"
+            \(try emit("catalog", 0, "accepted", catalog))
+            \(try emit("catalog", 1, "started", catalog))
+            \(try emit("catalog", 2, "failed", ["code": .string(code)]))
+            \(readLine)
+            printf '%s\\n' "$line" >> "$HOME/catalog-requests.jsonl"
+            \(try emit("refresh", 0, "accepted", catalog))
+            \(try emit("refresh", 1, "started", catalog))
+            \(try emit("refresh", 2, "completed", ["models": .array([])]))
+            \(shutdown)
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            let terminal = notices.terminal("catalog")
+            notices.connection.modelCatalog(id: "catalog")
+            await fulfillment(of: [terminal], timeout: 10)
+            XCTAssertEqual(notices.events.last { $0.id == "catalog" }?.safeFailureCode, code)
+            let refreshed = notices.terminal("refresh")
+            notices.connection.modelCatalog(id: "refresh")
+            await fulfillment(of: [refreshed], timeout: 10)
+            notices.connection.stop()
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertTrue(notices.failures.isEmpty)
+            let requests = try Data(contentsOf: context.home.appendingPathComponent("catalog-requests.jsonl"))
+                .split(separator: 10).map { try JSONValue.parse(Data($0)) }
+            XCTAssertEqual(requests.compactMap { $0.object?["id"]?.string }, ["catalog", "refresh"])
+        }
+    }
+
+    @MainActor
+    func testCatalogCancellationAndGracefulStopDrainEmptyTerminalBeforeShutdown() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("catalog", 0, "accepted", catalog))
+        \(try emit("catalog", 1, "started", catalog))
+        \(readLine)
+        \(try emit("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        \(readLine)
+        /bin/sleep 1
+        printf drained > "$HOME/catalog-drained"
+        \(try emit("catalog", 2, "cancelled"))
+        printf '%s\\n' "$line" | /usr/bin/sed 's/"type":"shutdown"/"seq":0,"type":"completed"/'
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("catalog"), terminal = notices.terminal("catalog")
+        notices.connection.modelCatalog(id: "catalog")
+        await fulfillment(of: [started], timeout: 10)
+        let cancelled = notices.terminal("cancel")
+        notices.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("catalog")]))
+        await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertFalse(notices.events.contains { $0.id == "catalog" && $0.isTerminal })
+        notices.connection.stop()
+        await fulfillment(of: [terminal, notices.stopped], timeout: 10, enforceOrder: true)
+        XCTAssertEqual(notices.events.last { $0.id == "catalog" }?.payload, [:])
+        XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("catalog-drained"), encoding: .utf8), "drained")
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testCatalogEOFAndTimeoutReportUnderlyingFailureWithoutTranslationUnknown() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        for timeout in [false, true] {
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("catalog", 0, "accepted", catalog))
+            \(try emit("catalog", 1, "started", catalog))
+            \(timeout ? "while IFS= read -r line; do :; done" : "exec 1>&-")
+            printf drained > "$HOME/catalog-drained"
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            notices.connection.modelCatalog(id: "catalog", timeout: timeout ? 0.5 : 20)
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertEqual(notices.failures, [timeout ? .requestTimeout : .helperEOF])
+            XCTAssertEqual(notices.events.filter { $0.id == "catalog" }.map(\.type), ["accepted", "started"])
+            XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("catalog-drained"), encoding: .utf8), "drained")
+        }
+    }
+
+    @MainActor
+    func testCatalogMalformedUnsolicitedAndLateCompletionNeverReachClients() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        let completed: [String: JSONValue] = ["models": .array([])]
+        for scenario in ["malformed", "unsolicited", "late"] {
+            let terminal = scenario == "late" ? try emit("catalog", 2, "cancelled") : ""
+            let result = scenario == "malformed" ? ["models": JSONValue.array([.object(["id": .string("missing")])])] : completed
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("catalog", 0, "accepted", catalog))
+            \(try emit("catalog", 1, "started", catalog))
+            \(terminal)
+            \(try emit(scenario == "unsolicited" ? "unsolicited" : "catalog", scenario == "late" ? 3 : 2, "completed", result))
+            while IFS= read -r line; do :; done
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            notices.connection.modelCatalog(id: "catalog")
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertEqual(notices.failures, [scenario == "malformed" ? .invalidPayload :
+                                                (scenario == "unsolicited" ? .invalidID : .invalidTransition)])
+            XCTAssertFalse(notices.events.contains { $0.type == "completed" })
+            XCTAssertEqual(notices.events.filter { $0.id == "catalog" && $0.isTerminal }.map(\.type),
+                           scenario == "late" ? ["cancelled"] : [])
+        }
     }
 }

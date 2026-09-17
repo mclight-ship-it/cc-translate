@@ -12,6 +12,7 @@ from cc_prompts import (
 )
 from cc_providers.base import CODEX_PROVIDER, ProviderRequest, ProviderSelection
 from cc_providers.codex_darwin import DarwinCodexProvider
+from cc_providers.codex_catalog import CatalogProbeError
 from cc_providers.darwin_process import ProcessError
 from cc_request import RequestSnapshot
 from cc_result_rules import history_kind, provider_cache_signature
@@ -255,6 +256,22 @@ class TranslationSession(ConfigurationSession):
             config = self.perform({"operation": "config_load"})["config"]
             snapshot = snapshot_for_result_action(config, payload)
         return self._execute(snapshot, None, False, cancel, on_delta, begin_finish)
+
+    def model_catalog(self, cancel, begin_finish):
+        try:
+            models = self._provider.model_catalog(cancel)
+        except CatalogProbeError as error:
+            code = str(error)
+            if code == "provider_cleanup_failed":
+                raise ConfigurationError(code) from None
+            if cancel.is_set() or code in ("cancelled", "appserver_shutdown"):
+                return "cancelled", {}
+            raise ConfigurationError(
+                "model_catalog_too_large" if code == "model_catalog_too_large"
+                else "model_catalog_failed") from None
+        if not begin_finish():
+            return "cancelled", {}
+        return "completed", {"models": models}
 
     def _execute(self, snapshot, cached, record_history, cancel, on_delta, begin_finish):
         if cancel.is_set():

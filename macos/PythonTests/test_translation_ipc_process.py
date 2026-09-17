@@ -194,6 +194,7 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.assertEqual(ready["payload"]["backend"], "native_appserver")
         self.assertIn("translate", ready["payload"]["capabilities"])
         self.assertIn("result_action", ready["payload"]["capabilities"])
+        self.assertIn("model_catalog", ready["payload"]["capabilities"])
         if configure:
             self.configure(process)
         return process
@@ -262,6 +263,230 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.send_message(process, "shutdown", "shutdown")
         self.assertEqual(self.terminal(process, "shutdown")["payload"], {})
         self.finish_helper(process)
+
+    def catalog_mode(self, mode):
+        (self.root / "catalog-mode.txt").write_text(mode, encoding="utf-8")
+
+    def catalog(self, process, id_="catalog"):
+        self.send_message(process, id_, "request", operation="model_catalog")
+
+    def catalog_calls(self):
+        path = self.root / "calls.jsonl"
+        return ([json.loads(line) for line in path.read_text().splitlines()] if path.exists() else [])
+
+    def wait_catalog_child(self, process):
+        self.assertEqual(self.receive(process)["type"], "accepted")
+        self.assertEqual(self.receive(process)["type"], "started")
+        deadline = time.monotonic() + 5
+        while not any(path.stat().st_size for path in (self.root / "children").glob("*.json")):
+            if process.poll() is not None or time.monotonic() >= deadline:
+                self.fail("Synthetic catalog child did not start.")
+            time.sleep(0.01)
+
+    def test_catalog_explicit_effective_metadata_preserves_ids_and_later_translation(self):
+        process = self.start()
+        self.no_cli()
+        before = self.path.read_bytes()
+        native_config = self.root / "home" / "config.toml"
+        native_before = native_config.read_bytes()
+        self.catalog_mode("metadata")
+        for id_ in ("catalog", "refresh"):
+            self.catalog(process, id_)
+            event = self.terminal(process, id_)
+            self.assertEqual((event["type"], event["payload"]),
+                             ("completed", {"models": native_provider_fixture.CATALOG_EXPECTED}))
+            events = [e for pid, e in self.events if pid == process.pid and e["id"] == id_]
+            self.assertEqual([(e["type"], e["seq"]) for e in events],
+                             [("accepted", 0), ("started", 1), ("completed", 2)])
+        self.assertEqual(len(self.catalog_calls()), 2)
+        self.assertTrue(all(row["args"][:2] == ["debug", "models"] for row in self.catalog_calls()))
+        self.assertFalse((self.root / "version.jsonl").exists())
+        self.assertFalse((self.root / "native-rpc.jsonl").exists())
+        self.assertFalse(self.history_path.exists())
+        self.assertFalse(list(self.root.rglob("state.json")))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(native_config.read_bytes(), native_before)
+        self.catalog_mode("normal")
+        self.request(process)
+        self.assert_completed(self.terminal(process, "translation"))
+        self.assertEqual(len(self.turns()), 1)
+        self.assertEqual(len(self.history(process)), 1)
+        self.stop(process)
+        self.assert_native_gone()
+
+    def test_catalog_empty_models_is_successful_and_later_explicit_refresh_preserves_metadata(self):
+        process = self.start()
+        self.no_cli()
+        before = self.path.read_bytes()
+        native_config = self.root / "home" / "config.toml"
+        native_before = native_config.read_bytes()
+        self.catalog_mode("empty")
+        self.catalog(process)
+        event = self.terminal(process, "catalog")
+        self.assertEqual((event["type"], event["payload"]), ("completed", {"models": []}))
+        events = [e for pid, e in self.events if pid == process.pid and e["id"] == "catalog"]
+        self.assertEqual([(e["type"], e["seq"]) for e in events],
+                         [("accepted", 0), ("started", 1), ("completed", 2)])
+        self.assertEqual(len(self.catalog_calls()), 1)
+        self.assertEqual(self.catalog_calls()[0]["args"][:2], ["debug", "models"])
+        self.assertFalse((self.root / "version.jsonl").exists())
+        self.assertFalse((self.root / "native-rpc.jsonl").exists())
+        self.assertFalse(self.history_path.exists())
+        self.assertFalse(list(self.root.rglob("state.json")))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(native_config.read_bytes(), native_before)
+        self.assert_native_gone()
+
+        self.catalog_mode("metadata")
+        self.catalog(process, "refresh")
+        event = self.terminal(process, "refresh")
+        self.assertEqual((event["type"], event["payload"]),
+                         ("completed", {"models": native_provider_fixture.CATALOG_EXPECTED}))
+        self.assertEqual(len(self.catalog_calls()), 2)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(native_config.read_bytes(), native_before)
+        self.assertEqual(self.turns(), [])
+        self.catalog_mode("normal")
+        self.request(process)
+        self.assert_completed(self.terminal(process, "translation"))
+        self.assertEqual(len(self.turns()), 1)
+        self.stop(process)
+        self.assert_native_gone()
+
+    def test_catalog_malformed_failed_and_oversized_export_are_sanitized_without_replay(self):
+        for mode in ("malformed", "wrong_shape", "bad_id", "nonzero", "oversized",
+                     "stdout_flood", "stderr_flood", "combined_flood"):
+            with self.subTest(mode=mode):
+                self.prepare()
+                process = self.start()
+                before = self.path.read_bytes()
+                self.catalog_mode(mode)
+                self.catalog(process)
+                event = self.terminal(process, "catalog")
+                code = "model_catalog_too_large" if mode in (
+                    "oversized", "stdout_flood", "stderr_flood", "combined_flood") else "model_catalog_failed"
+                self.assertEqual((event["type"], event["payload"]), ("failed", {"code": code}))
+                self.assertNotIn("PRIVATE", json.dumps(event))
+                self.assertEqual(len(self.catalog_calls()), 1)
+                self.assertEqual(self.turns(), [])
+                self.assertFalse(self.history_path.exists())
+                self.assertEqual(self.path.read_bytes(), before)
+                self.assert_native_gone(descendant=mode.endswith("flood"))
+                self.catalog_mode("metadata")
+                self.catalog(process, "retry")
+                self.assertEqual(self.terminal(process, "retry")["payload"],
+                                 {"models": native_provider_fixture.CATALOG_EXPECTED})
+                self.assertEqual(len(self.catalog_calls()), 2)
+                self.catalog_mode("normal")
+                self.request(process)
+                self.assert_completed(self.terminal(process, "translation"))
+                self.stop(process)
+                self.assert_native_gone(descendant=mode.endswith("flood"))
+
+    def test_catalog_cancel_eof_and_shutdown_drain_owned_group_without_submitting(self):
+        for exit_kind in ("cancel", "eof", "shutdown"):
+            with self.subTest(exit_kind=exit_kind):
+                self.prepare()
+                process = self.start()
+                self.catalog_mode("timeout")
+                self.catalog(process)
+                self.wait_catalog_child(process)
+                if exit_kind == "cancel":
+                    self.send_message(process, "cancel", "cancel", request_id="catalog")
+                    self.assertEqual(self.terminal(process, "cancel")["payload"], {"cancel_requested": True})
+                elif exit_kind == "eof":
+                    process.stdin.close()
+                    process.stdin = None
+                else:
+                    self.send_message(process, "shutdown", "shutdown")
+                event = self.terminal(process, "catalog")
+                self.assertEqual((event["type"], event["payload"]), ("cancelled", {}))
+                self.assertEqual(self.turns(), [])
+                self.assertEqual(len(self.catalog_calls()), 1)
+                self.assertFalse(self.history_path.exists())
+                self.assert_native_gone(descendant=True)
+                if exit_kind == "cancel":
+                    self.catalog_mode("normal")
+                    self.request(process)
+                    self.assert_completed(self.terminal(process, "translation"))
+                    self.stop(process)
+                else:
+                    if exit_kind == "shutdown":
+                        self.assertEqual(self.terminal(process, "shutdown")["payload"], {})
+                    self.finish_helper(process)
+                self.assert_native_gone(descendant=True)
+
+    def test_catalog_prestart_cancel_never_launches_cli_or_loads_state(self):
+        self.mode = "prestart"
+        process = self.start()
+        self.catalog(process)
+        self.assertEqual(self.receive(process)["type"], "accepted")
+        self.barrier()
+        self.send_message(process, "cancel", "cancel", request_id="catalog")
+        self.assertEqual(self.receive(process)["payload"], {})
+        self.assertEqual(self.receive(process)["payload"], {"cancel_requested": True})
+        self.release()
+        self.stop(process)
+        self.no_cli()
+        events = [event for pid, event in self.events if pid == process.pid and event["id"] == "catalog"]
+        self.assertEqual([event["type"] for event in events], ["accepted", "cancelled"])
+
+    def test_catalog_timeout_drains_without_automatic_retry_and_fresh_request_succeeds(self):
+        process = self.start()
+        self.catalog_mode("timeout")
+        self.catalog(process)
+        self.wait_catalog_child(process)
+        # The existing line reader has an eight-second limit too; allow the
+        # owned probe's eight-second deadline plus cleanup to finish inside it.
+        time.sleep(2)
+        event = self.terminal(process, "catalog")
+        self.assertEqual((event["type"], event["payload"]), ("failed", {"code": "model_catalog_failed"}))
+        self.assert_native_gone(descendant=True)
+        self.assertEqual(len(self.catalog_calls()), 1)
+        self.assertEqual(self.turns(), [])
+        self.catalog_mode("normal")
+        self.catalog(process, "retry")
+        self.assertEqual(self.terminal(process, "retry")["type"], "completed")
+        self.assertEqual(len(self.catalog_calls()), 2)
+        self.stop(process)
+        self.assert_native_gone(descendant=True)
+
+    def test_catalog_does_not_depend_on_application_state_or_new_version_gate(self):
+        process = self.start()
+        self.path.write_bytes(b"PRIVATE_INVALID_CONFIG")
+        self.history_path.write_bytes(b"PRIVATE_INVALID_HISTORY")
+        (self.root / "version-output.bin").write_bytes(b"not a CLI version")
+        self.catalog_mode("metadata")
+        self.catalog(process)
+        event = self.terminal(process, "catalog")
+        self.assertEqual(event["payload"], {"models": native_provider_fixture.CATALOG_EXPECTED})
+        self.assertEqual(self.path.read_bytes(), b"PRIVATE_INVALID_CONFIG")
+        self.assertEqual(self.history_path.read_bytes(), b"PRIVATE_INVALID_HISTORY")
+        self.assertFalse((self.root / "version.jsonl").exists())
+        self.assertFalse((self.root / "native-rpc.jsonl").exists())
+        self.assertEqual(len(self.catalog_calls()), 1)
+        self.stop(process)
+        self.assert_native_gone()
+
+    def test_catalog_cancel_while_waiting_for_translation_lock_never_starts_export(self):
+        self.prepare("gated")
+        process = self.start()
+        self.request(process)
+        self.until_delta(process)
+        before = self.catalog_calls()
+        self.catalog(process)
+        self.assertEqual(self.receive(process)["type"], "accepted")
+        self.assertEqual(self.receive(process)["type"], "started")
+        self.send_message(process, "cancel-catalog", "cancel", request_id="catalog")
+        self.assertEqual(self.terminal(process, "cancel-catalog")["payload"], {"cancel_requested": True})
+        event = self.terminal(process, "catalog")
+        self.assertEqual((event["type"], event["payload"]), ("cancelled", {}))
+        self.assertEqual(self.catalog_calls(), before)
+        self.send_message(process, "cancel-translation", "cancel", request_id="translation")
+        self.assertEqual(self.terminal(process, "cancel-translation")["payload"], {"cancel_requested": True})
+        self.assertEqual(self.terminal(process, "translation")["type"], "cancelled")
+        self.stop(process)
+        self.assert_native_gone(descendant=True)
 
     def test_ocr_text_routes_keep_classification_and_record_ocr_without_local_or_history_cache(self):
         for scenario in ("normal", "dictionary", "code", "summary"):

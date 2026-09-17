@@ -54,6 +54,7 @@ final class ProbeModel: ObservableObject {
         didSet { if !loadingConfiguration { modelEdited = true } }
     }
     @Published private(set) var modelSettings = CodexModelSettings()
+    @Published private(set) var modelCatalog = ModelCatalogState()
     @Published var translatePassiveSelections = false
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
@@ -80,12 +81,15 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var hasNextHistoryPage = false
     @Published private(set) var permissions = "Not checked."
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
-    @Published var cliName = "codex"
+    @Published var cliName = "codex" {
+        didSet { if cliName != oldValue { invalidateModelCatalogScope() } }
+    }
     @Published private(set) var candidates: [CLICandidate] = []
     @Published private(set) var cliChangeDeferred = false
     @Published var selectedCLI = "" {
         didSet {
-            if selectedCLI != oldValue {
+            if !CodexModelSettings.sameID(selectedCLI, oldValue) {
+                if !modelCatalog.matches(scope: selectedCLI) { invalidateModelCatalogScope() }
                 cliStatus = "Selection changed; not executed. Run --version explicitly. Authentication: unknown."
                 if connected && connectionMode != .diagnostic && !locatingForUpgrade {
                     if dictionary.ownsInstallation {
@@ -195,6 +199,14 @@ final class ProbeModel: ObservableObject {
     private var plainPasteRestoreStarted = false
     private var plainPasteConfigAfterStop = false
     private var plainPasteReconcileOnLoad = false
+    private var catalogReconnectIntent: UUID?
+    private var advancingCatalog = false
+    private var catalogSupported = false
+    private var catalogNeedsReconnect = false
+    private var catalogWasLastRequest = false
+    private var catalogPreservesPreparation = false
+    private(set) var catalogShutDown = false
+    private var connectedCLI = ""
     private let preferences: UserDefaults?
     private let persistsPreferences: Bool
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
@@ -294,7 +306,10 @@ final class ProbeModel: ObservableObject {
         dictionaryObservation = dictionary.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         plainPasteObservation = self.plainPaste.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         self.plainPaste.onDrained = { [weak self] in
-            DispatchQueue.main.async { [weak self] in self?.notifyStoppedIfIdle() }
+            DispatchQueue.main.async { [weak self] in
+                self?.resumeModelCatalog()
+                self?.notifyStoppedIfIdle()
+            }
         }
         dictionary.onSettled = { [weak self] in
             self?.flushPlainPastePreference()
@@ -336,7 +351,8 @@ final class ProbeModel: ObservableObject {
     func openProduct() {
         loadPresentation()
         if connected {
-            if connectionMode == .diagnostic || error != nil {
+            if connectionMode == .diagnostic || error != nil ||
+                (catalogNeedsReconnect && !dictionary.ownsInstallation) {
                 openAfterStop = true
                 stopHelper(preservePendingHistory: true)
             }
@@ -419,10 +435,15 @@ final class ProbeModel: ObservableObject {
         startConnection(mode: .translation)
     }
 
-    private func startConnection(mode: ConnectionMode) {
+    private func startConnection(mode: ConnectionMode, preserveProduct: Bool = false) {
         guard connection == nil else { return }
         do {
             let runtime = try runtimeProvider()
+            if preserveProduct {
+                guard modelCatalog.pending, modelCatalog.matches(scope: selectedCLI),
+                      !catalogShutDown else { return }
+            }
+            let command = selectedCLI
             connectionID = UUID()
             let id = connectionID
             let connection = makeConnection { [weak self] notice in
@@ -431,14 +452,22 @@ final class ProbeModel: ObservableObject {
                     self.receive(notice)
                 }
             }
+            if preserveProduct {
+                guard modelCatalog.pending, modelCatalog.matches(scope: selectedCLI),
+                      CodexModelSettings.sameID(command, selectedCLI), !catalogShutDown else { return }
+            }
             self.connection = connection
             error = nil
             stopping = false
             connected = true
             connectionMode = mode
             nativeTranslation = mode == .translation
+            connectedCLI = mode == .translation ? command : ""
+            catalogSupported = false
+            catalogNeedsReconnect = false
+            catalogPreservesPreparation = preserveProduct
             settingsReady = false
-            if mode == .diagnostic || primaryResult.isEmpty { output = "" }
+            if !preserveProduct && (mode == .diagnostic || primaryResult.isEmpty) { output = "" }
             activeAction = nil
             latest.select(nil)
             status = "Starting bundled isolated Python; waiting for ready..."
@@ -450,7 +479,7 @@ final class ProbeModel: ObservableObject {
                 environment["PATH"] = CLILocator.searchPath + inheritedPath
                 connection.startTranslation(
                     runtime: runtime, home: home,
-                    codexCommand: URL(fileURLWithPath: selectedCLI), environment: environment)
+                    codexCommand: URL(fileURLWithPath: command), environment: environment)
             } else if mode == .configuration {
                 connection.startConfiguration(runtime: runtime,
                                               home: homeDirectory ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
@@ -458,19 +487,21 @@ final class ProbeModel: ObservableObject {
                 connection.start(runtime: runtime)
             }
         } catch let error as ProbeError {
+            if modelCatalog.pending { modelCatalog.fail(.connection) }
             plainPaste.connectionLost()
             self.error = error
             status = "Cannot start: \(error.rawValue). No host Python fallback."
-            failPreparation(status)
+            if !preserveProduct { failPreparation(status) }
             if queuedHistory != nil {
                 failHistory(text("History helper could not start (\(error.rawValue)). Refresh explicitly.",
                                  "历史记录助手无法启动（\(error.rawValue)），请手动刷新。"))
             }
         } catch {
+            if modelCatalog.pending { modelCatalog.fail(.connection) }
             plainPaste.connectionLost()
             self.error = .launchFailed
             status = "Cannot start bundled helper. No host Python fallback."
-            failPreparation(status)
+            if !preserveProduct { failPreparation(status) }
             if queuedHistory != nil {
                 failHistory(text("History helper could not start. Refresh explicitly.",
                                  "历史记录助手无法启动，请手动刷新。"))
@@ -493,6 +524,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func translate(origin: String = "text", useCache: Bool = true) {
+        catalogWasLastRequest = false
         loadPresentation()
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf8.count <= 8192 else {
             failPreparation(text("Enter some text (up to 8192 UTF-8 bytes).",
@@ -513,6 +545,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func performResultAction(_ action: ResultAction, targetLanguage: String? = nil) {
+        catalogWasLastRequest = false
         guard !active, !preparing else {
             productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
             return
@@ -564,7 +597,7 @@ final class ProbeModel: ObservableObject {
                                       id: id, timeout: 25)
             return
         }
-        if cliChangeDeferred {
+        if cliChangeDeferred || catalogNeedsReconnect {
             if dictionary.ownsInstallation {
                 productMessage = text("Waiting for the dictionary operation before using the selected Codex. You can cancel the download.",
                                       "等待词典操作完成后使用所选 Codex。你可以取消下载。")
@@ -664,6 +697,7 @@ final class ProbeModel: ObservableObject {
     }
 
     private func resumeDeferredCLIConnection() {
+        if !cliChangeDeferred { resumeModelCatalog() }
         guard cliChangeDeferred, !dictionary.busy, !dictionary.ownsInstallation,
               dictionary.phase != .unknown, !active, !preparing, draft == nil,
               ready, !settingsBusy, !stopping else { return }
@@ -711,6 +745,136 @@ final class ProbeModel: ObservableObject {
     func setCustomModelEditing(_ editing: Bool) { modelSettings.setEditing(editing) }
 
     func resetCustomModelDraft() { modelSettings.resetDraft(selection: modelProfile) }
+
+    func modelChoices(selection: String) -> [String] {
+        modelCatalog.choices(addingTo: modelSettings.choices(selection: selection), scope: selectedCLI)
+    }
+
+    func discoveredModel(_ id: String) -> DiscoveredCodexModel? {
+        guard modelCatalog.matches(scope: selectedCLI) else { return nil }
+        return modelCatalog.models.first { CodexModelSettings.sameID($0.id.value, id) }
+    }
+
+    func refreshModels() {
+        guard !modelCatalog.busy, !catalogShutDown else { return }
+        loadPresentation()
+        modelCatalog.begin(scope: selectedCLI)
+        resumeModelCatalog()
+    }
+
+    func cancelModelCatalog() {
+        guard modelCatalog.busy else { return }
+        let request = modelCatalog.cancel()
+        catalogReconnectIntent = nil
+        if let request, let connection, !stopping {
+            connection.send(ClientMessage(id: UUID().uuidString, type: "cancel",
+                                          payload: ["request_id": .string(request)]))
+        }
+    }
+
+    private func invalidateModelCatalogScope() {
+        catalogReconnectIntent = nil
+        guard modelCatalog.scope != nil || modelCatalog.busy else { return }
+        let request = modelCatalog.phase == .failed(.cliChanged) ? nil : modelCatalog.requestID
+        modelCatalog.fail(.cliChanged)
+        if let request, let connection, !stopping {
+            connection.send(ClientMessage(id: UUID().uuidString, type: "cancel",
+                                          payload: ["request_id": .string(request)]))
+        }
+    }
+
+    private func resumeModelCatalog() {
+        guard modelCatalog.pending, !catalogShutDown, !advancingCatalog else { return }
+        if error == nil && !stopping {
+            guard !active, !preparing, !settingsBusy, !historyBusy, !dictionary.busy,
+                  !dictionary.ownsInstallation, !cliBusy, !plainPaste.serviceState.busy else { return }
+        }
+        advancingCatalog = true
+        defer { advancingCatalog = false }
+        let intent = modelCatalog.intent
+        guard cliName == "codex" else { modelCatalog.fail(.missingCLI); return }
+        if stopping {
+            catalogReconnectIntent = intent
+            modelCatalog.connecting()
+            return
+        }
+        if selectedCLI.isEmpty {
+            let located = locateCandidates("codex", userCLI["codex"])
+            guard modelCatalog.intent == intent, modelCatalog.pending, selectedCLI.isEmpty,
+                  cliName == "codex", !catalogShutDown else { return }
+            guard let candidate = located.first(where: \.executable) else {
+                modelCatalog.fail(.missingCLI)
+                return
+            }
+            modelCatalog.bind(scope: candidate.url.path)
+            candidates = located
+            locatingForUpgrade = true
+            selectedCLI = candidate.url.path
+            locatingForUpgrade = false
+            needsCLI = false
+        }
+        guard modelCatalog.intent == intent, modelCatalog.pending,
+              modelCatalog.matches(scope: selectedCLI) else { return }
+        guard candidates.contains(where: { $0.executable && CodexModelSettings.sameID($0.url.path, selectedCLI) }) else {
+            modelCatalog.fail(.missingCLI)
+            return
+        }
+        if connected && (connectionMode != .translation || error != nil || catalogNeedsReconnect ||
+                         !CodexModelSettings.sameID(connectedCLI, selectedCLI)) {
+            catalogReconnectIntent = intent
+            modelCatalog.connecting()
+            stopHelper()
+        }
+        if !connected, modelCatalog.intent == intent, modelCatalog.pending {
+            modelCatalog.connecting()
+            startConnection(mode: .translation, preserveProduct: true)
+        }
+        if modelCatalog.intent == intent, modelCatalog.pending, ready, !settingsReady,
+           !settingsBusy, !stopping, error == nil, connectionMode == .translation {
+            modelCatalog.connecting()
+            catalogPreservesPreparation = true
+            loadSettings()
+        }
+        guard modelCatalog.intent == intent, modelCatalog.pending, ready, settingsReady, !settingsBusy,
+              !stopping, error == nil, connectionMode == .translation,
+              modelCatalog.matches(scope: connectedCLI) else { return }
+        guard catalogSupported else { modelCatalog.fail(.unavailable); return }
+        guard let connection else { modelCatalog.fail(.connection); return }
+        let id = UUID().uuidString
+        modelCatalog.submit(id: id)
+        catalogWasLastRequest = true
+        connection.modelCatalog(id: id)
+    }
+
+    private func handleModelCatalog(_ event: ServerEvent) -> Bool {
+        guard modelCatalog.requestID == event.id else { return false }
+        guard event.isTerminal else { return true }
+        switch event.type {
+        case "completed":
+            do {
+                let rows = try CodexModelEntry.decode(payload: event.payload).map {
+                    DiscoveredCodexModel(id: .init(value: $0.id), name: $0.name, description: $0.description)
+                }
+                modelCatalog.finish(id: event.id, models: rows)
+            } catch {
+                modelCatalog.finish(id: event.id, models: nil, failure: .discovery)
+            }
+        case "cancelled": modelCatalog.finish(id: event.id, models: nil, cancelled: true)
+        default:
+            let failure: ModelCatalogState.Failure
+            switch event.safeFailureCode {
+            case "model_catalog_too_large": failure = .tooLarge
+            case "provider_cleanup_failed":
+                catalogNeedsReconnect = true
+                failure = .cleanup
+            default: failure = .discovery
+            }
+            modelCatalog.finish(id: event.id, models: nil, failure: failure)
+        }
+        resumeTranslation()
+        resumeDeferredCLIConnection()
+        return true
+    }
 
     func applyCustomModelID() {
         if let validation = CodexModelSettings.validateCustom(modelSettings.draft) {
@@ -1001,6 +1165,7 @@ final class ProbeModel: ObservableObject {
 
     func stopHelper(preservePendingHistory: Bool = false) {
         guard !stopping else { return }
+        if catalogReconnectIntent != modelCatalog.intent { modelCatalog.disconnect() }
         plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
         let keepHistory = preservePendingHistory && historyRead == nil && historyClearID == nil && queuedHistory != nil
         let interruptedHistory = historyBusy || queuedHistory != nil || historyDebounce != nil
@@ -1020,11 +1185,15 @@ final class ProbeModel: ObservableObject {
     }
 
     private func receive(_ notice: HelperNotice) {
+        defer { resumeModelCatalog() }
         switch notice {
         case .event(let event):
             if dictionary.handle(event) { return }
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
+                if case .array(let capabilities)? = event.payload["capabilities"] {
+                    catalogSupported = nativeTranslation && capabilities.contains(.string("model_catalog"))
+                } else { catalogSupported = false }
                 ready = true
                 status = nativeTranslation
                     ? "Native connection ready. CLI/account/model availability is not yet verified."
@@ -1033,6 +1202,7 @@ final class ProbeModel: ObservableObject {
                 if connectionMode != .diagnostic { loadSettings() }
                 return
             }
+            if handleModelCatalog(event) { return }
             if handleBusinessEvent(event) { return }
             if handleDictionaryLookup(event) { return }
             if event.isTerminal { pending.remove(event.id) }
@@ -1139,6 +1309,9 @@ final class ProbeModel: ObservableObject {
                 resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            let isolatedCatalog = (modelCatalog.busy || catalogWasLastRequest) && !active && draft == nil
+            modelCatalog.disconnect()
+            catalogReconnectIntent = nil
             modelSettings.connectionLost()
             plainPaste.connectionLost()
             historySearchActive = false
@@ -1179,9 +1352,14 @@ final class ProbeModel: ObservableObject {
             if activeAction != nil, !hideCurrentOutput {
                 output += "\n\n[" + text("Result action interrupted", "结果操作已中断") + "]"
             }
-            failPreparation(status)
-            if nativeTranslation || hadLocalLookup { onTranslationResult?(status + "\n\n" + output) }
+            if !isolatedCatalog { failPreparation(status) }
+            if !isolatedCatalog && (nativeTranslation || hadLocalLookup) { onTranslationResult?(status + "\n\n" + output) }
         case .stopped:
+            let restartCatalog = catalogReconnectIntent == modelCatalog.intent && modelCatalog.pending &&
+                (modelCatalog.matches(scope: selectedCLI) ||
+                 (modelCatalog.scope == nil && selectedCLI.isEmpty)) && !catalogShutDown
+            catalogReconnectIntent = nil
+            if !restartCatalog { modelCatalog.disconnect() }
             discardBufferedDelta()
             let reopen = openAfterStop
             let keepHistory = reopen && historyRequested && queuedHistory != nil
@@ -1221,6 +1399,9 @@ final class ProbeModel: ObservableObject {
             historyCursor = .null
             hasNextHistoryPage = false
             connection = nil
+            connectedCLI = ""
+            catalogSupported = false
+            catalogPreservesPreparation = false
             dictionaryLookup = nil
             dictionary.connectionLost()
             if !reopen, draft != nil {
@@ -1236,6 +1417,10 @@ final class ProbeModel: ObservableObject {
             plainPasteConfigAfterStop = false
             if restartPlainPaste { plainPasteReconcileOnLoad = true }
             if upgrade { startNativeTranslation() }
+            else if restartCatalog {
+                if draft != nil { openProduct(); resumeTranslation() }
+                else { resumeModelCatalog() }
+            }
             else if reopen { openProduct() }
             else if restartPlainPaste { loadPlainPasteConfiguration(reconcile: true) }
         }
@@ -1374,7 +1559,8 @@ final class ProbeModel: ObservableObject {
                 }
                 settingsReady = true
                 status = "Native settings loaded. Account and model access require an explicit translation."
-                if !needsCLI && !preparing && !active && output.isEmpty {
+                if !needsCLI && !preparing && !active && output.isEmpty &&
+                    !modelCatalog.pending && !catalogPreservesPreparation {
                     productMessage = ""
                     productPhase = .idle
                 }
@@ -1385,10 +1571,12 @@ final class ProbeModel: ObservableObject {
                                          "保存的模型与请求的 ID 不同。请检查模型设置，未发送模型请求。"))
                 }
             } else {
+                let catalogPreparation = modelCatalog.pending && !active && draft == nil
                 modelSettings.fail(id: event.id, failure: .operation(event.safeFailureCode))
                 plainPaste.failed(id: event.id, code: event.safeFailureCode)
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
-                if !pasteSave || !active { failPreparation(status) }
+                if catalogPreparation { modelCatalog.fail(.connection) }
+                if (!pasteSave || !active) && !catalogPreparation { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))
@@ -1396,6 +1584,7 @@ final class ProbeModel: ObservableObject {
             }
             configLoadID = nil
             configSaveID = nil
+            catalogPreservesPreparation = false
             settingsBusy = false
             if settingsReady { dictionary.connectionReady() }
             flushPlainPastePreference()
@@ -1570,6 +1759,7 @@ final class ProbeModel: ObservableObject {
                     self.cliStatus = "Version probe closed. Authentication: unknown."
                 }
                 self.notifyStoppedIfIdle()
+                self.resumeModelCatalog()
             }
         }
         cliRun = run
@@ -1583,6 +1773,8 @@ final class ProbeModel: ObservableObject {
     }
 
     func closePanel() {
+        cancelModelCatalog()
+        modelCatalog.disconnect()
         translationIntentID = UUID()
         discardBufferedDelta()
         historySearchActive = false
@@ -1615,6 +1807,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func prepareToQuit() {
+        catalogShutDown = true
         plainPasteConfigAfterStop = false
         plainPaste.shutdown()
         stopMonitor()

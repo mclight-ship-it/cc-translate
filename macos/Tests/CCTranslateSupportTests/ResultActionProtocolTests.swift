@@ -22,7 +22,7 @@ final class ResultActionProtocolTests: XCTestCase {
             "protocol": .integer(1), "max_frame_bytes": .integer(65_536), "fixture": .bool(false),
             "backend": .string("native_appserver"),
             "capabilities": .array(["config_load", "config_save", "history_load", "history_add",
-                                    "history_clear", "translate", "result_action"].map(JSONValue.string) +
+                                    "history_clear", "translate", "result_action", "model_catalog"].map(JSONValue.string) +
                 DictionaryRequest.operations.sorted().map(JSONValue.string))
         ]))
         return state

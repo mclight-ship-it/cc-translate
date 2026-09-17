@@ -32,7 +32,7 @@ final class DictionaryProtocolTests: XCTestCase {
         var state = ProtocolState(mode: mode)
         try state.register(ClientMessage(id: "hello", type: "hello"))
         let operations = ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-            DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action"] : [])
+            DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "model_catalog"] : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "fixture": .bool(false), "max_frame_bytes": .integer(65_536)

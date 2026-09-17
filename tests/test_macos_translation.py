@@ -20,10 +20,11 @@ from cc_prompts import (
 )
 from cc_summary import codex_summary_instruction
 from cc_providers.base import ProviderResult
+from cc_providers.codex_catalog import CatalogProbeError
 from cc_providers.codex_cli import build_codex_prompt
 from cc_providers.darwin_process import ProcessError
 from cc_macos import configuration, translation
-from cc_macos.protocol import RESERVED_ID, ProtocolError, decode_frame
+from cc_macos.protocol import MAX_FRAME_BYTES, RESERVED_ID, ProtocolError, decode_frame, encode_frame
 from cc_macos.server import Server
 
 if __package__:
@@ -578,6 +579,9 @@ class ScriptedProvider:
         self.release.set()
         self.result_code = ""
         self.closed = 0
+        self.catalog_calls = 0
+        self.catalog_models = [{"id": "synthetic", "name": "Synthetic", "description": ""}]
+        self.catalog_error = None
 
     def stream(self, captured, on_delta, cancel):
         self.requests.append(captured)
@@ -596,6 +600,17 @@ class ScriptedProvider:
 
     def complete(self, captured, cancel):
         return self.stream(captured, lambda _text: None, cancel)
+
+    def model_catalog(self, cancel):
+        self.catalog_calls += 1
+        self.entered.set()
+        if not self.release.wait(3):
+            raise AssertionError("Synthetic catalog drain was not released.")
+        if self.catalog_error is not None:
+            raise CatalogProbeError(self.catalog_error)
+        if cancel.is_set():
+            raise CatalogProbeError("cancelled")
+        return self.catalog_models
 
     def shutdown(self):
         self.closed += 1
@@ -654,6 +669,177 @@ class _TranslationDirectory(_ConfigurationDirectory):
     def history(self):
         return self.session.perform_history(
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
+
+
+class ModelCatalogServiceTests(_TranslationDirectory):
+    def catalog(self, id_="catalog"):
+        self.server._handle(message(id_, "request", operation="model_catalog"))
+
+    def test_explicit_catalog_never_loads_application_config_history_or_submits_model(self):
+        self.assertEqual(self.provider.catalog_calls, 0)
+        self.assertIn("model_catalog", self.stdout.events[0]["payload"]["capabilities"])
+        self.path.write_bytes(b"PRIVATE_BAD_CONFIG")
+        history_path = self.directory / "history.json"
+        history_path.write_bytes(b"PRIVATE_BAD_HISTORY")
+        with patch.object(self.session, "perform", side_effect=AssertionError("config read")), \
+                patch.object(self.session, "perform_history", side_effect=AssertionError("history read")), \
+                patch.object(self.session, "_capture", side_effect=AssertionError("translation capture")):
+            self.catalog()
+            self.assertTrue(self.stdout.terminal("catalog"))
+        events = [event for event in self.stdout.events if event["id"] == "catalog"]
+        self.assertEqual([e["type"] for e in events], ["accepted", "started", "completed"])
+        self.assertEqual([e["seq"] for e in events], [0, 1, 2])
+        self.assertEqual(events[-1]["payload"], {"models": self.provider.catalog_models})
+        self.assertEqual(self.provider.requests, [])
+        self.assertEqual(self.path.read_bytes(), b"PRIVATE_BAD_CONFIG")
+        self.assertEqual(history_path.read_bytes(), b"PRIVATE_BAD_HISTORY")
+
+    def test_catalog_failure_is_fixed_and_later_translation_is_unaffected(self):
+        before = self.path.read_bytes()
+        for index, (error, code) in enumerate((
+                ("PRIVATE_FAILURE", "model_catalog_failed"), ("timeout", "model_catalog_failed"),
+                ("model_catalog_too_large", "model_catalog_too_large"))):
+            self.provider.catalog_error = error
+            self.catalog(str(index))
+            self.assertTrue(self.stdout.terminal(str(index)))
+            self.assertEqual(self.stdout.result(str(index))["payload"], {"code": code})
+        self.assertEqual(self.provider.requests, [])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.history(), [])
+        self.translate()
+        self.assertTrue(self.stdout.terminal("translate"))
+        self.assertEqual(self.stdout.result("translate")["payload"]["text"], OUTPUT)
+        self.assertEqual(len(self.history()), 1)
+        self.assertEqual(len(self.provider.requests), 1)
+
+    def test_whole_completed_frame_exact_budget_and_one_byte_over_fail_without_truncation(self):
+        id_ = "c" * 64
+        model = {"id": "synthetic-\u4e2d", "name": "\U0001f642", "description": ""}
+        envelope = {"v": 1, "id": id_, "seq": 2, "type": "completed", "payload": {"models": [model]}}
+        available = MAX_FRAME_BYTES - len(encode_frame(envelope))
+        # JSON escapes, multibyte scalars and the complete envelope all count.
+        model["description"] = "\0" * (available // 6) + "x" * (available % 6)
+        self.assertEqual(len(encode_frame(envelope)), MAX_FRAME_BYTES)
+        self.provider.catalog_models = [model]
+        self.catalog(id_)
+        self.assertTrue(self.stdout.terminal(id_))
+        self.assertEqual(self.stdout.result(id_)["payload"], {"models": [model]})
+        model["description"] += "x"
+        too_big = "b" * 64
+        self.catalog(too_big)
+        self.assertTrue(self.stdout.terminal(too_big))
+        self.assertEqual(self.stdout.result(too_big)["payload"], {"code": "model_catalog_too_large"})
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == too_big],
+                         ["accepted", "started", "failed"])
+        self.assertFalse(self.server._stopping)
+        self.assertEqual(self.stderr.getvalue(), "")
+        self.assertTrue(all(len(raw) + 1 <= MAX_FRAME_BYTES for raw in self.stdout.getvalue().splitlines()))
+        self.translate()
+        self.assertTrue(self.stdout.terminal("translate"))
+        self.assertEqual(self.stdout.result("translate")["type"], "completed")
+
+    def test_catalog_cancel_waits_for_drain_and_keeps_provider_and_state_owners(self):
+        self.provider.release.clear()
+        self.catalog()
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.server._handle(message("cancel", "cancel", request_id="catalog"))
+            self.assertTrue(self.stdout.result("cancel")["payload"]["cancel_requested"])
+            self.assertFalse(any(e["id"] == "catalog" and e["type"] == "cancelled" for e in self.stdout.events))
+            self.assertIn("catalog", self.server._tasks)
+            self.assertEqual(self.provider.closed, 0)
+            self.assertIsNotNone(self.session._owner)
+        finally:
+            self.provider.release.set()
+        self.assertTrue(self.stdout.terminal("catalog"))
+        self.assertEqual(self.stdout.result("catalog")["type"], "cancelled")
+        self.assertEqual(self.stdout.result("catalog")["payload"], {})
+        self.assertEqual(self.provider.catalog_calls, 1)
+        self.assertEqual(self.provider.requests, [])
+
+    def test_catalog_prestart_cancel_never_calls_provider(self):
+        captured = []
+        with patch.object(self.server, "_start_translation",
+                          side_effect=lambda req, payload: captured.append((req, payload)) or True):
+            self.catalog()
+        self.server._handle(message("cancel", "cancel", request_id="catalog"))
+        self.server._translate(*captured[0])
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == "catalog"],
+                         ["accepted", "cancelled"])
+        self.assertEqual(self.stdout.result("catalog")["payload"], {})
+        self.assertEqual(self.provider.catalog_calls, 0)
+
+    def test_catalog_cleanup_failure_wins_over_started_cancel_without_private_detail(self):
+        self.provider.release.clear()
+        self.provider.catalog_error = "provider_cleanup_failed"
+        self.catalog()
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.server._handle(message("cancel", "cancel", request_id="catalog"))
+        finally:
+            self.provider.release.set()
+        self.assertTrue(self.stdout.terminal("catalog"))
+        self.assertEqual(self.stdout.result("catalog")["type"], "failed")
+        self.assertEqual(self.stdout.result("catalog")["payload"], {"code": "provider_cleanup_failed"})
+
+    def test_catalog_finish_rejects_late_cancel_but_honors_cancel_before_publication(self):
+        event, result = self.session.model_catalog(threading.Event(), lambda: False)
+        self.assertEqual((event, result), ("cancelled", {}))
+        original = self.server._send
+        def send(req, event, payload):
+            if req.id == "catalog" and event == "completed":
+                self.server._handle(message("late", "cancel", request_id="catalog"))
+            original(req, event, payload)
+        with patch.object(self.server, "_send", side_effect=send):
+            self.catalog()
+            self.assertTrue(self.stdout.terminal("catalog"))
+        self.assertFalse(self.stdout.result("late")["payload"]["cancel_requested"])
+        self.assertEqual(self.stdout.result("catalog")["type"], "completed")
+
+    def test_catalog_eof_drains_before_provider_shutdown_and_releases_state(self):
+        self.provider.release.clear()
+        self.catalog()
+        self.assertTrue(self.provider.entered.wait(1))
+        results = []
+        with patch("cc_macos.server.PipeFrameReader") as reader:
+            reader.return_value.read.return_value = None
+            worker = threading.Thread(target=lambda: results.append(self.server.run()))
+            worker.start()
+            try:
+                self.assertTrue(self.server._stop_event.wait(1))
+                self.assertTrue(worker.is_alive())
+                self.assertEqual(self.provider.closed, 0)
+                self.assertIsNotNone(self.session._owner)
+            finally:
+                self.provider.release.set()
+                worker.join(4)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [0])
+        self.assertEqual(self.stdout.result("catalog")["type"], "cancelled")
+        self.assertEqual(self.provider.closed, 1)
+        self.assertIsNone(self.session._owner)
+        self.assertIsNone(self.session._history)
+
+    def test_catalog_shutdown_acknowledges_only_after_read_only_work_drains(self):
+        self.provider.release.clear()
+        self.catalog()
+        self.assertTrue(self.provider.entered.wait(1))
+        with patch("cc_macos.server.PipeFrameReader") as reader:
+            reader.return_value.read.return_value = message("stop", "shutdown")
+            results = []
+            worker = threading.Thread(target=lambda: results.append(self.server.run()))
+            worker.start()
+            try:
+                self.assertTrue(self.server._stop_event.wait(1))
+                self.assertFalse(any(e["id"] == "stop" for e in self.stdout.events))
+                self.assertEqual(self.provider.closed, 0)
+            finally:
+                self.provider.release.set()
+                worker.join(4)
+        self.assertEqual(results, [0])
+        terminals = [e["id"] for e in self.stdout.events if e["type"] in ("cancelled", "completed")]
+        self.assertEqual(terminals, ["catalog", "stop"])
+        self.assertEqual(self.stdout.result("stop")["payload"], {})
 
 
 class OCRTranslationServiceTests(_TranslationDirectory):
@@ -955,7 +1141,7 @@ class TranslationServiceTests(_TranslationDirectory):
     def test_ready_is_native_and_first_request_streams_records_then_hits_cache(self):
         ready = self.stdout.events[0]["payload"]
         self.assertEqual((ready["backend"], ready["fixture"]), ("native_appserver", False))
-        self.assertEqual(len(ready["capabilities"]), 13)
+        self.assertEqual(len(ready["capabilities"]), 14)
         self.assertIn("result_action", ready["capabilities"])
         self.assertEqual(ready["capabilities"][-6:], [
             "dictionary_status", "dictionary_lookup", "dictionary_prepare_install",

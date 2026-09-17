@@ -102,6 +102,8 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.stack.enter_context(patch.object(native.sys, "platform", "darwin"))
         self.capture = self.stack.enter_context(patch.object(
             native, "capture_output", return_value=b"codex-cli 0.146.0\n"))
+        self.export = self.stack.enter_context(patch(
+            "cc_providers.darwin_process.capture_output", return_value=json.dumps(PAYLOAD).encode()))
         self.rpc = self.stack.enter_context(patch.object(native, "RpcProcess", side_effect=self.spawn))
         self.config = self.stack.enter_context(patch(
             "cc_providers.codex_appserver.read_native_config", return_value=NATIVE_CONFIG))
@@ -159,6 +161,7 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.catalog.assert_not_called()
         self.makedirs.assert_not_called()
         self.popen.assert_not_called()
+        self.export.assert_not_called()
 
     def start(self, function):
         result, errors = [], []
@@ -185,6 +188,196 @@ class TestDarwinCodexProvider(unittest.TestCase):
             if time.monotonic() >= deadline:
                 self.fail("synthetic operation did not reach its synchronization point")
             time.sleep(0.002)
+
+    def test_catalog_is_explicit_read_only_no_version_config_rpc_or_model_submission(self):
+        provider = self.provider()
+        self.assert_no_activity()
+        self.export.return_value = native_provider_fixture.catalog_export("metadata")
+        self.assertEqual(provider.model_catalog(), native_provider_fixture.CATALOG_EXPECTED)
+        self.capture.assert_not_called()
+        self.config.assert_not_called()
+        self.catalog.assert_not_called()
+        self.rpc.assert_not_called()
+        self.assertEqual(self.export.call_args.args[:3],
+                         ([self.command, "debug", "models",
+                           *[part for value in CODEX_CONFIG_OVERRIDES for part in ("-c", value)]],
+                          provider.env, self.work))
+        self.assertIsNone(provider._transport.operation)
+        self.assertIsNone(provider._active_thread)
+        self.assertEqual(provider._foreground_waiters, 0)
+        self.assertEqual(provider._catalog.status, "not_checked")
+        self.assertEqual(provider.model_catalog(), native_provider_fixture.CATALOG_EXPECTED)
+        self.assertEqual(self.export.call_count, 2)
+
+    def test_catalog_failure_is_sanitized_and_does_not_block_later_explicit_translation(self):
+        provider = self.provider()
+        for output in (b"SYNTHETIC_PRIVATE_CATALOG", b'{"models":null}', b'{"models":[{"slug":null}]}'):
+            with self.subTest(output=output):
+                self.export.return_value = output
+                with self.assertRaisesRegex(CatalogProbeError, "^model_catalog_failed$"):
+                    provider.model_catalog()
+                self.assertIsNone(provider._fatal)
+        self.rpc.assert_not_called()
+        self.catalog.assert_not_called()
+        self.assertEqual(self.export.call_count, 3)
+        result = provider.complete(self.request())
+        self.assertTrue(result.ok, result.error_code)
+        self.assertEqual(result.text, TEXT)
+        self.assertEqual(self.methods(self.processes[-1]).count("turn/start"), 1)
+
+    def test_catalog_export_limit_and_timeout_are_distinct_from_fatal_cleanup(self):
+        provider = self.provider()
+        for code, expected in (("probe_output_limit", "model_catalog_too_large"),
+                               ("probe_timeout", "model_catalog_failed"),
+                               ("probe_failed", "model_catalog_failed")):
+            with self.subTest(code=code):
+                self.export.side_effect = ProcessError(code)
+                with self.assertRaisesRegex(CatalogProbeError, "^" + expected + "$"):
+                    provider.model_catalog()
+                self.assertIsNone(provider._fatal)
+                self.assertIsNone(provider._active_thread)
+        self.assertEqual(self.export.call_count, 3)
+        self.rpc.assert_not_called()
+
+    def test_catalog_precancel_and_cancelled_provider_lock_wait_never_launch(self):
+        provider = self.provider()
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaisesRegex(CatalogProbeError, "^cancelled$"):
+            provider.model_catalog(cancel)
+        cancel.clear()
+        with provider._operation_lock:
+            running = self.start(lambda: provider.model_catalog(cancel))
+            self.wait_for(lambda: provider._foreground_waiters == 1)
+            cancel.set()
+            running[0].join(2)
+            self.assertFalse(running[0].is_alive())
+        self.assertEqual([str(error) for error in running[2]], ["cancelled"])
+        self.assert_no_activity()
+        self.assertEqual(provider._foreground_waiters, 0)
+
+    def test_catalog_cancellation_drains_before_releasing_lock_and_later_translation(self):
+        provider = self.provider()
+        cancel, entered, release = threading.Event(), threading.Event(), threading.Event()
+        def capture(*_args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            self.assertTrue(kwargs["cancel_event"].is_set())
+            raise ProcessError("probe_cancelled")
+        self.export.side_effect = capture
+        running = self.start(lambda: provider.model_catalog(cancel))
+        try:
+            self.assertTrue(entered.wait(1))
+            cancel.set()
+            later = self.start(lambda: provider.complete(self.request()))
+            self.assertTrue(running[0].is_alive())
+            self.assertTrue(later[0].is_alive())
+            self.rpc.assert_not_called()
+        finally:
+            release.set()
+            running[0].join(3)
+        self.assertEqual([str(error) for error in running[2]], ["cancelled"])
+        self.assertTrue(self.finish(later).ok)
+        self.assertIsNone(provider._active_thread)
+
+    def test_catalog_shutdown_signals_active_capture_and_waits_for_drain(self):
+        provider = self.provider()
+        entered, release = threading.Event(), threading.Event()
+        def capture(*_args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            self.assertTrue(kwargs["cancel_event"].is_set())
+            raise ProcessError("probe_cancelled")
+        self.export.side_effect = capture
+        running = self.start(provider.model_catalog)
+        try:
+            self.assertTrue(entered.wait(1))
+            shutdown = self.start(provider.shutdown)
+            self.assertTrue(provider._closing.wait(1))
+            self.assertTrue(shutdown[0].is_alive())
+        finally:
+            release.set()
+            running[0].join(3)
+        self.assertEqual([str(error) for error in running[2]], ["appserver_shutdown"])
+        self.assertIsNone(self.finish(shutdown))
+        with self.assertRaisesRegex(CatalogProbeError, "^appserver_shutdown$"):
+            provider.model_catalog()
+        self.assertEqual(self.export.call_count, 1)
+
+    def test_catalog_fatal_cleanup_wins_over_cancel_and_poisons_later_requests(self):
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        cancel = threading.Event()
+        def fail(*_args, **_kwargs):
+            cancel.set()
+            raise ProcessError("probe_cleanup_failed")
+        self.export.side_effect = fail
+        with self.assertRaisesRegex(CatalogProbeError, "^provider_cleanup_failed$"):
+            provider.model_catalog(cancel)
+        self.assertTrue(self.processes[0].closed)
+        with self.assertRaisesRegex(CatalogProbeError, "^provider_cleanup_failed$"):
+            provider.model_catalog()
+        self.assert_failure(provider.complete(self.request()), "provider_cleanup_failed")
+        self.assert_failure(provider.warm_up("synthetic"), "provider_cleanup_failed")
+        self.assertEqual(self.export.call_count, 1)
+
+    def test_catalog_reentrant_call_is_rejected_without_mutating_active_translation(self):
+        provider = self.provider()
+        errors = []
+        def delta(_text):
+            with self.assertRaisesRegex(RuntimeError, "^provider_reentrant_request$") as error:
+                provider.model_catalog()
+            errors.append(str(error.exception))
+            self.assertIsNotNone(provider._transport.operation)
+        self.assertTrue(provider.stream(self.request(), delta).ok)
+        self.assertEqual(errors, ["provider_reentrant_request"])
+        self.export.assert_not_called()
+        self.assertIsNone(provider._active_thread)
+        self.assertEqual(provider._foreground_waiters, 0)
+
+    def test_catalog_deadline_and_prior_cleanup_failure_do_not_admit_new_capture(self):
+        provider = self.provider()
+        def expired(*_args, **kwargs):
+            operation = kwargs["cancel_event"]
+            operation.deadline = time.monotonic() - 1
+            return json.dumps(PAYLOAD).encode()
+        self.export.side_effect = expired
+        with self.assertRaisesRegex(CatalogProbeError, "^timeout$"):
+            provider.model_catalog()
+        provider._transport.cleanup_failed.set()
+        with self.assertRaisesRegex(CatalogProbeError, "^provider_cleanup_failed$"):
+            provider.model_catalog()
+        self.assertEqual(self.export.call_count, 1)
+        self.rpc.assert_not_called()
+
+    def test_catalog_fixture_data_and_debug_dispatch_are_independent_of_translation_scenario(self):
+        from cc_macos import catalog_process_fixture, translation_fixture
+        from cc_providers.codex_catalog import catalog_models
+
+        with tempfile.TemporaryDirectory(prefix=".catalog-fixture-", dir=Path.cwd()) as directory:
+            fixture = translation_fixture.prepare(Path(directory) / "prepared", "synthetic")
+            root = Path(fixture["root"])
+            before = (root / "expected-request.json").read_bytes()
+            with patch.object(sys, "path", list(sys.path)), \
+                    patch.object(sys, "argv", [fixture["command"], "debug", "models"]), \
+                    patch.dict(os.environ, fixture["environment"]), \
+                    patch.object(Path, "cwd", return_value=Path(fixture["home"]) / "work"), \
+                    patch.object(catalog_process_fixture, "_serve") as serve:
+                (root / "catalog-mode.txt").write_text("metadata", encoding="utf-8")
+                native_provider_fixture._serve()
+                self.assertEqual(catalog_models(json.loads(serve.call_args.kwargs["export_output"])),
+                                 native_provider_fixture.CATALOG_EXPECTED)
+                (root / "catalog-mode.txt").write_text("normal", encoding="utf-8")
+                native_provider_fixture._serve()
+                self.assertIsNone(serve.call_args.kwargs["export_output"])
+                self.assertEqual(serve.call_count, 2)
+            self.assertEqual((root / "expected-request.json").read_bytes(), before)
+            for name in ("calls.jsonl", "version.jsonl", "native-rpc.jsonl", "native-processes.jsonl"):
+                self.assertFalse((root / name).exists())
+        for mode in ("metadata", "empty", "wrong_shape", "bad_id", "oversized"):
+            self.assertIsInstance(json.loads(native_provider_fixture.catalog_export(mode)), dict)
+        with self.assertRaisesRegex(ValueError, "^synthetic_catalog_mode_required$"):
+            native_provider_fixture.catalog_export("unknown")
 
     def test_constructor_has_no_process_filesystem_or_host_home_side_effects(self):
         with patch("builtins.open", side_effect=AssertionError("constructor I/O")), \

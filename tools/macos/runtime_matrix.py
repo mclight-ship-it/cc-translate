@@ -38,6 +38,7 @@ INTEGRATION_TESTS = (
     "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
     "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
     "testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID",
+    "testBundledModelCatalogReadsExactMetadataWithoutTurnsThenTranslatesKnownModel",
     "testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary",
     "testBundledTranslationConcurrentOptoutAndCancellationDrain",
     "testBundledTranslationCorruptionAndOutputBudgets",

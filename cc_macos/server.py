@@ -41,6 +41,7 @@ class _Request:
     terminal: bool = False
     started: bool = False
     translating: bool = False
+    catalog: bool = False
     dictionary: bool = False
     committing: bool = False
     wire_bytes: int = 0
@@ -84,8 +85,15 @@ class Server:
         with self._lock:
             if request.terminal or self._pipe_closed:
                 return
-            raw = encode_frame({"v": VERSION, "id": request.id, "seq": request.seq,
-                                "type": event, "payload": payload})
+            try:
+                raw = encode_frame({"v": VERSION, "id": request.id, "seq": request.seq,
+                                    "type": event, "payload": payload})
+            except ProtocolError as error:
+                if not request.catalog or event != "completed" or error.code != "frame_too_large":
+                    raise
+                event, payload = "failed", {"code": "model_catalog_too_large"}
+                raw = encode_frame({"v": VERSION, "id": request.id, "seq": request.seq,
+                                    "type": event, "payload": payload})
             if (request.translating and event == "delta"
                     and request.wire_bytes + len(raw) > MAX_STREAM_BYTES - MAX_FRAME_BYTES):
                 raise ProtocolError("translation_output_limit")
@@ -114,7 +122,7 @@ class Server:
             for request in self._tasks.values():
                 if request.dictionary and not request.committing:
                     request.cancel.set()
-                elif request.translating and request.started and not request.committing:
+                elif (request.translating or request.catalog) and request.started and not request.committing:
                     request.cancel.set()
                 elif self._configuration is None or not request.started:
                     request.cancel.set()
@@ -286,12 +294,16 @@ class Server:
                     return
                 request.started = True
                 self._send(request, "started", {"operation": payload["operation"]})
-            execute = (self._configuration.result_action if payload["operation"] == "result_action"
-                       else self._configuration.translate)
-            event, result = execute(payload, request.cancel, delta, begin_finish)
+            if request.catalog:
+                event, result = self._configuration.model_catalog(request.cancel, begin_finish)
+            else:
+                execute = (self._configuration.result_action if payload["operation"] == "result_action"
+                           else self._configuration.translate)
+                event, result = execute(payload, request.cancel, delta, begin_finish)
             self._send(request, event, result)
         except ConfigurationError as error:
-            self._send(request, "failed", {"code": error.code, "submitted": error.submitted})
+            self._send(request, "failed", {"code": error.code} if request.catalog
+                       else {"code": error.code, "submitted": error.submitted})
         except (ProtocolError, OSError):
             self._worker_failed = True
             self._log("internal_error")
@@ -320,6 +332,8 @@ class Server:
     def _payload_error(self, payload: dict) -> str | None:
         operation = payload.get("operation")
         if self._configuration is not None:
+            if operation == "model_catalog" and self._translation_enabled:
+                return None if set(payload) == {"operation"} else "invalid_payload"
             if operation in DICTIONARY_OPERATIONS and self._dictionary_enabled:
                 try:
                     validate_dictionary_request(payload)
@@ -391,7 +405,7 @@ class Server:
             capabilities = (["fixture", "runtime_probe"] if self._configuration is None
                             else ["config_load", "config_save", *HISTORY_OPERATIONS])
             if self._translation_enabled:
-                capabilities.extend(("translate", "result_action"))
+                capabilities.extend(("translate", "result_action", "model_catalog"))
             if self._dictionary_enabled:
                 capabilities.extend(DICTIONARY_OPERATIONS)
             self._send(control, "ready", {
@@ -417,7 +431,8 @@ class Server:
                 target = self._tasks.get(payload["request_id"])
                 active = (target is not None and not target.terminal
                           and (self._configuration is None or not target.started
-                               or (target.translating or target.dictionary) and not target.committing))
+                               or (target.translating or target.catalog or target.dictionary)
+                               and not target.committing))
                 if active:
                     target.cancel.set()
                     if not target.started and not target.dictionary:
@@ -434,13 +449,14 @@ class Server:
                     return True
                 self._tasks[id_] = control
                 control.translating = payload["operation"] in ("translate", "result_action")
+                control.catalog = payload["operation"] == "model_catalog"
                 control.dictionary = payload["operation"] in DICTIONARY_OPERATIONS
                 self._send(control, "accepted", {"operation": payload["operation"]})
                 if self._pipe_closed:
                     self._tasks.pop(id_, None)
                     return False
                 if self._configuration is not None:
-                    if control.translating:
+                    if control.translating or control.catalog:
                         return self._start_translation(control, payload)
                     if control.dictionary:
                         return self._queue_dictionary(control, payload)

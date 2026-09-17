@@ -444,6 +444,101 @@ extension HelperIntegrationTests {
     }
 
     @MainActor
+    func testBundledModelCatalogReadsExactMetadataWithoutTurnsThenTranslatesKnownModel() async throws {
+        let context = try translationContext()
+        defer { removeConfigurationHome(context.cleanupRoot) }
+        let session = ConfigurationNotices()
+        defer { session.connection.forceStop() }
+        startTranslation(session, context)
+        await fulfillment(of: [session.ready], timeout: 10)
+        guard case let .array(capabilities)? = session.events.first?.payload["capabilities"] else {
+            return XCTFail("Native catalog capability is required")
+        }
+        XCTAssertTrue(capabilities.contains(.string("model_catalog")))
+        assertNoTranslationCLI(context)
+        let saved = session.terminal("save")
+        session.connection.saveConfiguration(context.config, id: "save")
+        await fulfillment(of: [saved], timeout: 10)
+        session.assertOperation("save")
+        let configuration = try Data(contentsOf: context.configFile)
+        assertNoTranslationCLI(context)
+        let cache = context.home.appendingPathComponent("Library/Caches")
+            .appendingPathComponent(try context.runtime.configurationApplicationIdentifier())
+            .appendingPathComponent("CodexModels")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+        let codexHome = URL(fileURLWithPath: try XCTUnwrap(context.environment["CODEX_HOME"]), isDirectory: true)
+        let codexConfig = codexHome.appendingPathComponent("config.toml")
+        let nativeConfiguration = try Data(contentsOf: codexConfig)
+        let mode = context.root.appendingPathComponent("catalog-mode.txt")
+        try Data("metadata".utf8).write(to: mode)
+        let listed = session.terminal("catalog")
+        session.connection.modelCatalog(id: "catalog")
+        await fulfillment(of: [listed], timeout: 20)
+        session.assertOperation("catalog")
+        let models = try CodexModelEntry.decode(payload: XCTUnwrap(session.result("catalog")?.payload))
+        let expected: [[String: JSONValue]] = [
+            ["id": .string("synthetic"), "name": .string("Synthetic \u{4e2d}"), "description": .string("Local fixture only")],
+            ["id": .string("synthetic-\u{00e9}"), "name": .string("synthetic-\u{00e9}"), "description": .string("")],
+            ["id": .string("synthetic-e\u{0301}"), "name": .string("synthetic-e\u{0301}"), "description": .string("")],
+            ["id": .string(" synthetic "), "name": .string(" synthetic "), "description": .string("")]
+        ]
+        XCTAssertEqual(models, try expected.map { try CodexModelEntry(payload: $0) })
+        XCTAssertEqual(Set(models).count, 4, "Canonical-equivalent provider IDs must remain distinct")
+        XCTAssertTrue(session.events.filter { $0.id == "catalog" }.allSatisfy { $0.payload["submitted"] == nil })
+
+        for (index, fault) in ["malformed", "oversized"].enumerated() {
+            try Data(fault.utf8).write(to: mode)
+            let id = "failed_\(index)", terminal = session.terminal("failed_\(index)")
+            session.connection.modelCatalog(id: id)
+            await fulfillment(of: [terminal], timeout: 20)
+            XCTAssertEqual(session.events.filter { $0.id == id }.map(\.type), ["accepted", "started", "failed"])
+            XCTAssertEqual(session.result(id)?.payload, ["code": .string(
+                fault == "oversized" ? "model_catalog_too_large" : "model_catalog_failed")])
+        }
+        XCTAssertTrue(session.failures.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: context.configFile), configuration)
+        XCTAssertEqual(try Data(contentsOf: codexConfig), nativeConfiguration)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path), "Discovery must not install override metadata")
+        for name in ["native-processes.jsonl", "native-rpc.jsonl", "version.jsonl"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: context.root.appendingPathComponent(name).path),
+                           "Catalog alone must not initialize app-server, probe versions, or submit thread/turn/model")
+        }
+        let calls = try Data(contentsOf: context.root.appendingPathComponent("calls.jsonl"))
+            .split(separator: 10).map { try XCTUnwrap(JSONValue.parse(Data($0)).object) }
+        XCTAssertEqual(calls.count, 3, "One debug export per explicit request; no automatic fallback or retry")
+        for call in calls {
+            guard case let .array(values)? = call["args"] else { return XCTFail("Expected synthetic argv receipt") }
+            let args = try values.map { try XCTUnwrap($0.string) }
+            XCTAssertEqual(Array(args.prefix(2)), ["debug", "models"])
+            XCTAssertFalse(args.contains { $0.hasPrefix("model_catalog_json=") })
+            XCTAssertFalse(args.contains("app-server"))
+        }
+        try verifyTranslation(context, turns: 0, cleanup: true)
+
+        // Switch only the synthetic export fixture back to the existing known-model catalog.
+        try Data("normal".utf8).write(to: mode)
+        let translated = session.terminal("translation")
+        try sendTranslation(session, context, useCache: false)
+        await fulfillment(of: [translated], timeout: 25)
+        assertTranslation(session, context)
+        let records = try Data(contentsOf: context.root.appendingPathComponent("native-rpc.jsonl"))
+            .split(separator: 10).map { try XCTUnwrap(JSONValue.parse(Data($0)).object) }
+        let modelRequests = try records.compactMap { record -> [String: JSONValue]? in
+            let request = try XCTUnwrap(record["request"]?.object)
+            return ["thread/start", "turn/start"].contains(request["method"]?.string ?? "") ? request : nil
+        }
+        XCTAssertEqual(modelRequests.count, 2)
+        for request in modelRequests {
+            XCTAssertTrue(try XCTUnwrap(request["params"]?.object?["model"]?.string).utf8.elementsEqual("synthetic".utf8))
+        }
+        session.connection.stop()
+        await fulfillment(of: [session.stopped], timeout: 10)
+        XCTAssertTrue(session.failures.isEmpty)
+        try verifyTranslation(context, turns: 1, cleanup: true)
+    }
+
+    @MainActor
     func testBundledTranslationConfigurationStreamHistoryCacheAndReopen() async throws {
         let context = try translationContext(scenario: "direction")
         defer { removeConfigurationHome(context.cleanupRoot) }

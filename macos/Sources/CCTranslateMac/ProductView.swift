@@ -839,15 +839,17 @@ struct ModelPicker: View {
             get: { CodexModelSettings.ChoiceID(value: selection) },
             set: { selection = $0.value }
         )) {
-            ForEach(model.modelSettings.choices(selection: selection).map {
+            ForEach(model.modelChoices(selection: selection).map {
                 CodexModelSettings.ChoiceID(value: $0)
             }, id: \.self) { profile in
-                Text(label(profile.value)).tag(profile)
+                Text(verbatim: label(profile.value)).tag(profile)
+                    .disabled(!CodexModelSettings.isPreset(profile.value) &&
+                              CodexModelSettings.validateCustom(profile.value) != nil)
             }
         }
         .accessibilityLabel(model.text("Codex model profile", "Codex 模型配置"))
         .accessibilityValue(label(selection))
-        .help(label(selection) + model.text(" · Enter a new custom ID in Settings.", " · 在设置中输入新的自定义 ID。"))
+        .help(label(selection) + model.text(" · Refresh models or enter an ID in Settings.", " · 在设置中刷新模型或输入 ID。"))
         .disabled(model.active || model.preparing || model.settingsBusy || model.dictionary.committing)
     }
 
@@ -856,7 +858,12 @@ struct ModelPicker: View {
         case "auto-fast": return model.text("Fast profile", "快速模式")
         case "auto": return model.text("Codex default", "Codex 默认")
         case "": return model.text("Empty model ID", "模型 ID 为空")
-        default: return value
+        default:
+            if let row = model.discoveredModel(value), !row.name.isEmpty,
+               !CodexModelSettings.sameID(row.name, value) {
+                return row.name + " — " + value
+            }
+            return value
         }
     }
 }
@@ -914,14 +921,15 @@ struct CodexModelSettingsView: View {
             }
             Button(model.text("Reload saved setting", "重新读取已保存设置")) { model.reloadModelSetting() }
                 .disabled(!model.ready || model.settingsBusy || model.active || model.preparing || model.dictionary.committing)
-            if !model.ready {
+            ModelCatalogSettingsView(model: model)
+            if !model.ready && !model.modelCatalog.busy {
                 Text(model.text("Open Settings again to reconnect before applying. Your draft stays editable.",
                                 "请再次打开设置以连接后应用。你仍可编辑草稿。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text(model.text(
-                "IDs are case-sensitive and are not trimmed. Apply saves and reads back settings, without requesting a model or checking account access. This editor does not load a model catalogue.",
-                "ID 区分大小写，不会自动去除空格。“应用”会保存并重新读取设置，不请求模型，也不检查账号权限。此编辑器不加载模型目录。"))
+                "IDs are case-sensitive and are not trimmed. Apply saves and reads back settings, without requesting a model or checking account access.",
+                "ID 区分大小写，不会自动去除空格。“应用”会保存并重新读取设置，不请求模型，也不检查账号权限。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }

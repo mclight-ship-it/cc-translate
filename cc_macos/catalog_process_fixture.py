@@ -56,7 +56,7 @@ def probe_catalog_process(root, cancel_event=None):
             "cache_verified": True, "reopen_verified": True}
 
 
-def _serve(*, version_output=b"codex-cli 0.146.0\n"):
+def _serve(*, version_output=b"codex-cli 0.146.0\n", export_output=None):
     import signal
     import subprocess
     import time
@@ -130,7 +130,7 @@ def _serve(*, version_output=b"codex-cli 0.146.0\n"):
             raise SystemExit(77)
         sys.stdout.buffer.write(path.read_bytes())
     else:
-        sys.stdout.buffer.write((root / "payload.json").read_bytes())
+        sys.stdout.buffer.write((root / "payload.json").read_bytes() if export_output is None else export_output)
 
 
 if __name__ == "__main__":

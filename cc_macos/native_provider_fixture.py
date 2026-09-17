@@ -18,6 +18,41 @@ NATIVE_CONFIG = {
     "layers": [],
 }
 
+CATALOG_METADATA = {
+    "future_top_level": {"ignored": True},
+    "models": [
+        {"slug": "synthetic", "display_name": "Synthetic \u4e2d", "description": "Local fixture only",
+         "future_capabilities": {"not_interpreted": [1, 2]}},
+        {"slug": "synthetic", "display_name": "Duplicate ignored"},
+        {"slug": "synthetic-\u00e9", "display_name": None, "description": None},
+        {"slug": "synthetic-e\u0301"},
+        {"slug": " synthetic ", "display_name": 42, "description": {"future": True}},
+    ],
+}
+CATALOG_EXPECTED = [
+    {"id": "synthetic", "name": "Synthetic \u4e2d", "description": "Local fixture only"},
+    {"id": "synthetic-\u00e9", "name": "synthetic-\u00e9", "description": ""},
+    {"id": "synthetic-e\u0301", "name": "synthetic-e\u0301", "description": ""},
+    {"id": " synthetic ", "name": " synthetic ", "description": ""},
+]
+
+
+def catalog_export(mode):
+    """Catalog fault data is independent of the selected translation scenario."""
+    payloads = {
+        "metadata": CATALOG_METADATA, "empty": {"models": []},
+        "wrong_shape": {"models": {}}, "bad_id": {"models": [{"slug": None}]},
+        "oversized": {"models": [{"slug": "synthetic", "description": "x" * 65_536}]},
+    }
+    if mode == "malformed":
+        return b'{"models": SYNTHETIC_PRIVATE_CATALOG'
+    if mode in payloads:
+        return json.dumps(payloads[mode], ensure_ascii=False).encode("utf-8")
+    if mode in ("normal", "nonzero", "timeout", "descendant", "early",
+                "stdout_flood", "stderr_flood", "combined_flood", "closed_pipes"):
+        return None
+    raise ValueError("synthetic_catalog_mode_required")
+
 
 def create_cli(root, mode="normal"):
     from cc_macos.catalog_process_fixture import create_cli as create_catalog_cli
@@ -175,8 +210,15 @@ def _serve():
         return
     if args and args[0] in ("--version", "debug"):
         # Reuse the existing catalog version/export/roundtrip and override checks.
-        os.environ["CC_SYNTHETIC_MODE"] = "normal"
-        catalog_process_fixture._serve(version_output=version_output)
+        discovery = args[:2] == ["debug", "models"] and not any(
+            value.startswith("model_catalog_json=") for value in args)
+        catalog_mode = os.environ.get("CC_SYNTHETIC_CATALOG_MODE", "normal") if discovery else "normal"
+        mode_file = root / "catalog-mode.txt"
+        if discovery and mode_file.is_file():
+            catalog_mode = mode_file.read_text(encoding="utf-8").strip()
+        export_output = catalog_export(catalog_mode)
+        os.environ["CC_SYNTHETIC_MODE"] = "normal" if export_output is not None else catalog_mode
+        catalog_process_fixture._serve(version_output=version_output, export_output=export_output)
         return
     config_probe = args[:2] == ["app-server", "--strict-config"]
     prefix = (["app-server", "--strict-config"] if config_probe else

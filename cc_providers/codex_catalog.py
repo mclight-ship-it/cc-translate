@@ -100,6 +100,31 @@ class CatalogProbeError(RuntimeError):
     """Fatal supervision failure; never fall back to another discovery/turn."""
 
 
+def catalog_models(payload):
+    """Project effective metadata without interpreting provider capabilities or entitlements."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise CatalogError("invalid_catalog_shape")
+    models, seen = [], set()
+    for entry in payload["models"]:
+        if not isinstance(entry, dict):
+            raise CatalogError("invalid_catalog_models")
+        slug = entry.get("slug")
+        if not isinstance(slug, str) or not slug.strip() or "\0" in slug:
+            raise CatalogError("invalid_catalog_models")
+        name, description = entry.get("display_name"), entry.get("description")
+        name = name if isinstance(name, str) and name else slug
+        description = description if isinstance(description, str) else ""
+        try:
+            for value in (slug, name, description):
+                value.encode("utf-8")
+        except UnicodeError:
+            raise CatalogError("invalid_catalog_models") from None
+        if slug not in seen:
+            seen.add(slug)
+            models.append({"id": slug, "name": name, "description": description})
+    return models
+
+
 def _models(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
         raise CatalogError("invalid_catalog_shape")
@@ -251,6 +276,17 @@ class CodexModelCatalog:
                 self._warn(code)
                 self._failure_until = time.monotonic() + _RETRY_SECONDS
                 return ()
+
+    def discover(self, *, cancel_event=None):
+        """Explicit read-only export; no version probe, override, cache or retry policy."""
+        if cancel_event is not None and sys.platform != "darwin":
+            raise CatalogProbeError("catalog_cancel_unsupported")
+        with self._probe_scope(cancel_event):
+            try:
+                payload = json.loads(self._run(["debug", "models"]))
+            except (json.JSONDecodeError, UnicodeError, RecursionError):
+                raise CatalogError("invalid_catalog_json") from None
+            return catalog_models(payload)
 
     def _resolve(self, model, environment):
         home = Path(environment.get("CODEX_HOME") or (

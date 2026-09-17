@@ -341,6 +341,7 @@ class TestMacResultActionProtocol(unittest.TestCase):
         ready = self.events(output, "hello")[0]["payload"]
         self.assertEqual(ready["capabilities"], [
             "config_load", "config_save", "history_load", "history_add", "history_clear", "translate", "result_action",
+            "model_catalog",
         ])
         self.assertEqual((ready["backend"], ready["fixture"], ready["protocol"]), ("native_appserver", False, 1))
         config.translate.assert_not_called()
@@ -431,6 +432,69 @@ class TestMacResultActionProtocol(unittest.TestCase):
             with self.assertRaisesRegex(ProtocolError, "^duplicate_id$"):
                 server._handle(message("0", "request", **self.payload()))
         config.result_action.assert_not_called()
+
+
+class TestMacModelCatalogProtocol(unittest.TestCase):
+    server = TestMacResultActionProtocol.server
+    events = staticmethod(TestMacResultActionProtocol.events)
+
+    def test_catalog_is_native_only_and_ready_never_invokes_it(self):
+        server, config, output = self.server()
+        self.assertIn("model_catalog", self.events(output, "hello")[0]["payload"]["capabilities"])
+        config.model_catalog.assert_not_called()
+        config.translate.assert_not_called()
+        for mode in ("configuration", "diagnostic"):
+            with self.subTest(mode=mode):
+                if mode == "configuration":
+                    server, config, output = self.server(translation_enabled=False)
+                else:
+                    output = io.BytesIO()
+                    server = Server(io.BytesIO(), output, io.StringIO())
+                    server._handle(message("hello", "hello"))
+                self.assertNotIn("model_catalog", self.events(output, "hello")[0]["payload"]["capabilities"])
+                server._handle(message("catalog", "request", operation="model_catalog"))
+                self.assertEqual(self.events(output, "catalog")[0]["payload"], {"code": "unsupported_operation"})
+
+    def test_catalog_exact_request_rejects_fields_before_any_worker_or_model(self):
+        server, config, output = self.server()
+        for index, extra in enumerate(({"text": "x"}, {"model": "synthetic"}, {"refresh": True},
+                                       {"account": None}, {"use_cache": False})):
+            server._handle(message(str(index), "request", operation="model_catalog", **extra))
+            self.assertEqual(self.events(output, str(index)), [{
+                "v": 1, "id": str(index), "seq": 0, "type": "failed", "payload": {"code": "invalid_payload"},
+            }])
+        config.model_catalog.assert_not_called()
+        config.perform.assert_not_called()
+        self.assertFalse(server._workers)
+
+    def test_catalog_cancelled_worker_keeps_capacity_until_actual_drain(self):
+        server, config, output = self.server()
+        requests = []
+        def start(request, _payload):
+            request.started = True
+            requests.append(request)
+            return True
+        with patch.object(server, "_start_translation", side_effect=start):
+            for index in range(4):
+                server._handle(message(str(index), "request", operation="model_catalog"))
+            server._handle(message("cancel", "cancel", request_id="0"))
+            self.assertEqual(self.events(output, "cancel")[0]["payload"], {"cancel_requested": True})
+            self.assertTrue(requests[0].cancel.is_set())
+            self.assertFalse(requests[0].terminal)
+            server._handle(message("overflow", "request", operation="model_catalog"))
+            self.assertEqual(self.events(output, "overflow")[0]["payload"], {"code": "busy"})
+        config.model_catalog.assert_not_called()
+
+    def test_catalog_worker_start_failure_has_one_terminal_without_submission_field(self):
+        server, config, output = self.server()
+        with patch("cc_macos.server.threading.Thread.start", side_effect=RuntimeError("PRIVATE")):
+            server._handle(message("catalog", "request", operation="model_catalog"))
+        events = self.events(output, "catalog")
+        self.assertEqual([event["type"] for event in events], ["accepted", "failed"])
+        self.assertEqual(events[-1]["payload"], {"code": "worker_start_failed"})
+        config.model_catalog.assert_not_called()
+        self.assertFalse(server._tasks)
+        self.assertFalse(server._workers)
 
 
 class TestMacServerConcurrency(unittest.TestCase):

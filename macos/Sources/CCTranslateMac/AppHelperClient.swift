@@ -10,6 +10,7 @@ protocol AppHelperClient: AnyObject {
                    recordHistory: Bool, id: String, timeout: TimeInterval) -> String
     func resultAction(_ action: ResultAction, text: String, appLanguage: String,
                       targetLanguage: String?, id: String, timeout: TimeInterval) -> String
+    func modelCatalog(id: String, timeout: TimeInterval) -> String
     func dictionary(_ request: DictionaryRequest, id: String, timeout: TimeInterval) -> String
     func loadConfiguration(id: String, timeout: TimeInterval) -> String
     func saveConfiguration(_ config: [String: JSONValue], id: String, timeout: TimeInterval) -> String
@@ -23,6 +24,12 @@ extension HelperConnection: AppHelperClient {}
 
 extension AppHelperClient {
     func send(_ message: ClientMessage) { send(message, timeout: 25) }
+    @discardableResult
+    func modelCatalog(id: String, timeout: TimeInterval = 40) -> String {
+        send(ClientMessage(id: id, type: "request", payload: ["operation": .string("model_catalog")]),
+             timeout: timeout)
+        return id
+    }
     @discardableResult
     func loadConfiguration(id: String) -> String { loadConfiguration(id: id, timeout: 20) }
     @discardableResult

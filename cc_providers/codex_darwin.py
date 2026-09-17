@@ -14,7 +14,7 @@ from .base import (
 from .codex_appserver import (
     CodexAppServerProtocolError, CodexAppServerTransport,
 )
-from .codex_catalog import CodexModelCatalog, CatalogProbeError, parse_codex_version
+from .codex_catalog import CodexModelCatalog, CatalogError, CatalogProbeError, parse_codex_version
 from .codex_config import child_environment, CodexConfigError
 from .darwin_process import capture_output, ProcessError
 from .darwin_rpc import RpcProcess, RpcError
@@ -389,6 +389,55 @@ class DarwinCodexProvider:
     def warm_up(self, model):
         request = self._request(ProviderRequest("text", model, "", "", timeout_seconds=10))
         return self._execute(request, None, None)
+
+    def model_catalog(self, cancel_event=None):
+        operation = _Operation(8, self._closing, cancel_event)
+        with self._priority_lock:
+            self._foreground_waiters += 1
+            self._prewarm_preempt.set()
+        entered, acquired = False, False
+        try:
+            while True:
+                code = self._failure_code(operation)
+                if code is not None:
+                    raise CatalogProbeError(code)
+                if self._operation_lock.acquire(timeout=0.05):
+                    acquired = True
+                    break
+            if self._active_thread is not None:
+                raise RuntimeError("provider_reentrant_request")
+            code = self._failure_code(operation)
+            if code is not None:
+                raise CatalogProbeError(code)
+            self._active_thread = threading.get_ident()
+            entered = True
+            try:
+                os.makedirs(self.work_dir, exist_ok=True)
+                models = self._catalog.discover(cancel_event=operation)
+            except (CatalogError, CatalogProbeError, ProcessError, OSError) as error:
+                if "cleanup_failed" in str(error):
+                    self._fatal = "provider_cleanup_failed"
+                    try:
+                        self._transport.stop_current()
+                    except ProcessError:
+                        self._fatal = "provider_cleanup_failed"
+                code = self._failure_code(operation)
+                if code is None:
+                    code = ("model_catalog_too_large" if str(error) in (
+                        "catalog_probe_output_limit", "catalog_output_too_large")
+                            else "model_catalog_failed")
+                raise CatalogProbeError(code) from None
+            code = self._failure_code(operation)
+            if code is not None:
+                raise CatalogProbeError(code)
+            return models
+        finally:
+            if entered:
+                self._active_thread = None
+            if acquired:
+                self._operation_lock.release()
+            with self._priority_lock:
+                self._foreground_waiters -= 1
 
     def _failure_code(self, operation):
         if self._transport.cleanup_failed.is_set():

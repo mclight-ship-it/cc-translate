@@ -535,6 +535,9 @@ public struct ClientMessage {
         if TranslationDocument.modelOperations.contains(payload["operation"]?.string ?? "") {
             try TranslationDocument.validateRequest(payload)
         }
+        if payload["operation"] == .string(ModelCatalogDocument.operation) {
+            try ModelCatalogDocument.validateRequest(payload)
+        }
         if payload["operation"] == .string("config_save"), let config = payload["config"] {
             try ConfigurationDocument.validate(config)
         }
@@ -630,6 +633,8 @@ private enum HelperFailureCode: String {
     case providerCleanupFailed = "provider_cleanup_failed"
     case providerProtocolError = "provider_protocol_error"
     case providerFailed = "provider_failed"
+    case modelCatalogFailed = "model_catalog_failed"
+    case modelCatalogTooLarge = "model_catalog_too_large"
     case invalidDictionary = "invalid_dictionary"
     case dictionaryUnavailable = "dictionary_unavailable"
     case dictionaryIOFailed = "dictionary_io_failed"
@@ -661,7 +666,8 @@ public struct ProtocolState {
         var deltaText = ""
         var isModelRequest: Bool { TranslationDocument.modelOperations.contains(operation ?? "") }
         var isDictionaryRequest: Bool { DictionaryRequest.operations.contains(operation ?? "") }
-        var cancellableAfterStart: Bool { isModelRequest || isDictionaryRequest }
+        var isModelCatalogRequest: Bool { operation == ModelCatalogDocument.operation }
+        var cancellableAfterStart: Bool { isModelRequest || isDictionaryRequest || isModelCatalogRequest }
     }
     private var entries: [String: Entry] = [:]
     public private(set) var ready = false
@@ -686,6 +692,9 @@ public struct ProtocolState {
     public var hasPendingDictionary: Bool {
         entries.values.contains { !$0.terminal && $0.isDictionaryRequest }
     }
+    public var hasPendingModelCatalog: Bool {
+        entries.values.contains { !$0.terminal && $0.isModelCatalogRequest }
+    }
     var pendingOutcomeUnknown: ProbeError? {
         if hasPendingTranslation { return .translationOutcomeUnknown }
         if hasPendingDictionary { return .dictionaryOutcomeUnknown }
@@ -702,6 +711,7 @@ public struct ProtocolState {
         case .configuration: return Self.businessOperations.union(DictionaryRequest.operations)
         case .translation:
             return Self.businessOperations.union(DictionaryRequest.operations).union(TranslationDocument.modelOperations)
+                .union([ModelCatalogDocument.operation])
         }
     }
     public init(mode: Mode = .diagnostic) { self.mode = mode }
@@ -736,6 +746,8 @@ public struct ProtocolState {
             switch operation {
             case "translate", "result_action":
                 _ = try message.encoded()
+            case "model_catalog":
+                try ModelCatalogDocument.validateRequest(payload)
             case let operation where DictionaryRequest.operations.contains(operation):
                 try DictionaryDocument.validateRequest(payload)
             case "config_load":
@@ -838,10 +850,11 @@ public struct ProtocolState {
                   payload["operation"]?.string == entry.operation else {
                 throw ProbeError.invalidTransition
             }
-            if !entry.isModelRequest {
+            if !entry.isModelRequest && !entry.isModelCatalogRequest {
                 guard !entries.values.contains(where: {
                     $0.type == "request" && !$0.terminal && $0.order < entry.order &&
-                        !$0.isModelRequest && $0.isDictionaryRequest == entry.isDictionaryRequest
+                        !$0.isModelRequest && !$0.isModelCatalogRequest &&
+                        $0.isDictionaryRequest == entry.isDictionaryRequest
                 }) else { throw ProbeError.invalidTransition }
             }
             entry.started = true
@@ -875,6 +888,9 @@ public struct ProtocolState {
                 } else if entry.isDictionaryRequest {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     try DictionaryDocument.validateCompletion(payload, operation: entry.operation)
+                } else if entry.isModelCatalogRequest {
+                    guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
+                    _ = try CodexModelEntry.decode(payload: payload)
                 } else if isBusiness {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     switch entry.operation {
@@ -925,7 +941,7 @@ public struct ProtocolState {
             case "shutdown":
                 guard seq == 0, payload.isEmpty else { throw ProbeError.invalidPayload }
                 if isBusiness, hasPendingConfiguration || hasPendingHistory ||
-                    hasPendingTranslation || hasPendingDictionary {
+                    hasPendingTranslation || hasPendingDictionary || hasPendingModelCatalog {
                     throw ProbeError.invalidTransition
                 }
             default: throw ProbeError.invalidTransition
@@ -938,7 +954,7 @@ public struct ProtocolState {
                 guard seq >= 2, Set(payload.keys) == ["submitted"],
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
-            } else if entry.isDictionaryRequest, entry.started {
+            } else if entry.isDictionaryRequest || entry.isModelCatalogRequest, entry.started {
                 guard seq == 2, payload.isEmpty else { throw ProbeError.invalidTransition }
             } else {
                 guard !entry.started, payload.isEmpty else { throw ProbeError.invalidTransition }
@@ -950,6 +966,11 @@ public struct ProtocolState {
                       TranslationDocument.failureCodes.union(TranslationDocument.storageFailureCodes).contains(code),
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
+            } else if entry.isModelCatalogRequest, entry.started {
+                guard seq == 2, Set(payload.keys) == ["code"],
+                      let code = payload["code"]?.string, ModelCatalogDocument.failureCodes.contains(code) else {
+                    throw ProbeError.invalidPayload
+                }
             } else {
                 guard validFailure(payload) else { throw ProbeError.invalidPayload }
             }
@@ -1049,6 +1070,8 @@ public struct ProtocolState {
     private func validFailure(_ payload: [String: JSONValue]) -> Bool {
         guard Set(payload.keys) == ["code"], let code = payload["code"]?.string else { return false }
         if isBusiness {
+            // Discovery-specific errors are legal only on the started native catalog operation.
+            guard !ModelCatalogDocument.discoveryFailureCodes.contains(code) else { return false }
             return HelperFailureCode(rawValue: code) != nil &&
                 (mode == .translation || !TranslationDocument.failureCodes.contains(code))
         }
