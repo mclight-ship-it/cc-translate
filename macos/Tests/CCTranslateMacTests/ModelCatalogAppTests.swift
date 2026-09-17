@@ -471,7 +471,11 @@ final class ModelCatalogAppTests: XCTestCase {
         f.onMake = { [weak f] client in
             client.onStart = { [weak f, weak client] in
                 guard let f, let client else { return }
-                XCTAssertNoThrow(try f.ready(client))
+                do {
+                    try f.ready(client)
+                } catch {
+                    XCTFail("Synchronous native readiness must succeed: \(error)")
+                }
             }
             client.onCatalog = { [weak client] id in
                 client?.base.event("completed", id: id, payload: CatalogAppFixture.payload())
