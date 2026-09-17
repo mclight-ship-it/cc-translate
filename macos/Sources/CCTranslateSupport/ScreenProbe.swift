@@ -185,7 +185,7 @@ public final class ScreenProbe: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, generation == self.generation else { return }
-                invalidateForLayoutNotification()
+                self.invalidateForLayoutNotification()
             }
         }
         busy = true
