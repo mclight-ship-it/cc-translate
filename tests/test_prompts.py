@@ -19,7 +19,7 @@ PROMPT_NAMES = (
 class TestPromptCatalog(unittest.TestCase):
     def test_catalog_matches_pre_extraction_utf8_snapshot(self):
         self.assertEqual(
-            {name for name in vars(cc_prompts) if name.isupper()}, set(PROMPT_NAMES))
+            {name for name in vars(cc_prompts) if name.isupper()}, set(PROMPT_NAMES) | {"OCR_STRUCTURE_HINT"})
         values = {name: getattr(cc_prompts, name) for name in PROMPT_NAMES}
         encoded = json.dumps(
             values, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -27,6 +27,10 @@ class TestPromptCatalog(unittest.TestCase):
         self.assertEqual(
             hashlib.sha256(encoded).hexdigest(),
             "e3acdc8589d0182b6c800450d6c5fa6eb7c033f69e45e8f976716403d412a844")
+        # Independently captured from cc_core at 439f66a, before OCR hint extraction.
+        self.assertEqual(
+            hashlib.sha256(cc_prompts.OCR_STRUCTURE_HINT.encode("utf-8")).hexdigest(),
+            "c2d0a3fef9a2b77979717134f9febe08a0485a8accd58ab723b7824eab02b4df")
 
     def test_translation_and_summary_keep_data_and_verbatim_code_rules(self):
         for suffix in (cc_prompts.SYSTEM_SUFFIX, cc_prompts.SUMMARY_SUFFIX):

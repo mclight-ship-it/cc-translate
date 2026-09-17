@@ -28,9 +28,10 @@ LEGACY_SOURCE_SHA256 = {
     "summary_instruction": "eabd02d93e9c239c126db13c48d9df8a280e3dc5c227ad2f262da152c6ebb9a0",
     "codex_summary_instruction": "105d68af952fcdc06d8855bfc5a52ec197f22715fce8b60d5d1c90b0838172d5",
 }
-LEGACY_WINDOWS_SHA256 = {
+WINDOWS_SOURCE_SHA256 = {
     "_should_summarize": "0778fdac3645f45716c37c5589903a3eb8b4227bdf0b11e6816fab6e3f258362",
-    "_system_prompt_for": "ab3505b7cb4155c324872beabf9778ca71139a66fc24f0ea871a41af88584f8b",
+    # Reviewed OCR helper delegation at 639d598; prompt bytes are frozen separately.
+    "_system_prompt_for": "0994c262ec3cf2550e6d6ea23a7ee5f0421fef60ea0135b09e781ee240d8e351",
 }
 LEGACY_PROMPT_SHA256 = {
     "zh": ("cd156f8b54dc7071d2fc2b59d6af746fcf5584a8d4e851a73e123a6f84442aa0",
@@ -91,8 +92,8 @@ class SummaryRuleTests(unittest.TestCase):
                 source = ast.get_source_segment(self.source, nodes[name])
                 self.assertEqual(hashlib.sha256(source.encode("utf-8")).hexdigest(), expected)
 
-    def test_windows_gate_and_prompt_preserve_original_source_bytes(self):
-        for name, expected in LEGACY_WINDOWS_SHA256.items():
+    def test_windows_gate_and_prompt_preserve_reviewed_source_bytes(self):
+        for name, expected in WINDOWS_SOURCE_SHA256.items():
             with self.subTest(name=name):
                 source = ast.get_source_segment(self.windows_source, self.windows_nodes[name])
                 self.assertEqual(hashlib.sha256(source.encode("utf-8")).hexdigest(), expected)
