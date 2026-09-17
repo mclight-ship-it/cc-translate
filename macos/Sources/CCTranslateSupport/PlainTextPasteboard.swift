@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreServices
 import UniformTypeIdentifiers
 
 // AppKit change-count checks and eager writes stay on MainActor. Item enumeration and
@@ -242,10 +243,19 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         return String(data: data, encoding: encoding)
     }
 
+    private static let legacyFileFlavors: Set<String> = [
+        "NSFilenamesPboardType", "NSFileContentsPboardType", "NSFilesPromisePboardType"
+    ]
+    private static let pasteboardTagClass = UTTagClass(rawValue: kUTTagClassNSPboardType as String)
+
     private static func isFileFlavor(_ type: String) -> Bool {
-        type == "public.file-url" || type == "NSFilenamesPboardType" || type == "NSFileContentsPboardType" ||
-            type == "NSFilesPromisePboardType" || type.hasPrefix("com.apple.pasteboard.promised-file-") ||
-            UTType(type)?.conforms(to: .fileURL) == true
+        if type == "public.file-url" || legacyFileFlavors.contains(type) ||
+            type.hasPrefix("com.apple.pasteboard.promised-file-") { return true }
+        guard let uniformType = UTType(type) else { return false }
+        if uniformType.conforms(to: .fileURL) { return true }
+        // Carbon exposes some legacy AppKit file flavors as dynamic UTIs. Their public
+        // tag specification preserves the pasteboard type; the opaque dyn.* string is not stable.
+        return uniformType.tags[pasteboardTagClass]?.contains(where: legacyFileFlavors.contains) == true
     }
 
     private func onQueue<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
