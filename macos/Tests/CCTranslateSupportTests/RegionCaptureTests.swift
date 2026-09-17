@@ -279,6 +279,7 @@ final class RegionCaptureGeometryTests: XCTestCase {
         }
         for displays in [[], [CaptureFixture.display(), CaptureFixture.display()],
                          [CaptureFixture.display(1, CGRect(x: 0, y: 0, width: -4, height: 4))],
+                         [CaptureFixture.display(1, CGRect(x: 0, y: 0, width: 4, height: -4))],
                          [CaptureFixture.display(pixels: 0)]] {
             XCTAssertThrowsError(try RegionCaptureGeometry.capturePlan(for: displays))
         }

@@ -161,6 +161,9 @@ enum DictionaryDocument {
                 throw ProbeError.invalidPayload
             }
         case "dictionary_lookup":
+            guard let origin = payload["origin"]?.string, ["text", "selection"].contains(origin) else {
+                throw ProbeError.invalidPayload
+            }
             var translation = payload
             translation["operation"] = .string("translate")
             try TranslationDocument.validateRequest(translation)

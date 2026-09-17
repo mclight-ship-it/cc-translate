@@ -255,7 +255,7 @@ public enum RegionCaptureGeometry {
         guard !displays.isEmpty else { throw RegionCaptureError.noDisplays }
         guard Set(displays.map(\.id)).count == displays.count,
               displays.allSatisfy({
-                  finite($0.frame) && $0.frame.width > 0 && $0.frame.height > 0 &&
+                  finite($0.frame) && $0.frame.size.width > 0 && $0.frame.size.height > 0 &&
                   $0.pixelWidth > 0 && $0.pixelHeight > 0 && $0.rotation.isFinite
               }) else { throw RegionCaptureError.invalidLayout }
         let union = displays.dropFirst().reduce(displays[0].frame) { $0.union($1.frame) }

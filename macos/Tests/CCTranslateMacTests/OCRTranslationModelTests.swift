@@ -82,7 +82,8 @@ final class OCRTranslationModelTests: XCTestCase {
         XCTAssertEqual(upgraded.translations.last?.text, "Reviewed OCR input")
         XCTAssertEqual(upgraded.translations.last?.origin, "ocr")
         XCTAssertEqual(upgraded.translations.last?.useCache, false)
-        XCTAssertTrue(upgraded.dictionaryRequests.isEmpty)
+        // Reconnection refreshes dictionary status, but must never look up OCR content.
+        XCTAssertEqual(upgraded.dictionaryRequests.map(\.request), [.status])
         XCTAssertEqual(model.input, "Changed after submission")
     }
 
