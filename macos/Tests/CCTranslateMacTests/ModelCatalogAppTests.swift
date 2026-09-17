@@ -6,6 +6,7 @@ import AppKit
 final class CatalogTestClient: AppHelperClient {
     let base: ProductTestHelper
     private(set) var catalogRequests: [String] = []
+    private(set) var catalogTimeouts: [TimeInterval] = []
     var onCatalog: (@MainActor (String) -> Void)?
     var onStart: (@MainActor () -> Void)?
     var onStop: (@MainActor () -> Void)?
@@ -21,6 +22,7 @@ final class CatalogTestClient: AppHelperClient {
     }
     func modelCatalog(id: String, timeout: TimeInterval) -> String {
         catalogRequests.append(id)
+        catalogTimeouts.append(timeout)
         MainActor.assumeIsolated { onCatalog?(id) }
         return id
     }
@@ -136,6 +138,19 @@ final class CatalogAppFixture {
 }
 
 final class ModelCatalogAppTests: XCTestCase {
+    @MainActor
+    func testCatalogConvenienceDispatchesThroughTheClientRequirement() throws {
+        let f = try CatalogAppFixture()
+        defer { f.cleanUp() }
+        let client = try f.ready()
+        let transport: AppHelperClient = client
+        XCTAssertEqual(transport.modelCatalog(id: "default-timeout"), "default-timeout")
+        XCTAssertEqual(transport.modelCatalog(id: "explicit-timeout", timeout: 7), "explicit-timeout")
+        XCTAssertEqual(client.catalogRequests, ["default-timeout", "explicit-timeout"])
+        XCTAssertEqual(client.catalogTimeouts, [40, 7])
+        XCTAssertTrue(client.base.messages.isEmpty)
+    }
+
     @MainActor
     func testConstructionAndOpeningSettingsDoNotDiscoverModels() throws {
         let f = try CatalogAppFixture()

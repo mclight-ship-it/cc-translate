@@ -25,7 +25,9 @@ extension HelperConnection: AppHelperClient {}
 extension AppHelperClient {
     func send(_ message: ClientMessage) { send(message, timeout: 25) }
     @discardableResult
-    func modelCatalog(id: String, timeout: TimeInterval = 40) -> String {
+    func modelCatalog(id: String) -> String { modelCatalog(id: id, timeout: 40) }
+    @discardableResult
+    func modelCatalog(id: String, timeout: TimeInterval) -> String {
         send(ClientMessage(id: id, type: "request", payload: ["operation": .string("model_catalog")]),
              timeout: timeout)
         return id
