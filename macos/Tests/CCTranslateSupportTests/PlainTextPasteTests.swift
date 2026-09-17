@@ -184,6 +184,7 @@ private enum PasteboardFixtureError: Error {
 
 private struct PasteboardFixtureGeneration {
     let name: String
+    var releaseQueued = false
     var releaseRequested = false
 }
 
@@ -193,7 +194,7 @@ private struct PasteboardFixtureGeneration {
 @MainActor private var pasteboardFixtureItemGeneration: [UInt: Int] = [:]
 
 @MainActor
-private func newPrivatePasteboard() -> NSPasteboard {
+private func makePrivatePasteboard() -> NSPasteboard {
     let board = NSPasteboard.withUniqueName()
     let name = board.name.rawValue
     let previous = pasteboardFixtureLatestGeneration[name]
@@ -206,15 +207,15 @@ private func newPrivatePasteboard() -> NSPasteboard {
 
 @MainActor
 private func releasePrivatePasteboard(_ board: NSPasteboard) {
-    defer { board.releaseGlobally() }
     let name = board.name.rawValue
     guard let generation = pasteboardFixtureLatestGeneration[name] else {
         XCTFail("Private board release must have a recorded namespace generation")
         return
     }
-    // releaseGlobally is oneway; this records the request, not server-side destruction.
-    pasteboardFixtureGenerations[generation].releaseRequested = true
-    print("PasteboardFixture global release requested generation \(generation), name \(name)")
+    // The test body can finish before its retained C publishers are retired in tearDown.
+    // Keep the server resource available for C-reference cleanup, including promise retirement.
+    pasteboardFixtureGenerations[generation].releaseQueued = true
+    print("PasteboardFixture global release queued generation \(generation), name \(name)")
 }
 
 @MainActor
@@ -508,10 +509,42 @@ private final class PastePromiseFixture {
 final class PlainTextPasteTests: XCTestCase {
     @MainActor
     private var publishedReferences: [Pasteboard] = []
+    @MainActor
+    private var privateBoards: [NSPasteboard] = []
 
     override func tearDown() async throws {
-        await releasePublishedReferences()
+        await retirePrivatePasteboardResources()
         try await super.tearDown()
+    }
+
+    @MainActor
+    private func newPrivatePasteboard() -> NSPasteboard {
+        let board = makePrivatePasteboard()
+        privateBoards.append(board)
+        return board
+    }
+
+    @MainActor
+    private func retirePrivatePasteboardResources() {
+        // CFRelease can resolve promises against the server resource. Retire local C users
+        // (and their autoreleased objects) before AppKit releases that resource globally.
+        autoreleasepool { releasePublishedReferences() }
+        XCTAssertTrue(publishedReferences.isEmpty)
+        for board in privateBoards {
+            let name = board.name.rawValue
+            if let generation = pasteboardFixtureLatestGeneration[name] {
+                XCTAssertTrue(pasteboardFixtureGenerations[generation].releaseQueued,
+                              "A fixture scope must finish before its server resource is released")
+                XCTAssertFalse(pasteboardFixtureGenerations[generation].releaseRequested)
+                // releaseGlobally is oneway: record the request, not completed destruction.
+                pasteboardFixtureGenerations[generation].releaseRequested = true
+                print("PasteboardFixture global release requested after C retirement generation \(generation), name \(name)")
+            } else {
+                XCTFail("Private board teardown must have a recorded namespace generation")
+            }
+            board.releaseGlobally()
+        }
+        privateBoards.removeAll()
     }
 
     @MainActor
@@ -1181,6 +1214,35 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateImageFileAndMixedFileTextClipboardsRemainUntouched() async throws {
+        let predecessorGeneration: Int
+        do {
+            let predecessor = newPrivatePasteboard()
+            defer { releasePrivatePasteboard(predecessor) }
+            predecessorGeneration = try XCTUnwrap(pasteboardFixtureLatestGeneration[predecessor.name.rawValue])
+            let bytes = Data("<b>synthetic predecessor</b>".utf8)
+            try publish(predecessor, representations: [[("public.html", bytes)]])
+            let count = predecessor.changeCount
+            let token = PlainTextPasteCancellation()
+            let adapter = SystemPlainTextPasteClipboard(name: predecessor.name)
+            guard case .failure(.unsupportedRepresentation) = await adapter.read(cancellation: token) else {
+                return XCTFail("The predecessor must remain an unsupported HTML-only resource")
+            }
+            XCTAssertEqual(predecessor.changeCount, count)
+            XCTAssertEqual(predecessor.data(forType: .html), bytes)
+            XCTAssertEqual(token.outcome(.unsupportedRepresentation).clipboard, .unchanged)
+        }
+        XCTAssertEqual(publishedReferences.count, 1)
+        XCTAssertEqual(privateBoards.count, 1)
+        XCTAssertTrue(pasteboardFixtureGenerations[predecessorGeneration].releaseQueued)
+        XCTAssertFalse(pasteboardFixtureGenerations[predecessorGeneration].releaseRequested,
+                       "Global release must not run while a C publisher still owns the resource")
+        retirePrivatePasteboardResources()
+        XCTAssertTrue(publishedReferences.isEmpty)
+        XCTAssertTrue(privateBoards.isEmpty, "Finished resources must not be retained across fixtures")
+        XCTAssertTrue(pasteboardFixtureGenerations[predecessorGeneration].releaseRequested)
+
+        // Reopen after real retirement; existing publication checks still require exact
+        // IDs, flavors and bytes even when the native allocator reuses a reference address.
         let types: [NSPasteboard.PasteboardType] = [.png, .fileURL, NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url")]
         for type in types {
             let board = newPrivatePasteboard()
