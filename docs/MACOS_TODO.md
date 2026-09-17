@@ -53,6 +53,57 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵、Claude独立后端及旧Windows稳定性追踪仍分别保留，但不冻结独立可做的Codex产品界面。
 
+<a id="native-image-translation-checkpoint"></a>
+
+### 当前图片翻译进展：功能已接线，尚未完成同包三系统验收
+
+源码90228cb已接通原生选区PNG、Swift附件所有权、helper私有副本和真实`localImage`请求；
+后续修复取消准备期间的设置回读覆盖，并修正新历史截图测试遗漏语义背景的问题。
+说明与操作见[明确发送图片](MACOS_DEVELOPMENT.md#native-image-translation)。
+
+源码`bfd93827784f5533c385eb591d46eba62e9c1e0b` /
+[run35255188300](https://github.com/mclight-ship-it/cc-translate/actions/runs/35255188300)
+的producer已通过；**整run实际watch仍退出1**，两个消费者仅在旧私有剪贴板测试失败。
+正常privacy/full hook1819/95.530s；portable876/14.777s；原生编译35.74s，
+598方法中575通过、23项既定构包前可选skip，291.919s。
+相对固定26645b9基线新增76、删除0；75项新增非集成方法各通过一次，
+新增图片Foundation方法在构包后也实际通过一次，不能借用它的构包前skip。
+已独立核验100张本run原生PNG：原84张全保留、新增16张，含窄窗、中英深浅色、取消、
+清理失败和仅输出历史；诊断合成图不作为新的原生执行证据。
+
+| 同一App执行系统 | process | core | 构包后Foundation |
+|---|---|---|---|
+| macOS15.7.9 / Xcode16.4 producer | 231/503.937s | 644/5.003s | 21/179.306s |
+| macOS14.8.9 / Xcode16.2 | 231/503.552s | 644/5.842s | 21/191.148s |
+| macOS26.6.2 / Xcode26.6 | 231/512.869s | 644/5.478s | 21/186.386s |
+
+表中各阶段零fail/error/skip；每系统新增9项图片process、40项core和图片Foundation方法
+已逐AST差分及原始日志核验各通过一次，旧20项Foundation也各通过一次。
+两个消费者的About1/Vision4已通过，但**46项剪贴板阶段未通过**，不将表中局部通过写成整包验收成功。
+首次完整进程运行的旧“image是不支持任务”假设已修正：
+保留无进程/无RPC/无缓存写入断言，覆盖真正不支持的audio、预取消图片和相对路径图片拒绝。
+
+[工程验证App10513607054](https://github.com/mclight-ship-it/cc-translate/actions/runs/35255188300/artifacts/10513607054)
+已下载独立审计，**不是新的推荐版或Release**：内层19,351,108 bytes，
+SHA-256 `d93ba68614fa3aa8be884de72e70ed671133eb65aed9436212ab6698924b3142`，
+tree `7c19f25e27f0a75178266960a7449cb5b37608e18581b4a6505a2f995031f5d1`。
+实际690库存/80资源/52源码路径（51唯一）/6个Mach-O；19份Python运行时许可完整，
+许可目录总计27个文件（含其他许可、notice和元数据）。
+633项固定runtime/许可与已验模型目录包一致，bridge排除已知构建元数据后也一致；
+23文件独立Git重建harness SHA
+`3e796078f3bc0a63dbdf05ee54455b4908a8b451b5923a045a3355ab413aa30e`
+与两份消费者报告匹配。HTTPS证书/随包CA、SQLite、取消/EOF与smoke临时清理检查通过；
+消费者最终整体验收仍保持`NOT PASSED`，没有调用真实账号或模型。
+
+当前未勾选完成，也未更换推荐App：旧私有剪贴板fixture在C条目枚举后出现
+`badPasteboardItemErr`，包括返回前一条目ID的多次实际诊断，仍在定位。
+保留所有旧拒绝、原字节、changeCount、promise和零副作用断言；不靠放宽错误原因或重复运行碰绿灯。
+CI现继续收集独立随包检查，但归档、seal、上传之前始终要求原生unit步骤的原始
+`outcome == success`；失败、跳过、取消、空值或未知状态均拒绝，producer保持失败，consumer不能启动。
+该归档前置已用实际shell验证，03be40a失败run也已证明unit失败时未生成App归档制品；
+bfd9382的unit真实通过才生成上述工程包，不能因此忽略随后两个消费者的失败。
+下一步仍是修复当前源码并完成整个同包消费者验收，不等待用户重新配置账号。
+
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；
 36项模型测试中1项抓到准备期间的新模型选择被旧配置回读覆盖，其余35项通过。
@@ -1670,7 +1721,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [x] 同帧区域截图、多显示器坐标转换、本地Vision及明确OCR文字翻译；082aad6同包验证见截图检查点，真人多屏/TCC仍另列待验。
-- [ ] 真正图片provider及图片明确发送；不以OCR文字翻译冒充完成。
+- [ ] 真正图片provider及图片明确发送已实现；[同包三系统验收进行中](#native-image-translation-checkpoint)，不以OCR文字翻译或构包前skip冒充完成。
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。

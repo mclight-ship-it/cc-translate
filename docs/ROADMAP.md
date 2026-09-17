@@ -68,7 +68,13 @@ Swift522（500通过、22构包前可选skip）、84PNG与完整App已独立核�
 未修改生产粘贴实现，不把失败重试当修复。仅明确刷新读取所选Codex目录；空/失败不阻断
 Fast/Default、手工ID或普通翻译，不引入精确版本白名单、账号探针或自动重试。
 Mac测试编译、协议派发、实际可读性、旧fixture受控复现及修复保留于[模型目录检查点](MACOS_TODO.md#native-model-catalog-checkpoint)。
-完整模型/设置余项、真正图片provider及其余P3–P6仍未完成。
+真正图片provider及明确发送已接线，含选区PNG、双端附件所有权、取消/清理和仅输出历史；
+源码bfd9382的75项新增非集成方法与16张新增原生渲染已通过；
+同一App在15/14/26均通过231process/644core/21构包后Foundation，新增图片方法逐项实测。
+但run35255188300整run仍失败：两个消费者仅旧私有剪贴板阶段未通过。
+完整工程App已独立审计，尚不作为推荐版；继续修复，不将构包前skip或局部通过当成完成交付。
+详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
+推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 
