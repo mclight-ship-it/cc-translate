@@ -437,6 +437,46 @@ assert not any(name in sys.modules for name in ("cc_core", "cc_providers", "tkin
                         report = translation_fixture.verify(fixture["root"])
                         self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
 
+    def test_custom_model_fixture_requires_native_routing_when_optional_catalog_has_no_id(self):
+        from cc_macos.native_provider_fixture import _validate_provider_catalog
+
+        with tempfile.TemporaryDirectory(prefix=".native-model-args-", dir=Path.cwd()) as directory:
+            root = Path(directory).resolve()
+            for model in ("provider/Exact-ID:2026", "gpt-5.4-mini", "model-e\u0301", "m" * 256):
+                with self.subTest(model=model):
+                    _validate_provider_catalog(root, [], model)
+                    for extra in (['model_catalog_json="unused"'], ['model="substitute"']):
+                        with self.assertRaises(SystemExit) as caught:
+                            _validate_provider_catalog(root, extra, model)
+                        self.assertEqual(caught.exception.code, 76)
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_known_model_fixture_keeps_exact_catalog_path_payload_and_argument_checks(self):
+        from cc_macos.catalog_fixture import PAYLOAD
+        from cc_macos.native_provider_fixture import _validate_provider_catalog
+
+        with tempfile.TemporaryDirectory(prefix=".native-model-catalog-", dir=Path.cwd()) as directory:
+            root = Path(directory).resolve()
+            (root / "cache").mkdir()
+            catalog = root / "cache" / "models.json"
+            catalog.write_text(json.dumps(PAYLOAD), encoding="utf-8")
+            override = "model_catalog_json=" + json.dumps(str(catalog))
+            for model in ("synthetic", "synthetic-small"):
+                _validate_provider_catalog(root, [override], model)
+                for remaining in ([], [override, 'extra=true']):
+                    with self.assertRaises(SystemExit) as caught:
+                        _validate_provider_catalog(root, remaining, model)
+                    self.assertEqual(caught.exception.code, 76)
+            outside = root / "outside.json"
+            outside.write_text(json.dumps(PAYLOAD), encoding="utf-8")
+            with self.assertRaises(SystemExit) as caught:
+                _validate_provider_catalog(root, ["model_catalog_json=" + json.dumps(str(outside))], "synthetic")
+            self.assertEqual(caught.exception.code, 77)
+            catalog.write_text('{"models":[]}', encoding="utf-8")
+            with self.assertRaises(SystemExit) as caught:
+                _validate_provider_catalog(root, [override], "synthetic")
+            self.assertEqual(caught.exception.code, 77)
+
     def test_result_action_fixtures_keep_exact_expected_prompts_without_running_cli(self):
         from cc_macos import translation_fixture
         from cc_providers.codex_cli import build_codex_prompt

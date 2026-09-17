@@ -35,6 +35,21 @@ def create_cli(root, mode="normal"):
     return str(binary), environment, str(work), manager.cache_dir, warnings
 
 
+def _validate_provider_catalog(root, remaining, model):
+    from cc_macos.catalog_fixture import PAYLOAD
+
+    if model not in {entry["slug"] for entry in PAYLOAD["models"]}:
+        # A custom ID absent from optional metadata stays native; it is not a gate.
+        if remaining:
+            raise SystemExit(76)
+        return
+    if len(remaining) != 1 or not remaining[0].startswith("model_catalog_json="):
+        raise SystemExit(76)
+    catalog = Path(json.loads(remaining[0].split("=", 1)[1])).resolve()
+    if not catalog.is_relative_to(root / "cache") or json.loads(catalog.read_bytes()) != PAYLOAD:
+        raise SystemExit(77)
+
+
 def reply_messages(request, cwd, *, thread_id="synthetic-thread", turn_id="synthetic-turn"):
     """The pinned SDK completion has turn.id, not a top-level turnId."""
     method, identifier = request["method"], request.get("id")
@@ -134,7 +149,6 @@ def _serve():
     # The launcher is -I: resolve dependencies exclusively beside this fixture.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from cc_macos import catalog_process_fixture
-    from cc_macos.catalog_fixture import PAYLOAD
     from cc_providers.base import ProviderRequest
     from cc_providers.codex_appserver import _DEFENDER_HOOK_COMMAND
     from cc_providers.codex_cli import build_codex_prompt
@@ -174,17 +188,16 @@ def _serve():
         raise SystemExit(72)
     overrides = values[1::2]
     required = list(CODEX_CONFIG_OVERRIDES)
+    selected_model = translation["model"] if translation is not None else "synthetic"
     if not config_probe:
         required.extend(integration_overrides(NATIVE_CONFIG["config"]))
+        if selected_model == "gpt-5.4-mini":
+            required.append('model_reasoning_effort="low"')
     if overrides[:len(required)] != required:
         raise SystemExit(73)
     if not config_probe:
         remaining = overrides[len(required):]
-        if len(remaining) != 1 or not remaining[0].startswith("model_catalog_json="):
-            raise SystemExit(76)
-        catalog = Path(json.loads(remaining[0].split("=", 1)[1])).resolve()
-        if not catalog.is_relative_to(root / "cache") or json.loads(catalog.read_bytes()) != PAYLOAD:
-            raise SystemExit(77)
+        _validate_provider_catalog(root, remaining, selected_model)
     info = {"pid": os.getpid(), "group": os.getpgrp(), "session": os.getsid(0),
             "args": args, "cwd": cwd, "kind": "config" if config_probe else "provider"}
     _receipt(root, "native-processes.jsonl", info)
