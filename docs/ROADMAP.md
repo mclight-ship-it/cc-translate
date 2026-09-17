@@ -89,7 +89,11 @@ P2词典来源与许可按钮的稳定identity接线并行继续，不冻结其�
 整run实际watch1、没有App/消费者，不将新界面通过说成整run绿色。
 dbf5b33改用AppKit单次交互条目读取；46项产品测试保持，明确以已知C发布ID/精确字节/
 真实promise回调和后置AppKit顺序验证替代C枚举器符合性断言。
-正常hook1823/95.502s通过，run35275212199正在同包验证，不宣称Apple内部机制已修复。
+正常hook1823/95.502s通过，但run35275212199实际watch1：仅UTF-16无损解码失败，
+自动UTF-8别名把BOM带入文字；46粘贴45通过、18Sources及21后置Foundation通过。
+先前API步骤success为continue-on-error后的conclusion，不能当成原始通过；门槛实际阻止App发布。
+237f3c9优先解码UTF-16本身并增加literal-prefix/TSV及精确写入字节检查，
+正常完整hook1823/88.733s通过，run35277832576验证中，仍不宣称迁移验收或Apple内部机制已修复。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
 推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。

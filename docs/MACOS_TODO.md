@@ -152,8 +152,28 @@ tree `b87b0706154feedc3ef8cf947cec2984ad7fdaaa4e5e8aca485e37d91adecda0`，
 避免预先读取AppKit为被测读取准备缓存。identity仅存在于私有测试资源，不写用户剪贴板。
 这不是已证明Apple内部机制或已修复系统缓存。父已审阅两个文件、核验方法清单无增删，
 正常privacy/完整hook1823/95.502s通过，推送时远端精确一致且工作树干净。
-记录时新run的原生Swift步骤通过、构包阶段运行中；仍需同App两个消费者，
-不据producer单步成功宣称迁移通过，不降低原始unit outcome或最终消费者门槛。
+**更正先前状态：API步骤的success是continue-on-error转换后的conclusion，不是原始测试通过。**
+本run实际watch退出1；编译43.68s，616项/23构包前skip/1fail/369.102s。
+46项粘贴45通过，唯一失败为UTF-16无损解码：AppKit同时暴露自动转换的UTF-8别名，
+原优先级选择了它，使UTF-16 BOM变成文字开头的U+FEFF。C已知ID原始字节、
+AppKit原UTF-16字节均精确正确；本次没有C枚举器失败，但迁移仍未通过验收。
+18项Sources、76项图片方法及21后置Foundation逐项通过；
+portable880/14.270s、232process/517.993s、648core/6.562s、Foundation21/184.681s通过。
+原始outcome门槛实际拒绝归档，没有App、消费者未运行。112张本源码PNG已核验并直接查看关键图。
+仅三文档提交aa5e164也因现有push触发器自动运行CI35276127888，实际watch1，
+再次出现同一UTF-16失败；不是新的修复源码，也不能声称文档推送没有触发云CI。
+
+修正源码`237f3c9df85ae98f140f5da32359195348ae3110` /
+[run35277832576](https://github.com/mclight-ship-it/cc-translate/actions/runs/35277832576)
+优先读取并解码UTF-16本身，外部格式仍先于可能改变换行的native别名；
+不对UTF-8结果任意删除U+FEFF。原4个编码矩阵场景和46个方法保持，新增4个
+literal-prefix/TSV场景，并检查最终发布UTF-8的精确字节。
+新增literal-prefix场景使用原始字节而非会消费前缀的AppKit string便捷转换作为判据，
+同时仍检查纯文本类型；原4场景的所有断言保留。Mac原生验证正在运行，尚不宣称修复成功。
+正常push首次被未改动的Windows历史矩阵测试挡住：1823/95.325s、仅日志存在断言失败；
+本日志未记录具体拒绝原因，不能直接归因为WinError5。独立该方法1/3.022s通过后，
+正常privacy/完整hook1823/88.733s通过并推送，未绕过hook，也不把重试称为Windows稳定性修复。
+并行双Cmd+C切片的未提交文件与此源码分开，不宣称共享工作树干净。
 
 <a id="native-dictionary-sources-checkpoint"></a>
 
