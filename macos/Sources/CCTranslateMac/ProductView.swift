@@ -87,7 +87,8 @@ struct TranslatorView: View {
             Label(model.text("Codex", "Codex"), systemImage: "sparkle")
                 .foregroundStyle(.secondary)
             ModelPicker(model: model, selection: $model.modelProfile)
-                .labelsHidden().frame(width: 180)
+                .labelsHidden().frame(minWidth: 180, idealWidth: 280, maxWidth: 340)
+                .layoutPriority(1)
         }
         .disabled(busy || model.settingsBusy)
         .padding(.horizontal, 18).padding(.vertical, 12)

@@ -139,10 +139,17 @@ extension ProductRenderingTests {
         f.model.interfaceLanguage = "en"
         f.model.appearance = "light"
         f.model.reuseHistory(.init(id: "fixture", input: "Original text", output: "Preserved result"))
-        let main = try render(TranslatorView(model: f.model, showHistory: {}, showSettings: {}, showCapture: {}),
-                              named: "model-catalog-main-light", size: NSSize(width: 1120, height: 760),
-                              scheme: .light)
-        XCTAssertTrue(try catalogWords(main).contains("fixture/model-a"))
+        for (name, size) in [
+            ("model-catalog-main-light", NSSize(width: 1120, height: 760)),
+            ("model-catalog-main-narrow-light", NSSize(width: 660, height: 540))
+        ] {
+            let main = try render(TranslatorView(model: f.model, showHistory: {}, showSettings: {}, showCapture: {}),
+                                  named: name, size: size, scheme: .light)
+            let words = try catalogWords(main)
+            XCTAssertTrue(words.contains("fixture model 1"), words)
+            XCTAssertTrue(words.contains("fixture/model-a"), words)
+            XCTAssertTrue(words.contains("translate to"), words)
+        }
         let source = CaptureTestSource(image: try CaptureProductFixture.image())
         let screen = ScreenProbe(source: source, makeOCRJob: { CaptureTestOCR() },
                                  notificationCenter: NotificationCenter())
@@ -153,7 +160,9 @@ extension ProductRenderingTests {
         let preview = try render(
             CaptureView(capture: capture, model: f.model, captureAgain: {}, reselect: {}, close: {}),
             named: "model-catalog-capture-dark", size: NSSize(width: 860, height: 720), scheme: .dark)
-        XCTAssertTrue(try catalogWords(preview).contains("fixture/model-a"))
+        let previewWords = try catalogWords(preview)
+        XCTAssertTrue(previewWords.contains("fixture model 1"), previewWords)
+        XCTAssertTrue(previewWords.contains("fixture/model-a"), previewWords)
         XCTAssertEqual(client.catalogRequests.count, 1)
         XCTAssertEqual(source.requests.count, 1)
         XCTAssertTrue(client.base.translations.isEmpty)

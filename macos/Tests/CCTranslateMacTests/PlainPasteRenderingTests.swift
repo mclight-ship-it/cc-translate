@@ -24,8 +24,8 @@ extension ProductRenderingTests {
         let unavailable = try renderPasteSettings(fixture, name: "plain-paste-settings-own-unavailable-zh-dark",
                                                  scheme: .dark, chinese: true)
         let chinese = try pasteSettingsWords(unavailable, chinese: true).filter { !$0.isWhitespace }
-        XCTAssertTrue(chinese.contains("没有原生编辑器可处理"))
-        XCTAssertTrue(chinese.contains("未请求外部粘贴"))
+        XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
+        XCTAssertTrue(chinese.contains("未请求外部粘贴"), chinese)
         XCTAssertTrue(chinese.contains("文件与文字混合"))
         XCTAssertTrue(chinese.contains("不读取图片数据"))
         XCTAssertEqual(fixture.routing.nativePastes, 2)

@@ -47,11 +47,11 @@ struct PlainPasteSettingsSection: View {
                                   "已在 CC Translate 内分派原生“粘贴并匹配样式”命令。")
                      : model.text("No native editor could handle Paste and Match Style. No external paste was requested.",
                                   "没有原生编辑器可处理“粘贴并匹配样式”，未请求外部粘贴。"))
-                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
             } else if paste.lastRoute == .unavailable {
                 Text(model.text("The foreground app could not be identified. No paste was requested.",
                                 "无法确定前台应用，未请求粘贴。"))
-                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             if case .finished(let outcome) = paste.serviceState.status {
                 VStack(alignment: .leading, spacing: 5) {
