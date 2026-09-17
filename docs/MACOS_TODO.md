@@ -103,13 +103,95 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
+<a id="native-model-settings-checkpoint"></a>
+
+### P3 自定义模型设置与混合语言 OCR：同包三系统已通过，继续纯文本粘贴
+
+当前修正源码`b33515d7ece10a82eb2dacdc68f6d5440d172cc2` /
+[run35185087510](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510)。
+实际watch exit0；API attempt1、3jobs/40steps全部success。完整App已独立核验，
+当前推荐下载已更新为此包。56张最终源码PNG全部保留，逐字节匹配已查看的首轮图；
+新增8张模型设置状态及完整设置的中英/浅深布局均可读。这不是整个移植完成。
+
+- 设置增加自定义Codex模型ID、应用、重置草稿、重新读取及保存/回读/错误状态；
+  保留Fast/Default和已保存的自定义值，主窗口与截图共用选择器。
+  草稿不直接改变请求，应用只保存和读取配置，不加载模型目录或探测账号。
+- 修复共享配置每次把`gpt-5.4-mini`重新改成`auto-fast`的根因：
+  旧默认迁移加一次性标记并持久化实际改写；之后明确选择的mini和其他ID
+  原样通过保存、重新读取、重开和请求快照。不禁止mini，不增加CLI版本白名单。
+- 新Foundation方法使用真实随包helper及合成provider，覆盖4个ID、文字/OCR来源、
+  配置保存/重开及实际thread/start、turn/start的UTF-8字节；没有真实账号或模型调用。
+  原18个Foundation保留，新总数19；About1和consumer OCR4独立执行。
+- 生产Vision启用自动语言检测，保留原识别精度、关闭语言纠错及取消逻辑。
+  4个生产API测试包括原660×120小字反例裁图、13px英文、简中/英文两种行顺序和繁中/英文。
+  不放大/替换原像素、不注入预期词、不把应用界面语言强加给任意截图。
+- 原始341项父整合测试有1个新增标记期望未同步，修正后341/8.350s通过。
+  首次正常完整hook1744/84.702s被旧Windows冻结对照的110个子场景挡住；
+  保留原AST散列，仅投影有意新增的迁移差异，并修复新查找错误假设raw必为映射的问题：
+  复用已转换的迁移字典，保留旧Windows成对可迭代输入及错误/写盘合同。
+  新增对应回归后联合352/11.738s及正常privacy/compile/完整hook1745/84.404s通过。
+  没有绕过hook；原Tk teardown stderr保留，也不宣称旧Windows历史稳定性已修复。
+- 前轮[run35182641842](https://github.com/mclight-ship-it/cc-translate/actions/runs/35182641842)
+  实际watch1：portable803/11.810s、Swift构建28.41s、379/117.083s
+  （21构包前可选skip、零失败）、214process/381.055s通过。
+  4个生产OCR方法实际通过原小字反例及英文/简繁混合；后置Foundation19/157.646s，
+  新模型方法的8组用例产生56个断言失败，未上传完整App，也未运行两个consumer。
+  根因是合成CLI只接受旧目录里的模型并强求目录覆盖参数；真实产品本来就让目录外
+  明确ID由原生Codex处理，目录不是使用门槛。修正仅在合成fixture中匹配该合同，
+  保留已知模型的目录路径/原字节检查及mini的low effort要求，未放宽产品协议、
+  删除模型/请求断言或编造模型目录。新增两项host回归，228/9.641s及正常完整
+  hook1747/96.515s通过后推送`6652bd0`复验。
+- `6652bd0`的producer已通过实际自定义模型方法（53.804s）、整个19Foundation/161.102s
+  及585core/4.343s，确认上述fixture修复覆盖保存/重开到真实合成thread/turn。
+  父再复核发现Picker仍使用Swift String的规范等价比较，可能丢失字节不同的已保存ID。
+  `b33515d`把选择绑定、tag及列表identity都改为字节精确的Hashable值，并增加一个原生回归；
+  不改变后端请求或新增使用条件。正常完整hook1747/98.709s通过；
+  新字节identity方法已在最终原生运行中实际passed。
+- 固定Git实点214process/585core/380Swift，bundle门槛同步；380包含原356、19模型设置、
+  4生产OCR及1Foundation。21个构包前可选skip不代替后置执行。
+  当前56PNG不包含checked-in的OCR输入图；原始失败日志保留。
+
+最终`b33515d`的portable805/15.355s、Swift构建39.95s，
+380/140.759s（359 passed、21构包前可选skip、0fail）。
+固定Git原生清单356→380、+24/-0：23个新前置方法各一次started/passed，
+新增模型Foundation及原18个Foundation在三系统后置均各一次started/passed，无后置skip。
+15个新增core方法也在三个系统各一次ok；原始AST指纹不变，迁移的有意差异单独校验。
+
+| 同一个App的系统 | 真实进程 | 核心 | 后置Foundation | About读取 | 同源生产Vision |
+| --- | --- | --- | --- | --- | --- |
+| 15.7.9 / Xcode16.4 | 214/405.160s | 585/5.021s | 19/169.277s | 1/0.014s | 4/4.392s |
+| 14.8.9 / Xcode16.2 harness | 214/403.232s | 585/5.336s | 19/165.343s | 1/0.017s | 4/4.207s |
+| 26.6.2 / Xcode26.6 harness | 214/391.597s | 585/5.032s | 19/164.702s | 1/0.032s | 4/3.533s |
+
+Vision来自同源生产LocalOCR及原像素输入，不是打包GUI/TCC屏幕捕获实测。
+两个consumer的19/1/4方法分别核对，没有用总数掩盖缺失、重复或skip。
+完整App artifact10482227412，内层zip19,109,069bytes，
+SHA-256 `32cefda7ac9c9d1a526873a3799bea411ed9b958a964277f90f6dc1a73bde53f`，
+tree `e7678ec13e3db66bf5bf7b78f5cc57c886c6bdd9c29ca0d5ca13b2478d3b73a5`。
+独立检查ZIP CRC/路径/模式/链接、688库存、78资源、50个Core来源路径（49唯一）、
+6个实际arm64 Mach-O及最低系统、19份运行时许可/14项必需覆盖。
+632个保留运行时/许可文件逐SHA与已核验关于包一致，另1个相同符号链接。
+两个consumer的archive/tree/原16.4产品编译器均匹配；17文件library-only harness
+从固定Git原字节及模式独立重建为
+`92926c4697dfa99041de5c09368accc01158d81a8f5626353a7f456c17e84c10`，两端一致，
+没有重建或重签被测App。UI artifact10482335822，14/26小报告10482731602/10481723601。
+证书/HTTPS、SQLite、取消/EOF、不可变及临时清理字段逐项通过；
+生产URLSession实取67,948,544bytes，同源模型到原生离屏绘制P95/最大57.188667ms，
+不是物理键盘、打包GUI或OCR延迟。官方0.146/0.154只做版本/native prewarm，
+没有账号、thread/turn或模型调用。
+
+技术合同见[自定义模型设置](MACOS_DEVELOPMENT.md#native-custom-model-settings)。
+下一片已开始原生纯文本粘贴支持服务；对应Windows的主动去格式并立即粘贴行为，
+不是只给翻译输入框增加Paste。完整动态模型目录、真正图片provider及其他P3–P6仍继续，
+不等待用户再次“继续”。
+
 <a id="native-about-checkpoint"></a>
 
 ### P3 关于与第三方许可：同包三系统已通过，继续完整设置
 
-当前源码`d699185fe8d020b928bd4a8091447fb366304401` /
+该检查点源码`d699185fe8d020b928bd4a8091447fb366304401` /
 [run35176360537](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537)。
-实际watch exit0；API attempt1、3jobs/40steps全部success。当前下载已更新为经完整核验的关于/许可新包，
+实际watch exit0；API attempt1、3jobs/40steps全部success。该关于/许可包已完整核验；最新下载见上方模型设置检查点，
 不是旧版黑导航截图所对应的App，也不代表整个移植结束。
 
 - 原生About/许可视图、独立资源模型、菜单和设置入口已接通。构造无新增资源/业务I/O，
@@ -1442,6 +1524,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
+- [x] 手动自定义模型设置、精确保存/重开/请求及中英混合OCR改进；b33515d同包验证见模型设置检查点。
 - [ ] 完整设置/模型管理。
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
 

@@ -36,7 +36,18 @@ Swift335（316通过及19构包前可选skip），41PNG和完整App均已独立�
 新增20个原生方法及各系统的真实包读取逐方法确认。菜单/设置进入同一独立窗口，
 完整许可可选择/滚动，版本及构建元数据不冒充实时签名验证，不需要CLI或模型请求。
 导航黑块和中文像素测试语言修复的原始失败证据见[关于/许可检查点](MACOS_TODO.md#native-about-checkpoint)；
-当前下载已更新为此新包。真正图片provider、完整设置/模型管理及其他P3功能仍继续开发。
+该关于包保留为前置证据，当前下载已由下方模型设置新包替代。
+自定义Codex模型设置及生产混合语言OCR修正源码`b33515d` /
+[run35185087510](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510)
+现已通过实际watch0、attempt1的3jobs/40steps，正常完整hook1747；
+380原生方法（359通过/21前置可选skip）、56张PNG和完整App已核验。
+同一App三系统各214process/585core/19后置Foundation及About1，同源生产OCR4也逐项通过。
+修复了合成CLI错误强求目录覆盖参数的前提，保留实际模型请求断言；
+Picker还补齐字节精确identity，避免Swift规范等价比较丢失不同ID。
+当前下载已更新为该源码的完整核验包，下一片已开始主动纯文本粘贴支持服务。
+明确模型ID不再被重复默认迁移改写；没有增加版本白名单或账号探针作为使用前置。
+完整范围及原始失败/修复见[模型设置与OCR检查点](MACOS_TODO.md#native-model-settings-checkpoint)；
+动态模型目录、真正图片provider及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

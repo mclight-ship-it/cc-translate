@@ -770,6 +770,38 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 不要添加未经证明必要的宽泛 entitlement。未来每次更新是否保留 TCC 授权仍须实机验证。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
 
+<a id="native-custom-model-settings"></a>
+
+### 原生自定义模型设置
+
+此功能已包含在下方完整核验的新开发包中，证据见
+[模型设置与OCR检查点](MACOS_TODO.md#native-model-settings-checkpoint)。
+这一步是手动输入已有模型ID，不是动态目录、账号权限查询或完整模型管理。
+
+- Settings的翻译区保留Fast/Default，并可输入自定义Codex模型ID，明确应用、重置草稿或
+  重新读取已保存设置；主窗口和截图共用同一选择器。应用走原配置保存/回读协议，
+  不运行模型、不要求先执行目录或版本检查。
+- 输入草稿、当前选择和已读回值分离。只在对应保存请求的读回ID逐UTF-8字节一致后
+  显示已应用；失败/不一致保留用户输入并显示实际状态，不悄悄替换模型或重放写入。
+  保存期间、断连和迟到回调沿原请求生命周期处理；输入框使用原生field editor，
+  不将翻译的Cmd+Return改绑成“应用模型”。
+- ID保持大小写和Unicode原字节，不自动修剪或规范化；空值、空白/控制字符、
+  超过已有256字节请求上限会给出输入提示。Fast/Default由预置选项选择。
+  选择器的绑定、tag和列表identity也使用字节精确比较，避免Swift String的规范等价规则
+  合并不同ID或丢失之前保存的选择。
+  `gpt-5.4-mini`不是被禁用的ID：共享配置只迁移未标记的旧默认一次，
+  写入`codex_model_default_migrated`；从已加载配置明确选择mini后，
+  保存、读回、重开及请求快照不再将它改写成`auto-fast`。
+- 最近确认的自定义ID沿现有本机偏好保存，不新增账号、目录或探测RPC。
+  合成测试覆盖多字节/组合Unicode/256字节、读回不一致、编辑和断连；
+  真实包后置测试另检查实际provider请求，不用准备fixture里的期望值自证模型。
+- 同一源码启用Vision自动语言检测，任意截图仍不采用应用UI语言作为强制识别语言。
+  原像素小字及英文/简繁混合回归调用生产LocalOCR；两consumer只复制同字节测试和输入图
+  到library-only harness，不重建/重签被测App，也不把测试PNG加入产品资源。
+
+原生离屏渲染与合成请求不等同于真人IME/VoiceOver/TCC、屏幕多显示器或账号模型验收。
+本轮三系统自动化已通过；下一片继续主动纯文本粘贴，完整模型目录等仍属后续范围。
+
 <a id="native-about-licenses"></a>
 
 ### 原生关于与第三方许可
@@ -802,19 +834,21 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-当前新增原生关于/第三方许可窗口，保留区域截图、本地OCR、可编辑预览和明确文字翻译、
+当前新增自定义模型设置、一次性模型迁移修复和中英混合OCR识别改进，
+保留原生关于/第三方许可、区域截图、可编辑预览和明确文字翻译、
 全库历史搜索、本地词典下载/开关/删除/来源许可与六种结果动作。
-producer通过真实原生模型/渲染测试并保留48张PNG，同一个App在15.7.9/14.8.9/26.6.2
-各通过214进程/570核心/18后置Foundation及独立的1个About包资源测试，完整App已独立字节核验。
+producer通过380个原生测试（21构包前可选skip、零失败）并保留56张PNG，
+同一个App在15.7.9/14.8.9/26.6.2各通过214进程/585核心/19后置Foundation及独立About1；
+三个系统的4项同源生产Vision测试也实际通过。完整App已独立字节核验。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`d699185fe8d020b928bd4a8091447fb366304401`；
-  [run35176360537](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537/artifacts/10479431166)；
-  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537/artifacts/10478831534)。
-- 内层`CCTranslateMac-P0.zip`：19,073,485 bytes；
-  SHA-256 `bda9a33e1e29a9b2740cc5729ba34b89978b69da7eb43dcdc50e6b7cfe2b86a5`。
-  artifact保留到2026-09-24T03:10:44Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`b33515d7ece10a82eb2dacdc68f6d5440d172cc2`；
+  [run35185087510](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510/artifacts/10482227412)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510/artifacts/10482335822)。
+- 内层`CCTranslateMac-P0.zip`：19,109,069 bytes；
+  SHA-256 `32cefda7ac9c9d1a526873a3799bea411ed9b958a964277f90f6dc1a73bde53f`。
+  artifact保留到2026-09-24T05:30:54Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
@@ -846,7 +880,10 @@ producer通过真实原生模型/渲染测试并保留48张PNG，同一个App在
    显示匹配总数并对匹配结果分页、复制及复用。无需先“加载更多”才能找到较早记录。
    输入短暂合并后自动搜索，Return立即提交；清空仍需确认并删除全库，不限于当前匹配。
    Settings可保存中英语言、系统/浅/深色、
-   默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
+   默认方向/模式和历史开关，也可明确输入并应用自定义Codex模型ID；
+   “重置草稿”不发送模型请求，保存后可“重新读取已保存设置”确认。
+   不需要先加载模型目录；模型本身是否可用由已有Codex和账号决定。
+   历史开关关掉并保存读回后，新翻译不再新增历史。
    普通关闭窗口不退出，菜单可召回结果。分页时历史变化会提示刷新，不自动重放请求。
 6. `Screenshot / 截图`或菜单栏`Screenshot translation… / 截图翻译…`打开区域截图工作流。
    选区后自动本地识别，预览文字可编辑；只有点击`Translate text / 翻译文字`才发送文字。
@@ -858,6 +895,14 @@ producer通过真实原生模型/渲染测试并保留48张PNG，同一个App在
 8. 应用菜单、菜单栏或Settings中的关于入口会打开同一个关于/第三方许可窗口。
    可以查看版本和构建来源、选择并滚动完整许可文本、明确复制应用信息；
    不需要Codex、helper连接或新的系统权限，不会发出模型请求。
+
+**本轮简短检查（可选，不需要改已有CLI路径或账号）：**
+
+1. 在Settings保留Fast/Default，或只在需要时填写已有Codex可用的自定义ID。
+   点“应用模型”，再“重新读取已保存设置”，正常退出重开后应保持同一个选择。
+   应用设置本身不请求模型；需要实际翻译时再使用无敏感内容的短句。
+2. 截图可使用一行中文和一行英文的合成文字，查看本地识别预览；仍可编辑后明确翻译，
+   不会因为本地OCR就上传图片或调用模型。不必为了这次更新重跑全部权限流程。
 
 **关于/许可简短检查（可选，不是继续使用或开发的前置）：**
 
