@@ -140,13 +140,16 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
         let boardName = name == .general ? (kPasteboardClipboard as String) : name.rawValue
         var reference: Pasteboard?
-        guard PasteboardCreate(boardName as CFString, &reference) == noErr, let board = reference else {
+        let createStatus = PasteboardCreate(boardName as CFString, &reference)
+        trace?("create status \(createStatus), reference \(reference != nil)")
+        guard createStatus == noErr, let board = reference else {
             return .failure(.unavailableData)
         }
         defer { withExtendedLifetime(board) {} }
         _ = PasteboardSynchronize(board)
         var count = 0
         let countStatus = PasteboardGetItemCount(board, &count)
+        trace?("count status \(countStatus), actual \(count), expected \(metadata.itemCount)")
         if let failure = failure(after: countStatus, cancellation: cancellation) { return .failure(failure) }
         guard count == metadata.itemCount else { return .failure(.clipboardChanged) }
         var items: [(id: PasteboardItemID, flavors: [String])] = []
@@ -154,10 +157,12 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
             var item: PasteboardItemID?
             let status = PasteboardGetItemIdentifier(board, index, &item)
+            trace?("identifier index \(index), status \(status), present \(item != nil)")
             if let failure = failure(after: status, cancellation: cancellation) { return .failure(failure) }
             guard let item else { return .failure(.unavailableData) }
             var array: CFArray?
             let flavorsStatus = PasteboardCopyItemFlavors(board, item, &array)
+            trace?("flavors status \(flavorsStatus), count \(array.map { CFArrayGetCount($0) } ?? -1)")
             if let failure = failure(after: flavorsStatus, cancellation: cancellation) { return .failure(failure) }
             guard let flavors = array as? [String] else { return .failure(.unavailableData) }
             guard !flavors.contains(where: Self.isFileFlavor) else { return .failure(.noText) }

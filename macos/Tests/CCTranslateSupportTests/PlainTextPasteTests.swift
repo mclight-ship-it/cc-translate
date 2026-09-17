@@ -307,6 +307,19 @@ private final class PastePromiseFixture {
 
 final class PlainTextPasteTests: XCTestCase {
     @MainActor
+    private var publishedReferences: [Pasteboard] = []
+
+    override func tearDown() async throws {
+        await releasePublishedReferences()
+        try await super.tearDown()
+    }
+
+    @MainActor
+    private func releasePublishedReferences() {
+        publishedReferences.removeAll()
+    }
+
+    @MainActor
     private func publish(_ board: NSPasteboard, items: [NSPasteboardItem]) throws {
         let representations = try items.map { item in
             try item.types.map { type in
@@ -320,6 +333,8 @@ final class PlainTextPasteTests: XCTestCase {
     @MainActor
     private func publish(_ board: NSPasteboard, representations: [[(String, Data)]]) throws {
         let reference = try privatePasteboardReference(board)
+        // A private global pasteboard can disappear when its final C reference is released.
+        publishedReferences.append(reference)
         try checkPasteboardFixture(PasteboardClear(reference))
         _ = PasteboardSynchronize(reference)
         for flavors in representations {
