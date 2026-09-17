@@ -19,6 +19,24 @@ final class CustomModelSettingsTests: XCTestCase {
         XCTAssertFalse(CodexModelSettings.sameID("e\u{301}", "\u{e9}"), "Provider IDs compare UTF-8, not canonical Unicode equivalence.")
     }
 
+    func testCanonicallyEquivalentIDsKeepDistinctPickerIdentityAndRememberedChoice() {
+        let composed = "model-\u{e9}"
+        let decomposed = "model-e\u{301}"
+        XCTAssertEqual(composed, decomposed, "Swift String equality alone merges these provider IDs.")
+        let first = CodexModelSettings.ChoiceID(value: composed)
+        let second = CodexModelSettings.ChoiceID(value: decomposed)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(Set([first, second]).count, 2)
+        XCTAssertEqual(first, CodexModelSettings.ChoiceID(value: composed))
+        var settings = CodexModelSettings()
+        settings.restoreCustom(decomposed)
+        let choices = settings.choices(selection: composed)
+        XCTAssertEqual(choices.map { Array($0.utf8) },
+                       ["auto-fast", "auto", decomposed, composed].map { Array($0.utf8) })
+        XCTAssertEqual(Set(choices.map { CodexModelSettings.ChoiceID(value: $0) }).count, 4)
+        XCTAssertEqual(settings.choices(selection: decomposed).count, 3)
+    }
+
     @MainActor
     func testTypingBeforeSettingsLoadDoesNotSelectSaveOrProbeAnything() throws {
         let fixture = try ProductTestHarness(savedCLI: false)

@@ -1,6 +1,19 @@
 import Foundation
 
 struct CodexModelSettings {
+    // SwiftUI tags must preserve byte-distinct IDs that String treats as equivalent.
+    struct ChoiceID: Hashable {
+        let value: String
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            CodexModelSettings.sameID(lhs.value, rhs.value)
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(Data(value.utf8))
+        }
+    }
+
     enum Validation: Equatable {
         case empty, whitespace, tooLong, preset
     }
@@ -43,7 +56,7 @@ struct CodexModelSettings {
 
     func choices(selection: String) -> [String] {
         var values = ["auto-fast", "auto"]
-        if let rememberedCustom, !Self.isPreset(rememberedCustom), rememberedCustom != selection {
+        if let rememberedCustom, !Self.isPreset(rememberedCustom), !Self.sameID(rememberedCustom, selection) {
             values.append(rememberedCustom)
         }
         if !Self.isPreset(selection) { values.append(selection) }

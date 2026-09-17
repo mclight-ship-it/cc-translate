@@ -834,9 +834,14 @@ struct ModelPicker: View {
     @Binding var selection: String
 
     var body: some View {
-        Picker(model.text("Model", "模型"), selection: $selection) {
-            ForEach(model.modelSettings.choices(selection: selection), id: \.self) { profile in
-                Text(label(profile)).tag(profile)
+        Picker(model.text("Model", "模型"), selection: Binding(
+            get: { CodexModelSettings.ChoiceID(value: selection) },
+            set: { selection = $0.value }
+        )) {
+            ForEach(model.modelSettings.choices(selection: selection).map {
+                CodexModelSettings.ChoiceID(value: $0)
+            }, id: \.self) { profile in
+                Text(label(profile.value)).tag(profile)
             }
         }
         .accessibilityLabel(model.text("Codex model profile", "Codex 模型配置"))
