@@ -57,6 +57,9 @@ jobs:
           tests.test_macos_runtime tests.test_macos_bundled_tests
           tests.test_macos_dictionary_fixture tests.test_macos_dictionary
       - name: Native Swift tests (not GUI or first-use TCC validation)
+        id: native_units
+        # Collect independent bundled checks too; the mandatory gate below still blocks publication.
+        continue-on-error: true
         env:
           CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/ui-screenshots
         run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
@@ -124,6 +127,15 @@ jobs:
           tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
           tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app
           --suite core --report tools/macos/.build/core-tests.json
+      - name: Require native Swift unit success before archiving or publishing
+        if: always()
+        shell: bash
+        env:
+          NATIVE_UNIT_OUTCOME: ${{ steps.native_units.outcome }}
+        run: |
+          set -euo pipefail
+          printf 'Native Swift unit test outcome: %s\n' "$NATIVE_UNIT_OUTCOME"
+          test "$NATIVE_UNIT_OUTCOME" = success
       - name: Recheck immutable bundle and preserve executable modes in zip
         shell: bash
         run: |
