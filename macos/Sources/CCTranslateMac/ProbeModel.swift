@@ -70,6 +70,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var monitorEnabled = false
     @Published private(set) var resultKind = "text"
     @Published private(set) var isLocalDictionaryResult = false
+    @Published private(set) var resultSources: [DictionarySource] = []
     @Published private(set) var resultInput = ""
     @Published private(set) var resultHasOriginalInput = true
     @Published private(set) var primaryResult = ""
@@ -765,6 +766,7 @@ final class ProbeModel: ObservableObject {
             resultHasOriginalInput = requested.imageIntent == nil
             resultKind = requested.origin == "ocr" ? "ocr" : "text"
             isLocalDictionaryResult = false
+            resultSources = []
             productMessage = requested.imageIntent == nil ? text("Translating…", "正在翻译…") :
                 text("Translating the selected image…", "正在翻译所选图片…")
         }
@@ -1220,6 +1222,7 @@ final class ProbeModel: ObservableObject {
         resultGeneration = UUID()
         resultKind = row.kind
         isLocalDictionaryResult = row.isLocalDictionary
+        resultSources = []
         hideCurrentOutput = true
         productPhase = .completed
         productMessage = text("From history", "来自历史记录")
@@ -1234,6 +1237,7 @@ final class ProbeModel: ObservableObject {
         output = ""
         primaryResult = ""
         isLocalDictionaryResult = false
+        resultSources = []
         resultGeneration = UUID()
         resultInput = ""
         resultHasOriginalInput = true
@@ -1641,6 +1645,7 @@ final class ProbeModel: ObservableObject {
                 resultHasOriginalInput = true
                 resultKind = "dict"
                 isLocalDictionaryResult = true
+                resultSources = result.sources
                 resultGeneration = UUID()
                 output = resultText
                 primaryResult = resultText
@@ -1958,6 +1963,7 @@ final class ProbeModel: ObservableObject {
         draft = nil
         cliChangeDeferred = false
         isLocalDictionaryResult = false
+        resultSources = []
         productPhase = .idle
         productMessage = ""
         resultInput = ""

@@ -13,12 +13,12 @@ from cc_config import CFG
 from cc_dictionary_artifact_core import DictionaryArtifact, DictionaryArtifactError, DictionaryArtifactManager
 from cc_dictionary_artifact_core import DictionaryDownloadCancelled
 from cc_dictionary_lookup import LocalDictionary
-from cc_dictionary_presentation import PLAIN_FORMATTER_VERSION, format_dictionary_plain
+from cc_dictionary_presentation import PLAIN_FORMATTER_VERSION, format_dictionary_plain, source_details
 from cc_dictionary_store import DictionaryStoreError
 from cc_result_rules import local_cache_signature
 from .configuration import ConfigurationError
 from .history import HistoryError, MAX_HISTORY_TEXT_BYTES
-from .protocol import MAX_TEXT_BYTES, ProtocolError
+from .protocol import MAX_TEXT_BYTES, VERSION, ProtocolError, encode_frame
 
 
 DICTIONARY_OPERATIONS = (
@@ -240,6 +240,18 @@ class DictionaryService:
         if (type(output) is not str or not output.strip()
                 or len(json.dumps(output, ensure_ascii=False).encode("utf-8")) > MAX_HISTORY_TEXT_BYTES):
             raise DictionaryError("dictionary_output_limit")
+        value = {
+            "text": output, "submitted": False, "cached": cached is not None, "kind": "dict",
+            "target_lang": None, "summarize": False, "history": "unchanged", "history_error": "x" * 64,
+            "source_details": source_details(result),
+        }
+        # Bound the complete terminal, including the longest request ID and storage-error headroom,
+        # before entering the history commit. Attribution in the copied/saved text is unchanged.
+        try:
+            encode_frame({"v": VERSION, "id": "x" * 64, "seq": 2, "type": "completed",
+                          "payload": {"status": "hit", "result": value}})
+        except ProtocolError:
+            raise DictionaryError("dictionary_output_limit") from None
         self._finish(cancel, begin_finish)
         history = "failed" if history_error is not None else "unchanged" if cached is not None else "disabled"
         if cached is None and history_error is None and payload["record_history"]:
@@ -256,10 +268,8 @@ class DictionaryService:
                         history, history_error = "failed", error.code
                     else:
                         history = "recorded"
-        return {"status": "hit", "result": {
-            "text": output, "submitted": False, "cached": cached is not None, "kind": "dict",
-            "target_lang": None, "summarize": False, "history": history, "history_error": history_error,
-        }}
+        value.update(history=history, history_error=history_error)
+        return {"status": "hit", "result": value}
 
     def perform(self, payload, cancel, begin_finish):
         with self._lock:

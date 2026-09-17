@@ -15,11 +15,11 @@ from unittest.mock import Mock, patch
 from cc_config import CFG, DEFAULT_CONFIG
 from cc_dictionary_artifact_core import DictionaryArtifact, DictionaryArtifactManager
 from cc_dictionary_lookup import LocalDictionary
-from cc_dictionary_presentation import format_dictionary_plain
+from cc_dictionary_presentation import format_dictionary_plain, source_details
 from cc_dictionary_store import StoreStatus
 from cc_macos import configuration, dictionary
 from cc_macos.dictionary_probe import create_fixture
-from cc_macos.protocol import ProtocolError
+from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, encode_frame
 from cc_macos.server import Server
 if __package__:
     from .test_macos_configuration import _ConfigurationDirectory, message
@@ -131,6 +131,8 @@ class MacDictionaryTests(_ConfigurationDirectory):
             "text": "synthetic\n\nnoun\n- Synthetic definition\n\nSources & licenses:\n- Synthetic source | 1 | Synthetic license",
             "submitted": False, "cached": False, "kind": "dict", "target_lang": None, "summarize": False,
             "history": "recorded", "history_error": None,
+            "source_details": [{"id": "fixture", "label": "Synthetic source", "version": "1",
+                                "license": "Synthetic license"}],
         })
         entry, = self.history()
         self.assertTrue(entry["is_dict"])
@@ -173,6 +175,70 @@ class MacDictionaryTests(_ConfigurationDirectory):
         self.assertIn("\u6765\u6e90\u4e0e\u8bb8\u53ef", rendered)
         self.assertNotIn("[[cc-", rendered)
         self.assertNotIn("##", rendered)
+
+    def test_structured_sources_preserve_order_and_distinct_versions_without_changing_body_or_history(self):
+        self.install()
+        local = LocalDictionary(str(self.source), self.pin.sha256)
+        self.addCleanup(local.close_thread)
+        original = local.lookup("synthetic")
+        alternate = replace(original.senses[0], source_version="2", source_license="Literal <license> [link](x)")
+        senses = original.senses + (alternate, alternate)
+        result = replace(original, entries=(replace(original.entries[0], senses=senses),), senses=senses)
+        with patch.object(LocalDictionary, "lookup", return_value=result):
+            value = self.lookup()["payload"]["result"]
+        self.assertEqual(value["source_details"], source_details(result))
+        self.assertEqual([row["version"] for row in value["source_details"]], ["1", "2"])
+        self.assertEqual(value["text"], format_dictionary_plain(result, "en_US"))
+        entry = self.history()[0]
+        self.assertEqual(entry["output"], value["text"])
+        self.assertNotIn("source_details", entry)
+        self.assertEqual(entry["sig"].split("|")[-1], "native-plain-v1:en_US")
+
+    def test_cache_hit_uses_live_structured_sources_not_cached_text_and_does_not_rewrite_history(self):
+        self.install()
+        first = self.lookup()["payload"]["result"]
+        before = self.history()
+        local = LocalDictionary(str(self.source), self.pin.sha256)
+        self.addCleanup(local.close_thread)
+        original = local.lookup("synthetic")
+        result = replace(original, entries=(replace(original.entries[0], source_version="live-2"),))
+        with patch.object(LocalDictionary, "lookup", return_value=result):
+            cached = self.lookup()["payload"]["result"]
+        self.assertTrue(cached["cached"])
+        self.assertEqual(cached["text"], first["text"])
+        self.assertEqual(cached["source_details"], source_details(result))
+        self.assertEqual(cached["source_details"][0]["version"], "live-2")
+        self.assertEqual(self.history(), before)
+
+    def test_oversized_source_metadata_fails_before_history_commit_or_finish(self):
+        self.install()
+        local = LocalDictionary(str(self.source), self.pin.sha256)
+        self.addCleanup(local.close_thread)
+        original = local.lookup("synthetic")
+        for source_id in ("\u6e90" * 22000, '"' * 33000):
+            result = replace(original, entries=(replace(original.entries[0], source_id=source_id),))
+            with patch.object(LocalDictionary, "lookup", return_value=result), \
+                    patch.object(self.service, "_finish", side_effect=AssertionError("premature finish")):
+                failed = self.lookup()
+            self.assertEqual(failed["type"], "failed")
+            self.assertEqual(failed["payload"], {"code": "dictionary_output_limit"})
+            self.assertEqual(self.history(), [])
+            self.assertNotIn(source_id, self.stderr.getvalue())
+
+    def test_source_metadata_near_frame_limit_is_not_arbitrarily_truncated(self):
+        self.install()
+        local = LocalDictionary(str(self.source), self.pin.sha256)
+        self.addCleanup(local.close_thread)
+        original = local.lookup("synthetic")
+        source_id = "s" * 64000
+        result = replace(original, entries=(replace(original.entries[0], source_id=source_id),))
+        with patch.object(LocalDictionary, "lookup", return_value=result):
+            terminal = self.lookup(record_history=False)
+        self.assertEqual(terminal["type"], "completed")
+        self.assertEqual(terminal["payload"]["result"]["source_details"][0]["id"], source_id)
+        self.assertLessEqual(len(encode_frame(terminal)), MAX_FRAME_BYTES)
+        self.assertEqual(terminal["payload"]["result"]["text"], format_dictionary_plain(result, "en_US"))
+        self.assertEqual(self.history(), [])
 
     def test_disabled_history_never_reads_or_writes_corrupt_history(self):
         self.install()

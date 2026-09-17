@@ -165,6 +165,96 @@ final class DictionaryProtocolTests: XCTestCase {
         XCTAssertNil(state.pendingOutcomeUnknown)
     }
 
+    private func source(id: String = "fixture", version: String = "1") -> JSONValue {
+        .object(["id": .string(id), "label": .string("Synthetic source"), "version": .string(version),
+                 "license": .string("Literal <license> [link](https://example.invalid)\nNo markup.")])
+    }
+
+    func testStructuredSourcesTraverseBothModesAndKeepVerbatimText() throws {
+        let details: [JSONValue] = [source(), source(version: "2")]
+        let enriched = result.merging(["source_details": .array(details)]) { _, new in new }
+        let completion: [String: JSONValue] = ["status": .string("hit"), "result": .object(enriched)]
+        for mode in [ProtocolState.Mode.configuration, .translation] {
+            var state = try connected(mode)
+            try accept(lookup, id: "sources", state: &state)
+            let received = try state.receive(event("sources", 2, "completed", completion))
+            let decoded = try DictionaryLookupResult(payload: received.payload)
+            XCTAssertEqual(decoded.sources.map(\.id), ["fixture", "fixture"])
+            XCTAssertEqual(decoded.sources.map(\.version), ["1", "2"])
+            XCTAssertEqual(decoded.sources.first?.license,
+                           "Literal <license> [link](https://example.invalid)\nNo markup.")
+            XCTAssertEqual(decoded.result?["text"], result["text"])
+            XCTAssertFalse(state.hasPendingDictionary)
+        }
+        XCTAssertThrowsError(try TranslationDocument.validateCompletion(enriched, streamed: false),
+                             "Structured provenance is dictionary-only, not arbitrary model output.")
+    }
+
+    func testLegacyAndEmptySourceMetadataStayReadableWithoutInventedSources() throws {
+        let legacy = try DictionaryLookupResult(payload: ["status": .string("hit"), "result": .object(result)])
+        XCTAssertTrue(legacy.sources.isEmpty)
+        XCTAssertEqual(legacy.result?["text"], result["text"])
+        let empty = result.merging(["source_details": .array([])]) { _, new in new }
+        XCTAssertTrue(try DictionaryLookupResult(payload: [
+            "status": .string("hit"), "result": .object(empty)
+        ]).sources.isEmpty)
+        for status in ["miss", "disabled", "unavailable", "ineligible"] {
+            XCTAssertTrue(try DictionaryLookupResult(payload: [
+                "status": .string(status), "result": .null
+            ]).sources.isEmpty)
+        }
+    }
+
+    func testMalformedOrDuplicateSourceRecordsAreNotSilentlyIgnored() throws {
+        let valid = try XCTUnwrap(source().object)
+        var missing = valid
+        missing.removeValue(forKey: "license")
+        let bad: [JSONValue] = [
+            .null, .object(valid), .array([.string("source")]), .array([.object(missing)]),
+            .array([.object(valid.merging(["license": .integer(1)]) { _, new in new })]),
+            .array([.object(valid.merging(["url": .string("https://example.invalid")]) { _, new in new })]),
+            .array([source(), source()])
+        ]
+        for details in bad {
+            let enriched = result.merging(["source_details": details]) { _, new in new }
+            XCTAssertThrowsError(try DictionaryLookupResult(payload: [
+                "status": .string("hit"), "result": .object(enriched)
+            ]))
+        }
+    }
+
+    func testSourceEqualityAndDeduplicationUseAllLiteralUTF8Fields() throws {
+        let composed = try DictionarySource(payload: XCTUnwrap(source(id: "\u{e9}").object))
+        let decomposed = try DictionarySource(payload: XCTUnwrap(source(id: "e\u{301}").object))
+        let otherVersion = try DictionarySource(payload: XCTUnwrap(source(id: "\u{e9}", version: "2").object))
+        XCTAssertNotEqual(composed, decomposed)
+        XCTAssertNotEqual(composed, otherVersion)
+        XCTAssertEqual(Set([composed, decomposed, otherVersion, composed]).count, 3)
+        let literal = result.merging([
+            "source_details": .array([source(id: "\u{e9}"), source(id: "e\u{301}")])
+        ]) { _, new in new }
+        XCTAssertEqual(try DictionaryLookupResult(payload: [
+            "status": .string("hit"), "result": .object(literal)
+        ]).sources.count, 2)
+    }
+
+    func testSourceMetadataRespectsUTF8FrameBudgetWithoutTruncation() throws {
+        let identifier = String(repeating: "s", count: 64_000)
+        let valid = result.merging(["source_details": .array([source(id: identifier)])]) { _, new in new }
+        XCTAssertEqual(try DictionaryLookupResult(payload: [
+            "status": .string("hit"), "result": .object(valid)
+        ]).sources.first?.id, identifier)
+        let excessive = result.merging([
+            "source_details": .array([source(id: String(repeating: "\u{6e90}", count: 22_000))])
+        ]) { _, new in new }
+        let payload: [String: JSONValue] = ["status": .string("hit"), "result": .object(excessive)]
+        XCTAssertThrowsError(try DictionaryLookupResult(payload: payload))
+        var state = try connected()
+        try accept(lookup, id: "sources", state: &state)
+        XCTAssertThrowsError(try state.receive(event("sources", 2, "completed", payload)))
+        XCTAssertTrue(state.hasPendingDictionary)
+    }
+
     func testStartedCancellationAcknowledgementDoesNotReleaseLookupOrShutdown() throws {
         var state = try connected()
         try accept(lookup, id: "lookup", state: &state)

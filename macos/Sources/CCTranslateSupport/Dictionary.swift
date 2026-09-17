@@ -95,12 +95,42 @@ public struct DictionaryInstallTicket: Equatable {
     }
 }
 
+public struct DictionarySource: Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let version: String
+    public let license: String
+
+    public init(payload: [String: JSONValue]) throws {
+        guard Set(payload.keys) == ["id", "label", "version", "license"],
+              let id = payload["id"]?.string, let label = payload["label"]?.string,
+              let version = payload["version"]?.string, let license = payload["license"]?.string else {
+            throw ProbeError.invalidPayload
+        }
+        self.id = id
+        self.label = label
+        self.version = version
+        self.license = license
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id.utf8.elementsEqual(rhs.id.utf8) && lhs.label.utf8.elementsEqual(rhs.label.utf8) &&
+            lhs.version.utf8.elementsEqual(rhs.version.utf8) && lhs.license.utf8.elementsEqual(rhs.license.utf8)
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        for value in [id, label, version, license] { hasher.combine(Data(value.utf8)) }
+    }
+}
+
 public struct DictionaryLookupResult: Equatable {
     public let status: String
     public let result: [String: JSONValue]?
+    public let sources: [DictionarySource]
 
     public init(payload: [String: JSONValue]) throws {
         guard Set(payload.keys) == ["status", "result"],
+              try JSONValue.object(payload).encoded().count < LineFramer.maxFrameBytes,
               let status = payload["status"]?.string,
               ["hit", "miss", "disabled", "unavailable", "ineligible"].contains(status) else {
             throw ProbeError.invalidPayload
@@ -111,11 +141,24 @@ public struct DictionaryLookupResult: Equatable {
                   result["target_lang"] == .null, result["summarize"] == .bool(false) else {
                 throw ProbeError.invalidPayload
             }
-            try TranslationDocument.validateCompletion(result, streamed: false)
+            var translation = result
+            if let details = translation.removeValue(forKey: "source_details") {
+                guard case .array(let rows) = details else { throw ProbeError.invalidPayload }
+                let sources = try rows.map { value -> DictionarySource in
+                    guard let row = value.object else { throw ProbeError.invalidPayload }
+                    return try DictionarySource(payload: row)
+                }
+                guard Set(sources).count == sources.count else { throw ProbeError.invalidPayload }
+                self.sources = sources
+            } else {
+                self.sources = []
+            }
+            try TranslationDocument.validateCompletion(translation, streamed: false)
             self.result = result
         } else {
             guard payload["result"] == .null else { throw ProbeError.invalidPayload }
             self.result = nil
+            self.sources = []
         }
         self.status = status
     }

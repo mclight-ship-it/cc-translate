@@ -132,6 +132,8 @@ class TestDictionaryIPCProcess(StateIPCProcessCase):
         self.assertEqual(result["result"]["history"], "recorded")
         self.assertIn("Synthetic source | 1 | Synthetic license", result["result"]["text"])
         self.assertNotIn("[[cc-", result["result"]["text"])
+        self.assertEqual(result["result"]["source_details"], [
+            {"id": "fixture", "label": "Synthetic source", "version": "1", "license": "Synthetic license"}])
         self.assertEqual(self.lookup(process)["payload"]["result"]["history"], "unchanged")
         self.assertEqual(self.request(process, "dictionary_delete")["payload"], {"deleted": True, "enabled": False})
         self.assertEqual(self.lookup(process)["payload"], {"status": "disabled", "result": None})
@@ -139,6 +141,26 @@ class TestDictionaryIPCProcess(StateIPCProcessCase):
         self.assertEqual(self.terminal(process, "stop")["type"], "completed")
         with MacConfigOwner(self.home, self.identity), MacHistoryOwner(self.history_path):
             pass
+        self.finish_helper(process)
+
+    def test_live_sources_survive_cached_ipc_lookup_without_entering_history(self):
+        process = self.spawn()
+        self.hello(process)
+        prepared = self.prepare(process)
+        self.assertEqual(self.request(process, "dictionary_install", ticket=prepared["ticket"])["type"], "completed")
+        first = self.lookup(process)["payload"]["result"]
+        cached = self.lookup(process)["payload"]["result"]
+        self.assertFalse(first["cached"])
+        self.assertTrue(cached["cached"])
+        self.assertEqual(cached["source_details"], first["source_details"])
+        self.assertEqual(len(cached["source_details"]), 1)
+        self.assertEqual(cached["text"], first["text"])
+        history = self.request(process, "history_load", page_size=100, cursor=None)["payload"]["entries"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["output"], first["text"])
+        self.assertNotIn("source_details", history[0])
+        self.send_message(process, "stop", "shutdown")
+        self.assertEqual(self.terminal(process, "stop")["type"], "completed")
         self.finish_helper(process)
 
     def test_corrupt_history_returns_local_hit_when_enabled_and_is_ignored_when_disabled(self):

@@ -245,6 +245,17 @@ struct TranslationResultView: View {
         .preferredColorScheme(model.preferredColorScheme)
     }
 
+    private var sourcesLabels: DictionarySourcesLabels {
+        .init(title: model.text("Sources & licenses", "来源与许可"),
+              explanation: model.text("Sources for the local dictionary entry only, not model-generated additions.",
+                                      "仅显示本地词典词条的来源，不包含模型生成的补充内容。"),
+              sourceID: model.text("Source ID", "来源标识"),
+              version: model.text("Version", "版本"),
+              license: model.text("License", "许可"),
+              missing: model.text("Not provided", "未提供"),
+              close: model.text("Close", "关闭"))
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: emptySymbol)
@@ -314,6 +325,10 @@ struct TranslationResultView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
+            if !model.resultSources.isEmpty {
+                DictionarySourcesControl(sources: model.resultSources, labels: sourcesLabels)
+                    .fixedSize()
+            }
         }
     }
 
