@@ -299,9 +299,9 @@ private final class PastePromiseFixture {
     @MainActor
     func itemCount() throws -> Int {
         let reference = try XCTUnwrap(reference)
-        var count: ItemCount = 0
+        var count = 0
         try checkPasteboardFixture(PasteboardGetItemCount(reference, &count))
-        return Int(count)
+        return count
     }
 }
 
@@ -1101,8 +1101,10 @@ final class PlainTextPasteTests: XCTestCase {
             try publish(board, representations: [[(type, bytes)]])
             let sourceReference = try privatePasteboardReference(board)
             _ = PasteboardSynchronize(sourceReference)
+            var firstItem: PasteboardItemID?
+            try checkPasteboardFixture(PasteboardGetItemIdentifier(sourceReference, 1, &firstItem))
             var fixtureBytes: CFData?
-            let fixtureStatus = PasteboardCopyItemFlavorData(sourceReference, try XCTUnwrap(PasteboardItemID(bitPattern: 1)),
+            let fixtureStatus = PasteboardCopyItemFlavorData(sourceReference, try XCTUnwrap(firstItem),
                                                              type as CFString, &fixtureBytes)
             print("PasteboardFixture \(type), input \(Array(bytes)), copied \(fixtureBytes.map { Array($0 as Data) } ?? []), status \(fixtureStatus)")
             let adapter = SystemPlainTextPasteClipboard(name: board.name,
