@@ -20,12 +20,21 @@ struct AboutView: View {
                 Spacer()
             }
             .padding(20)
-            TabView(selection: $model.page) {
-                overview
-                    .tabItem { Text(presentation.text("About", "关于")) }.tag(AboutModel.Page.application)
-                licenses
-                    .tabItem { Text(presentation.text("Third-party licenses", "第三方许可")) }.tag(AboutModel.Page.licenses)
+            Picker(presentation.text("Section", "页面"), selection: $model.page) {
+                Text(presentation.text("About", "关于")).tag(AboutModel.Page.application)
+                Text(presentation.text("Third-party licenses", "第三方许可")).tag(AboutModel.Page.licenses)
             }
+            .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
+            .padding(.bottom, 12)
+            Group {
+                switch model.page {
+                case .application: overview
+                case .licenses: licenses
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(nsColor: .separatorColor)))
             .padding(.horizontal, 12)
             HStack {
                 Button(presentation.text("Reload resources", "重新读取资源")) { model.reload() }

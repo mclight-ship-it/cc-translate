@@ -551,10 +551,12 @@ final class ProductRenderingTests: XCTestCase {
             XCTAssertTrue(words.contains("9.8.7"), "Read the displayed bundle version, not a hard-coded product version.")
             XCTAssertTrue(words.contains("42"))
             XCTAssertTrue(words.contains("source"))
+            try assertAboutNavigation(png, width: 820)
         }
         fixture.model.interfaceLanguage = "zh"
-        _ = try render(AboutView(model: about, presentation: fixture.model, close: {}),
-                       named: "about-metadata-zh-narrow", size: NSSize(width: 660, height: 520), scheme: .dark)
+        let chinese = try render(AboutView(model: about, presentation: fixture.model, close: {}),
+                                 named: "about-metadata-zh-narrow", size: NSSize(width: 660, height: 520), scheme: .dark)
+        try assertAboutNavigation(chinese, width: 660, labels: ["关于", "第三方许可"])
         XCTAssertTrue(fixture.helpers.isEmpty)
         XCTAssertEqual(fixture.runtimeRequests, 0)
         XCTAssertEqual(fixture.locatorRequests, 0)
@@ -609,6 +611,7 @@ final class ProductRenderingTests: XCTestCase {
             let words = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)).text.lowercased()
             XCTAssertTrue(words.contains("synthetic license heading"))
             XCTAssertTrue(words.contains("literal markers"))
+            try assertAboutNavigation(png, width: 760)
         }
         XCTAssertEqual(about.documentText, text)
         XCTAssertTrue(fixture.helpers.isEmpty)
@@ -633,6 +636,7 @@ final class ProductRenderingTests: XCTestCase {
         let missingWords = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: missing)?.cgImage)).text.lowercased()
         XCTAssertTrue(missingWords.contains("missing"))
         XCTAssertTrue(missingWords.contains("malformed"))
+        try assertAboutNavigation(missing, width: 760)
         about.selectedDocument = "THIRD_PARTY_NOTICES"
         await about.documentTask?.value
         about.page = .licenses
@@ -641,9 +645,24 @@ final class ProductRenderingTests: XCTestCase {
         let words = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)).text.lowercased()
         XCTAssertTrue(words.contains("retry"))
         XCTAssertTrue(words.contains("utf"))
+        try assertAboutNavigation(png, width: 660)
         XCTAssertNil(about.documentText)
         XCTAssertEqual(about.documentError, .invalidEncoding)
         XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    private func assertAboutNavigation(_ png: Data, width: CGFloat,
+                                       labels: [String] = ["about", "third", "party", "licenses"]) throws {
+        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+        // Body copy can mention these labels too; inspect only the navigation strip.
+        let height = min(CGFloat(image.height), 120 * CGFloat(image.width) / width)
+        let navigation = try XCTUnwrap(image.cropping(to: CGRect(
+            x: 0, y: 0, width: CGFloat(image.width), height: height)))
+        let words = try LocalOCR.recognize(navigation).text.lowercased().filter { !$0.isWhitespace }
+        for label in labels {
+            XCTAssertTrue(words.contains(label.lowercased()), "Unreadable About navigation: \(words)")
+        }
     }
 
     @MainActor
