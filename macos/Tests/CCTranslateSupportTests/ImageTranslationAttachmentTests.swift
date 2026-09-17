@@ -286,7 +286,8 @@ final class ImageTranslationAttachmentTests: XCTestCase {
         defer { remove(parent) }
         let attachment = try ImageTranslationAttachment(pngData: ImageTranslationFixture.png(), temporaryParent: parent)
         DispatchQueue.concurrentPerform(iterations: 4) { _ in
-            XCTAssertNoThrow(try attachment.cleanup())
+            do { try attachment.cleanup() }
+            catch { XCTFail("Concurrent owned image cleanup failed") }
         }
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty)
     }
