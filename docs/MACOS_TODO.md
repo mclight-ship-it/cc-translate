@@ -141,9 +141,23 @@ tree `b87b0706154feedc3ef8cf947cec2984ad7fdaaa4e5e8aca485e37d91adecda0`，
 与两个消费者相符。报告保持`NOT PASSED/plain-text-paste-harness`，
 未执行失败之后的最终消费者不可变门槛；不替换推荐包。
 
+后续改用AppKit条目读取，源码`dbf5b33eae16865a3deadd8e2fd4a17407b9a152` /
+[run35275212199](https://github.com/mclight-ship-it/cc-translate/actions/runs/35275212199)。
+不再让产品依赖已观察到跨资源不一致的`PasteboardGetItemIdentifier`：
+单次交互在原有串行队列取得AppKit items/types/data，所有条目先检查文件类型，
+之后才请求文字或RTF；严格解码、changeCount、取消、一次性lease及不恢复/不重试保持。
+测试明确替换的是C枚举API本身的符合性断言，不删除46个产品方法：
+已知发布ID仍由C验证flavor/flags/精确字节，真实C promise回调仍核对opaque ID；
+产品读取之后才检查AppKit条目数量、顺序及测试专用eager identity的精确字节，
+避免预先读取AppKit为被测读取准备缓存。identity仅存在于私有测试资源，不写用户剪贴板。
+这不是已证明Apple内部机制或已修复系统缓存。父已审阅两个文件、核验方法清单无增删，
+正常privacy/完整hook1823/95.502s通过，推送时远端精确一致且工作树干净。
+记录时新run的原生Swift步骤通过、构包阶段运行中；仍需同App两个消费者，
+不据producer单步成功宣称迁移通过，不降低原始unit outcome或最终消费者门槛。
+
 <a id="native-dictionary-sources-checkpoint"></a>
 
-### 词典来源与许可按钮：已接线，等待实际原生验证
+### 词典来源与许可按钮：18项新增原生测试通过，完整新包仍待验收
 
 源码`420928b0865bab9207991f7069670fc2944aac26` /
 [run35271286020](https://github.com/mclight-ship-it/cc-translate/actions/runs/35271286020)
@@ -154,8 +168,30 @@ tree `b87b0706154feedc3ef8cf947cec2984ad7fdaaa4e5e8aca485e37d91adecda0`，
 并以输出发布expectation替代固定80ms等待。静态清单新增18Swift、4core、1process，删除0；
 本源码预期616Swift/232process/648core/21Foundation/46粘贴与112张PNG，均需实际日志核验。
 针对性110/7.400s通过；正常privacy、5文件compile及完整hook1823/95.083s通过，
-推送时远端精确一致、工作树干净。Mac执行和截图结果尚未验收，不能据静态方法名宣称通过；
-当前推荐下载不变，也不将仍在处理的剪贴板问题隐藏为来源功能的成功。
+推送时远端精确一致、工作树干净。
+
+420首轮实际watch退出1：编译46.24s，616项/23构包前skip/6fail（2unexpected）/310.321s。
+18项新增方法均实际发现，其中17通过；changed-source交互方法在第三次发布后
+过早假设SwiftUI已更新原生弹窗，两个断言失败，另4fail来自旧C剪贴板fixture。
+新流式/取消方法、真实mouseDown→异步更新→mouseUp、同来源的语言/主题/选择保留、
+Escape/关闭后焦点返回均实际通过。112张PNG已逐张CRC/数量/尺寸核验，原100张保留、
+新12张精确匹配；已直接查看本源码的中文暗色结果及英文浅色来源弹窗。
+232process/532.947s、648core/5.079s和21后置Foundation/182.555s通过，
+新增4core/1process及21Foundation逐项各通过一次。原始unit门槛拒绝归档，没有App/消费者。
+
+仅测试时序修正`62a92194d495b4406f3c3778d6e67cde68a54a0d` /
+[run35273880271](https://github.com/mclight-ship-it/cc-translate/actions/runs/35273880271)
+改为等待真实NSTextStorage编辑通知含新来源，再检查关闭/重新打开；
+保留所有旧断言并增加同一按钮/精确来源检查，不改生产代码。
+正常privacy/完整hook1823/94.973s通过。实际编译49.63s，
+**18项新增Sources方法逐项真正start/pass各一次**，原唯一来源失败方法0.646s通过；
+全部616项/23构包前skip/2fail（1unexpected）/390.502s。
+仅旧备用图片promise fixture仍发布19返回18，随后`-25132`，所以整run实际watch仍退出1。
+portable880/16.089s、232process/483.295s、648core/4.867s及21后置Foundation/179.406s通过；
+新增4core/1process和全部21Foundation逐项各通过一次。
+API核验attempt1/source精确相符，原始unit门槛失败、没有App、消费者跳过；
+UI artifact10520356031保留，不能将它说成安装包。
+上方dbf5b33正在验证AppKit迁移；当前推荐下载不变，不把局部通过当完整移植完成。
 
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；

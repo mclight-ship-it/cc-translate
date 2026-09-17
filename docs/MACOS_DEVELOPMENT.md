@@ -682,7 +682,7 @@ OCR本地执行不意味着用户之后主动选择的AI翻译离线或免费。
 
 来源来自既有共享`source_details`，随显式查询的`result.source_details`返回。
 在历史提交前检查完整终态帧仍不超过既有64KiB；不截断许可，也不加模型/账号前置。
-源码420928b的测试、实际构建和仍未通过范围见
+源码420928b及62a9219时序修正的测试、实际构建和仍未通过范围见
 [来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)，目前未替换推荐下载。
 
 ### CLI 和运行时
@@ -869,8 +869,14 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
   正在等待的外部数据返回后不会继续写入或发键。若格式已经移除，则如实显示部分效果，
   不恢复旧内容、自动重试或宣称目标编辑器已经插入成功。
 
-实现使用MainActor上的AppKit元数据/changeCount及立即UTF-8写入；可能等待外部提供者的
-数据读取和RTF解析留在后台队列，使用新建的C引用，不共享跨线程NSPasteboard缓存。
+推荐模型目录包的实现使用MainActor上的AppKit changeCount及立即UTF-8写入；
+可能等待外部提供者的数据读取和RTF解析使用后台队列中的C引用。
+后续工程源码dbf5b33改为在原串行队列内、单次交互范围使用AppKit items/types/data，
+不再依赖已实测跨不同私有资源返回旧ID的C枚举API。所有条目先做文件类型检查，
+之后才请求精确文字类型或RTF数据；保持严格Unicode解码、取消、前后changeCount与一次性lease。
+46项产品测试保留；C已知ID/字节/promise回调与读取后的AppKit条目顺序共同验证产品语义，
+明确不再以C枚举器自身符合性作为测试目标。新源码尚待完整同包三系统验收，
+不能据API迁移声称修复了Apple内部机制；[当前证据](MACOS_TODO.md#native-image-translation-checkpoint)与推荐包分开。
 30秒读取期限后仍等待不能中断的调用drain；不承诺任意系统IPC绝不会阻塞。
 检查不是跨进程原子CAS，也不替代真人外部编辑器、Universal Clipboard或系统访问策略验收。
 

@@ -82,8 +82,15 @@ P2词典来源与许可按钮的稳定identity接线并行继续，不冻结其�
 后续918f497释放顺序候选的producer通过，但同App两消费者仍在旧剪贴板阶段失败，
 因此没有宣称修复或推广新包。独立来源功能420928b已接通共享来源元数据、
 原生按钮/弹窗和生命周期回归；正常完整hook1823通过，新增18Swift/4core/1process，
-首次Mac CI35271286020仍待实际验收。集成前已修正一个误嵌套、无法被XCTest发现的新方法，
-不拿静态方法计数替代实际执行，详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
+首次Mac CI35271286020实际发现18个新增方法、17通过，来源更新时序方法失败；
+112张真实PNG已核验。集成前已修正一个误嵌套、无法被XCTest发现的新方法。
+仅测试时序修正62a9219/run35273880271使18项逐项实际start/pass各一次，
+232process/648core/21后置Foundation通过；但旧C promise枚举仍返回旧ID，
+整run实际watch1、没有App/消费者，不将新界面通过说成整run绿色。
+dbf5b33改用AppKit单次交互条目读取；46项产品测试保持，明确以已知C发布ID/精确字节/
+真实promise回调和后置AppKit顺序验证替代C枚举器符合性断言。
+正常hook1823/95.502s通过，run35275212199正在同包验证，不宣称Apple内部机制已修复。
+详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
 推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
