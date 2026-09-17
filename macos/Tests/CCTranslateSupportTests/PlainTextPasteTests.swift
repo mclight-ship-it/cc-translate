@@ -179,7 +179,57 @@ private final class PasteSchedulerDouble: PlainTextPasteScheduler {
 }
 
 private enum PasteboardFixtureError: Error {
-    case systemPasteboard, status(OSStatus), missingReference, missingItemData, identifierExhausted
+    case systemPasteboard, status(OSStatus), missingReference, missingItemData, identifierExhausted, untrackedBoard
+}
+
+private struct PasteboardFixtureGeneration {
+    let name: String
+    var releaseRequested = false
+}
+
+// Metadata only: retaining boards or C references here would change the lifecycle under test.
+@MainActor private var pasteboardFixtureGenerations: [PasteboardFixtureGeneration] = []
+@MainActor private var pasteboardFixtureLatestGeneration: [String: Int] = [:]
+@MainActor private var pasteboardFixtureItemGeneration: [UInt: Int] = [:]
+
+@MainActor
+private func newPrivatePasteboard() -> NSPasteboard {
+    let board = NSPasteboard.withUniqueName()
+    let name = board.name.rawValue
+    let previous = pasteboardFixtureLatestGeneration[name]
+    let generation = pasteboardFixtureGenerations.count
+    pasteboardFixtureGenerations.append(PasteboardFixtureGeneration(name: name))
+    pasteboardFixtureLatestGeneration[name] = generation
+    print("PasteboardFixture namespace generation \(generation), name \(name), previous generation \(previous.map { String($0) } ?? "none"), previous release requested \(previous.map { String(pasteboardFixtureGenerations[$0].releaseRequested) } ?? "n/a")")
+    return board
+}
+
+@MainActor
+private func releasePrivatePasteboard(_ board: NSPasteboard) {
+    defer { board.releaseGlobally() }
+    let name = board.name.rawValue
+    guard let generation = pasteboardFixtureLatestGeneration[name] else {
+        XCTFail("Private board release must have a recorded namespace generation")
+        return
+    }
+    // releaseGlobally is oneway; this records the request, not server-side destruction.
+    pasteboardFixtureGenerations[generation].releaseRequested = true
+    print("PasteboardFixture global release requested generation \(generation), name \(name)")
+}
+
+@MainActor
+private func pasteboardFixtureItemOrigin(_ item: PasteboardItemID?, requestedName: String) -> String {
+    guard let item else { return "nil item" }
+    let id = UInt(bitPattern: item)
+    guard let generation = pasteboardFixtureItemGeneration[id] else {
+        return "item \(String(id, radix: 16)) has no fixture allocation record"
+    }
+    let origin = pasteboardFixtureGenerations[generation]
+    return "item \(String(id, radix: 16)) allocated in generation \(generation), name \(origin.name), release requested \(origin.releaseRequested), same requested name \(origin.name == requestedName), current requested generation \(pasteboardFixtureLatestGeneration[requestedName].map { String($0) } ?? "none")"
+}
+
+private func pasteboardFixtureReferenceID(_ reference: Pasteboard) -> String {
+    String(UInt(bitPattern: Unmanaged.passUnretained(reference).toOpaque()), radix: 16)
 }
 
 @MainActor
@@ -187,6 +237,7 @@ private func privatePasteboardReference(_ board: NSPasteboard) throws -> Pastebo
     guard board.name != .general else { throw PasteboardFixtureError.systemPasteboard }
     var reference: Pasteboard?
     let status = PasteboardCreate(board.name.rawValue as CFString, &reference)
+    print("PasteboardFixture create name \(board.name.rawValue), reference \(reference.map(pasteboardFixtureReferenceID) ?? "nil"), status \(status), main \(Thread.isMainThread)")
     guard status == noErr else { throw PasteboardFixtureError.status(status) }
     guard let reference else { throw PasteboardFixtureError.missingReference }
     return reference
@@ -197,16 +248,96 @@ private func checkPasteboardFixture(_ status: OSStatus) throws {
 }
 
 @MainActor
+private func diagnosePasteboardPublication(_ reference: Pasteboard, name: String,
+                                          expected: [(PasteboardItemID, [String])],
+                                          publisher: Pasteboard? = nil,
+                                          trace: (String) -> Void) {
+    func flavors(_ source: Pasteboard, item: PasteboardItemID, types: [String], label: String) {
+        var array: CFArray?
+        let status = PasteboardCopyItemFlavors(source, item, &array)
+        trace("\(label) item \(String(UInt(bitPattern: item), radix: 16)), flavors status \(status), types \((array as? [String]).map { $0.joined(separator: ",") } ?? "nil")")
+        for type in types {
+            var flags = PasteboardFlavorFlags(rawValue: 0)
+            let flagStatus = PasteboardGetItemFlavorFlags(source, item, type as CFString, &flags)
+            trace("\(label) flavor \(type), flags status \(flagStatus), value \(flags.rawValue)")
+        }
+    }
+    @MainActor
+    func snapshot(_ source: Pasteboard, label: String, enumerate: Bool) {
+        var copiedName: CFString?
+        let nameStatus = PasteboardCopyName(source, &copiedName)
+        let actualName = copiedName.map { $0 as String }
+        trace("\(label) reference \(pasteboardFixtureReferenceID(source)), requested name \(name), actual name \(actualName ?? "nil"), name status \(nameStatus), main \(Thread.isMainThread)")
+        guard nameStatus == noErr, actualName == name else {
+            trace("\(label) metadata skipped: private resource identity is unproven")
+            return
+        }
+        if !enumerate {
+            // Check published IDs before any count query can affect enumeration state.
+            for (item, types) in expected {
+                flavors(source, item: item, types: types, label: "\(label) published-ID lookup")
+            }
+        }
+        var count = 0
+        let countStatus = PasteboardGetItemCount(source, &count)
+        trace("\(label) count status \(countStatus), actual \(count), expected \(expected.count)")
+        if enumerate {
+            guard countStatus == noErr, count > 0 else { return }
+            let limit = min(count, expected.count + 1)
+            trace("\(label) enumerating \(limit) of \(count) items")
+            for index in 1...limit {
+                var item: PasteboardItemID?
+                let status = PasteboardGetItemIdentifier(source, index, &item)
+                trace("\(label) index \(index), identifier status \(status), value \(item.map { String(UInt(bitPattern: $0), radix: 16) } ?? "nil")")
+                trace("\(label) origin: \(pasteboardFixtureItemOrigin(item, requestedName: name))")
+                if status == noErr, let item {
+                    flavors(source, item: item, types: [], label: label)
+                }
+            }
+        }
+    }
+
+    // Run only after the original lookup has failed. These observations never replace its
+    // result, resynchronize the publisher, or request promised data.
+    snapshot(reference, label: "failed reference", enumerate: false)
+    if let publisher {
+        if pasteboardFixtureReferenceID(publisher) == pasteboardFixtureReferenceID(reference) {
+            trace("publisher aliases failed reference")
+        } else {
+            snapshot(publisher, label: "actual publisher", enumerate: false)
+        }
+    }
+    var fresh: Pasteboard?
+    let createStatus = PasteboardCreate(name as CFString, &fresh)
+    trace("independent reference create status \(createStatus), reference \(fresh.map(pasteboardFixtureReferenceID) ?? "nil")")
+    if createStatus == noErr, let fresh {
+        defer { withExtendedLifetime(fresh) {} }
+        guard pasteboardFixtureReferenceID(fresh) != pasteboardFixtureReferenceID(reference),
+              publisher.map(pasteboardFixtureReferenceID) != pasteboardFixtureReferenceID(fresh) else {
+            trace("independent reference aliases an existing reference; skipping sync and enumeration")
+            return
+        }
+        let flags = PasteboardSynchronize(fresh)
+        trace("independent reference sync \(flags.rawValue)")
+        snapshot(fresh, label: "independent reference", enumerate: true)
+    }
+}
+
+@MainActor
 private var nextPasteboardFixtureItemID: UInt = 1
 
 @MainActor
-private func newPasteboardFixtureItem() throws -> PasteboardItemID {
-    // Addresses are legal IDs, but private-board native runs returned IDs whose flavor lookup
-    // failed. Use process-unique small opaque values, never per-board ordinals.
+private func newPasteboardFixtureItem(_ board: NSPasteboard) throws -> PasteboardItemID {
+    // Process-unique opaque IDs identify earlier publications when native enumeration is stale.
+    // The values are not dereferenced or reset for each private board.
+    guard let generation = pasteboardFixtureLatestGeneration[board.name.rawValue] else {
+        throw PasteboardFixtureError.untrackedBoard
+    }
     guard nextPasteboardFixtureItemID <= UInt(Int32.max),
           let item = PasteboardItemID(bitPattern: nextPasteboardFixtureItemID) else {
         throw PasteboardFixtureError.identifierExhausted
     }
+    pasteboardFixtureItemGeneration[nextPasteboardFixtureItemID] = generation
     nextPasteboardFixtureItemID += 1
     return item
 }
@@ -280,16 +411,24 @@ private final class PastePromiseFixture {
     init(_ board: NSPasteboard, plainText: String? = nil, promisedType: NSPasteboard.PasteboardType = .string,
          response: PastePromiseState.Response = .unavailable, fileURL: String? = nil,
          trace: (@Sendable (String) -> Void)? = nil) throws {
+        let trace: @Sendable (String) -> Void = trace ?? { print("PasteboardFixture promise: \($0)") }
         let reference = try privatePasteboardReference(board)
         self.reference = reference
-        let item = try newPasteboardFixtureItem()
+        let item = try newPasteboardFixtureItem(board)
+        var expected = [(item, [promisedType.rawValue])]
         let replacementItem: PasteboardItemID?
-        if case .replaceOwner = response { replacementItem = try newPasteboardFixtureItem() }
+        if case .replaceOwner = response { replacementItem = try newPasteboardFixtureItem(board) }
         else { replacementItem = nil }
         state = PastePromiseState(response, item: item, replacementItem: replacementItem, trace: trace)
-        try checkPasteboardFixture(PasteboardClear(reference))
-        _ = PasteboardSynchronize(reference)
+        let clearStatus = PasteboardClear(reference)
+        trace("clear name \(board.name.rawValue), reference \(pasteboardFixtureReferenceID(reference)), status \(clearStatus)")
+        try checkPasteboardFixture(clearStatus)
+        let clearedFlags = PasteboardSynchronize(reference)
+        trace("cleared sync \(clearedFlags.rawValue)")
         if let plainText {
+            if promisedType.rawValue != "public.utf8-plain-text" {
+                expected[0].1.append("public.utf8-plain-text")
+            }
             try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, "public.utf8-plain-text" as CFString,
                                                               Data(plainText.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
         }
@@ -297,24 +436,48 @@ private final class PastePromiseFixture {
             guard let context else { return OSStatus(noPasteboardPromiseKeeperErr) }
             return Unmanaged<PastePromiseState>.fromOpaque(context).takeUnretainedValue().provide(board, item: item, flavor: flavor)
         }, Unmanaged.passUnretained(state).toOpaque()))
-        try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, promisedType.rawValue as CFString,
-                                                          nil, PasteboardFlavorFlags(rawValue: 0)))
+        let promiseStatus = PasteboardPutItemFlavor(reference, item, promisedType.rawValue as CFString,
+                                                   nil, PasteboardFlavorFlags(rawValue: 0))
+        trace("put promise item \(String(UInt(bitPattern: item), radix: 16)), flavor \(promisedType.rawValue), status \(promiseStatus)")
+        try checkPasteboardFixture(promiseStatus)
         var promisedFlags = PasteboardFlavorFlags(rawValue: 0)
         try checkPasteboardFixture(PasteboardGetItemFlavorFlags(reference, item,
             promisedType.rawValue as CFString, &promisedFlags))
         XCTAssertNotEqual(promisedFlags.rawValue & (1 << 9), 0, "Fixture must publish an actual unfulfilled promise")
-        trace?("published promise item \(String(UInt(bitPattern: item), radix: 16)), flags \(promisedFlags.rawValue)")
+        trace("published promise item \(String(UInt(bitPattern: item), radix: 16)), flags \(promisedFlags.rawValue)")
         if let fileURL {
-            let file = try newPasteboardFixtureItem()
-            try checkPasteboardFixture(PasteboardPutItemFlavor(reference, file, "public.file-url" as CFString,
-                                                              Data(fileURL.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
+            let file = try newPasteboardFixtureItem(board)
+            expected.append((file, ["public.file-url"]))
+            let fileStatus = PasteboardPutItemFlavor(reference, file, "public.file-url" as CFString,
+                                                     Data(fileURL.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0))
+            trace("put file item \(String(UInt(bitPattern: file), radix: 16)), status \(fileStatus)")
+            try checkPasteboardFixture(fileStatus)
         }
-        _ = PasteboardSynchronize(reference)
+        let publishedFlags = PasteboardSynchronize(reference)
+        trace("published sync \(publishedFlags.rawValue), keeper calls \(state.calls)")
+        // Preserve the original first identifier -> flavor lookup, without a preparatory
+        // count/name query that could hide a stale enumeration cache.
         var returnedItem: PasteboardItemID?
-        try checkPasteboardFixture(PasteboardGetItemIdentifier(reference, 1, &returnedItem))
+        let identifierStatus = PasteboardGetItemIdentifier(reference, 1, &returnedItem)
+        trace("first identifier status \(identifierStatus), returned \(returnedItem.map { String(UInt(bitPattern: $0), radix: 16) } ?? "nil"), expected \(String(UInt(bitPattern: item), radix: 16))")
+        trace("first identifier origin: \(pasteboardFixtureItemOrigin(returnedItem, requestedName: board.name.rawValue))")
+        if identifierStatus != noErr || returnedItem == nil {
+            diagnosePasteboardPublication(reference, name: board.name.rawValue, expected: expected, trace: trace)
+            trace("after diagnostics keeper calls \(state.calls)")
+            XCTAssertEqual(state.calls, 0, "Metadata diagnostics must not fulfill promises")
+        }
+        try checkPasteboardFixture(identifierStatus)
         XCTAssertEqual(returnedItem, item, "Promise publication must retain its opaque item ID")
         var flavors: CFArray?
-        try checkPasteboardFixture(PasteboardCopyItemFlavors(reference, try XCTUnwrap(returnedItem), &flavors))
+        let flavorStatus = PasteboardCopyItemFlavors(reference, try XCTUnwrap(returnedItem), &flavors)
+        trace("first returned-ID flavors status \(flavorStatus), types \((flavors as? [String]).map { $0.joined(separator: ",") } ?? "nil")")
+        if returnedItem != item || flavorStatus != noErr ||
+            (flavors as? [String])?.contains(promisedType.rawValue) != true {
+            diagnosePasteboardPublication(reference, name: board.name.rawValue, expected: expected, trace: trace)
+            trace("after diagnostics keeper calls \(state.calls)")
+        }
+        XCTAssertEqual(state.calls, 0, "Publication and metadata diagnostics must not fulfill promises")
+        try checkPasteboardFixture(flavorStatus)
         XCTAssertTrue(try XCTUnwrap(flavors as? [String]).contains(promisedType.rawValue))
     }
 
@@ -353,6 +516,9 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     private func releasePublishedReferences() {
+        if !publishedReferences.isEmpty {
+            print("PasteboardFixture releasing eager references \(publishedReferences.map(pasteboardFixtureReferenceID)), main \(Thread.isMainThread)")
+        }
         publishedReferences.removeAll()
     }
 
@@ -374,56 +540,86 @@ final class PlainTextPasteTests: XCTestCase {
         let reference = try privatePasteboardReference(board)
         // A private global pasteboard can disappear when its final C reference is released.
         publishedReferences.append(reference)
-        try checkPasteboardFixture(PasteboardClear(reference))
-        _ = PasteboardSynchronize(reference)
+        let clearStatus = PasteboardClear(reference)
+        print("PasteboardFixture eager clear name \(board.name.rawValue), reference \(pasteboardFixtureReferenceID(reference)), status \(clearStatus)")
+        try checkPasteboardFixture(clearStatus)
+        let clearedFlags = PasteboardSynchronize(reference)
+        print("PasteboardFixture eager cleared sync \(clearedFlags.rawValue)")
         var identifiers: [PasteboardItemID] = []
         for flavors in representations {
-            let identifier = try newPasteboardFixtureItem()
+            let identifier = try newPasteboardFixtureItem(board)
             identifiers.append(identifier)
             for (type, data) in flavors {
-                try checkPasteboardFixture(PasteboardPutItemFlavor(reference, identifier, type as CFString,
-                                                                  data as CFData, PasteboardFlavorFlags(rawValue: 0)))
+                let status = PasteboardPutItemFlavor(reference, identifier, type as CFString,
+                                                    data as CFData, PasteboardFlavorFlags(rawValue: 0))
+                print("PasteboardFixture eager put reference \(pasteboardFixtureReferenceID(reference)), item \(String(UInt(bitPattern: identifier), radix: 16)), flavor \(type), bytes \(data.count), status \(status)")
+                try checkPasteboardFixture(status)
             }
         }
-        _ = PasteboardSynchronize(reference)
-        try verifyPublication(board, identifiers: identifiers, representations: representations)
+        let publishedFlags = PasteboardSynchronize(reference)
+        print("PasteboardFixture eager published sync \(publishedFlags.rawValue)")
+        try verifyPublication(board, publisher: reference, identifiers: identifiers, representations: representations)
         return identifiers
     }
 
     @MainActor
-    private func verifyPublication(_ board: NSPasteboard, identifiers: [PasteboardItemID],
+    private func verifyPublication(_ board: NSPasteboard, publisher: Pasteboard, identifiers: [PasteboardItemID],
                                    representations: [[(String, Data)]]) throws {
         let reader = try privatePasteboardReference(board)
-        defer { withExtendedLifetime(reader) {} }
+        defer {
+            print("PasteboardFixture finished eager reader reference \(pasteboardFixtureReferenceID(reader))")
+            withExtendedLifetime(reader) {}
+        }
+        let published = zip(identifiers, representations).map { pair in
+            (pair.0, pair.1.map { $0.0 })
+        }
+        var diagnosed = false
+        let diagnoseOnce: @MainActor () -> Void = {
+            guard !diagnosed else { return }
+            diagnosed = true
+            diagnosePasteboardPublication(reader, name: board.name.rawValue, expected: published,
+                                          publisher: publisher,
+                                          trace: { print("PasteboardFixture eager coherence: \($0)") })
+        }
         let synchronized = PasteboardSynchronize(reader)
         var count = 0
-        try checkPasteboardFixture(PasteboardGetItemCount(reader, &count))
+        let countStatus = PasteboardGetItemCount(reader, &count)
+        print("PasteboardFixture eager reader reference \(pasteboardFixtureReferenceID(reader)), sync \(synchronized.rawValue), count status \(countStatus), actual \(count), expected \(identifiers.count)")
+        if countStatus != noErr || count != identifiers.count { diagnoseOnce() }
+        try checkPasteboardFixture(countStatus)
         XCTAssertEqual(count, identifiers.count, "Fresh C reference must enumerate every published item")
         for (index, expected) in identifiers.enumerated() {
             var returned: PasteboardItemID?
             let status = PasteboardGetItemIdentifier(reader, index + 1, &returned)
             let expectedID = String(UInt(bitPattern: expected), radix: 16)
             print("PasteboardFixture publication index \(index + 1): sync \(synchronized.rawValue), published \(expectedID), returned \(returned.map { String(UInt(bitPattern: $0), radix: 16) } ?? "nil"), status \(status)")
+            print("PasteboardFixture publication origin: \(pasteboardFixtureItemOrigin(returned, requestedName: board.name.rawValue))")
+            if status != noErr || returned == nil { diagnoseOnce() }
             try checkPasteboardFixture(status)
             XCTAssertEqual(returned, expected, "A fresh C reference must return the published opaque ID")
             let item = try XCTUnwrap(returned)
             var flavorArray: CFArray?
             let flavorStatus = PasteboardCopyItemFlavors(reader, item, &flavorArray)
             print("PasteboardFixture publication item \(expectedID): flavors status \(flavorStatus)")
+            if returned != expected || flavorStatus != noErr || (flavorArray as? [String]) == nil { diagnoseOnce() }
             try checkPasteboardFixture(flavorStatus)
             let flavors = try XCTUnwrap(flavorArray as? [String])
             for (type, expectedData) in representations[index] {
+                if !flavors.contains(type) { diagnoseOnce() }
                 XCTAssertTrue(flavors.contains(type), "Published flavor must remain discoverable: \(type)")
                 // An empty stored representation may be unavailable on macOS; all nonempty
                 // eager data must round-trip byte-for-byte without invoking any provider.
                 if !expectedData.isEmpty {
                     var flags = PasteboardFlavorFlags(rawValue: 0)
-                    try checkPasteboardFixture(PasteboardGetItemFlavorFlags(reader, item, type as CFString, &flags))
+                    let flagStatus = PasteboardGetItemFlavorFlags(reader, item, type as CFString, &flags)
+                    if flagStatus != noErr || flags.rawValue & (1 << 9) != 0 { diagnoseOnce() }
+                    try checkPasteboardFixture(flagStatus)
                     XCTAssertEqual(flags.rawValue & (1 << 9), 0, "Eager fixture data must not become a promise")
                     guard flags.rawValue & (1 << 9) == 0 else { throw PasteboardFixtureError.missingItemData }
                     var actual: CFData?
                     let copyStatus = PasteboardCopyItemFlavorData(reader, item, type as CFString, &actual)
                     print("PasteboardFixture publication item \(expectedID), \(type): copy status \(copyStatus), expected bytes \(expectedData.count), actual bytes \(actual.map { CFDataGetLength($0) } ?? -1)")
+                    if copyStatus != noErr || actual.map({ $0 as Data }) != expectedData { diagnoseOnce() }
                     XCTAssertEqual(copyStatus, noErr)
                     XCTAssertEqual(actual.map { $0 as Data }, expectedData)
                 }
@@ -896,8 +1092,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateRichAndPlainClipboardPrefersExactUnicodePlainText() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = "  \u{4E2D}\u{6587}\tCafe\u{0301} \u{1F642}\r\nsecond\n\u{2028}  "
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .string))
@@ -924,8 +1120,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateTextWithAlternativeImageRepresentationDoesNotReadImageData() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = "name\tvalue\n\u{4E2D}\u{6587}\t42"
         let provider = try PastePromiseFixture(board, plainText: text, promisedType: .png)
         defer { withExtendedLifetime(provider) {} }
@@ -946,8 +1142,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateRTFOnlyClipboardUsesAppKitConversion() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = "Bold \u{4E2D}\u{6587}\t123\nnext line"
         let attributed = NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: 14)])
         let data = try attributed.data(from: NSRange(location: 0, length: attributed.length),
@@ -966,8 +1162,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateMultipleTextItemsHaveExplicitNewlineBoundariesAndNoTranslationCharacterLimit() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let strings = [" first\t", String(repeating: "a", count: 20_000), "\nlast  "]
         let items = strings.map { text -> NSPasteboardItem in
             let item = NSPasteboardItem()
@@ -987,8 +1183,8 @@ final class PlainTextPasteTests: XCTestCase {
     func testPrivateImageFileAndMixedFileTextClipboardsRemainUntouched() async throws {
         let types: [NSPasteboard.PasteboardType] = [.png, .fileURL, NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url")]
         for type in types {
-            let board = NSPasteboard.withUniqueName()
-            defer { board.releaseGlobally() }
+            let board = newPrivatePasteboard()
+            defer { releasePrivatePasteboard(board) }
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(Data([1, 2, 3]), forType: type))
             if type == .fileURL { XCTAssertTrue(item.setString("filename.txt", forType: .string)) }
@@ -1013,8 +1209,8 @@ final class PlainTextPasteTests: XCTestCase {
             let uniformType = try XCTUnwrap(UTType(tag: rawType, tagClass: tagClass, conformingTo: nil))
             XCTAssertTrue(uniformType.tags[tagClass]?.contains(rawType) == true,
                           "The public UTI tag specification must preserve the legacy file flavor")
-            let board = NSPasteboard.withUniqueName()
-            defer { board.releaseGlobally() }
+            let board = newPrivatePasteboard()
+            defer { releasePrivatePasteboard(board) }
             let type = NSPasteboard.PasteboardType(rawType)
             board.declareTypes([type, .string], owner: nil)
             XCTAssertTrue(board.setData(data, forType: type))
@@ -1036,8 +1232,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateHTMLOnlyIsNotRenderedOrConvertedViaNetworkCapableImporter() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let html = "<html><img src='https://invalid.example/not-fetched'><b>text</b></html>"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(html, forType: .html))
@@ -1053,8 +1249,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateMixedTextAndFileItemsAreNotPartiallyConverted() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = NSPasteboardItem()
         XCTAssertTrue(text.setString("keep with file", forType: .string))
         let file = NSPasteboardItem()
@@ -1072,8 +1268,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateTabularTextRetainsTabsAndLineBreaks() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = "name\tvalue\r\nfirst\t 42 \r\n"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .tabularText))
@@ -1090,8 +1286,8 @@ final class PlainTextPasteTests: XCTestCase {
         let cases = [Data(), Data([0, 255, 1, 2]), Data("{\\rtf".utf8), Data("{\\rtfish}".utf8)]
         var previousIdentifier: UInt = 0
         for (index, data) in cases.enumerated() {
-            let board = NSPasteboard.withUniqueName()
-            defer { board.releaseGlobally() }
+            let board = newPrivatePasteboard()
+            defer { releasePrivatePasteboard(board) }
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(data, forType: .rtf))
             let identifiers = try publish(board, items: [item])
@@ -1127,8 +1323,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivatePromisedButUnavailableTextReturnsFailureWithoutChangingClipboard() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let trace: @Sendable (String) -> Void = { print("PasteboardTrace unavailable promise: \($0)") }
         let provider = try PastePromiseFixture(board, trace: trace)
         defer { withExtendedLifetime(provider) {} }
@@ -1149,8 +1345,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateRichHTMLProviderIsNeverAskedWhenPlainTextIsAvailable() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let provider = try PastePromiseFixture(board, plainText: "plain wins", promisedType: .html)
         defer { withExtendedLifetime(provider) {} }
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
@@ -1163,8 +1359,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateProviderChangingOwnerDuringReadCannotProduceStaleSnapshot() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let provider = try PastePromiseFixture(board, response: .replaceOwner)
         defer { withExtendedLifetime(provider) {} }
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
@@ -1176,8 +1372,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivatePasteboardServiceStripsFormattingAndRequestsExactlyOneInjectedPaste() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString("private synthetic text", forType: .string))
         XCTAssertTrue(item.setString("<b>private synthetic text</b>", forType: .html))
@@ -1194,8 +1390,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateNewOwnerBetweenReadAndWriteIsNeverOverwrittenOrRestored() async {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         board.declareTypes([.string], owner: nil)
         XCTAssertTrue(board.setString("old synthetic", forType: .string))
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
@@ -1213,8 +1409,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateCancelledSnapshotCannotWriteAndEmptyStringIsStillValidText() async {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         board.declareTypes([.string], owner: nil)
         XCTAssertTrue(board.setString("", forType: .string))
         let count = board.changeCount
@@ -1239,8 +1435,8 @@ final class PlainTextPasteTests: XCTestCase {
         for (index, testCase) in cases.enumerated() {
             let (type, encoding, text) = testCase
             let label = "case \(index), \(type), encoding \(encoding.rawValue)"
-            let board = NSPasteboard.withUniqueName()
-            defer { board.releaseGlobally() }
+            let board = newPrivatePasteboard()
+            defer { releasePrivatePasteboard(board) }
             let bytes = try XCTUnwrap(text.data(using: encoding))
             // NSPasteboardItem may translate legacy aliases, including their line endings.
             // Publish the intended external bytes directly rather than pre-converting the fixture.
@@ -1296,8 +1492,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateInvalidUTF8DoesNotBecomeReplacementCharacters() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let bytes = Data([0xFF, 0xFE, 0x41])
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setData(bytes, forType: .string))
@@ -1313,8 +1509,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateFulfilledCPromisePreservesTextAndCanBeWrittenOnce() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let text = "  promised \u{4E2D}\u{6587}\tCafe\u{0301}\r\n\u{1F642}\n"
         let provider = try PastePromiseFixture(board, response: .text(Data(text.utf8)))
         defer { withExtendedLifetime(provider) {} }
@@ -1341,8 +1537,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateWrittenLeaseIsInvalidatedBySameProcessAppKitOwner() async {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         board.declareTypes([.string], owner: nil)
         XCTAssertTrue(board.setString("original", forType: .string))
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
@@ -1365,8 +1561,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateSnapshotCannotCrossAdaptersOrReplayAfterAnotherRead() async {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         board.declareTypes([.string], owner: nil)
         XCTAssertTrue(board.setString("original", forType: .string))
         let first = SystemPlainTextPasteClipboard(name: board.name)
@@ -1395,8 +1591,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateCancelWhileCPromiseWaitsDrainsWithoutPosting() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let entered = expectation(description: "C promise entered")
         let release = DispatchSemaphore(value: 0)
         let provider = try PastePromiseFixture(board, response: .blockedText(Data("late synthetic".utf8),
@@ -1422,8 +1618,8 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateMixedFileClipboardDoesNotFulfillEarlierTextPromise() async throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
+        let board = newPrivatePasteboard()
+        defer { releasePrivatePasteboard(board) }
         let provider = try PastePromiseFixture(board, fileURL: "file:///synthetic/never-opened.txt")
         defer { withExtendedLifetime(provider) {} }
         XCTAssertEqual(try provider.itemCount(), 2)
