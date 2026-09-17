@@ -1318,12 +1318,12 @@ final class ProbeModel: ObservableObject {
         if event.id == configLoadID || event.id == configSaveID {
             guard event.isTerminal else { return true }
             let pasteSave = plainPaste.preference.ownsSave(event.id)
-            settingsBusy = false
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
                     plainPaste.saved(id: event.id)
                     configSaveID = nil
+                    settingsBusy = false
                     status = "Settings saved. Reloading their normalized view; no write replay."
                     loadSettings(modelRead: modelSave, afterModelSave: modelSave)
                     return true
@@ -1396,6 +1396,7 @@ final class ProbeModel: ObservableObject {
             }
             configLoadID = nil
             configSaveID = nil
+            settingsBusy = false
             if settingsReady { dictionary.connectionReady() }
             flushPlainPastePreference()
             resumeTranslation()

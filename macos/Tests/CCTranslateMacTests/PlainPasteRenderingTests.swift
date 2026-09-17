@@ -54,7 +54,7 @@ extension ProductRenderingTests {
                 XCTAssertTrue(words.contains("custom model id"))
                 XCTAssertTrue(words.contains("plain-text paste"))
                 XCTAssertTrue(words.contains("files mixed with text"))
-                XCTAssertTrue(words.contains("no image data is read"))
+                XCTAssertTrue(words.contains("no image data is read"), words)
                 XCTAssertTrue(words.contains(enabled ? "shortcut reserved" : "shortcut not registered"))
                 XCTAssertTrue(words.contains("about"), "The complete form must fit the tall review snapshot.")
             }
@@ -99,7 +99,7 @@ extension ProductRenderingTests {
         fixture.service.progress(.waitingForKeys)
         let busy = try renderPasteSettings(fixture, name: "plain-paste-settings-busy-light", scheme: .light)
         let busyWords = try pasteSettingsWords(busy)
-        XCTAssertTrue(busyWords.contains("release the shortcut keys"))
+        XCTAssertTrue(busyWords.contains("release the shortcut keys"), busyWords)
         XCTAssertTrue(busyWords.contains("cancel paste action"))
         fixture.model.setPlainPasteEnabled(false)
         let draining = try renderPasteSettings(fixture, name: "plain-paste-settings-draining-zh-dark",
@@ -135,7 +135,7 @@ extension ProductRenderingTests {
         let permission = try renderPasteSettings(fixture, name: "plain-paste-settings-permission-zh-light",
                                                 scheme: .light, chinese: true)
         let chinese = try pasteSettingsWords(permission, chinese: true).filter { !$0.isWhitespace }
-        XCTAssertTrue(chinese.contains("此操作需要辅助功能权限"))
+        XCTAssertTrue(chinese.contains("此操作需要辅助功能权限"), chinese)
         XCTAssertTrue(chinese.contains("此操作未更改剪贴板"))
         assertPasteRenderHasNoExternalEffects(fixture)
         XCTAssertTrue(fixture.service.requests.isEmpty)

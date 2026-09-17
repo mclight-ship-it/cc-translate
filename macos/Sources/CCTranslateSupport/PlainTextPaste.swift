@@ -370,7 +370,10 @@ struct SystemPlainTextPasteClipboard: PlainTextPasteClipboard {
                     guard !cancellation.isCancelled else { return .failure(.cancelled) }
                     guard board.changeCount == count else { return .failure(.clipboardChanged) }
                     guard let data else { return .failure(.unavailableData) }
-                    guard let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
+                    // AppKit can return an empty attributed string for non-RTF bytes.
+                    guard data.starts(with: Array("{\\rtf".utf8)),
+                          let version = data.dropFirst(5).first, (0x30...0x39).contains(version),
+                          let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
                         return .failure(.invalidRichText)
                     }
                     var attachment = false

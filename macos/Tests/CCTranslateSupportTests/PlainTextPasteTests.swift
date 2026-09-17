@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 import XCTest
 @testable import CCTranslateSupport
 
@@ -226,6 +227,21 @@ final class PlainTextPasteTests: XCTestCase {
                           clipboard: PlainTextPasteOutcome.ClipboardEffect = .unchanged,
                           events: PlainTextPasteOutcome.EventEffect = .notPosted) -> PlainTextPasteStatus {
         .finished(PlainTextPasteOutcome(reason: reason, clipboard: clipboard, events: events))
+    }
+
+    @MainActor
+    private func assertPlainTextOnly(_ board: NSPasteboard, text: String,
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        let types = Set(board.types ?? [])
+        let legacyString = NSPasteboard.PasteboardType("NSStringPboardType")
+        XCTAssertTrue(types.contains(.string), file: file, line: line)
+        XCTAssertTrue(types.allSatisfy { $0 == legacyString || UTType($0.rawValue)?.conforms(to: .plainText) == true },
+                      "Unexpected rich/file/image representation: \(types)",
+                      file: file, line: line)
+        for type in types {
+            XCTAssertEqual(board.string(forType: type).map { Array($0.utf8) }, Array(text.utf8),
+                           file: file, line: line)
+        }
     }
 
     @MainActor
@@ -667,7 +683,7 @@ final class PlainTextPasteTests: XCTestCase {
             return XCTFail("Expected intentional formatting removal")
         }
         XCTAssertEqual(board.changeCount, count)
-        XCTAssertEqual(board.types, [.string])
+        assertPlainTextOnly(board, text: text)
         XCTAssertEqual(board.string(forType: .string), text)
         XCTAssertEqual(board.string(forType: .string).map { Array($0.utf8) }, Array(text.utf8))
     }
@@ -691,7 +707,7 @@ final class PlainTextPasteTests: XCTestCase {
         guard case .written = await adapter.replace(snapshot, cancellation: token) else {
             return XCTFail("Expected explicit plain-text conversion")
         }
-        XCTAssertEqual(board.types, [.string])
+        assertPlainTextOnly(board, text: text)
         XCTAssertEqual(board.string(forType: .string), text)
         XCTAssertEqual(provider.calls, 0)
     }
@@ -713,7 +729,7 @@ final class PlainTextPasteTests: XCTestCase {
         XCTAssertEqual(snapshot.text, text)
         guard case .written = await adapter.replace(snapshot, cancellation: token) else { return XCTFail("Expected write") }
         XCTAssertEqual(board.string(forType: .string), text)
-        XCTAssertEqual(board.types, [.string])
+        assertPlainTextOnly(board, text: text)
     }
 
     @MainActor
@@ -807,17 +823,20 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     func testPrivateInvalidRTFDoesNotClearClipboard() async {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
-        let item = NSPasteboardItem()
-        XCTAssertTrue(item.setData(Data([0, 255, 1, 2]), forType: .rtf))
-        XCTAssertTrue(board.writeObjects([item]))
-        let count = board.changeCount
-        let adapter = SystemPlainTextPasteClipboard(name: board.name)
-        guard case .failure(.invalidRichText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
-            return XCTFail("Malformed RTF must fail explicitly")
+        for data in [Data(), Data([0, 255, 1, 2]), Data("{\\rtf".utf8), Data("{\\rtfish}".utf8)] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            let item = NSPasteboardItem()
+            XCTAssertTrue(item.setData(data, forType: .rtf))
+            XCTAssertTrue(board.writeObjects([item]))
+            let count = board.changeCount
+            let adapter = SystemPlainTextPasteClipboard(name: board.name)
+            guard case .failure(.invalidRichText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
+                return XCTFail("Malformed RTF must fail explicitly")
+            }
+            XCTAssertEqual(board.changeCount, count)
+            XCTAssertEqual(board.data(forType: .rtf), data)
         }
-        XCTAssertEqual(board.changeCount, count)
     }
 
     @MainActor
@@ -883,7 +902,7 @@ final class PlainTextPasteTests: XCTestCase {
         paste.requestPaste(releasing: [40])
         await wait(paste, for: finished(.eventsSubmitted, clipboard: .plainTextWritten, events: .submittedUnconfirmed))
         XCTAssertEqual(input.posts, [input.target])
-        XCTAssertEqual(board.types, [.string])
+        assertPlainTextOnly(board, text: "private synthetic text")
         XCTAssertEqual(board.string(forType: .string), "private synthetic text")
     }
 
