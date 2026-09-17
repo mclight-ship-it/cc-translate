@@ -598,11 +598,75 @@ final class ImageTranslationAppTests: XCTestCase {
         f.model.translateImage(try CaptureProductFixture.image())
         try await CaptureProductFixture.waitFor { !client.base.configurationSaves.isEmpty }
         f.model.cancel()
+        XCTAssertEqual(f.model.productPhase, .cancelled)
+        let cancellationMessage = f.model.productMessage
         try f.finishSave(client)
         try await CaptureProductFixture.waitFor { !f.resources.working }
         XCTAssertTrue(client.imageRequests.isEmpty)
         XCTAssertEqual(f.factory.attachments.last?.cleanupCalls, 1)
         XCTAssertEqual(f.model.productPhase, .cancelled)
+        XCTAssertEqual(f.model.productMessage, cancellationMessage)
+    }
+
+    @MainActor
+    func testCancelledTextAndImagePreparationSurviveReadbackAfterSaveAcknowledgement() async throws {
+        for image in [false, true] {
+            let f = try ImageAppFixture()
+            defer { f.cleanUp() }
+            let client = try f.ready()
+            f.model.modelProfile = "fixture/custom-model"
+            if image {
+                f.model.translateImage(try CaptureProductFixture.image())
+            } else {
+                f.model.input = "An explicitly cancelled text preparation"
+                f.model.translate(useCache: false)
+            }
+            try await CaptureProductFixture.waitFor { !client.base.configurationSaves.isEmpty }
+            let save = try XCTUnwrap(client.base.configurationSaves.last)
+            client.base.event("completed", id: save.id)
+            XCTAssertTrue(f.model.settingsBusy)
+            f.model.cancel()
+            let cancellationMessage = f.model.productMessage
+            XCTAssertEqual(f.model.productPhase, .cancelled)
+            try f.readConfig(client, config: save.config)
+            try await CaptureProductFixture.waitFor { !f.resources.working }
+            XCTAssertEqual(f.model.productPhase, .cancelled)
+            XCTAssertEqual(f.model.productMessage, cancellationMessage)
+            XCTAssertTrue(f.model.settingsReady)
+            XCTAssertFalse(f.model.settingsBusy)
+            f.model.loadSettings()
+            try f.readConfig(client, config: save.config)
+            XCTAssertEqual(f.model.productPhase, .cancelled)
+            XCTAssertEqual(f.model.productMessage, cancellationMessage)
+            XCTAssertTrue(client.imageRequests.isEmpty)
+            XCTAssertTrue(client.base.translations.isEmpty)
+            XCTAssertEqual(client.base.configurationSaves.count, 1)
+        }
+    }
+
+    @MainActor
+    func testCancelledPreparationDoesNotPinReplacementCLIConnectionToOldState() async throws {
+        let f = try ImageAppFixture()
+        defer { f.cleanUp() }
+        let old = try f.ready()
+        f.model.modelProfile = "fixture/custom-model"
+        f.model.translateImage(try CaptureProductFixture.image())
+        try await CaptureProductFixture.waitFor { !old.base.configurationSaves.isEmpty }
+        let save = try XCTUnwrap(old.base.configurationSaves.last)
+        f.model.cancel()
+        try f.finishSave(old)
+        try await CaptureProductFixture.waitFor { !f.resources.working }
+        XCTAssertEqual(f.model.productPhase, .cancelled)
+        f.model.selectedCLI = f.base.alternateExecutable.path
+        XCTAssertEqual(old.base.stopCount, 1)
+        old.base.stopped()
+        let current = try f.ready(config: save.config)
+        XCTAssertFalse(current === old)
+        XCTAssertEqual(f.model.productPhase, .idle)
+        XCTAssertEqual(f.model.productMessage, "")
+        XCTAssertTrue(current.imageRequests.isEmpty)
+        XCTAssertTrue(current.base.translations.isEmpty)
+        XCTAssertTrue(current.base.configurationSaves.isEmpty)
     }
 
     @MainActor

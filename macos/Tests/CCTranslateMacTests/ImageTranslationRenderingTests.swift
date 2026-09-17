@@ -163,8 +163,19 @@ extension ProductRenderingTests {
             ("image-history-zh-dark", true, .dark)
         ] {
             f.model.interfaceLanguage = chinese ? "zh" : "en"
-            let png = try render(HistoryTranslationDetail(model: f.model, row: row, useEntry: {}),
-                                 named: name, size: NSSize(width: 660, height: 520), scheme: scheme)
+            let png = try render(
+                HistoryTranslationDetail(model: f.model, row: row, useEntry: {})
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                named: name, size: NSSize(width: 660, height: 520), scheme: scheme, inspect: { host in
+                    let rendered = self.imageTextViews(host).first { $0.string == row.output }
+                    XCTAssertNotNil(rendered)
+                    XCTAssertEqual(rendered?.isEditable, false)
+                    XCTAssertEqual(rendered?.isSelectable, true)
+                })
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+            let background = try XCTUnwrap(bitmap.colorAt(x: 0, y: 0))
+            XCTAssertEqual(background.alphaComponent, 1, accuracy: 0.001,
+                           "Cache the history window's semantic background, not a transparent child in isolation.")
             let words = try imageWords(png, chinese: chinese)
             XCTAssertTrue(words.contains("only translated text"), words)
             if chinese {

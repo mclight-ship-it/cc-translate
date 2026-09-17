@@ -193,6 +193,7 @@ final class ProbeModel: ObservableObject {
     private var activeAction: (id: String, content: ActionDraft)?
     private var resultGeneration = UUID()
     private(set) var translationIntentID = UUID()
+    private var cancelledPreparation: (intent: UUID, connection: UUID)?
     private var presentationLoaded = false
     private var loadingConfiguration = false
     private var directionEdited = false
@@ -1262,6 +1263,7 @@ final class ProbeModel: ObservableObject {
 
     func cancel() {
         if draft != nil {
+            cancelledPreparation = (translationIntentID, connectionID)
             draft = nil
             productPhase = .cancelled
             productMessage = text("Cancelled", "已取消")
@@ -1724,8 +1726,11 @@ final class ProbeModel: ObservableObject {
                 }
                 settingsReady = true
                 status = "Native settings loaded. Account and model access require an explicit translation."
+                let preservesCancellation = productPhase == .cancelled &&
+                    cancelledPreparation?.intent == translationIntentID &&
+                    cancelledPreparation?.connection == connectionID
                 if !needsCLI && !preparing && !active && output.isEmpty &&
-                    !modelCatalog.pending && !catalogPreservesPreparation {
+                    !modelCatalog.pending && !catalogPreservesPreparation && !preservesCancellation {
                     productMessage = ""
                     productPhase = .idle
                 }

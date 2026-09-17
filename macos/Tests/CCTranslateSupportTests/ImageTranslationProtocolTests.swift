@@ -61,17 +61,18 @@ final class ImageTranslationProtocolTests: XCTestCase {
 
     func testImageRequestExactShapeAndScalarTypesRejectInlineImageBytes() throws {
         var state = try connected()
-        var variants: [[String: JSONValue]] = []
-        for key in request.keys {
+        var variants: [(label: String, payload: [String: JSONValue])] = []
+        for key in request.keys.sorted() {
             var missing = request
             missing.removeValue(forKey: key)
-            variants.append(missing)
+            variants.append(("missing \(key)", missing))
         }
         for change: [String: JSONValue] in [
             ["image_path": .null], ["image_path": .string("relative.png")], ["image_path": .string("file:///tmp/image.png")],
             ["image_path": .string("/bad\0path")], ["image_path": .integer(1)], ["image_path": .string("")],
             ["image_bytes": .integer(0)], ["image_bytes": .integer(-1)], ["image_bytes": .bool(true)],
             ["image_bytes": .number(80)], ["image_bytes": .string("80")], ["image_bytes": .integer(83_886_081)],
+            ["image_bytes": .number(.nan)], ["image_bytes": .number(.infinity)], ["image_bytes": .number(-.infinity)],
             ["image_sha256": .string(String(repeating: "A", count: 64))],
             ["image_sha256": .string(String(repeating: "a", count: 63))],
             ["image_sha256": .string(String(repeating: "g", count: 64))], ["image_sha256": .null],
@@ -81,12 +82,37 @@ final class ImageTranslationProtocolTests: XCTestCase {
             ["use_cache": .bool(false)], ["model": .string("not wire settings")],
             ["origin": .string("ocr")], ["config": .object([:])]
         ] {
-            variants.append(request.merging(change) { _, value in value })
+            variants.append(("invalid \(String(reflecting: change))", request.merging(change) { _, value in value }))
         }
-        for payload in variants {
-            let message = ClientMessage(id: "invalid", type: "request", payload: payload)
-            XCTAssertThrowsError(try message.encoded())
-            XCTAssertThrowsError(try state.register(message))
+
+        let integralDouble = JSONValue.number(80)
+        XCTAssertEqual(try JSONValue.parse(integralDouble.encoded()), .integer(80),
+                       "Foundation serialization can erase a Double's nominal type; validate before encoding")
+        for token in ["80.0", "8e1", "8E+1", "80.5", "true", "false", "null", "[]", "{}"] {
+            let value = try JSONValue.parse(Data(token.utf8))
+            if ["80.0", "8e1", "8E+1"].contains(token) { XCTAssertEqual(value, integralDouble) }
+            var payload = request
+            payload["image_bytes"] = value
+            variants.append(("image_bytes wire token \(token)", payload))
+        }
+        for (index, variant) in variants.enumerated() {
+            let (label, payload) = variant
+            XCTAssertThrowsError(try ImageTranslationDocument.validateRequest(payload), label) { error in
+                XCTAssertEqual(error as? ProbeError, .invalidPayload, label)
+            }
+            let message = ClientMessage(id: "invalid\(index)", type: "request", payload: payload)
+            if payload["operation"] == .string("translate_image") {
+                XCTAssertThrowsError(try message.encoded(), label) { error in
+                    XCTAssertEqual(error as? ProbeError, .invalidPayload, label)
+                }
+            } else {
+                // The generic encoder cannot dispatch an absent operation; registration must reject it before writing.
+                XCTAssertNil(payload["operation"], label)
+                XCTAssertNoThrow(try message.encoded(), label)
+            }
+            XCTAssertThrowsError(try state.register(message), label) { error in
+                XCTAssertEqual(error as? ProbeError, .invalidPayload, label)
+            }
         }
         XCTAssertFalse(state.hasPendingTranslation)
     }
@@ -94,16 +120,18 @@ final class ImageTranslationProtocolTests: XCTestCase {
     func testImageRequestAllowsFullByteBudgetButKeepsIPCFrameSmallAndUnchanged() throws {
         var state = try connected()
         for (index, language) in ["en_US", "zh_CN"].enumerated() {
-            var payload = request
-            payload["image_path"] = .string("/synthetic/\u{4e2d} space/region.png")
-            payload["image_bytes"] = .integer(83_886_080)
-            payload["record_history"] = .bool(index == 0)
-            payload["app_language"] = .string(language)
-            let message = ClientMessage(id: "image\(index)", type: "request", payload: payload)
-            let encoded = try message.encoded()
-            XCTAssertLessThan(encoded.count, 1024, "The 80MiB image must never be embedded in JSONL")
-            XCTAssertEqual(try JSONValue.parse(Data(encoded.dropLast())).object?["payload"], .object(payload))
-            try state.register(message)
+            for bytes: Int64 in [1, 80, 83_886_080] {
+                var payload = request
+                payload["image_path"] = .string("/synthetic/\u{4e2d} space/region.png")
+                payload["image_bytes"] = .integer(bytes)
+                payload["record_history"] = .bool(index == 0)
+                payload["app_language"] = .string(language)
+                let message = ClientMessage(id: "image\(index)_\(bytes)", type: "request", payload: payload)
+                let encoded = try message.encoded()
+                XCTAssertLessThan(encoded.count, 1024, "The 80MiB image must never be embedded in JSONL")
+                XCTAssertEqual(try JSONValue.parse(Data(encoded.dropLast())).object?["payload"], .object(payload))
+                try state.register(message)
+            }
         }
         var oversized = request
         oversized["image_path"] = .string("/" + String(repeating: "a", count: 65_536))

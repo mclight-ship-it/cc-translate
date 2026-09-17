@@ -965,7 +965,9 @@ final class PlainTextPasteTests: XCTestCase {
             XCTAssertTrue(item.setData(data, forType: .rtf))
             try publish(board, items: [item])
             let count = board.changeCount
-            let adapter = SystemPlainTextPasteClipboard(name: board.name)
+            let adapter = SystemPlainTextPasteClipboard(name: board.name) {
+                print("Synthetic malformed RTF case \(index): \($0)")
+            }
             let token = PlainTextPasteCancellation()
             let result = await adapter.read(cancellation: token)
             switch result {

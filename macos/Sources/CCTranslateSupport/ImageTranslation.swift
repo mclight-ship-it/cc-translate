@@ -7,10 +7,11 @@ enum ImageTranslationDocument {
     ]
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
+        // Check the nominal JSON type before Foundation can serialize an integral Double as an integer.
         guard Set(payload.keys) == ["operation", "image_path", "image_bytes", "image_sha256", "app_language", "record_history"],
               payload["operation"] == .string(operation),
               let path = payload["image_path"]?.string, path.hasPrefix("/"), !path.contains("\0"),
-              let bytes = payload["image_bytes"]?.integer,
+              case let .integer(bytes)? = payload["image_bytes"],
               bytes > 0, bytes <= Int64(ImageTranslationAttachment.maxBytes),
               let digest = payload["image_sha256"]?.string, digest.utf8.count == 64,
               digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
