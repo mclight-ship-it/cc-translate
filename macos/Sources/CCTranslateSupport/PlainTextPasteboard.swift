@@ -1,10 +1,9 @@
 import AppKit
-import ApplicationServices
 import CoreServices
 import UniformTypeIdentifiers
 
 // AppKit change-count checks and eager writes stay on MainActor. Item enumeration and
-// potentially blocking promise/RTF reads use one queue-confined C reference.
+// potentially blocking promise/RTF reads use queue-confined AppKit items for one interaction.
 final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked Sendable {
     private static let queue = DispatchQueue(label: "CCTranslate.plain-text-paste.clipboard", qos: .userInitiated)
     private let name: NSPasteboard.Name
@@ -35,7 +34,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         let initialCount = await currentChangeCount()
         let result = await onQueue {
             self.trace?("read token \(token), initial change count \(initialCount)")
-            return self.readText(token: token, cancellation: cancellation)
+            return self.readText(token: token, expectedChangeCount: initialCount, cancellation: cancellation)
         }
         let count = await currentChangeCount()
         return await onQueue {
@@ -119,54 +118,35 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         return .written(count)
     }
 
-    private func readText(token: Int, cancellation: PlainTextPasteCancellation) -> PlainTextPasteRead {
+    private func readText(token: Int, expectedChangeCount: Int,
+                          cancellation: PlainTextPasteCancellation) -> PlainTextPasteRead {
         dispatchPrecondition(condition: .onQueue(Self.queue))
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        let boardName = name == .general ? (kPasteboardClipboard as String) : name.rawValue
-        var reference: Pasteboard?
-        let createStatus = PasteboardCreate(boardName as CFString, &reference)
-        trace?("create status \(createStatus), reference \(reference != nil)")
-        guard createStatus == noErr, let board = reference else {
-            return .failure(.unavailableData)
+        let board = NSPasteboard(name: name)
+        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
+        // Global types include legacy AppKit file declarations; item types are UTIs.
+        guard !(board.types ?? []).contains(where: { Self.isFileFlavor($0.rawValue) }) else {
+            return .failure(.noText)
         }
-        defer { withExtendedLifetime(board) {} }
-        let synchronized = PasteboardSynchronize(board)
-        trace?("synchronize flags \(synchronized.rawValue)")
-        var count = 0
-        let countStatus = PasteboardGetItemCount(board, &count)
-        trace?("count status \(countStatus), actual \(count)")
-        if let failure = failure(after: countStatus, cancellation: cancellation) { return .failure(failure) }
-        guard count > 0 else { return .failure(.noText) }
-        var items: [(id: PasteboardItemID, flavors: [String])] = []
-        for index in 1...count {
+        guard let pasteboardItems = board.pasteboardItems else { return .failure(.unavailableData) }
+        trace?("AppKit item count \(pasteboardItems.count)")
+        guard !pasteboardItems.isEmpty else { return .failure(.noText) }
+        var items: [(item: NSPasteboardItem, flavors: [String])] = []
+        for (index, item) in pasteboardItems.enumerated() {
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            var item: PasteboardItemID?
-            let status = PasteboardGetItemIdentifier(board, index, &item)
-            trace?("identifier index \(index), status \(status), value \(item.map { String(UInt(bitPattern: $0), radix: 16) } ?? "nil")")
-            if let failure = failure(after: status, cancellation: cancellation) { return .failure(failure) }
-            guard let item else { return .failure(.unavailableData) }
-            var array: CFArray?
-            let flavorsStatus = PasteboardCopyItemFlavors(board, item, &array)
-            trace?("flavors status \(flavorsStatus), count \(array.map { CFArrayGetCount($0) } ?? -1)")
-            if let failure = failure(after: flavorsStatus, cancellation: cancellation) { return .failure(failure) }
-            guard let flavors = array as? [String] else { return .failure(.unavailableData) }
+            guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
+            let flavors = item.types.map(\.rawValue)
+            trace?("AppKit item \(index), types \(flavors)")
             guard !flavors.contains(where: Self.isFileFlavor) else { return .failure(.noText) }
-            var explicitFlavors: [String] = []
-            for flavor in flavors {
-                var flags = PasteboardFlavorFlags(rawValue: 0)
-                let status = PasteboardGetItemFlavorFlags(board, item, flavor as CFString, &flags)
-                trace?("flavor \(flavor), flags \(flags.rawValue), status \(status)")
-                if let failure = failure(after: status, cancellation: cancellation) { return .failure(failure) }
-                if flags.rawValue & (1 << 8) == 0 { explicitFlavors.append(flavor) }
-            }
-            items.append((item, explicitFlavors))
+            items.append((item, flavors))
         }
-        // Classify every C item before fulfilling any promise, including earlier text items
-        // on a mixed-file pasteboard. Do not materialize AppKit item/provider wrappers here.
+        // Inspect every item's metadata before requesting any promised data. Exact type
+        // membership avoids conformance-based object importers (notably HTML and file URLs).
         var strings: [String] = []
         for (item, flavors) in items {
             if let flavor = Self.textFlavors.first(where: { flavors.contains($0.type) }) {
-                switch copyData(board, item: item, type: flavor.type, cancellation: cancellation) {
+                switch copyData(board, item: item, type: flavor.type,
+                                expectedChangeCount: expectedChangeCount, cancellation: cancellation) {
                 case .failure(let reason): return .failure(reason)
                 case .success(let data):
                     guard let text = Self.decodeText(data, type: flavor.type, encoding: flavor.encoding) else {
@@ -177,7 +157,8 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
                     strings.append(text)
                 }
             } else if flavors.contains("public.rtf") {
-                switch copyData(board, item: item, type: "public.rtf", cancellation: cancellation) {
+                switch copyData(board, item: item, type: "public.rtf",
+                                expectedChangeCount: expectedChangeCount, cancellation: cancellation) {
                 case .failure(let reason): return .failure(reason)
                 case .success(let data):
                     guard data.starts(with: Array("{\\rtf".utf8)),
@@ -202,28 +183,21 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
                                             sourceIdentity: identity))
     }
 
-    private func failure(after status: OSStatus,
-                         cancellation: PlainTextPasteCancellation) -> PlainTextPasteReason? {
-        guard !cancellation.isCancelled else { return .cancelled }
-        if status == OSStatus(badPasteboardSyncErr) || status == OSStatus(notPasteboardOwnerErr) {
-            return .clipboardChanged
-        }
-        return status == noErr ? nil : .unavailableData
-    }
-
     private enum FlavorData {
         case success(Data), failure(PlainTextPasteReason)
     }
 
-    private func copyData(_ board: Pasteboard, item: PasteboardItemID, type: String,
+    private func copyData(_ board: NSPasteboard, item: NSPasteboardItem, type: String,
+                          expectedChangeCount: Int,
                           cancellation: PlainTextPasteCancellation) -> FlavorData {
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        var data: CFData?
-        let result = PasteboardCopyItemFlavorData(board, item, type as CFString, &data)
-        trace?("copy \(type), status \(result), bytes \(data.map { CFDataGetLength($0) } ?? -1)")
-        if let failure = failure(after: result, cancellation: cancellation) { return .failure(failure) }
+        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
+        let data = item.data(forType: NSPasteboard.PasteboardType(type))
+        trace?("AppKit copy \(type), bytes \(data?.count ?? -1)")
+        guard !cancellation.isCancelled else { return .failure(.cancelled) }
+        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
         guard let data else { return .failure(.unavailableData) }
-        return .success(data as Data)
+        return .success(data)
     }
 
     private static let textFlavors: [(type: String, encoding: String.Encoding)] = [
