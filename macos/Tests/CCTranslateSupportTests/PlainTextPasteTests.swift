@@ -195,6 +195,17 @@ private func checkPasteboardFixture(_ status: OSStatus) throws {
     guard status == noErr else { throw PasteboardFixtureError.status(status) }
 }
 
+@MainActor
+private var pasteboardFixtureItems: [NSObject] = []
+
+@MainActor
+private func newPasteboardFixtureItem() -> PasteboardItemID {
+    // Keep opaque item identities unique for the entire test process, including delayed promises.
+    let item = NSObject()
+    pasteboardFixtureItems.append(item)
+    return Unmanaged.passUnretained(item).toOpaque()
+}
+
 private final class PastePromiseState {
     enum Response {
         case unavailable, text(Data), replaceOwner
@@ -251,7 +262,7 @@ private final class PastePromiseFixture {
         state = PastePromiseState(response)
         try checkPasteboardFixture(PasteboardClear(reference))
         _ = PasteboardSynchronize(reference)
-        let item = try XCTUnwrap(PasteboardItemID(bitPattern: 1))
+        let item = newPasteboardFixtureItem()
         if let plainText {
             try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, "public.utf8-plain-text" as CFString,
                                                               Data(plainText.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
@@ -263,7 +274,7 @@ private final class PastePromiseFixture {
         try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, promisedType.rawValue as CFString,
                                                           nil, PasteboardFlavorFlags(rawValue: 0)))
         if let fileURL {
-            let file = try XCTUnwrap(PasteboardItemID(bitPattern: 2))
+            let file = newPasteboardFixtureItem()
             try checkPasteboardFixture(PasteboardPutItemFlavor(reference, file, "public.file-url" as CFString,
                                                               Data(fileURL.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
         }
@@ -284,6 +295,14 @@ private final class PastePromiseFixture {
     }
 
     var calls: Int { state.calls }
+
+    @MainActor
+    func itemCount() throws -> Int {
+        let reference = try XCTUnwrap(reference)
+        var count: ItemCount = 0
+        try checkPasteboardFixture(PasteboardGetItemCount(reference, &count))
+        return Int(count)
+    }
 }
 
 final class PlainTextPasteTests: XCTestCase {
@@ -303,8 +322,8 @@ final class PlainTextPasteTests: XCTestCase {
         let reference = try privatePasteboardReference(board)
         try checkPasteboardFixture(PasteboardClear(reference))
         _ = PasteboardSynchronize(reference)
-        for (index, flavors) in representations.enumerated() {
-            let identifier = try XCTUnwrap(PasteboardItemID(bitPattern: index + 1))
+        for flavors in representations {
+            let identifier = newPasteboardFixtureItem()
             for (type, data) in flavors {
                 try checkPasteboardFixture(PasteboardPutItemFlavor(reference, identifier, type as CFString,
                                                                   data as CFData, PasteboardFlavorFlags(rawValue: 0)))
@@ -1235,6 +1254,8 @@ final class PlainTextPasteTests: XCTestCase {
         defer { board.releaseGlobally() }
         let provider = try PastePromiseFixture(board, fileURL: "file:///synthetic/never-opened.txt")
         defer { withExtendedLifetime(provider) {} }
+        XCTAssertEqual(try provider.itemCount(), 2)
+        print("PasteboardFixture mixedFile before read: C=\(try provider.itemCount()), AppKit=\(board.pasteboardItems?.count ?? -1)")
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name,
             trace: { print("PasteboardTrace mixedFile: \($0)") })
@@ -1244,6 +1265,8 @@ final class PlainTextPasteTests: XCTestCase {
         }
         XCTAssertEqual(provider.calls, 0)
         XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(try provider.itemCount(), 2)
+        print("PasteboardFixture mixedFile after read: C=\(try provider.itemCount()), AppKit=\(board.pasteboardItems?.count ?? -1)")
         XCTAssertEqual(board.pasteboardItems?.count, 2)
     }
 }
