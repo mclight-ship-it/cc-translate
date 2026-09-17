@@ -649,11 +649,7 @@ struct TranslationSettingsView: View {
                 set: { model.direction = $0; model.saveSettings() }
             ))
             .disabled(model.settingsBusy || busy || model.dictionary.committing)
-            ModelPicker(model: model, selection: Binding(
-                get: { model.modelProfile },
-                set: { model.modelProfile = $0; model.saveSettings() }
-            ))
-            .disabled(model.settingsBusy || busy || model.dictionary.committing)
+            CodexModelSettingsView(model: model)
             if model.settingsReady {
                 Toggle(model.text("Save translation history", "保存翻译历史记录"), isOn: Binding(
                     get: { model.historyEnabled },
@@ -839,13 +835,140 @@ struct ModelPicker: View {
 
     var body: some View {
         Picker(model.text("Model", "模型"), selection: $selection) {
-            Text(model.text("Fast profile", "快速模式")).tag("auto-fast")
-            Text(model.text("Codex default", "Codex 默认")).tag("auto")
-            if selection != "auto-fast" && selection != "auto" {
-                Text(selection).tag(selection)
+            ForEach(model.modelSettings.choices(selection: selection), id: \.self) { profile in
+                Text(label(profile)).tag(profile)
             }
         }
         .accessibilityLabel(model.text("Codex model profile", "Codex 模型配置"))
+        .accessibilityValue(label(selection))
+        .help(label(selection) + model.text(" · Enter a new custom ID in Settings.", " · 在设置中输入新的自定义 ID。"))
+        .disabled(model.active || model.preparing || model.settingsBusy || model.dictionary.committing)
+    }
+
+    private func label(_ value: String) -> String {
+        switch value {
+        case "auto-fast": return model.text("Fast profile", "快速模式")
+        case "auto": return model.text("Codex default", "Codex 默认")
+        case "": return model.text("Empty model ID", "模型 ID 为空")
+        default: return value
+        }
+    }
+}
+
+@MainActor
+struct CodexModelSettingsView: View {
+    @ObservedObject var model: ProbeModel
+
+    private var validation: CodexModelSettings.Validation? {
+        CodexModelSettings.validateCustom(model.modelSettings.draft)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ModelPicker(model: model, selection: Binding(
+                get: { model.modelProfile }, set: { model.applyModelProfile($0) }))
+                .disabled(!model.canApplyModelSetting)
+            Text(model.text("Custom model ID", "自定义模型 ID")).font(.subheadline)
+            TextField(model.text("Enter the exact model ID", "输入完整的模型 ID"), text: Binding(
+                get: { model.modelSettings.draft }, set: { model.editCustomModelID($0) }),
+                onEditingChanged: { model.setCustomModelEditing($0) })
+                .textFieldStyle(.roundedBorder)
+                .disableAutocorrection(true)
+                .accessibilityLabel(model.text("Custom model ID", "自定义模型 ID"))
+                .accessibilityIdentifier("custom-codex-model-id")
+            HStack {
+                Button(model.text("Apply model", "应用模型")) { model.applyCustomModelID() }
+                    .disabled(!model.canApplyModelSetting || validation != nil)
+                Button(model.text("Reset draft", "重置草稿")) { model.resetCustomModelDraft() }
+                Spacer(minLength: 8)
+                Text(model.text("\(model.modelSettings.draft.utf8.count)/256 UTF-8 bytes",
+                                "\(model.modelSettings.draft.utf8.count)/256 UTF-8 字节"))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            if let validation, !model.modelSettings.draft.isEmpty {
+                Label(validationMessage(validation), systemImage: "exclamationmark.circle")
+                    .font(.caption).fixedSize(horizontal: false, vertical: true)
+            } else if model.modelSettings.draftEdited && !model.modelSettings.draft.isEmpty &&
+                        !CodexModelSettings.sameID(model.modelSettings.draft, model.modelSettings.savedProfile) {
+                Text(model.text("Unapplied draft. Typing does not change the model used for translation.",
+                                "草稿尚未应用。输入不会更改翻译使用的模型。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            status
+            HStack(alignment: .top) {
+                Text(model.text("Last read setting:", "上次读取的设置：")).foregroundStyle(.secondary)
+                Text(verbatim: model.modelSettings.savedProfile ?? model.text("Not loaded", "尚未加载"))
+                    .textSelection(.enabled)
+                Spacer(minLength: 0)
+            }.font(.caption)
+            if let saved = model.modelSettings.savedProfile, !CodexModelSettings.sameID(saved, model.modelProfile) {
+                Text(model.text("The current selection is not confirmed as saved. A new translation applies its selected profile before sending.",
+                                "当前选择尚未确认保存。新的翻译会在发送前应用其所选模型配置。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Button(model.text("Reload saved setting", "重新读取已保存设置")) { model.reloadModelSetting() }
+                .disabled(!model.ready || model.settingsBusy || model.active || model.preparing || model.dictionary.committing)
+            if !model.ready {
+                Text(model.text("Open Settings again to reconnect before applying. Your draft stays editable.",
+                                "请再次打开设置以连接后应用。你仍可编辑草稿。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(model.text(
+                "IDs are case-sensitive and are not trimmed. Apply saves and reads back settings, without requesting a model or checking account access. This editor does not load a model catalogue.",
+                "ID 区分大小写，不会自动去除空格。“应用”会保存并重新读取设置，不请求模型，也不检查账号权限。此编辑器不加载模型目录。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch model.modelSettings.phase {
+        case .idle:
+            if model.settingsBusy {
+                ProgressView(model.text("Loading saved setting…", "正在读取已保存设置…")).controlSize(.small)
+            }
+        case .saving(let profile):
+            ProgressView(model.text("Saving \(profile)…", "正在保存 \(profile)…")).controlSize(.small)
+        case .reading:
+            ProgressView(model.text("Reading back saved setting…", "正在重新读取已保存设置…")).controlSize(.small)
+        case .applied(let profile):
+            Label(model.text("Saved and read back: \(profile)", "已保存并重新读取：\(profile)"),
+                  systemImage: "checkmark.circle").font(.caption).textSelection(.enabled)
+        case .failed(let failure):
+            Label(failureMessage(failure), systemImage: "exclamationmark.triangle")
+                .font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func validationMessage(_ validation: CodexModelSettings.Validation) -> String {
+        switch validation {
+        case .empty: return model.text("Enter a custom model ID.", "请输入自定义模型 ID。")
+        case .whitespace: return model.text("Remove whitespace and control characters from the ID; nothing is trimmed automatically.",
+                                           "请移除 ID 中的空白和控制字符，不会自动去除这些字符。")
+        case .tooLong: return model.text("The ID exceeds 256 UTF-8 bytes. Shorten it before applying.",
+                                        "ID 超过 256 UTF-8 字节，请缩短后再应用。")
+        case .preset: return model.text("Use the Model picker for Fast profile or Codex default.",
+                                       "请通过“模型”选择快速模式或 Codex 默认。")
+        }
+    }
+
+    private func failureMessage(_ failure: CodexModelSettings.Failure) -> String {
+        switch failure {
+        case .invalidID(let reason): return validationMessage(reason)
+        case .busy: return model.text("Wait for the current request or settings operation. Your draft is retained.",
+                                     "请等待当前请求或设置操作完成，草稿已保留。")
+        case .unavailable: return model.text("Load settings before applying a model. Your draft is retained.",
+                                            "请先加载设置再应用模型，草稿已保留。")
+        case .operation(let code): return model.text("Settings operation failed (\(code)). No automatic retry; reload the saved setting before retrying.",
+                                                    "设置操作失败（\(code)）。不会自动重试，请先重新读取已保存设置再重试。")
+        case .invalidReadback: return model.text("The settings readback was invalid. Reconnect and reload; the model was not confirmed.",
+                                                "设置回读无效。请重新连接并读取，模型尚未确认。")
+        case .interrupted: return model.text("The connection closed before the model could be confirmed. Reload settings; the write is not replayed.",
+                                            "模型确认前连接已关闭。请重新读取设置，不会重放写入。")
+        case .differentReadback(let expected, let actual):
+            return model.text("Requested \(expected), but read back \(actual). No model substitution was accepted. Review the saved setting.",
+                              "请求的是 \(expected)，但回读为 \(actual)。未接受模型替换，请检查已保存设置。")
+        }
     }
 }
 

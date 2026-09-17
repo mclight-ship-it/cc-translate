@@ -682,7 +682,7 @@ final class ProductRenderingTests: XCTestCase {
     // This paints the actual SwiftUI/AppKit view in memory. It is not a screen capture,
     // human GUI acceptance test, or evidence of Accessibility/Screen Recording permission.
     @MainActor
-    private func render<Content: View>(_ content: Content, named name: String, size: NSSize,
+    func render<Content: View>(_ content: Content, named name: String, size: NSSize,
                                       scheme: ColorScheme, inspect: ((NSView) -> Void)? = nil) throws -> Data {
         _ = NSApplication.shared
         let host = NSHostingView(rootView: content.environment(\.colorScheme, scheme))

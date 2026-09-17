@@ -53,6 +53,7 @@ final class ProbeModel: ObservableObject {
     @Published var modelProfile = "auto-fast" {
         didSet { if !loadingConfiguration { modelEdited = true } }
     }
+    @Published private(set) var modelSettings = CodexModelSettings()
     @Published var translatePassiveSelections = false
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
@@ -308,6 +309,9 @@ final class ProbeModel: ObservableObject {
                 let defaults = preferences ?? .standard
                 interfaceLanguage = defaults.string(forKey: "interfaceLanguage") ?? "system"
                 appearance = defaults.string(forKey: "appearance") ?? "system"
+                if let custom = defaults.string(forKey: "lastCustomCodexModel") {
+                    modelSettings.restoreCustom(custom)
+                }
                 if let saved = defaults.string(forKey: "selectedCodexPath"), !saved.isEmpty {
                     userCLI["codex"] = URL(fileURLWithPath: saved)
                 }
@@ -532,7 +536,7 @@ final class ProbeModel: ObservableObject {
         }
         let savedLanguage = savedConfiguration?["language"]?.string
         if savedConfiguration?["direction"] != .string(requested.direction) ||
-            savedConfiguration?["codex_model"] != .string(requested.model) ||
+            !CodexModelSettings.sameID(savedConfiguration?["codex_model"]?.string, requested.model) ||
             (savedLanguage != nil && savedLanguage != "" && savedLanguage != requested.language) {
             guard !requested.configurationSaved else {
                 failPreparation(text("Settings could not be applied. Check Settings before translating again.",
@@ -618,13 +622,55 @@ final class ProbeModel: ObservableObject {
         onTranslationResult?(status + (output.isEmpty ? "" : "\n\n" + output))
     }
 
-    func loadSettings() {
+    func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
+        if modelRead { modelSettings.beginRead(id: id, afterSave: afterModelSave) }
         connection.loadConfiguration(id: id)
+    }
+
+    var canApplyModelSetting: Bool {
+        ready && settingsReady && !settingsBusy && !stopping && !active && !preparing &&
+            !dictionary.committing && connectionMode != .diagnostic && savedConfiguration != nil
+    }
+
+    func editCustomModelID(_ value: String) { modelSettings.edit(value) }
+
+    func setCustomModelEditing(_ editing: Bool) { modelSettings.setEditing(editing) }
+
+    func resetCustomModelDraft() { modelSettings.resetDraft(selection: modelProfile) }
+
+    func applyCustomModelID() {
+        if let validation = CodexModelSettings.validateCustom(modelSettings.draft) {
+            modelSettings.reject(.invalidID(validation))
+            return
+        }
+        applyModelProfile(modelSettings.draft)
+    }
+
+    func applyModelProfile(_ profile: String) {
+        if !CodexModelSettings.isPreset(profile), let validation = CodexModelSettings.validateCustom(profile) {
+            modelSettings.reject(.invalidID(validation))
+            return
+        }
+        guard canApplyModelSetting else {
+            modelSettings.reject(ready && settingsReady ? .busy : .unavailable)
+            return
+        }
+        modelProfile = profile
+        saveConfiguration(history: historyEnabled, direction: direction, model: profile, modelEdit: true)
+    }
+
+    func reloadModelSetting() {
+        guard ready, !settingsBusy, !stopping, !active, !preparing, !dictionary.committing,
+              connectionMode != .diagnostic else {
+            modelSettings.reject(ready ? .busy : .unavailable)
+            return
+        }
+        loadSettings(modelRead: true)
     }
 
     func saveSettings(history: Bool? = nil) {
@@ -637,9 +683,12 @@ final class ProbeModel: ObservableObject {
     }
 
     private func saveConfiguration(history enabled: Bool, direction: String, model: String,
-                                   language: String? = nil) {
+                                   language: String? = nil, modelEdit: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, var config = savedConfiguration,
-              let connection = connection else { return }
+              let connection = connection else {
+            if modelEdit { modelSettings.reject(.unavailable) }
+            return
+        }
         if !enabled, active { cancel() }
         config["history_enabled"] = .bool(enabled)
         config["direction"] = .string(direction)
@@ -649,6 +698,7 @@ final class ProbeModel: ObservableObject {
         settingsBusy = true
         let id = UUID().uuidString
         configSaveID = id
+        if modelEdit { modelSettings.beginSave(id: id, profile: model) }
         connection.saveConfiguration(config, id: id)
     }
 
@@ -1019,6 +1069,7 @@ final class ProbeModel: ObservableObject {
                 resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            modelSettings.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
             let hadSeparateModelRequest = active && !hadLocalLookup && nativeTranslation
@@ -1075,6 +1126,7 @@ final class ProbeModel: ObservableObject {
             activeAction = nil
             pending.removeAll()
             savedConfiguration = nil
+            modelSettings.connectionLost()
             settingsReady = false
             settingsBusy = false
             historyBusy = false
@@ -1192,15 +1244,17 @@ final class ProbeModel: ObservableObject {
             settingsBusy = false
             if event.type == "completed" {
                 if event.id == configSaveID {
+                    let modelSave = modelSettings.requestID == event.id
                     configSaveID = nil
                     status = "Settings saved. Reloading their normalized view; no write replay."
-                    loadSettings()
+                    loadSettings(modelRead: modelSave, afterModelSave: modelSave)
                     return true
                 }
                 guard let config = event.payload["config"]?.object,
                       case let .bool(enabled)? = config["history_enabled"],
                       let savedDirection = config["direction"]?.string,
                       let profile = config["codex_model"]?.string else {
+                    modelSettings.fail(id: event.id, failure: .invalidReadback)
                     error = .invalidTransition
                     settingsReady = false
                     status = "Invalid normalized settings response; stopping the connection."
@@ -1208,6 +1262,11 @@ final class ProbeModel: ObservableObject {
                     return true
                 }
                 savedConfiguration = config
+                let modelReadbackFailure = modelSettings.loaded(profile: profile, id: event.id)
+                if persistsPreferences, let custom = modelSettings.rememberedCustom,
+                   CodexModelSettings.validateCustom(custom) == nil {
+                    (preferences ?? .standard).set(custom, forKey: "lastCustomCodexModel")
+                }
                 historyEnabled = enabled
                 if draft?.useSavedDirection == true {
                     draft?.direction = savedDirection
@@ -1224,7 +1283,8 @@ final class ProbeModel: ObservableObject {
                 if direction == savedDirection && (draft == nil || draft?.direction == direction) {
                     directionEdited = false
                 }
-                if modelProfile == profile && (draft == nil || draft?.model == modelProfile) {
+                if CodexModelSettings.sameID(modelProfile, profile) &&
+                    (draft == nil || CodexModelSettings.sameID(draft?.model, modelProfile)) {
                     modelEdited = false
                 }
                 settingsReady = true
@@ -1233,7 +1293,14 @@ final class ProbeModel: ObservableObject {
                     productMessage = ""
                     productPhase = .idle
                 }
+                if let modelReadbackFailure,
+                   case .differentReadback(let expected, _) = modelReadbackFailure,
+                   CodexModelSettings.sameID(draft?.model, expected) {
+                    failPreparation(text("The saved model differs from the requested ID. Review model settings; nothing was sent.",
+                                         "保存的模型与请求的 ID 不同。请检查模型设置，未发送模型请求。"))
+                }
             } else {
+                modelSettings.fail(id: event.id, failure: .operation(event.safeFailureCode))
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 failPreparation(status)
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {

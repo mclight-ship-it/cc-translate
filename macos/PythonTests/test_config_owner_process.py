@@ -160,6 +160,7 @@ class TestConfigOwnerProcess(OwnerProcessCase):
 
     def test_save_and_returned_views_are_detached_and_opt_out_is_preserved(self):
         raw = {"ui_v2_default_migrated": True, "ui_v2": False, "labs_defaults_migrated": True,
+               "codex_model_default_migrated": True,
                "summary_enabled": False, "future": {"values": ["synthetic"]}}
         with self.create() as owner:
             owner.save(raw)

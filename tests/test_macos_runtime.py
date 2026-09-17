@@ -93,6 +93,38 @@ class AboutEvidenceTests(unittest.TestCase):
                 runtime.about_result(self.log())
 
 
+class LocalOCREvidenceTests(unittest.TestCase):
+    def log(self):
+        cases = []
+        for method in runtime.LOCAL_OCR_METHODS:
+            case = "Test Case '-[CCTranslateSupportTests.LocalOCRTests " + method + "]' "
+            cases.extend((case + "started.", case + "passed (0.1 seconds)."))
+        return "\n".join(cases) + "\nExecuted 4 tests, with 0 failures\n"
+
+    def test_production_ocr_methods_are_required_once_without_skip_or_failure(self):
+        text = self.log()
+        self.assertEqual(runtime.local_ocr_result(text), {
+            "tests_run": 4, "failures": 0, "skipped": 0, "methods": list(runtime.LOCAL_OCR_METHODS),
+            "scope": "production_Vision_on_synthetic_images_not_screen_capture"})
+        for invalid in ("", text + text, text.replace("passed", "skipped"),
+                        text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
+                        text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
+                        text.replace("Executed 4 tests", "Executed 3 tests"),
+                        text.replace("LocalOCRTests", "SomeOtherTests"),
+                        text.replace(runtime.LOCAL_OCR_METHODS[0], "testUnexpected")):
+            with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
+                runtime.local_ocr_result(invalid)
+
+    def test_ocr_source_inventory_cannot_silently_change(self):
+        for methods in ((), runtime.LOCAL_OCR_METHODS[:-1],
+                        (*runtime.LOCAL_OCR_METHODS, "testAnother"),
+                        (*runtime.LOCAL_OCR_METHODS[:-1], runtime.LOCAL_OCR_METHODS[0])):
+            source = "\n".join("func " + method + "() {}" for method in methods)
+            with self.subTest(methods=methods), patch.object(Path, "read_text", return_value=source), \
+                    self.assertRaises(bundle.BundleError):
+                runtime.local_ocr_result(self.log())
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -249,6 +281,7 @@ class RuntimeMatrixTests(unittest.TestCase):
             "testBundledHistoryCompetingHelpersReleaseBothOwners",
             "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
             "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
+            "testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID",
             "testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary",
             "testBundledTranslationConcurrentOptoutAndCancellationDrain",
             "testBundledTranslationCorruptionAndOutputBudgets",
@@ -263,14 +296,15 @@ class RuntimeMatrixTests(unittest.TestCase):
         timing = {"scope": "config_only_foundation_helper_round_trip_not_gui", "unit": "ms",
                   "samples": [2.5] * 8, "use_cache": False, "record_history": False}
         measurements = "CC_TRANSLATE_DICTIONARY_TIMINGS " + json.dumps(timing)
-        summary = "Executed 18 tests, with 0 failures (0 unexpected)"
+        summary = "Executed 19 tests, with 0 failures (0 unexpected)"
         result = runtime.integration_result(methods + "\n" + measurements + "\n" + summary)
-        self.assertEqual(result, {"tests_run": 18, "failures": 0, "skipped": 0,
+        self.assertEqual(result, {"tests_run": 19, "failures": 0, "skipped": 0,
                                   "methods": list(runtime.INTEGRATION_TESTS), "dictionary_warm_lookup": timing})
         for text in ("0 tests passed", summary, methods,
                      methods + "\nExecuted 0 tests, with 0 failures",
-                     methods + "\nExecuted 18 tests, with 1 test skipped and 0 failures",
-                     methods + "\nExecuted 18 tests, with 1 failures",
+                     methods + "\nExecuted 19 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 19 tests, with 1 failures",
+                     methods + "\nExecuted 18 tests, with 0 failures",
                      methods + "\nExecuted 17 tests, with 0 failures",
                      methods + "\nExecuted 17 tests, with 1 test skipped and 0 failures",
                      methods + "\nExecuted 17 tests, with 1 failures",
@@ -323,8 +357,12 @@ class RuntimeMatrixTests(unittest.TestCase):
                          {"AboutResources.swift"})
         about_test = "Tests/CCTranslateMacTests/BundledAboutTests.swift"
         self.assertEqual((harness / about_test).read_bytes(), (runtime.ROOT / "macos" / about_test).read_bytes())
+        for relative in ("Tests/CCTranslateSupportTests/LocalOCRTests.swift",
+                         "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
+            self.assertEqual((harness / relative).read_bytes(), (runtime.ROOT / "macos" / relative).read_bytes())
         package = (harness / "Package.swift").read_text()
         self.assertIn('define("CC_TRANSLATE_RESOURCE_HARNESS")', package)
+        self.assertIn('exclude: ["Fixtures"]', package)
         self.assertNotIn("executableTarget", package)
         with self.assertRaises(bundle.BundleError):
             runtime.prepare_harness(harness)

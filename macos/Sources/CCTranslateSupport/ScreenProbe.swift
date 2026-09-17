@@ -48,6 +48,8 @@ final class OCRJob: ScreenOCRRecognizing, @unchecked Sendable {
         }
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
+        // A screenshot's language is unknown; the preferred list must not force English on Chinese glyphs.
+        request.automaticallyDetectsLanguage = true
         let supported = try request.supportedRecognitionLanguages()
         let preferred = ["en-US", "zh-Hans", "zh-Hant"]
         let selected = preferred.filter { supported.contains($0) }

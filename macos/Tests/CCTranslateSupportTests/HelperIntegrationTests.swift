@@ -352,7 +352,8 @@ extension HelperIntegrationTests {
     }
 
     private func translationContext(scenario: String = "normal", resultAction: ResultAction? = nil,
-                                    targetLanguage: String? = nil, origin: String? = nil) throws -> TranslationContext {
+                                    targetLanguage: String? = nil, origin: String? = nil,
+                                    model: String? = nil) throws -> TranslationContext {
         let base = try configurationContext()
         do {
             let identifier = try base.runtime.configurationApplicationIdentifier()
@@ -363,6 +364,7 @@ extension HelperIntegrationTests {
             if let resultAction { arguments += ["--result-action", resultAction.rawValue] }
             if let targetLanguage { arguments += ["--target-language", targetLanguage] }
             if let origin { arguments += ["--origin", origin] }
+            if let model { arguments += ["--model", model] }
             let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: arguments)
             let home = URL(fileURLWithPath: try XCTUnwrap(fixture["home"]?.string), isDirectory: true)
             let environment = try XCTUnwrap(fixture["environment"]?.object)
@@ -503,6 +505,81 @@ extension HelperIntegrationTests {
         await fulfillment(of: [reopened.stopped], timeout: 10)
         XCTAssertTrue(reopened.failures.isEmpty)
         try verifyTranslation(context, turns: 1, cleanup: true)
+    }
+
+    @MainActor
+    func testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID() async throws {
+        for model in ["provider/Exact-ID:2026", "gpt-5.4-mini", "model-e\u{301}",
+                      String(repeating: "m", count: 256)] {
+            for origin in ["text", "ocr"] {
+                let context = try translationContext(origin: origin, model: model)
+                defer { removeConfigurationHome(context.cleanupRoot) }
+                let session = ConfigurationNotices()
+                defer { session.connection.forceStop() }
+                startTranslation(session, context)
+                await fulfillment(of: [session.ready], timeout: 10)
+                let loaded = session.terminal("load")
+                session.connection.loadConfiguration(id: "load")
+                await fulfillment(of: [loaded], timeout: 10)
+                var config = try XCTUnwrap(session.result("load")?.payload["config"]?.object)
+                XCTAssertEqual(config["codex_model_default_migrated"], .bool(true))
+                assertNoTranslationCLI(context)
+                config["codex_model"] = .string(model)
+                config["future_model_setting"] = .string("preserve this synthetic field")
+                let saved = session.terminal("save")
+                session.connection.saveConfiguration(config, id: "save")
+                await fulfillment(of: [saved], timeout: 10)
+                session.assertOperation("save")
+                let readback = session.terminal("readback")
+                session.connection.loadConfiguration(id: "readback")
+                await fulfillment(of: [readback], timeout: 10)
+                let confirmed = try XCTUnwrap(session.result("readback")?.payload["config"]?.object)
+                XCTAssertTrue(try XCTUnwrap(confirmed["codex_model"]?.string).utf8.elementsEqual(model.utf8))
+                XCTAssertEqual(confirmed["future_model_setting"], config["future_model_setting"])
+                let bytes = try Data(contentsOf: context.configFile)
+                assertNoTranslationCLI(context)
+                let translated = session.terminal("translation")
+                try sendTranslation(session, context, useCache: false)
+                await fulfillment(of: [translated], timeout: 25)
+                assertTranslation(session, context)
+                session.connection.stop()
+                await fulfillment(of: [session.stopped], timeout: 10)
+                XCTAssertTrue(session.failures.isEmpty)
+                try verifyTranslation(context, turns: 1, cleanup: true)
+
+                let reopened = ConfigurationNotices()
+                defer { reopened.connection.forceStop() }
+                startTranslation(reopened, context)
+                await fulfillment(of: [reopened.ready], timeout: 10)
+                let reloaded = reopened.terminal("reload")
+                reopened.connection.loadConfiguration(id: "reload")
+                await fulfillment(of: [reloaded], timeout: 10)
+                let restored = try XCTUnwrap(reopened.result("reload")?.payload["config"]?.object)
+                XCTAssertTrue(try XCTUnwrap(restored["codex_model"]?.string).utf8.elementsEqual(model.utf8))
+                XCTAssertEqual(restored["future_model_setting"], config["future_model_setting"])
+                XCTAssertEqual(try Data(contentsOf: context.configFile), bytes)
+                let next = reopened.terminal("translation")
+                try sendTranslation(reopened, context, useCache: false)
+                await fulfillment(of: [next], timeout: 25)
+                assertTranslation(reopened, context)
+                reopened.connection.stop()
+                await fulfillment(of: [reopened.stopped], timeout: 10)
+                XCTAssertTrue(reopened.failures.isEmpty)
+                try verifyTranslation(context, turns: 2, cleanup: true)
+                let records = try Data(contentsOf: context.root.appendingPathComponent("native-rpc.jsonl"))
+                    .split(separator: 0x0a).map { try XCTUnwrap(JSONValue.parse(Data($0)).object) }
+                var actualModels: [String] = []
+                for record in records {
+                    let request = try XCTUnwrap(record["request"]?.object)
+                    if request["method"] == .string("thread/start") || request["method"] == .string("turn/start") {
+                        actualModels.append(try XCTUnwrap(request["params"]?.object?["model"]?.string))
+                    }
+                }
+                XCTAssertEqual(actualModels.count, 4)
+                XCTAssertTrue(actualModels.allSatisfy { $0.utf8.elementsEqual(model.utf8) },
+                              "Both actual native thread/start and turn/start must keep the selected ID.")
+            }
+        }
     }
 
     @MainActor

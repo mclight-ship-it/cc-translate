@@ -87,6 +87,9 @@ BASELINE_CONFIG_AST = {
     "load_config": "c6d2ede2c1f626e45563ed653143005e51329db54289dbc95dd15f21d10f0f4f",
 }
 
+MODEL_MARKER = "codex_model_default_migrated"
+MODEL_MARKER_GUARD = ast.parse("CFG.CODEX_MODEL_DEFAULT_MIGRATED not in raw", mode="eval").body
+
 
 def _ast_hash(node):
     def canonical(value):
@@ -106,6 +109,12 @@ def _ast_hash(node):
 
 def legacy_class(node):
     restored = copy.deepcopy(node)
+    guards = [child for child in ast.walk(restored)
+              if isinstance(child, ast.If) and isinstance(child.test, ast.BoolOp)
+              and isinstance(child.test.op, ast.And) and len(child.test.values) == 2
+              and _ast_hash(child.test.values[0]) == _ast_hash(MODEL_MARKER_GUARD)]
+    assert len(guards) == 1
+    guards[0].test = guards[0].test.values[1]
     old_method = ast.parse(LEGACY_COERCE_SOURCE).body[0]
     restored.body = [old_method if isinstance(method, ast.FunctionDef) and method.name == "_coerce"
                      else method for method in restored.body]
@@ -113,11 +122,45 @@ def legacy_class(node):
     return restored
 
 
+def legacy_definition(node):
+    """Remove only the new marker definition; retain the original AST fingerprints."""
+    restored = copy.deepcopy(node)
+    if isinstance(restored, ast.ClassDef) and restored.name == "CFG":
+        marker = ast.parse('CODEX_MODEL_DEFAULT_MIGRATED = "codex_model_default_migrated"').body[0]
+        kept = [child for child in restored.body if _ast_hash(child) != _ast_hash(marker)]
+        assert len(kept) == len(restored.body) - 1
+        restored.body = kept
+        name = "CFG"
+    else:
+        assert isinstance(restored, ast.Assign) and restored.targets[0].id == "DEFAULT_CONFIG"
+        marker = ast.parse("CFG.CODEX_MODEL_DEFAULT_MIGRATED", mode="eval").body
+        pairs = list(zip(restored.value.keys, restored.value.values))
+        kept = [(key, value) for key, value in pairs
+                if not (_ast_hash(key) == _ast_hash(marker)
+                        and isinstance(value, ast.Constant) and value.value is True)]
+        assert len(kept) == len(pairs) - 1
+        restored.value.keys = [key for key, _ in kept]
+        restored.value.values = [value for _, value in kept]
+        name = "DEFAULT_CONFIG"
+    assert _ast_hash(restored) == BASELINE_CONFIG_AST[name]
+    return restored
+
+
+def without_model_marker(config):
+    return {key: value for key, value in config.items() if key != MODEL_MARKER}
+
+
 def legacy_namespace(**overrides):
-    tree = ast.parse(inspect.getsource(rules.Config))
-    tree.body[0] = legacy_class(tree.body[0])
+    tree = ast.parse(inspect.getsource(rules))
+    definitions = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name in ("CFG", "Config"):
+            definitions.append(legacy_class(node) if node.name == "Config" else legacy_definition(node))
+        elif isinstance(node, ast.Assign) and node.targets[0].id == "DEFAULT_CONFIG":
+            definitions.append(legacy_definition(node))
+    tree.body = definitions
     tree.body.extend(ast.parse(LEGACY_LOAD_SOURCE).body)
-    values = {"CFG": rules.CFG, "DEFAULT_CONFIG": rules.DEFAULT_CONFIG, "json": json}
+    values = {"json": json}
     exec(compile(ast.fix_missing_locations(tree), "<frozen-config-reference>", "exec"), values)
     values.update(overrides)
     return values
@@ -150,12 +193,18 @@ class ConfigRuleTests(unittest.TestCase):
                 with self.subTest(name=name):
                     if name == "Config":
                         node = legacy_class(node)
+                    elif name in ("CFG", "DEFAULT_CONFIG"):
+                        node = legacy_definition(node)
                     self.assertEqual(_ast_hash(node), BASELINE_CONFIG_AST[name])
 
     def test_plan_statements_are_the_old_loader_statements(self):
         old_try = ast.parse(LEGACY_LOAD_SOURCE).body[0].body[1]
         plan = ast.parse(inspect.getsource(rules.plan_config_migration)).body[0]
-        self.assertEqual(_ast_hash(plan.body[1:-1]), _ast_hash(old_try.body[2:7]))
+        old_statements = [node for node in plan.body[1:-1]
+                          if not (isinstance(node, ast.If)
+                                  and _ast_hash(node.test) == _ast_hash(MODEL_MARKER_GUARD))]
+        self.assertEqual(len(old_statements), len(plan.body[1:-1]) - 1)
+        self.assertEqual(_ast_hash(old_statements), _ast_hash(old_try.body[2:7]))
 
     def test_defaults_order_and_language_absence(self):
         self.assertIsInstance(rules.Config(), dict)
@@ -164,16 +213,17 @@ class ConfigRuleTests(unittest.TestCase):
         self.assertIsNone(rules.Config().language)
 
     def test_type_matrix_matches_frozen_class(self):
-        old = legacy_namespace()["Config"]
+        legacy = legacy_namespace()
+        old = legacy["Config"]
         values = (None, False, True, 0, 1, -2, 1.5, "", "16", "bad", " YES ", "false",
                   [], {}, ["x"], float("inf"), float("-inf"), float("nan"))
-        for key, value in itertools.product(rules.DEFAULT_CONFIG, values):
+        for key, value in itertools.product(legacy["DEFAULT_CONFIG"], values):
             with self.subTest(key=key, value=repr(value)):
-                raw = dict(rules.DEFAULT_CONFIG, **{key: value})
+                raw = dict(legacy["DEFAULT_CONFIG"], **{key: value})
                 results = []
                 for cls in (old, rules.Config):
                     try:
-                        cfg = cls(raw)
+                        cfg = without_model_marker(cls(raw))
                     except (TypeError, ValueError, OverflowError) as error:
                         results.append((type(error), str(error)))
                     else:
@@ -221,7 +271,8 @@ class ConfigRuleTests(unittest.TestCase):
                     with self.assertRaises(type(error)):
                         rules.Config(value)
                 else:
-                    self.assertEqual(list(rules.Config(value).items()), list(expected.items()))
+                    self.assertEqual(list(without_model_marker(rules.Config(value)).items()),
+                                     list(expected.items()))
 
     def test_single_use_iterable_is_not_silently_reinterpreted(self):
         cfg = rules.Config(iter([("theme", "dark"), ("model", "opus")]))
@@ -232,6 +283,7 @@ class ConfigRuleTests(unittest.TestCase):
     def test_marker_presence_preserves_explicit_opt_out(self):
         for marker in (False, True, None, "", 0):
             raw = {"ui_v2_default_migrated": marker, "labs_defaults_migrated": marker,
+                   MODEL_MARKER: True,
                    "ui_v2": False, "summary_enabled": False, "clipboard_protection_enabled": False}
             with self.subTest(marker=marker):
                 cfg = rules.Config(raw)
@@ -253,6 +305,75 @@ class ConfigRuleTests(unittest.TestCase):
                 self.assertEqual((cfg.model_provider, cfg.claude_model, cfg.codex_model),
                                  (provider, claude, codex))
                 self.assertEqual(cfg.model, claude)
+
+    def test_model_marker_is_additive_and_frozen_oracle_is_independent(self):
+        self.assertEqual(rules.CFG.CODEX_MODEL_DEFAULT_MIGRATED, MODEL_MARKER)
+        self.assertIs(rules.DEFAULT_CONFIG[MODEL_MARKER], True)
+        legacy = legacy_namespace()
+        self.assertIsNot(legacy["CFG"], rules.CFG)
+        self.assertIsNot(legacy["DEFAULT_CONFIG"], rules.DEFAULT_CONFIG)
+        self.assertFalse(hasattr(legacy["CFG"], "CODEX_MODEL_DEFAULT_MIGRATED"))
+        self.assertNotIn(MODEL_MARKER, legacy["DEFAULT_CONFIG"])
+        raw = {"codex_model": "gpt-5.4-mini", MODEL_MARKER: True}
+        with mock.patch.object(rules, "coerce_config", side_effect=AssertionError("new coercion")):
+            self.assertEqual(legacy["Config"](raw).codex_model, "auto-fast")
+        self.assertEqual(rules.Config(raw).codex_model, "gpt-5.4-mini")
+
+    def test_model_marker_presence_preserves_mini_with_legacy_boolean_coercion(self):
+        for marker, expected in ((True, True), (False, False), (0, False), (2, True),
+                                 (" YES ", True), ("false", False), ("", False),
+                                 (None, True), ([], True), ({}, True)):
+            with self.subTest(marker=marker):
+                raw = dict(rules.DEFAULT_CONFIG, codex_model="gpt-5.4-mini", **{MODEL_MARKER: marker})
+                cfg = rules.Config(raw)
+                self.assertEqual(cfg.codex_model, "gpt-5.4-mini")
+                self.assertIs(cfg[MODEL_MARKER], expected)
+                self.assertEqual(rules.Config(cfg).codex_model, "gpt-5.4-mini")
+                changed, payload = rules.plan_config_migration(raw, cfg)
+                self.assertFalse(changed)
+                self.assertEqual(list(payload.items()), list(raw.items()))
+
+    def test_normalization_marks_migration_before_an_explicit_mini_selection(self):
+        cfg = rules.Config({"codex_model": "gpt-5.4-mini"})
+        self.assertEqual(cfg.codex_model, "auto-fast")
+        self.assertIs(cfg[MODEL_MARKER], True)
+        cfg["codex_model"] = "gpt-5.4-mini"
+        rules.coerce_config(cfg, strict=True)
+        for value in (cfg, dict(cfg)):
+            with self.subTest(type=type(value)):
+                normalized = rules.Config(value)
+                self.assertEqual(normalized.codex_model, "gpt-5.4-mini")
+                self.assertIs(normalized[MODEL_MARKER], True)
+                self.assertEqual(rules.plan_config_migration(value, normalized), (False, value))
+
+    def test_first_model_migration_preserves_other_ids_and_does_not_insert_missing_model(self):
+        for model in (None, "auto-fast", "auto", "gpt-5.4", "gpt-5.4-mini ",
+                      "GPT-5.4-mini", "vendor/custom-\u4e2d"):
+            with self.subTest(model=model):
+                nested = {"values": ["unchanged"]}
+                raw = {"ui_v2_default_migrated": True, "labs_defaults_migrated": True,
+                       "font_size": "16", "future": nested}
+                if model is not None:
+                    raw["codex_model"] = model
+                changed, payload = rules.plan_config_migration(raw, rules.Config(raw))
+                self.assertTrue(changed)
+                self.assertEqual(list(payload.items()), list(dict(raw, **{MODEL_MARKER: True}).items()))
+                self.assertIs(payload["future"], nested)
+                self.assertNotIn(MODEL_MARKER, raw)
+                if model is not None:
+                    self.assertIs(payload["codex_model"], model)
+                else:
+                    self.assertNotIn("codex_model", payload)
+
+    def test_model_plan_does_not_replace_an_explicit_mini_after_normalization(self):
+        raw = {"codex_model": "gpt-5.4-mini"}
+        cfg = rules.Config(raw)
+        cfg["codex_model"] = "gpt-5.4-mini"
+        changed, payload = rules.plan_config_migration(raw, cfg)
+        self.assertTrue(changed)
+        self.assertIs(payload[MODEL_MARKER], True)
+        self.assertEqual(payload["codex_model"], "gpt-5.4-mini")
+        self.assertEqual(rules.Config(payload).codex_model, "gpt-5.4-mini")
 
     def test_public_coerce_and_subclass_override_remain_active(self):
         class Config(rules.Config):
@@ -285,11 +406,16 @@ class ConfigRuleTests(unittest.TestCase):
                 expected = old["load_config"]()
                 cfg = rules.Config(raw)
                 changed, payload = rules.plan_config_migration(raw, cfg)
-                self.assertEqual(list(cfg.items()), list(expected.items()))
-                self.assertEqual(saved.call_count, int(changed))
+                self.assertEqual(list(without_model_marker(cfg).items()), list(expected.items()))
+                self.assertEqual(changed, bool(saved.call_count) or MODEL_MARKER not in raw)
+                expected_payload = dict(saved.call_args.args[0] if saved.called else raw)
+                if MODEL_MARKER not in raw:
+                    expected_payload[MODEL_MARKER] = True
+                    if raw.get("codex_model") == "gpt-5.4-mini":
+                        expected_payload["codex_model"] = "auto-fast"
                 if changed:
                     self.assertEqual(json.dumps(payload, ensure_ascii=False, indent=2),
-                                     json.dumps(saved.call_args.args[0], ensure_ascii=False, indent=2))
+                                     json.dumps(expected_payload, ensure_ascii=False, indent=2))
                 log.assert_not_called()
 
     def test_plan_preserves_raw_values_and_unknown_identity(self):
@@ -300,7 +426,8 @@ class ConfigRuleTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertIs(payload["future"], nested)
         self.assertEqual(payload["font_size"], "16")
-        self.assertEqual(payload["codex_model"], "gpt-5.4-mini")
+        self.assertEqual(payload["codex_model"], "auto-fast")
+        self.assertIs(payload[MODEL_MARKER], True)
         self.assertEqual(list(payload)[:3], list(raw))
         self.assertEqual(cfg["font_size"], 16)
         self.assertEqual(cfg.codex_model, "auto-fast")
@@ -330,4 +457,5 @@ class ConfigRuleTests(unittest.TestCase):
         self.assertEqual(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                          b'{"font_size":"16","future":"\xe4\xb8\xad","ui_v2":true,'
                          b'"ui_v2_default_migrated":true,"summary_enabled":true,'
-                         b'"clipboard_protection_enabled":true,"labs_defaults_migrated":true}')
+                         b'"clipboard_protection_enabled":true,"labs_defaults_migrated":true,'
+                         b'"codex_model_default_migrated":true}')

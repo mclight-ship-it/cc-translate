@@ -20,7 +20,8 @@ def _root(root):
     return root
 
 
-def prepare(root, application_id, scenario="normal", *, result_action=None, target_language=None, origin="text"):
+def prepare(root, application_id, scenario="normal", *, result_action=None, target_language=None, origin="text",
+            model=None):
     from cc_config import Config, plan_config_migration
     from cc_providers.codex_cli import build_codex_prompt
     from cc_storage import macos_user_paths
@@ -65,6 +66,12 @@ def prepare(root, application_id, scenario="normal", *, result_action=None, targ
         output = "\u0001" * 4_000
     elif scenario == "envelope-limit":
         output = "x" * 12_000
+    if model is not None:
+        if type(model) is not str or not model or model in ("auto", "auto-fast"):
+            raise ValueError("synthetic_custom_model_required")
+        # Model settings edit a loaded view, not an unmarked historical config.
+        config = Config(config)
+        config["codex_model"] = model
     request = {"operation": "translate", "text": text, "app_language": "zh_CN",
                "origin": origin, "use_cache": True, "record_history": True}
     normalized = Config(config)
@@ -153,6 +160,7 @@ def main(arguments=None):
     parser.add_argument("--result-action",
                         choices=("concise", "formal", "summary", "explain_code", "as_text", "retranslate"))
     parser.add_argument("--target-language")
+    parser.add_argument("--model", help="Explicit custom model ID in the synthetic saved configuration.")
     parser.add_argument("--require-cleanup", action="store_true")
     parser.add_argument("--require-descendant", action="store_true")
     arguments = parser.parse_args(arguments)
@@ -161,7 +169,7 @@ def main(arguments=None):
             parser.error("--prepare requires --application-id")
         result = prepare(arguments.prepare, arguments.application_id, arguments.scenario,
                          result_action=arguments.result_action, target_language=arguments.target_language,
-                         origin=arguments.origin)
+                         origin=arguments.origin, model=arguments.model)
     else:
         result = verify(arguments.verify, require_cleanup=arguments.require_cleanup,
                         require_descendant=arguments.require_descendant)

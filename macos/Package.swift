@@ -13,7 +13,8 @@ let package = Package(
         .target(name: "CCProcessSupport"),
         .target(name: "CCTranslateSupport", dependencies: ["CCProcessSupport"]),
         .executableTarget(name: "CCTranslateMac", dependencies: ["CCTranslateSupport"]),
-        .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"]),
+        .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"],
+                    exclude: ["Fixtures"]),
         .testTarget(name: "CCTranslateMacTests", dependencies: ["CCTranslateMac", "CCTranslateSupport"])
     ],
     swiftLanguageVersions: [.v5]

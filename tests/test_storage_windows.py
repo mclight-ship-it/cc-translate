@@ -15,7 +15,7 @@ from unittest import mock
 
 import cc_storage as storage
 from tests.history_reference import SOURCE as HISTORY_REFERENCE_SOURCE
-from tests.test_config_rules import LEGACY_LOAD_SOURCE, _ast_hash, legacy_class
+from tests.test_config_rules import LEGACY_LOAD_SOURCE, _ast_hash, legacy_class, legacy_definition
 import cc_config
 
 
@@ -135,7 +135,7 @@ class TestWindowsStorageExports(unittest.TestCase):
                 after["load_config"] = definitions(LEGACY_LOAD_SOURCE)["load_config"]
             else:
                 for name in ("CFG", "DEFAULT_CONFIG"):
-                    after[name] = shared_config[name]
+                    after[name] = legacy_definition(shared_config[name])
             for name in names:
                 with self.subTest(filename=filename, name=name):
                     self.assertIn(name, before)
@@ -399,6 +399,7 @@ class TestWindowsStorageConsumers(StorageTestCase):
             cfg.UI_V2: True, cfg.UI_V2_DEFAULT_MIGRATED: True,
             cfg.SUMMARY_ENABLED: True, cfg.CLIPBOARD_PROTECTION_ENABLED: True,
             cfg.LABS_DEFAULTS_MIGRATED: True, cfg.CODEX_STREAMING_EXPERIMENTAL: True,
+            cfg.CODEX_MODEL_DEFAULT_MIGRATED: True,
         })
         with mock.patch.object(tr.tempfile, "mkstemp", wraps=tempfile.mkstemp) as create:
             loaded = tr.load_config()

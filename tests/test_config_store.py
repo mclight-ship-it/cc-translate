@@ -11,7 +11,7 @@ import threading
 import unittest
 from unittest import mock
 
-from cc_config import Config, DEFAULT_CONFIG
+from cc_config import CFG, Config, DEFAULT_CONFIG
 import cc_config_store as store
 import cc_storage
 
@@ -82,6 +82,7 @@ class TestConfigRepository(unittest.TestCase):
             first = self.repo.load()
             self.assertIsInstance(first, Config)
             self.assertEqual(first, Config())
+            self.assertIs(first[CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
             first["future"] = {"nested": []}
             first["font_size"] = 90
             self.assertEqual(self.repo.load(), Config())
@@ -109,6 +110,7 @@ class TestConfigRepository(unittest.TestCase):
             "ui_v2": True, "ui_v2_default_migrated": True,
             "summary_enabled": True, "clipboard_protection_enabled": True,
             "labs_defaults_migrated": True, "codex_streaming_experimental": True,
+            "codex_model_default_migrated": True, "codex_model": "auto-fast",
         })
         with mock.patch.object(store, "atomic_write_json", wraps=cc_storage.atomic_write_json) as writer:
             cfg = self.repo.load()
@@ -116,6 +118,7 @@ class TestConfigRepository(unittest.TestCase):
             self.assertEqual(cfg.font_size, 16)
             self.assertEqual(cfg.model_provider, "claude_cli")
             self.assertEqual(cfg.codex_model, "auto-fast")
+            self.assertIs(cfg[CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
             self.assertIs(cfg["codex_streaming_experimental"], True)
             expected_bytes = json.dumps(expected, ensure_ascii=False, indent=2).replace(
                 "\n", os.linesep).encode("utf-8")
@@ -153,7 +156,7 @@ class TestConfigRepository(unittest.TestCase):
                     "future": {"first": [1]}, "ui_v2_default_migrated": marker,
                     "ui_v2": False, "labs_defaults_migrated": marker,
                     "summary_enabled": False, "clipboard_protection_enabled": False,
-                    "font_size": "16",
+                    "font_size": "16", "codex_model_default_migrated": marker,
                 }
                 before = json.dumps(raw, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
                 self.path.write_bytes(before)
@@ -167,7 +170,7 @@ class TestConfigRepository(unittest.TestCase):
                 self.assert_unchanged(before)
 
     def test_null_migration_markers_are_invalid_booleans_not_absent_markers(self):
-        for key in ("ui_v2_default_migrated", "labs_defaults_migrated"):
+        for key in ("ui_v2_default_migrated", "labs_defaults_migrated", "codex_model_default_migrated"):
             with self.subTest(key=key):
                 raw = dict(DEFAULT_CONFIG, ui_v2=False, summary_enabled=False, **{key: None})
                 before = self.seed(raw)
@@ -178,6 +181,139 @@ class TestConfigRepository(unittest.TestCase):
                     planner.assert_not_called()
                     writer.assert_not_called()
                 self.assert_unchanged(before)
+
+    def test_explicit_mini_survives_strict_normalize_save_load_and_reopen(self):
+        for initial in (None, {"codex_model": "gpt-5.4-mini"}):
+            with self.subTest(initial=initial):
+                cfg = store.normalize_config(initial)
+                self.assertEqual(cfg.codex_model, "auto-fast")
+                self.assertIs(cfg[CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+                cfg[CFG.CODEX_MODEL] = "gpt-5.4-mini"
+                cfg["future"] = {"nested": ["\u4e2d", 7]}
+                normalized = store.normalize_config(cfg)
+                self.assertEqual(normalized.codex_model, "gpt-5.4-mini")
+                self.assertIs(normalized["future"], cfg["future"])
+                self.repo.save(normalized)
+                before = self.path.read_bytes()
+                with mock.patch.object(store, "atomic_write_json") as writer:
+                    for loaded in (self.repo.load(), store.normalize_config(self.repo.load())):
+                        self.assertEqual(loaded.codex_model, "gpt-5.4-mini")
+                        self.assertIs(loaded[CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+                        self.assertEqual(loaded["future"], {"nested": ["\u4e2d", 7]})
+                    with store.ConfigRepository(self.path) as reopened:
+                        self.assertEqual(reopened.load().codex_model, "gpt-5.4-mini")
+                    writer.assert_not_called()
+                self.assert_unchanged(before)
+
+    def test_legacy_mini_migration_then_explicit_selection_is_persistent(self):
+        self.seed({"codex_model": "gpt-5.4-mini", "future": {"first": [1]}})
+        migrated = self.repo.load()
+        self.assertEqual(migrated.codex_model, "auto-fast")
+        saved = json.loads(self.path.read_bytes())
+        self.assertEqual(saved["codex_model"], "auto-fast")
+        self.assertIs(saved["codex_model_default_migrated"], True)
+        migrated["codex_model"] = "gpt-5.4-mini"
+        self.repo.save(migrated)
+        before = self.path.read_bytes()
+        with mock.patch.object(store, "atomic_write_json") as writer:
+            self.assertEqual(self.repo.load().codex_model, "gpt-5.4-mini")
+            with store.ConfigRepository(self.path) as reopened:
+                self.assertEqual(store.normalize_config(reopened.load()).codex_model, "gpt-5.4-mini")
+            writer.assert_not_called()
+        self.assert_unchanged(before)
+
+    def test_other_model_ids_only_add_marker_once_then_preserve_exact_bytes(self):
+        for model in ("auto-fast", "auto", "gpt-5.4", "gpt-5.4-mini ",
+                      "GPT-5.4-mini", "vendor/custom-\u4e2d"):
+            with self.subTest(model=model):
+                raw = {"codex_model": model, "font_size": "16", "future": {"nested": ["\u4e2d", 7]},
+                       "ui_v2_default_migrated": True, "labs_defaults_migrated": True}
+                self.seed(raw)
+                expected = dict(raw, codex_model_default_migrated=True)
+                expected_bytes = json.dumps(expected, ensure_ascii=False, indent=2).replace(
+                    "\n", os.linesep).encode("utf-8")
+                with mock.patch.object(store, "atomic_write_json", wraps=cc_storage.atomic_write_json) as writer:
+                    self.assertEqual(self.repo.load().codex_model, model)
+                    writer.assert_called_once_with(self.path, expected)
+                    self.assert_unchanged(expected_bytes)
+                    self.assertEqual(self.repo.load().codex_model, model)
+                    with store.ConfigRepository(self.path) as reopened:
+                        self.assertEqual(reopened.load().codex_model, model)
+                    self.assertEqual(writer.call_count, 1)
+                self.assert_unchanged(expected_bytes)
+
+    def test_present_model_marker_uses_strict_boolean_coercion_without_rewriting_mini(self):
+        for marker, expected in ((True, True), (False, False), (0, False), (2, True),
+                                 (" YES ", True), ("false", False), ("", False)):
+            with self.subTest(marker=marker):
+                raw = dict(DEFAULT_CONFIG, codex_model="gpt-5.4-mini", codex_model_default_migrated=marker)
+                before = self.seed(raw)
+                with mock.patch.object(store, "atomic_write_json") as writer:
+                    cfg = self.repo.load()
+                    self.assertEqual(cfg.codex_model, "gpt-5.4-mini")
+                    self.assertIs(cfg[CFG.CODEX_MODEL_DEFAULT_MIGRATED], expected)
+                    self.assertEqual(store.normalize_config(cfg).codex_model, "gpt-5.4-mini")
+                    writer.assert_not_called()
+                self.assert_unchanged(before)
+        for marker in (None, [], {}):
+            with self.subTest(invalid_marker=marker):
+                before = self.seed(dict(DEFAULT_CONFIG, codex_model="gpt-5.4-mini",
+                                        codex_model_default_migrated=marker))
+                with mock.patch.object(store, "plan_config_migration") as planner, \
+                        mock.patch.object(store, "atomic_write_json") as writer:
+                    with self.assertRaisesRegex(TypeError, "config_boolean_value_required: codex_model_default_migrated"):
+                        self.repo.load()
+                    planner.assert_not_called()
+                    writer.assert_not_called()
+                self.assert_unchanged(before)
+
+    def test_model_migration_respects_normalized_and_raw_payload_byte_validators(self):
+        raw = {"codex_model": "gpt-5.4-mini", "future": "\u4e2d" * 10,
+               "ui_v2_default_migrated": True, "labs_defaults_migrated": True}
+        normalized = dict(store.normalize_config(raw))
+        payload = dict(raw, codex_model="auto-fast", codex_model_default_migrated=True)
+
+        def wire_size(value):
+            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+        for callback, expected in (("validate", normalized), ("validate_migration", payload)):
+            for limit in (wire_size(expected) - 1, wire_size(expected)):
+                with self.subTest(callback=callback, limit=limit):
+                    before = self.seed(raw)
+                    error = ValueError("synthetic config byte budget")
+
+                    def validate(value):
+                        self.assertEqual(list(value.items()), list(expected.items()))
+                        if wire_size(value) > limit:
+                            raise error
+
+                    validator = mock.Mock(side_effect=validate)
+                    with mock.patch.object(store, "atomic_write_json", wraps=cc_storage.atomic_write_json) as writer:
+                        if limit < wire_size(expected):
+                            with self.assertRaises(ValueError) as caught:
+                                self.repo.load(**{callback: validator})
+                            self.assertIs(caught.exception, error)
+                            writer.assert_not_called()
+                            self.assert_unchanged(before)
+                        else:
+                            self.assertEqual(self.repo.load(**{callback: validator}).codex_model, "auto-fast")
+                            writer.assert_called_once_with(self.path, payload)
+                    validator.assert_called_once()
+
+    def test_model_migration_failed_replace_preserves_file_and_can_retry(self):
+        before = self.seed({"codex_model": "gpt-5.4-mini", "future": {"nested": [1]}})
+        error = PermissionError("synthetic model marker replace")
+        with mock.patch.object(cc_storage.os, "replace", side_effect=error):
+            with self.assertRaises(PermissionError) as caught:
+                self.repo.load()
+            self.assertIs(caught.exception, error)
+        self.assert_unchanged(before)
+        self.assertEqual(self.repo.load().codex_model, "auto-fast")
+        saved = json.loads(self.path.read_bytes())
+        self.assertIs(saved[CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+        self.assertEqual(saved["codex_model"], "auto-fast")
+        self.assertEqual(saved["future"], {"nested": [1]})
+        self.assertEqual(set(self.root.iterdir()), {self.path})
 
     def test_explicit_save_writes_raw_snapshot_returns_none_and_load_normalizes(self):
         raw = {"font_size": "16", "future": {"values": ["\u4e2d", {"enabled": True}]}}

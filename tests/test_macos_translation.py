@@ -414,6 +414,29 @@ assert not any(name in sys.modules for name in ("cc_core", "cc_providers", "tkin
                     if scenario == "streaming-migration":
                         self.assertIs(fixture["config"]["codex_streaming_experimental"], False)
 
+    def test_custom_model_fixture_preserves_loaded_setting_and_exact_snapshot_without_cli(self):
+        from cc_macos import translation_fixture
+        from cc_config_store import normalize_config
+
+        models = ("provider/Exact-ID:2026", "gpt-5.4-mini", "model-e\u0301",
+                  "model-\u00e9", "future_model.2026", "m" * 256, "\u754c" * 85 + "x")
+        with tempfile.TemporaryDirectory(prefix=".model-fixture-", dir=Path.cwd()) as directory, \
+                patch.object(subprocess, "Popen", side_effect=AssertionError("prepare must not execute CLI")):
+            for index, model in enumerate(models):
+                for origin in ("text", "ocr"):
+                    with self.subTest(model=model, origin=origin):
+                        fixture = translation_fixture.prepare(
+                            Path(directory) / (str(index) + origin), "synthetic", model=model, origin=origin)
+                        self.assertIs(fixture["config"]["codex_model_default_migrated"], True)
+                        for value in (fixture["config"]["codex_model"], fixture["expected"]["model"],
+                                      normalize_config(fixture["config"]).codex_model):
+                            self.assertEqual(value.encode("utf-8"), model.encode("utf-8"))
+                        snapshot = translation.snapshot_for_translation(
+                            normalize_config(fixture["config"]), fixture["request"])
+                        self.assertEqual(snapshot.request.model.encode("utf-8"), model.encode("utf-8"))
+                        report = translation_fixture.verify(fixture["root"])
+                        self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
+
     def test_result_action_fixtures_keep_exact_expected_prompts_without_running_cli(self):
         from cc_macos import translation_fixture
         from cc_providers.codex_cli import build_codex_prompt

@@ -37,6 +37,7 @@ INTEGRATION_TESTS = (
     "testBundledHistoryCompetingHelpersReleaseBothOwners",
     "testBundledWorkerStartFailureFramesAreDeterminateForAllBusinessOperations",
     "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
+    "testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID",
     "testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary",
     "testBundledTranslationConcurrentOptoutAndCancellationDrain",
     "testBundledTranslationCorruptionAndOutputBudgets",
@@ -157,6 +158,14 @@ def prepare_harness(destination):
         shutil.copy2(ROOT / "macos" / source, target)
         need(bundle.digest(target) == bundle.digest(ROOT / "macos" / source),
              "bundled About reader/test source changed")
+    for relative in (
+            "Tests/CCTranslateSupportTests/LocalOCRTests.swift",
+            "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "macos" / relative, target)
+        need(bundle.digest(target) == bundle.digest(ROOT / "macos" / relative),
+             "local OCR test/fixture source changed")
     return tree_digest(destination)
 
 
@@ -275,6 +284,25 @@ def verify_about(args):
     bundle.write_json(args.directory / "about-tests.json", report)
 
 
+LOCAL_OCR_METHODS = (
+    "testOriginalSmallAboutNavigationRecognizesChineseAndEnglish",
+    "testSmallPureEnglishRemainsReadableWithoutLanguageCorrection",
+    "testOrdinaryMixedSimplifiedChineseAndEnglishInEitherLineOrder",
+    "testOrdinaryMixedTraditionalChineseAndEnglishRemainRecognizable",
+)
+
+
+def local_ocr_result(text):
+    source = ROOT / "macos/Tests/CCTranslateSupportTests/LocalOCRTests.swift"
+    methods = re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8"))
+    need(len(methods) == len(LOCAL_OCR_METHODS) and set(methods) == set(LOCAL_OCR_METHODS),
+         "local OCR source test inventory changed")
+    require_xctest_passes(text, "CCTranslateSupportTests.LocalOCRTests", LOCAL_OCR_METHODS)
+    return {"tests_run": len(LOCAL_OCR_METHODS), "failures": 0, "skipped": 0,
+            "methods": list(LOCAL_OCR_METHODS),
+            "scope": "production_Vision_on_synthetic_images_not_screen_capture"}
+
+
 def seal(args):
     verify_checkout(args.source_sha)
     environment = environment_record(15, "16.4")
@@ -339,21 +367,21 @@ def run_runtime(args):
         report["harness_source_sha256"] = prepare_harness(harness)
         environment = os.environ.copy()
         environment["CC_TRANSLATE_APP"] = str(app)
-        result = subprocess.run(
-            ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),
-             "--triple", "arm64-apple-macosx14.0", "--filter", "HelperIntegrationTests"],
-            env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        print(result.stdout, flush=True)
-        need(result.returncode == 0, "integration harness compile/run failed")
-        report["integration"] = integration_result(result.stdout)
-        report["stage"] = "about-resource-harness"
-        result = subprocess.run(
-            ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),
-             "--triple", "arm64-apple-macosx14.0", "--filter", "BundledAboutTests"],
-            env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        print(result.stdout, flush=True)
-        need(result.returncode == 0, "bundled About reader harness failed")
-        report["about"] = about_result(result.stdout)
+        for stage, test_class, key, validate, error in (
+                ("integration-harness", "HelperIntegrationTests", "integration", integration_result,
+                 "integration harness compile/run failed"),
+                ("about-resource-harness", "BundledAboutTests", "about", about_result,
+                 "bundled About reader harness failed"),
+                ("local-ocr-harness", "LocalOCRTests", "local_ocr", local_ocr_result,
+                 "local OCR harness failed")):
+            report["stage"] = stage
+            result = subprocess.run(
+                ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),
+                 "--triple", "arm64-apple-macosx14.0", "--filter", test_class],
+                env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            print(result.stdout, flush=True)
+            need(result.returncode == 0, error)
+            report[key] = validate(result.stdout)
         report["stage"] = "audit-after"
         after = bundle.audit_bundle(app, bundle.load_lock(), os.environ.copy())
         need(after["inventory"] == audited["inventory"] and tree_digest(app) == before,

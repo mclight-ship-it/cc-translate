@@ -8,6 +8,7 @@ class CFG:
     MODEL_PROVIDER = "model_provider"
     CLAUDE_MODEL = "claude_model"
     CODEX_MODEL = "codex_model"
+    CODEX_MODEL_DEFAULT_MIGRATED = "codex_model_default_migrated"
     CODEX_STREAMING_EXPERIMENTAL = "codex_streaming_experimental"
     DOUBLE_PRESS_WINDOW = "double_press_window"
     FONT_SIZE = "font_size"
@@ -47,6 +48,7 @@ DEFAULT_CONFIG = {
     CFG.MODEL_PROVIDER: "codex_cli",
     CFG.CLAUDE_MODEL: "haiku",
     CFG.CODEX_MODEL: "auto-fast",
+    CFG.CODEX_MODEL_DEFAULT_MIGRATED: True,
     CFG.CODEX_STREAMING_EXPERIMENTAL: True,
     CFG.DOUBLE_PRESS_WINDOW: 0.5,
     CFG.FONT_SIZE: 12,
@@ -151,9 +153,10 @@ class Config(dict):
                 CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
         if CFG.CODEX_MODEL not in raw:
             self[CFG.CODEX_MODEL] = DEFAULT_CONFIG[CFG.CODEX_MODEL]
-        elif self[CFG.CODEX_MODEL] == "gpt-5.4-mini":
-            # The former standalone mini option is now an internal branch of
-            # smart routing, so migrate saved selections to the complete mode.
+        elif (CFG.CODEX_MODEL_DEFAULT_MIGRATED not in raw
+              and self[CFG.CODEX_MODEL] == "gpt-5.4-mini"):
+            # Migrate the old default once; the marker preserves a later
+            # explicit selection of mini as a custom model.
             self[CFG.CODEX_MODEL] = "auto-fast"
         # Keep the old key synchronized for one downgrade-compatible release.
         self[CFG.MODEL] = self[CFG.CLAUDE_MODEL]
@@ -247,5 +250,10 @@ def plan_config_migration(raw, cfg):
     if not cfg[CFG.CODEX_STREAMING_EXPERIMENTAL]:
         cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
         migrated[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
+        config_changed = True
+    if CFG.CODEX_MODEL_DEFAULT_MIGRATED not in raw:
+        migrated[CFG.CODEX_MODEL_DEFAULT_MIGRATED] = cfg[CFG.CODEX_MODEL_DEFAULT_MIGRATED]
+        if raw.get(CFG.CODEX_MODEL) == "gpt-5.4-mini" and cfg[CFG.CODEX_MODEL] == "auto-fast":
+            migrated[CFG.CODEX_MODEL] = cfg[CFG.CODEX_MODEL]
         config_changed = True
     return config_changed, migrated
