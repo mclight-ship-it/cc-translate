@@ -141,7 +141,7 @@ final class DictionarySourcesInteractionTests: XCTestCase {
     }
 
     @MainActor
-    func testChangedSourceDuringPressCannotOpenWrongPopoverAndClearRetiresOpenContext() throws {
+    func testChangedSourceDuringPressCannotOpenWrongPopoverAndClearRetiresOpenContext() async throws {
         let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
         let helper = try f.localReady()
@@ -159,8 +159,18 @@ final class DictionarySourcesInteractionTests: XCTestCase {
         button.performClick(nil)
         XCTAssertTrue(button.sourcesPopover.isShown)
         XCTAssertTrue(button.sourcesContent.textView.string.contains("replacement"))
+        let updated = expectation(description: "Native popover receives the replacement source")
+        let storage = try XCTUnwrap(button.sourcesContent.textView.textStorage)
+        let contentUpdate = NotificationCenter.default
+            .publisher(for: NSTextStorage.didProcessEditingNotification, object: storage)
+            .filter { _ in storage.string.contains("changed again") }
+            .prefix(1).sink { _ in updated.fulfill() }
+        defer { contentUpdate.cancel() }
         try DictionarySourcesFixture.publish(f, helper: helper, version: "changed again")
+        await fulfillment(of: [updated], timeout: 2)
         surface.flush()
+        XCTAssertTrue(try surface.button() === button)
+        XCTAssertEqual(button.sources, f.model.resultSources)
         XCTAssertFalse(button.sourcesPopover.isShown)
         button.performClick(nil)
         XCTAssertTrue(button.sourcesPopover.isShown)
