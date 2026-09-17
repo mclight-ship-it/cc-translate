@@ -23,7 +23,13 @@ run实际watch exit0，完整App已独立核验，保留21张原生截图。
 搜索原文/译文/日期、类型过滤后分页，不要求先加载旧页；输入合并、迟到结果隔离和明确清空保持。
 首轮透明背景fixture导致的4渲染断言失败及修复如实保留于
 [全库搜索检查点](MACOS_TODO.md#native-history-search)。
-随后继续同帧区域截图、本地OCR预览及明确文字翻译；这些后续开发不包含在历史包里。
+同帧区域截图、本地OCR预览及明确文字翻译源码`082aad6` /
+[run35168220762](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762)
+已通过同App三系统各214process/570core/18后置Foundation，正常完整hook1726、
+Swift335（316通过及19构包前可选skip），41PNG和完整App均已独立核验。
+菜单/主窗口可截图、原生框选、编辑本地识别结果，再明确翻译文字；当前下载已换为此新包。
+历次编译/合同/测试fixture请求ID错误及修复保留于[截图/OCR检查点](MACOS_TODO.md#native-capture-checkpoint)。
+真正图片provider、完整设置/关于许可及其他P3功能仍继续开发。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

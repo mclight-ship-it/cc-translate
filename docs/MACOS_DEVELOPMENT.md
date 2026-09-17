@@ -154,8 +154,9 @@ P1 首个切片将既有本地分类直接移到 `cc_classify.py`，Windows 主�
 静态文本提示词目录随后抽到 `cc_prompts.py`，12 个赋值（包含 provider/词典补充 revision）
 与旧实现 AST 和规范 UTF-8 快照完全一致。`cc_core` / Windows 主入口 / warm / 结果操作
 继续使用相同对象，不增加 API、预热 turn、重试或账号访问。三份纯模块一起随包验证。
-OCR 专属文案和动态提示词组装仍由现有调用方负责；后续快照与平台路径检查点见下，
-不把本条纯提示词提取宣称为全部 P1 完成。
+该早期检查点的OCR专属文案和动态提示词组装仍由现有调用方负责；
+后续[截图/OCR检查点](#native-capture-ocr)已把原字节排版提示及拼装helper共享给Windows与Mac。
+后续快照与平台路径检查点见下，不把这条早期纯提示词提取宣称为全部P1完成。
 已有 `ProviderRequest` / `ProviderResult` 等数据类和 `ProviderRegistry` 也能在隔离环境直接
 导入；类字段、冻结语义、未知认证状态和 registry 退出错误传播均保持原样。
 这只完成纯契约的初始化边界，不是完整请求快照/配置版本协议或可运行的 Mac provider。
@@ -434,10 +435,18 @@ CLI环境是严格string→string JSON（最大32768 UTF-8字节），经私有
 协议版本仍为1，4807f62已交付的ready为`fixture:false`、`backend:native_appserver`及七项能力：
 原config/history五操作加translate/result_action，不把业务称synthetic。translate精确接收
 `operation/text/app_language/origin/use_cache/record_history`；text非空白、UTF-8最多8192字节，
-language只zh_CN/en_US，origin只text/selection，两个布尔不接受整数替代。
+language只zh_CN/en_US，origin为text/selection/ocr，两个布尔不接受整数替代。
 配置决定Codex profile/方向/summary/限额；payload不接受每请求path、env、model或服务端timeout覆盖。
 Swift API的timeout只控制客户端等待，不改写执行快照的服务端预算。
 原load的streaming强制迁移保持，所以磁盘false不代表已提供非流式设置开关。
+
+`origin:ocr`仍是文字请求，不接收图片、路径或image任务。保留原始Unicode、换行和空白，
+同时受8192 UTF-8字节及已提交配置的MAX_CHARS限制；不截断。OCR跳过本地词典查询、
+历史缓存和自动摘要，即使调用方传use_cache:true也再次提交。普通/混合文字追加共享的
+OCR排版提示，Windows真实调用同一helper，提示字节与抽取前一致；单词/纯代码仍使用
+既有AI词典/代码解释提示，target_lang为null。所有OCR完成结果及历史kind都为ocr，
+历史is_dict/is_code保留分类，记录仍服从最新历史开关。用户之后主动选择摘要动作不受此限制。
+`dictionary_lookup`仍只允许text/selection；helper升级时已有的dictionary_status刷新不是OCR查词。
 
 `result_action`精确接收`operation/action/text/app_language/target_language`，
 action为concise/formal/summary/explain_code/as_text/retranslate；text非空白、原始UTF-8最多24000字节，
@@ -487,7 +496,7 @@ EOF/shutdown停止接新请求并drain；4807f62仅translation入口捕获SIGTER
 | 操作 | 除operation外的请求字段 | completed |
 |---|---|---|
 | `dictionary_status` | 无 | state、enabled、size、sha256、data_version、download_url、entry_count |
-| `dictionary_lookup` | text、app_language、origin、use_cache、record_history；复用翻译输入约束 | status、result；仅hit有结果，其余result=null |
+| `dictionary_lookup` | text、app_language、origin、use_cache、record_history；复用翻译输入约束，但origin只允许text/selection | status、result；仅hit有结果，其余result=null |
 | `dictionary_prepare_install` | 无 | ticket、path、url、size、sha256、data_version |
 | `dictionary_install` | ticket | 校验/提交完成后state=ready、enabled=true的完整status |
 | `dictionary_discard_install` | ticket | discarded=true |
@@ -582,13 +591,44 @@ Python 只从包内固定位置加载且要求 ABI 1，不搜索宿主库或降�
   Universal Clipboard 和更新系统的 ask/allow/deny 单独验收。P0 不写剪贴板。
 - 浮窗不激活并不等于无法接收键盘；快速输入主动激活、结果展示不抢焦点分别验证。
 
-### 截图与 OCR
+<a id="native-capture-ocr"></a>
 
-macOS 14 使用 ScreenCaptureKit 的 filter/configuration API，不误用 15.2 区域 API。
-先显式取得权限，再捕获一次、展示同一帧预览，用户确认后 Vision 只识别保留的 CGImage；
-不在确认后重新截图、不自动发送到模型。取消/关闭销毁持有的图像，不持久化真实屏幕。
-P0 可只选一个显示器；跨屏框选与坐标/像素/缩放转换在 P3 独立实现并验收。
-Vision 查询实际支持语言，OCR 本地执行不意味着后续翻译离线。
+### 区域截图、本地 OCR 与明确文字翻译
+
+以下合同已由082aad6同App三系统自动化验证，完整源码/制品证据见
+[截图检查点](MACOS_TODO.md#native-capture-checkpoint)；当前下载段已切换到经独立核验的截图包。
+这不是用户账号模型或真人多屏/TCC/IME/VoiceOver签收。
+
+菜单栏和主翻译窗口的截图入口使用真实原生选框，不再要求先打开诊断。
+只有显式截图才申请屏幕录制权限；本地截图、裁剪、Vision和编辑不需要helper、CLI或账号。
+选择区域后自动进行本地OCR，只有用户点击“翻译文字”（或在截图文字窗口使用Cmd+Return）
+才进入上面的OCR文字请求。IME组合输入时不把Cmd+Return当成提交。
+
+- macOS14使用ScreenCaptureKit的filter/configuration API，排除自身应用窗口，不采集光标或音频，
+  不依赖15.2的区域API。所有显示器保留完成后才出现选框，后续裁剪、预览和OCR复用这些像素。
+  多屏是逐一采样，不宣称严格同时曝光；旧诊断仍保留单屏4096像素上限与手动OCR确认。
+- 显示器描述使用AppKit全局逻辑点、左下原点，记录ID/矩形/原始像素尺寸/旋转。
+  支持负坐标、上下排列、混合缩放与反向选择；实际裁剪比例来自保留CGImage，不固定假设2倍。
+  跨屏各自裁剪后使用统一比例合成，屏间空隙填白，边缘向外取整但不拉伸裁剪内容。
+- 选区支持拖动或依次点击两角；方向键移动、Shift方向键缩放、Option细调为1点，
+  F选择当前屏幕、Return确认、Esc/右键或取消按钮退出。最小有效区域10×10点。
+  图像预算为保留32Mi像素/128MiB、合成16Mi像素/64MiB、最长边8192像素；
+  过大屏幕组合在捕获前统一缩放，并为行对齐预留空间，不把常见双5K当成错误。
+- 屏幕配置通知或ID/几何/缩放/旋转变化使事务失效，不自动重拍。权限弹窗返回时也核对代际，
+  取消或新的显式截图不能被旧授权结果覆盖。无效选区会停止旧OCR并保留帧供用户重新选择。
+- “在保留帧上重选”不重新截图。旧Vision尚在取消时，仅保留最新一次确认的本地OCR意图，
+  退出后重新核对布局再执行，不并发堆积、不要求多点一次确认。
+  重新截图若旧系统操作仍在退出，则明确提示稍候重试，不偷偷重拍。
+- Vision使用准确识别，查询实际支持语言后选取英语/简体中文/繁体中文。
+  OCR为空或失败仍可手动输入；文字超过8192 UTF-8字节保留完整内容供编辑，不静默截断。
+  截图窗口最小620×600，窄窗口改为上下布局，浅色/深色保留可编辑文本和明确发送按钮。
+- 取消、重选、关窗或退出会取消自己拥有的待提交/活动翻译并释放图像引用；
+  不取消后来开始的其他翻译，不删除已经完成的结果。不可取消的系统工作可能稍后结束，
+  其迟到结果不得恢复旧画面。原始图像不写磁盘、不写剪贴板、不上传。
+
+本轮不是视觉模型：Darwin provider的images能力仍为false，没有“上传图片”按钮或文字回退冒充视觉。
+原生合成模型/图像/渲染与随包进程验证也不能代替真人TCC、VoiceOver、IME、多屏和Spaces验收。
+OCR本地执行不意味着用户之后主动选择的AI翻译离线或免费。
 
 ### CLI 和运行时
 
@@ -735,21 +775,23 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-当前新增全库历史搜索及类型筛选，保留本地词典下载/开关/删除/来源许可与六种结果动作。
-producer通过真实原生模型/渲染测试和31张截图检查，同一个App在15.7.9/14.8.9/26.6.2通过包内运行验证。
+当前新增原生区域截图、本地OCR、可编辑预览和明确文字翻译，保留全库历史搜索、
+本地词典下载/开关/删除/来源许可与六种结果动作。
+producer通过真实原生模型/渲染测试并保留41张PNG，同一个App在15.7.9/14.8.9/26.6.2
+各通过214进程/570核心/18后置Foundation，完整App已独立字节核验。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`eaf0c15af071fa40f250d7052d517ebbd6f2ef3c`；
-  [run35157108608](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10471459022)；
-  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35157108608/artifacts/10472180519)。
-- 内层`CCTranslateMac-P0.zip`：18,829,861 bytes；
-  SHA-256 `9a42321555714e717d73dcf14a2cb23d3936cd625ce85c67392cc017109cfc23`。
-  artifact保留到2026-09-23T22:30:46Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`082aad6f26c6364acf7075e8e541d847b574bd25`；
+  [run35168220762](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10476491349)；
+  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10475427508)。
+- 内层`CCTranslateMac-P0.zip`：18,957,188 bytes；
+  SHA-256 `a9c4d75d0dd10229c2f66f8ac8a5343af1f4990ff290b1c69966ce9ebfd26fe8`。
+  artifact保留到2026-09-24T01:03:01Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包已有正式翻译、结果动作、设置、历史和本地词典界面；完整移植仍在继续。
+  本包已有正式翻译、截图文字翻译、结果动作、设置、历史和本地词典界面；完整移植仍在继续。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
@@ -778,10 +820,38 @@ producer通过真实原生模型/渲染测试和31张截图检查，同一个App
    Settings可保存中英语言、系统/浅/深色、
    默认方向/模式和历史开关。历史开关关掉并保存读回后，新翻译不再新增历史。
    普通关闭窗口不退出，菜单可召回结果。分页时历史变化会提示刷新，不自动重放请求。
-6. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
+6. `Screenshot / 截图`或菜单栏`Screenshot translation… / 截图翻译…`打开区域截图工作流。
+   选区后自动本地识别，预览文字可编辑；只有点击`Translate text / 翻译文字`才发送文字。
+   截图/本地识别不需要CLI或账号，不上传图片，也不要求先打开Diagnostics。
+   具体保留帧、编辑、取消与历史测试见下一节；真正直接图片请求仍未实现。
+7. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
    Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
-   截图仍是本地OCR诊断，尚未接完整截图翻译；IME、VoiceOver、Spaces/多屏和TCC可集中补验，
-   不阻止继续开发其他功能。
+   IME、VoiceOver、Spaces/多屏和TCC可集中补验，不阻止继续开发其他功能。
+
+**截图集中测试（无需改动已可用的Codex配置）：**
+
+1. 先隐藏真实文档、聊天和通知，只在TextEdit放两行较大的合成文字：
+   `CAPTURE A 12345`与`Please translate this sample.`。
+   点主窗口`Screenshot / 截图`，或菜单栏`Screenshot translation… / 截图翻译…`。
+   首次按系统提示自行决定屏幕录制授权；拒绝应有提示而不是偷偷继续。
+   系统若要求重启应用，正常退出重开再试；不清quarantine或关闭系统保护。
+2. 拖出文字区域，或点击两个角确定区域；应出现原截图和自动识别的可编辑文字。
+   这个阶段不需要CLI/账号，不应自动翻译或新增历史。
+   也可重新开始一次，在选框阶段按Esc或点取消，检查没有迟到预览/翻译恢复。
+3. 保留预览，把TextEdit文字改为`CAPTURE B 67890`，再点`Reselect retained frame / 在保留帧上重选`。
+   重新框选后预览/OCR仍应来自保留的A帧，不是新B文字；只有`Capture again / 重新截图`才取新帧。
+   多屏用户可用无敏感内容的两个测试窗口检查跨屏选区；各屏顺序采样，不保证同时曝光。
+4. 在识别文字框中改成`This text was edited before translation.`，选择方向，
+   点`Translate text / 翻译文字`或在该窗口按Cmd+Return。
+   这一步才使用已有Codex账号，可能计费；结果应对应编辑后的文字，不是原截图。
+   先在中文输入法组词时试Cmd+Return，检查未误提交，再完成组词后明确翻译。
+5. Settings保存历史开关为关时，不应新增记录；开启并保存后，新的截图文字翻译应出现在History的OCR筛选下。
+   本流程不读翻译缓存、不自动摘要、不转本地词典；再次明确翻译会再次请求模型。
+   OCR失败可编辑文字或明确重试本地识别；超限文字应完整保留供编辑，不能静默截断。
+   最后检查620×600窄窗口、浅/深色、取消与关闭；原生截图测试不代替这些实机操作。
+
+这些步骤是集中实机验收，不是普通翻译、本地查词或后续开发的前置门槛。
+不需要提供真实截图、账号材料或原始CLI日志；反馈操作、现象、系统版本和匿名错误码即可。
 
 **本地词典集中测试（无需改动已可用的Codex配置）：**
 

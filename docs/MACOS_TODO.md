@@ -1,7 +1,7 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-16。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-17。
 **当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
 Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
@@ -102,6 +102,93 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 上述64d80a0是前置界面包，**不包含结果动作**；下方4807f62已另行完成动作接线与验证。
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
+
+<a id="native-capture-checkpoint"></a>
+
+### P3 区域截图与本地 OCR：同包三系统已通过，继续剩余P3
+
+当前源码`082aad6f26c6364acf7075e8e541d847b574bd25` /
+[run35168220762](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762)。
+实际watch退出0，API核对attempt1、3jobs/39steps全部success；
+[完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10476491349)
+已独立核验，当前下载段已切换到此截图包，不把截图PNG当成App制品。
+
+- 原生主窗口/菜单栏截图入口、多屏保留帧、原生区域选框、同源裁剪、
+  自动本地Vision、可编辑预览及明确“翻译文字”已接线。
+  支持拖动、两次点击和键盘选区，窄窗口上下布局；取消/关闭/重选不自动发送。
+- 捕获与OCR不需要CLI、helper或账号，不上传图片、不读取/改写剪贴板、不保存原始图像。
+  文本翻译只在明确操作后使用既有Codex链路；真正图片provider仍未实现，不能一起勾完。
+- OCR文字保留空白/Unicode/换行，禁用翻译缓存、本地查词与自动摘要；
+  普通文字复用与Windows相同的OCR排版提示，单词/代码保留既有专属提示，
+  完成结果与历史始终为ocr并保留分类标记，遵守最新保存开关。
+- 父整合修复旧授权返回覆盖新操作、旧OCR迟到结果覆盖无效选区、
+  首次菜单栏截图返回焦点，以及旧诊断截图4096上限被产品预算放大的关联问题。
+  重选保留原帧；取消中的Vision只排队最新明确OCR意图；屏幕布局改变使旧事务失效。
+- 方法盘点：新增48 Support、35 App、2协议/连接、1 Foundation，共86 Swift方法，
+  总335；进程214、核心570、后置Foundation18。不是减少原覆盖后得到的数量。
+
+**失败与修复保留：**
+
+1. 初次正常push的1725项有3失败：两个共享提示抽取快照未同步，以及未修改的Windows历史矩阵
+   末尾日志存在断言。快照保留原12项总hash，另从固定旧Git源码逐字节验证OCR常量；
+   历史失败未取得具体日志原因，后续targeted与完整hooks通过，不宣称旧稳定性问题已修复。
+2. `5662518` / [run35165336983](https://github.com/mclight-ship-it/cc-translate/actions/runs/35165336983)
+   真正失败于Swift通知嵌套closure缺少显式self；补明确接收者，没有改行为或删测试。
+3. `3bebcad` / [run35165672294](https://github.com/mclight-ship-it/cc-translate/actions/runs/35165672294)
+   编译成功，335项中3方法的5断言失败：dictionary_lookup意外继承OCR origin；
+   CGRect.width归一化负尺寸；OCR升级测试误将既有dictionary_status刷新当成lookup。
+   分别保留查词text/selection范围、检查原始size.width/height、精确断言只有status刷新。
+   本轮4个新渲染方法已通过、41张PNG已保留，但没有完整App。
+4. `d6bc831` / [run35166343496](https://github.com/mclight-ship-it/cc-translate/actions/runs/35166343496)
+   实际watch退出1：portable785/10.581s通过，Swift编译29.63s，
+   335/96.251s中316通过、19构包前可选skip、零失败。
+   包内进程214/392.843s在两个新增OCR方法的4个子场景失败：测试fixture重复使用save请求ID，
+   被正确的连接规则拒绝；两consumer未执行，没有完整App上传。
+   当前修复仅让该fixture每次保存使用新ID，另加宿主可执行的实际configure方法序列化回归；
+   旧方法明确复现1个唯一ID而非2个的失败，修复后34/1.817s通过。没有放宽生产协议。
+5. 正常完整hooks依次1725/85.123s、1725/84.685s、1725/84.368s，
+   请求ID修复1726/90.621s、设置说明同步1726/87.025s通过；保留原Tk teardown stderr，没有跳过hooks。
+   最终同App三系统、后置Foundation及独立完整制品审计结果见下。
+
+设置页原本仍称截图翻译尚未实现、仅为诊断探针；082aad6同步两段中英文说明，
+正确区分已实现的本地识别/文字翻译和未实现的直接图片请求。
+前一fixture修复run35167671528实际watch退出0，日志另行保留，不代替该设置源码的新run。
+
+**最终082aad6的执行与制品证据：**
+
+- producer portable786/13.626s通过，Swift编译30.20s；
+  335/83.033s中316通过、19既定构包前可选skip、零失败。
+  固定Git源码盘点及实际日志逐项核对：新增85个前置Swift方法各通过一次，
+  新第18个Foundation方法在三个系统后置各通过一次。
+  新7个进程方法、新17个核心方法及1个原快照方法改名，在三系统相应suite均各通过一次，
+  原17个Foundation方法也均保留并各通过一次，没有后置skip。
+
+| 同一App执行系统 | 真实合成进程 | 包内核心 | 后置Foundation |
+|---|---|---|---|
+| 15.7.9 / Xcode16.4 producer | 214 / 392.200s | 570 / 3.612s | 18 / 105.568s |
+| 14.8.9 / Xcode16.2 harness | 214 / 395.340s | 570 / 4.495s | 18 / 107.300s |
+| 26.6.2 / Xcode26.6 harness | 214 / 382.925s | 570 / 4.284s | 18 / 103.745s |
+
+- [41张真实原生渲染PNG](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10475427508)
+  包含10张新截图状态；已实际查看当前窄浅色/宽深色预览，两行源图文字和编辑内容可读。
+- 内层ZIP 18,957,188 bytes，SHA-256
+  `a9c4d75d0dd10229c2f66f8ac8a5343af1f4990ff290b1c69966ce9ebfd26fe8`；
+  tree `37528ae938bbd32e672207cbce65c217a670e9059d91d59d1c8031d40a0f175f`。
+  独立核验ZIP CRC/路径/权限/链接、688库存、78资源、
+  50个Core源码路径（49唯一）与固定Git原字节、6个实际arm64 Mach-O头/最低系统、
+  19运行时许可/14 required覆盖；保留运行时及许可632文件与前一已独立核验包逐SHA相同。
+- macOS14/26小报告分别为artifact10476008709/10476467369，archive/tree及producer编译器
+  与独立审计一致；没有重建/重签产品App。HTTPS证书、SQLite、取消、EOF、临时清理、
+  bundle不可变逐字段核对通过。
+- 本地词典生产URLSession再实取67,948,544 bytes，当前意图到同源离屏绘制P95/最大41.833958ms；
+  不是物理键盘、打包GUI或截图OCR的延迟指标。官方0.146.0/0.154.0仅版本与native预热通过，
+  没有账号、thread/turn或真实模型调用。
+
+已重新查看d6源码的窄浅色/深色实际截图：保留图片自身均完整显示两行，
+没有确认先前疑似裁切；未因此保留推测性预览重构。截图和离屏OCR不等于真人GUI、
+TCC、IME、VoiceOver、多屏/Spaces或真实账号模型签收。
+技术合同见[区域截图/OCR](MACOS_DEVELOPMENT.md#native-capture-ocr)；
+本切片结束后继续完整设置/关于许可等P3，不把整个移植标为完成。
 
 <a id="native-history-search"></a>
 
@@ -1282,7 +1369,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] 来源按钮稳定 identity，按下时异步更新不吞 click。
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
-- [ ] 同帧区域截图、多显示器坐标转换、Vision 语言与视觉 provider 明确发送。
+- [x] 同帧区域截图、多显示器坐标转换、本地Vision及明确OCR文字翻译；082aad6同包验证见截图检查点，真人多屏/TCC仍另列待验。
+- [ ] 真正图片provider及图片明确发送；不以OCR文字翻译冒充完成。
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
 - [ ] 完整设置/关于与第三方许可界面。
