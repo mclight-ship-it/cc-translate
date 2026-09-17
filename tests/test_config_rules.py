@@ -150,6 +150,15 @@ def without_model_marker(config):
     return {key: value for key, value in config.items() if key != MODEL_MARKER}
 
 
+def model_migration_payload(raw, previous):
+    payload = dict(previous)
+    if MODEL_MARKER not in raw:
+        payload[MODEL_MARKER] = True
+        if dict(raw).get("codex_model") == "gpt-5.4-mini":
+            payload["codex_model"] = "auto-fast"
+    return payload
+
+
 def legacy_namespace(**overrides):
     tree = ast.parse(inspect.getsource(rules))
     definitions = []
@@ -408,15 +417,30 @@ class ConfigRuleTests(unittest.TestCase):
                 changed, payload = rules.plan_config_migration(raw, cfg)
                 self.assertEqual(list(without_model_marker(cfg).items()), list(expected.items()))
                 self.assertEqual(changed, bool(saved.call_count) or MODEL_MARKER not in raw)
-                expected_payload = dict(saved.call_args.args[0] if saved.called else raw)
-                if MODEL_MARKER not in raw:
-                    expected_payload[MODEL_MARKER] = True
-                    if raw.get("codex_model") == "gpt-5.4-mini":
-                        expected_payload["codex_model"] = "auto-fast"
+                expected_payload = model_migration_payload(
+                    raw, saved.call_args.args[0] if saved.called else raw)
                 if changed:
                     self.assertEqual(json.dumps(payload, ensure_ascii=False, indent=2),
                                      json.dumps(expected_payload, ensure_ascii=False, indent=2))
                 log.assert_not_called()
+
+    def test_model_migration_preserves_legacy_pair_iterable_inputs(self):
+        for raw in ([], [["theme", "dark"]],
+                    [["codex_model", "gpt-5.4-mini"], ["future", ["kept"]]]):
+            with self.subTest(raw=raw):
+                previous = mock.Mock()
+                old = legacy_namespace(
+                    CONFIG_PATH="unused", open=lambda *a, **k: io.StringIO(json.dumps(raw)),
+                    save_config=previous, log_error=mock.Mock())
+                expected = old["load_config"]()
+                cfg = rules.Config(raw)
+                changed, payload = rules.plan_config_migration(raw, cfg)
+                self.assertTrue(changed)
+                self.assertEqual(list(without_model_marker(cfg).items()), list(expected.items()))
+                self.assertIs(cfg[MODEL_MARKER], True)
+                self.assertEqual(list(payload.items()),
+                                 list(model_migration_payload(raw, previous.call_args.args[0]).items()))
+                old["log_error"].assert_not_called()
 
     def test_plan_preserves_raw_values_and_unknown_identity(self):
         nested = {"future": [1]}

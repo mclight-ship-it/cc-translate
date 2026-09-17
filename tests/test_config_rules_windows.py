@@ -5,7 +5,9 @@ import os
 from unittest import mock
 
 import cc_config as rules
-from tests.test_config_rules import config_cases, legacy_namespace
+from tests.test_config_rules import (
+    MODEL_MARKER, config_cases, legacy_namespace, model_migration_payload, without_model_marker,
+)
 from tests.test_storage_windows import StorageTestCase, core, tr
 
 
@@ -42,11 +44,15 @@ class WindowsConfigRuleTests(StorageTestCase):
                 with mock.patch.object(tr, "save_config", wraps=tr.save_config) as save, \
                         mock.patch.object(tr, "plan_config_migration", wraps=rules.plan_config_migration) as plan:
                     actual = tr.load_config()
-                self.assertEqual(list(actual.items()), list(expected.items()))
-                self.assertEqual(save.call_count, old["save_config"].call_count)
+                self.assertEqual(list(without_model_marker(actual).items()), list(expected.items()))
+                self.assertIs(actual[MODEL_MARKER], True)
+                self.assertEqual(save.call_count,
+                                 int(old["save_config"].called or MODEL_MARKER not in raw))
                 plan.assert_called_once()
                 if save.called:
-                    payload = old["save_config"].call_args.args[0]
+                    previous = old["save_config"]
+                    payload = model_migration_payload(raw, previous.call_args.args[0] if previous.called else raw)
+                    save.assert_called_once_with(payload)
                     expected_bytes = json.dumps(payload, ensure_ascii=False, indent=2).replace(
                         "\n", os.linesep).encode("utf-8")
                 else:
@@ -67,8 +73,14 @@ class WindowsConfigRuleTests(StorageTestCase):
                 expected = old["load_config"]()
                 with mock.patch.object(tr, "save_config") as save, mock.patch.object(tr, "log_error") as log:
                     actual = tr.load_config()
-                self.assertEqual(list(actual.items()), list(expected.items()))
-                self.assertEqual(save.call_args_list, old["save_config"].call_args_list)
+                self.assertEqual(list(without_model_marker(actual).items()), list(expected.items()))
+                self.assertIs(actual[MODEL_MARKER], True)
+                expected_calls = old["save_config"].call_args_list
+                if expected_calls:
+                    self.assertEqual(len(expected_calls), 1)
+                    expected_calls = [mock.call(model_migration_payload(
+                        json.loads(raw_bytes), expected_calls[0].args[0]))]
+                self.assertEqual(save.call_args_list, expected_calls)
                 self.assertEqual(
                     [(call.args[0], type(call.args[1]), str(call.args[1])) for call in log.call_args_list],
                     [(call.args[0], type(call.args[1]), str(call.args[1]))
@@ -82,7 +94,9 @@ class WindowsConfigRuleTests(StorageTestCase):
         expected = old["load_config"]()
         with mock.patch.object(tr, "open", side_effect=error, create=True), \
                 mock.patch.object(tr, "log_error") as log, mock.patch.object(tr, "save_config") as save:
-            self.assertEqual(list(tr.load_config().items()), list(expected.items()))
+            actual = tr.load_config()
+            self.assertEqual(list(without_model_marker(actual).items()), list(expected.items()))
+            self.assertIs(actual[MODEL_MARKER], True)
         log.assert_called_once_with("load_config", error)
         save.assert_not_called()
 

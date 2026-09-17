@@ -253,7 +253,7 @@ def plan_config_migration(raw, cfg):
         config_changed = True
     if CFG.CODEX_MODEL_DEFAULT_MIGRATED not in raw:
         migrated[CFG.CODEX_MODEL_DEFAULT_MIGRATED] = cfg[CFG.CODEX_MODEL_DEFAULT_MIGRATED]
-        if raw.get(CFG.CODEX_MODEL) == "gpt-5.4-mini" and cfg[CFG.CODEX_MODEL] == "auto-fast":
+        if migrated.get(CFG.CODEX_MODEL) == "gpt-5.4-mini" and cfg[CFG.CODEX_MODEL] == "auto-fast":
             migrated[CFG.CODEX_MODEL] = cfg[CFG.CODEX_MODEL]
         config_changed = True
     return config_changed, migrated
