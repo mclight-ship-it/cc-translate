@@ -149,7 +149,27 @@ def prepare_harness(destination):
     shutil.copy2(ROOT / "tools/macos/RuntimeHarnessPackage.swift", destination / "Package.swift")
     need(bundle.digest(destination / test) == bundle.digest(ROOT / "macos" / test),
          "integration test source changed")
+    for source, target in (
+            ("Sources/CCTranslateMac/AboutResources.swift", "Sources/CCTranslateAppResources/AboutResources.swift"),
+            ("Tests/CCTranslateMacTests/BundledAboutTests.swift", "Tests/CCTranslateMacTests/BundledAboutTests.swift")):
+        target = destination / target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "macos" / source, target)
+        need(bundle.digest(target) == bundle.digest(ROOT / "macos" / source),
+             "bundled About reader/test source changed")
     return tree_digest(destination)
+
+
+def require_xctest_passes(text, test_class, methods):
+    for outcome in ("started", "passed"):
+        found = re.findall(
+            r"Test Case '-\[" + re.escape(test_class) + r" (\w+)\]' " + outcome, text)
+        need(len(found) == len(methods) and set(found) == set(methods),
+             "XCTest method set incomplete or duplicated")
+    matches = re.findall(r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text)
+    need(bool(matches), "XCTest not discovered")
+    need(all(int(total) == len(methods) and int(skipped or 0) == 0 and int(failed) == 0
+             for total, skipped, failed in matches), "XCTest failed/skipped/wrong count")
 
 
 def integration_result(text):
@@ -157,15 +177,7 @@ def integration_result(text):
     methods = re.findall(r"\bfunc (test\w+)\(", source)
     need(len(methods) == len(INTEGRATION_TESTS) and set(methods) == set(INTEGRATION_TESTS),
          "integration source method set changed")
-    for outcome in ("started", "passed"):
-        found = re.findall(
-            r"Test Case '-\[CCTranslateSupportTests\.HelperIntegrationTests (\w+)\]' " + outcome, text)
-        need(len(found) == len(INTEGRATION_TESTS) and set(found) == set(INTEGRATION_TESTS),
-             "XCTest integration method set incomplete or duplicated")
-    matches = re.findall(r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text)
-    need(bool(matches), "XCTest integration not discovered")
-    need(all(int(total) == len(INTEGRATION_TESTS) and int(skipped or 0) == 0 and int(failed) == 0
-             for total, skipped, failed in matches), "XCTest integration failed/skipped/wrong count")
+    require_xctest_passes(text, "CCTranslateSupportTests.HelperIntegrationTests", INTEGRATION_TESTS)
     timings = re.findall(r"(?m)^CC_TRANSLATE_DICTIONARY_TIMINGS (\{[^\n]+\})\s*$", text)
     need(len(timings) == 1, "dictionary warm lookup measurements missing or duplicated")
     timing = json.loads(timings[0])
@@ -192,13 +204,7 @@ PRODUCT_DICTIONARY_METHOD = "testBundledWarmDictionaryIntentToNativePaintReports
 
 
 def dictionary_product_result(text):
-    for outcome in ("started", "passed"):
-        methods = re.findall(
-            r"Test Case '-\[CCTranslateMacTests\.DictionaryProductIntegrationTests (\w+)\]' " + outcome, text)
-        need(methods == [PRODUCT_DICTIONARY_METHOD], "dictionary product test missing or duplicated")
-    totals = re.findall(r"Executed (\d+) tests?, with (?:(\d+) tests? skipped and )?(\d+) failures", text)
-    need(bool(totals) and all(int(total) == 1 and int(skipped or 0) == 0 and int(failed) == 0
-                             for total, skipped, failed in totals), "dictionary product test failed/skipped")
+    require_xctest_passes(text, "CCTranslateMacTests.DictionaryProductIntegrationTests", [PRODUCT_DICTIONARY_METHOD])
     markers = re.findall(r"(?m)^CC_TRANSLATE_DICTIONARY_PRODUCT_TIMINGS (\{[^\n]+\})\s*$", text)
     need(len(markers) == 1, "dictionary product timing missing or duplicated")
     measurement = json.loads(markers[0])
@@ -248,6 +254,25 @@ def verify_dictionary_product(args):
     report.update(source_sha=args.source_sha, run_id=args.run_id,
                   producer_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
     bundle.write_json(args.directory / "dictionary-product-tests.json", report)
+
+
+BUNDLED_ABOUT_METHOD = "testPackagedAboutReadsRealMetadataAndEveryCompleteBundledLicenseWithoutLaunchingAnything"
+
+
+def about_result(text):
+    source = ROOT / "macos/Tests/CCTranslateMacTests/BundledAboutTests.swift"
+    need(re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8")) == [BUNDLED_ABOUT_METHOD],
+         "bundled About source test inventory changed")
+    require_xctest_passes(text, "CCTranslateMacTests.BundledAboutTests", [BUNDLED_ABOUT_METHOD])
+    return {"tests_run": 1, "failures": 0, "skipped": 0, "methods": [BUNDLED_ABOUT_METHOD]}
+
+
+def verify_about(args):
+    verify_checkout(args.source_sha)
+    report = about_result((args.directory / "about-tests.log").read_text(encoding="utf-8"))
+    report.update(source_sha=args.source_sha, run_id=args.run_id,
+                  producer_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+    bundle.write_json(args.directory / "about-tests.json", report)
 
 
 def seal(args):
@@ -321,6 +346,14 @@ def run_runtime(args):
         print(result.stdout, flush=True)
         need(result.returncode == 0, "integration harness compile/run failed")
         report["integration"] = integration_result(result.stdout)
+        report["stage"] = "about-resource-harness"
+        result = subprocess.run(
+            ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),
+             "--triple", "arm64-apple-macosx14.0", "--filter", "BundledAboutTests"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        print(result.stdout, flush=True)
+        need(result.returncode == 0, "bundled About reader harness failed")
+        report["about"] = about_result(result.stdout)
         report["stage"] = "audit-after"
         after = bundle.audit_bundle(app, bundle.load_lock(), os.environ.copy())
         need(after["inventory"] == audited["inventory"] and tree_digest(app) == before,
@@ -335,7 +368,7 @@ def run_runtime(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("seal", "run", "integration", "dictionary-product"))
+    parser.add_argument("command", choices=("seal", "run", "integration", "dictionary-product", "about"))
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--run-id", required=True)
@@ -357,6 +390,8 @@ def main(argv=None):
             verify_integration(args)
         elif args.command == "dictionary-product":
             verify_dictionary_product(args)
+        elif args.command == "about":
+            verify_about(args)
         else:
             run_runtime(args)
     except (bundle.BundleError, OSError, ValueError, KeyError, zipfile.BadZipFile,

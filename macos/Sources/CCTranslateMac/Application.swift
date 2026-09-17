@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var settingsPanel: NSPanel?
     private var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
+    private(set) var aboutPanel: NSPanel?
     private var selectionOverlay: RegionSelectionOverlay?
     private weak var captureReturnWindow: NSWindow?
     private weak var captureReturnResponder: NSResponder?
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let model: ProbeModel
     private let capture: CaptureModel
     private let diagnostics: ProbeModel
+    private let aboutModel: AboutModel
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
@@ -50,10 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.init(model: ProbeModel(), capture: CaptureModel(), diagnostics: ProbeModel(persistsPreferences: false))
     }
 
-    init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel) {
+    init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil) {
         self.model = model
         self.capture = capture
         self.diagnostics = diagnostics
+        self.aboutModel = about ?? AboutModel()
         super.init()
     }
 
@@ -115,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return item
     }
 
-    private func configureMenus() {
+    func configureMenus() {
         let menu = NSMenu()
         menu.delegate = self
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: menu)
@@ -128,12 +131,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         add(model.text("Settings…", "设置…"), action: #selector(openSettings), key: ",", to: menu)
         menu.addItem(.separator())
         add(model.text("Diagnostics…", "诊断…"), action: #selector(openDiagnostics), to: menu)
+        add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(openAbout), to: menu)
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: menu)
         statusItem?.menu = menu
 
         let main = NSMenu()
         let application = NSMenu()
-        add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(about), to: application)
+        add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(openAbout), to: application)
         add(model.text("Settings…", "设置…"), action: #selector(openSettings), key: ",", to: application)
         application.addItem(.separator())
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: application)
@@ -170,9 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         settingsPanel?.title = model.text("Settings", "设置")
         diagnosticsPanel?.title = model.text("Diagnostics", "诊断")
         capturePanel?.title = model.text("Screenshot translation", "截图翻译")
+        aboutPanel?.title = model.text("About CC Translate", "关于 CC Translate")
         let appearance: NSAppearance? = model.appearance == "dark" ? NSAppearance(named: .darkAqua) :
             model.appearance == "light" ? NSAppearance(named: .aqua) : nil
-        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel] { panel?.appearance = appearance }
+        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel, aboutPanel] { panel?.appearance = appearance }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -341,11 +346,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if settingsPanel == nil {
             settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 660, height: 650,
                 minimum: NSSize(width: 530, height: 460),
-                root: TranslationSettingsView(model: model,
-                    showDiagnostics: { [weak self] in self?.openDiagnostics() }))
+                root: settingsContent())
         }
         model.openProduct()
         activate(settingsPanel)
+    }
+
+    func settingsContent() -> TranslationSettingsView {
+        TranslationSettingsView(model: model,
+            showDiagnostics: { [weak self] in self?.openDiagnostics() },
+            showAbout: { [weak self] in self?.openAbout() })
     }
 
     @objc private func openDiagnostics() {
@@ -381,7 +391,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func recallResult() {
         if model.output.isEmpty { openInput() } else { showResult() }
     }
-    @objc private func about() { NSApp.orderFrontStandardAboutPanel(nil) }
+    @objc func openAbout() {
+        if aboutPanel == nil {
+            aboutPanel = makePanel(title: model.text("About CC Translate", "关于 CC Translate"),
+                width: 760, height: 660, minimum: NSSize(width: 660, height: 520),
+                root: AboutView(model: aboutModel, presentation: model,
+                                close: { [weak self] in self?.aboutPanel?.performClose(nil) }))
+            aboutModel.openResources()
+        }
+        activate(aboutPanel)
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func showResult() {
@@ -409,6 +428,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        if window === aboutPanel {
+            aboutModel.close()
+            aboutPanel?.contentView = nil
+            aboutPanel = nil
+        }
         if window === inputPanel {
             if model.translationOrigin == "text" { model.cancel() }
         }
@@ -431,6 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        aboutModel.close()
         selectionOverlay?.dismiss()
         selectionOverlay = nil
         capture.cancel()
@@ -442,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        aboutModel.close()
         selectionOverlay?.dismiss()
         capture.cancel()
         discardCapturePanel()

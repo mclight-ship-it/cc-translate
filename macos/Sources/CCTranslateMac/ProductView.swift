@@ -595,6 +595,7 @@ struct HistoryTranslationDetail: View {
 struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
     var showDiagnostics: () -> Void
+    var showAbout: () -> Void
 
     private var busy: Bool { model.active || model.preparing }
 
@@ -788,11 +789,8 @@ struct TranslationSettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("CC Translate") {
-                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ??
-                     model.text("Development build", "开发版本"))
-                    .foregroundStyle(.secondary)
-            }
+            Button(model.text("About CC Translate & third-party licenses…", "关于 CC Translate 与第三方许可…"),
+                   action: showAbout)
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
             Text(model.text("Text translation, screenshot text recognition and translation, local dictionary, result actions, history, and Codex settings are available here. Direct image requests, model management, login items, and app updates are not yet implemented.",
@@ -909,7 +907,7 @@ private func historyDate(_ raw: String) -> String {
 
 // Keep the native text view, selection, and scroll position alive across streamed deltas.
 @MainActor
-private struct NativeResultText: NSViewRepresentable {
+struct NativeResultText: NSViewRepresentable {
     var text: String
     var formatted: Bool
     var streaming: Bool

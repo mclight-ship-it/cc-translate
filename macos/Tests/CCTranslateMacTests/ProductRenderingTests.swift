@@ -297,12 +297,12 @@ final class ProductRenderingTests: XCTestCase {
         model.interfaceLanguage = "en"
         model.appearance = "light"
         let light = try render(
-            TranslationSettingsView(model: model, showDiagnostics: {}),
+            TranslationSettingsView(model: model, showDiagnostics: {}, showAbout: {}),
             named: "settings-light", size: NSSize(width: 820, height: 860), scheme: .light)
         model.interfaceLanguage = "zh"
         model.appearance = "dark"
         let dark = try render(
-            TranslationSettingsView(model: model, showDiagnostics: {}),
+            TranslationSettingsView(model: model, showDiagnostics: {}, showAbout: {}),
             named: "settings-dark-zh", size: NSSize(width: 820, height: 860), scheme: .dark)
 
         XCTAssertNotEqual(light, dark)
@@ -528,6 +528,121 @@ final class ProductRenderingTests: XCTestCase {
         }
         XCTAssertEqual(capture.text, longText)
         XCTAssertFalse(capture.canTranslate)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    func testAboutRendersRealBundleMetadataInLightDarkAndChineseWithoutHelperStartup() async throws {
+        let bundle = try AboutBundleFixture()
+        defer { bundle.cleanUp() }
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let about = AboutModel(resources: bundle.resources)
+        about.openResources()
+        await about.loadTask?.value
+        defer { about.close() }
+        for scheme in [ColorScheme.light, .dark] {
+            fixture.model.interfaceLanguage = "en"
+            let png = try render(
+                AboutView(model: about, presentation: fixture.model, close: {}),
+                named: "about-metadata-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 820, height: 900), scheme: scheme)
+            let words = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)).text.lowercased()
+            XCTAssertTrue(words.contains("9.8.7"), "Read the displayed bundle version, not a hard-coded product version.")
+            XCTAssertTrue(words.contains("42"))
+            XCTAssertTrue(words.contains("source"))
+        }
+        fixture.model.interfaceLanguage = "zh"
+        _ = try render(AboutView(model: about, presentation: fixture.model, close: {}),
+                       named: "about-metadata-zh-narrow", size: NSSize(width: 660, height: 520), scheme: .dark)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+        XCTAssertEqual(fixture.runtimeRequests, 0)
+        XCTAssertEqual(fixture.locatorRequests, 0)
+        XCTAssertEqual(fixture.model.permissions, "Not checked.")
+    }
+
+    @MainActor
+    func testAboutLongLicenseRendersLiteralSelectableScrollableTextInBothAppearances() async throws {
+        let bundle = try AboutBundleFixture()
+        defer { bundle.cleanUp() }
+        let text = "SYNTHETIC LICENSE HEADING\r\n**LITERAL MARKERS**\r\n" +
+            String(repeating: AboutBundleFixture.text, count: 1500) + "FINAL FULL TEXT SENTINEL\r\n"
+        try bundle.write(text, path: "Contents/Resources/Licenses/THIRD_PARTY_NOTICES")
+        try bundle.writeManifest()
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.interfaceLanguage = "en"
+        let about = AboutModel(resources: bundle.resources)
+        about.openResources()
+        await about.loadTask?.value
+        about.selectedDocument = "THIRD_PARTY_NOTICES"
+        await about.documentTask?.value
+        about.page = .licenses
+        defer { about.close() }
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                AboutView(model: about, presentation: fixture.model, close: {}),
+                named: "about-licenses-long-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 760, height: 660), scheme: scheme, inspect: { host in
+                    let view = self.textViews(in: host).first { $0.string == text }
+                    XCTAssertNotNil(view)
+                    XCTAssertEqual(view?.isEditable, false)
+                    XCTAssertEqual(view?.isSelectable, true)
+                    XCTAssertEqual(view?.isAutomaticLinkDetectionEnabled, false)
+                    XCTAssertEqual(view?.isAutomaticDataDetectionEnabled, false)
+                    XCTAssertEqual(view?.enclosingScrollView?.hasVerticalScroller, true)
+                    XCTAssertTrue(view?.accessibilityLabel()?.contains("License text") == true)
+                    if let view, let storage = view.textStorage {
+                        var linked = false
+                        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                            if value != nil { linked = true }
+                        }
+                        XCTAssertFalse(linked, "Literal legal text must not become AI/Markdown link content.")
+                        view.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
+                        XCTAssertGreaterThan(view.enclosingScrollView?.contentView.bounds.minY ?? 0, 0)
+                        XCTAssertTrue(view.string.hasSuffix("FINAL FULL TEXT SENTINEL\r\n"))
+                        view.enclosingScrollView?.contentView.scroll(to: .zero)
+                        if let scroll = view.enclosingScrollView { scroll.reflectScrolledClipView(scroll.contentView) }
+                        view.displayIfNeeded()
+                    }
+                })
+            let words = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)).text.lowercased()
+            XCTAssertTrue(words.contains("synthetic license heading"))
+            XCTAssertTrue(words.contains("literal markers"))
+        }
+        XCTAssertEqual(about.documentText, text)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    func testAboutMissingMetadataAndCorruptLicenseRenderHonestRecoverableStates() async throws {
+        let bundle = try AboutBundleFixture()
+        defer { bundle.cleanUp() }
+        try FileManager.default.removeItem(at: bundle.url("Contents/Info.plist"))
+        try bundle.write("malformed", path: "Contents/Resources/source-manifest.json")
+        try bundle.write(Data([0xff]), path: "Contents/Resources/Licenses/THIRD_PARTY_NOTICES")
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.interfaceLanguage = "en"
+        let about = AboutModel(resources: bundle.resources)
+        about.openResources()
+        await about.loadTask?.value
+        defer { about.close() }
+        let missing = try render(AboutView(model: about, presentation: fixture.model, close: {}),
+                                 named: "about-missing-metadata", size: NSSize(width: 760, height: 980), scheme: .light)
+        let missingWords = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: missing)?.cgImage)).text.lowercased()
+        XCTAssertTrue(missingWords.contains("missing"))
+        XCTAssertTrue(missingWords.contains("malformed"))
+        about.selectedDocument = "THIRD_PARTY_NOTICES"
+        await about.documentTask?.value
+        about.page = .licenses
+        let png = try render(AboutView(model: about, presentation: fixture.model, close: {}),
+                             named: "about-license-error", size: NSSize(width: 660, height: 520), scheme: .dark)
+        let words = try LocalOCR.recognize(try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)).text.lowercased()
+        XCTAssertTrue(words.contains("retry"))
+        XCTAssertTrue(words.contains("utf"))
+        XCTAssertNil(about.documentText)
+        XCTAssertEqual(about.documentError, .invalidEncoding)
         XCTAssertTrue(fixture.helpers.isEmpty)
     }
 

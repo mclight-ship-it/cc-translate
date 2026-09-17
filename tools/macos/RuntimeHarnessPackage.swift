@@ -7,7 +7,10 @@ let package = Package(
     targets: [
         .target(name: "CCProcessSupport"),
         .target(name: "CCTranslateSupport", dependencies: ["CCProcessSupport"]),
-        .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"])
+        .target(name: "CCTranslateAppResources"),
+        .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"]),
+        .testTarget(name: "CCTranslateMacTests", dependencies: ["CCTranslateAppResources"],
+                    swiftSettings: [.define("CC_TRANSLATE_RESOURCE_HARNESS")])
     ],
     swiftLanguageVersions: [.v5]
 )

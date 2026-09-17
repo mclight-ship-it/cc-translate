@@ -91,6 +91,16 @@ jobs:
             --filter DictionaryProductIntegrationTests 2>&1 | tee tools/macos/.build/dictionary-product-tests.log
           python3 -B tools/macos/runtime_matrix.py dictionary-product --directory tools/macos/.build \
             --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
+      - name: Native About reader against complete bundled metadata and licenses (no app launch)
+        env:
+          CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
+            --filter BundledAboutTests 2>&1 | tee tools/macos/.build/about-tests.log
+          python3 -B tools/macos/runtime_matrix.py about --directory tools/macos/.build \
+            --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
       - name: Native provider and repository owner lifecycle with bundled Python (synthetic only)
         run: >-
           tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
@@ -144,6 +154,7 @@ jobs:
             tools/macos/.build/integration-tests.json
             tools/macos/.build/codex-version-smoke.json
             tools/macos/.build/dictionary-product-tests.json
+            tools/macos/.build/about-tests.json
 
   runtime:
     needs: p0

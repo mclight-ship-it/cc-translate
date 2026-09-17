@@ -66,6 +66,33 @@ class DictionaryProductEvidenceTests(unittest.TestCase):
                 runtime.dictionary_product_result(self.log(self.measurement() | changes))
 
 
+class AboutEvidenceTests(unittest.TestCase):
+    def log(self):
+        case = "Test Case '-[CCTranslateMacTests.BundledAboutTests " + runtime.BUNDLED_ABOUT_METHOD + "]' "
+        return case + "started.\n" + case + "passed (0.1 seconds).\nExecuted 1 test, with 0 failures\n"
+
+    def test_actual_bundled_about_method_is_required_once_without_skip_or_failure(self):
+        text = self.log()
+        self.assertEqual(runtime.about_result(text), {
+            "tests_run": 1, "failures": 0, "skipped": 0, "methods": [runtime.BUNDLED_ABOUT_METHOD]})
+        for invalid in ("", "Executed 0 tests, with 0 failures", text + text,
+                        text.replace("passed", "skipped"), text.replace("started", "not-started"),
+                        text.replace("with 0 failures", "with 1 failure"),
+                        text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
+                        text.replace("Executed 1 test", "Executed 2 tests"),
+                        text.replace("BundledAboutTests", "SomeOtherTests"),
+                        text.replace(runtime.BUNDLED_ABOUT_METHOD, "testUnexpected")):
+            with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
+                runtime.about_result(invalid)
+
+    def test_bundle_about_source_inventory_cannot_silently_omit_or_add_methods(self):
+        for source in ("", "func testUnexpected() {}", "func " + runtime.BUNDLED_ABOUT_METHOD + "() {}\n" +
+                       "func testAnother() {}"):
+            with self.subTest(source=source), patch.object(Path, "read_text", return_value=source), \
+                    self.assertRaises(bundle.BundleError):
+                runtime.about_result(self.log())
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -288,8 +315,17 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual((harness / "Tests/CCTranslateSupportTests" / original.name).read_bytes(),
                          original.read_bytes())
         self.assertEqual({p.name for p in (harness / "Sources").iterdir()},
-                         {"CCTranslateSupport", "CCProcessSupport"})
-        self.assertNotIn("executableTarget", (harness / "Package.swift").read_text())
+                         {"CCTranslateSupport", "CCProcessSupport", "CCTranslateAppResources"})
+        reader = "Sources/CCTranslateAppResources/AboutResources.swift"
+        self.assertEqual((harness / reader).read_bytes(),
+                         (runtime.ROOT / "macos/Sources/CCTranslateMac/AboutResources.swift").read_bytes())
+        self.assertEqual({p.name for p in (harness / "Sources/CCTranslateAppResources").iterdir()},
+                         {"AboutResources.swift"})
+        about_test = "Tests/CCTranslateMacTests/BundledAboutTests.swift"
+        self.assertEqual((harness / about_test).read_bytes(), (runtime.ROOT / "macos" / about_test).read_bytes())
+        package = (harness / "Package.swift").read_text()
+        self.assertIn('define("CC_TRANSLATE_RESOURCE_HARNESS")', package)
+        self.assertNotIn("executableTarget", package)
         with self.assertRaises(bundle.BundleError):
             runtime.prepare_harness(harness)
 
