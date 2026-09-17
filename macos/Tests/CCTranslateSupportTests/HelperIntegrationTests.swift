@@ -352,7 +352,7 @@ extension HelperIntegrationTests {
     }
 
     private func translationContext(scenario: String = "normal", resultAction: ResultAction? = nil,
-                                    targetLanguage: String? = nil) throws -> TranslationContext {
+                                    targetLanguage: String? = nil, origin: String? = nil) throws -> TranslationContext {
         let base = try configurationContext()
         do {
             let identifier = try base.runtime.configurationApplicationIdentifier()
@@ -362,6 +362,7 @@ extension HelperIntegrationTests {
             ]
             if let resultAction { arguments += ["--result-action", resultAction.rawValue] }
             if let targetLanguage { arguments += ["--target-language", targetLanguage] }
+            if let origin { arguments += ["--origin", origin] }
             let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: arguments)
             let home = URL(fileURLWithPath: try XCTUnwrap(fixture["home"]?.string), isDirectory: true)
             let environment = try XCTUnwrap(fixture["environment"]?.object)
@@ -397,6 +398,7 @@ extension HelperIntegrationTests {
                                  id: String = "translation", useCache: Bool = true) throws {
         session.connection.translate(text: try XCTUnwrap(context.request["text"]?.string),
                                      appLanguage: try XCTUnwrap(context.request["app_language"]?.string),
+                                     origin: try XCTUnwrap(context.request["origin"]?.string),
                                      useCache: useCache, id: id)
     }
 
@@ -501,6 +503,56 @@ extension HelperIntegrationTests {
         await fulfillment(of: [reopened.stopped], timeout: 10)
         XCTAssertTrue(reopened.failures.isEmpty)
         try verifyTranslation(context, turns: 1, cleanup: true)
+    }
+
+    @MainActor
+    func testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary() async throws {
+        for scenario in ["normal", "summary", "dictionary", "code"] {
+            let context = try translationContext(scenario: scenario, origin: "ocr")
+            defer { removeConfigurationHome(context.cleanupRoot) }
+            XCTAssertEqual(context.request["origin"], .string("ocr"))
+            XCTAssertEqual(context.request["use_cache"], .bool(true))
+            XCTAssertEqual(context.expected["kind"], .string("ocr"))
+            XCTAssertEqual(context.expected["task"], .string("text"))
+            XCTAssertEqual(context.expected["summarize"], .bool(false))
+            let session = ConfigurationNotices()
+            defer { session.connection.forceStop() }
+            startTranslation(session, context)
+            await fulfillment(of: [session.ready], timeout: 10)
+            assertNoTranslationCLI(context)
+            let saved = session.terminal("save")
+            session.connection.saveConfiguration(context.config, id: "save")
+            await fulfillment(of: [saved], timeout: 10)
+            session.assertOperation("save")
+            assertNoTranslationCLI(context)
+            for click in 0..<2 {
+                let id = "ocr_\(click)"
+                let completed = session.terminal(id)
+                try sendTranslation(session, context, id: id)
+                await fulfillment(of: [completed], timeout: 25)
+                assertTranslation(session, context, id: id)
+                XCTAssertTrue(session.events.contains { $0.id == id && $0.type == "delta" })
+            }
+            let loaded = session.terminal("history")
+            session.connection.loadHistory(kind: "ocr", id: "history")
+            await fulfillment(of: [loaded], timeout: 10)
+            session.assertOperation("history")
+            let entries = try session.historyEntries("history")
+            XCTAssertEqual(entries.count, 2, "Each explicit OCR click is a new translation, not a cache hit.")
+            for entry in entries {
+                XCTAssertEqual(entry["input"], context.request["text"])
+                XCTAssertEqual(entry["output"], context.expected["output"])
+                XCTAssertEqual(entry["kind"], .string("ocr"))
+                XCTAssertEqual(entry["sig"], context.expected["signature"])
+                XCTAssertEqual(entry["is_dict"], .bool(scenario == "dictionary"))
+                XCTAssertEqual(entry["is_code"], .bool(scenario == "code"))
+            }
+            try verifyTranslation(context, turns: 2, cleanup: false)
+            session.connection.stop()
+            await fulfillment(of: [session.stopped], timeout: 10)
+            XCTAssertTrue(session.failures.isEmpty)
+            try verifyTranslation(context, turns: 2, cleanup: true)
+        }
     }
 
     @MainActor

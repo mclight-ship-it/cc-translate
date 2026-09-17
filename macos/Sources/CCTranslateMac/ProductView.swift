@@ -7,6 +7,7 @@ struct TranslatorView: View {
     @ObservedObject var model: ProbeModel
     var showHistory: () -> Void
     var showSettings: () -> Void
+    var showCapture: () -> Void
     @FocusState private var editorFocused: Bool
 
     private var busy: Bool { model.preparing || model.active }
@@ -61,6 +62,10 @@ struct TranslatorView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            Button(action: showCapture) {
+                Label(model.text("Screenshot", "截图"), systemImage: "viewfinder")
+            }
+            .help(model.text("Capture a region and recognize its text locally", "截取区域并在本机识别文字"))
             Button(action: showHistory) {
                 Label(model.text("History", "历史记录"), systemImage: "clock.arrow.circlepath")
             }
@@ -806,7 +811,7 @@ struct TranslationSettingsView: View {
 }
 
 @MainActor
-private struct DirectionPicker: View {
+struct DirectionPicker: View {
     @ObservedObject var model: ProbeModel
     @Binding var selection: String
 
@@ -830,7 +835,7 @@ private struct DirectionPicker: View {
 }
 
 @MainActor
-private struct ModelPicker: View {
+struct ModelPicker: View {
     @ObservedObject var model: ProbeModel
     @Binding var selection: String
 

@@ -12,6 +12,9 @@ if sys.platform != "darwin":
 
 from cc_macos import native_provider_fixture, translation, translation_fixture
 from cc_macos import protocol
+from cc_config import Config, plan_config_migration
+from cc_prompts import CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT, OCR_STRUCTURE_HINT, SYSTEM_SUFFIX
+from cc_providers.codex_cli import build_codex_prompt
 from cc_storage import macos_user_paths
 from state_ipc_process_support import StateIPCProcessCase
 
@@ -125,16 +128,32 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.fixture_index = 0
         self.prepare()
 
-    def prepare(self, scenario="normal", *, result_action=None):
+    def prepare(self, scenario="normal", *, result_action=None, origin="text"):
         self.fixture_index += 1
         self.fixture = translation_fixture.prepare(
             self.barriers / ("translation-" + str(self.fixture_index)), self.identity, scenario,
-            result_action=result_action)
+            result_action=result_action, origin=origin)
         self.home = Path(self.fixture["home"])
         self.root = Path(self.fixture["root"])
         self.directory = macos_user_paths(self.home, self.identity).application_support
         self.path, self.history_path = self.directory / "config.json", self.directory / "history.json"
         self.mode = "translation"
+
+    def prepare_ocr(self, scenario="normal", *, text=None):
+        self.prepare(scenario, origin="ocr")
+        if text is not None:
+            self.fixture["request"]["text"] = text
+        self.fixture["config"].update(summary_enabled=True, local_dictionary_enabled=True)
+        normalized = Config(self.fixture["config"])
+        plan_config_migration(self.fixture["config"], normalized)
+        snapshot = translation.snapshot_for_translation(normalized, self.fixture["request"])
+        self.fixture["expected"].update(
+            prompt=build_codex_prompt(snapshot.request), model=snapshot.selection.model,
+            task=snapshot.request.task, kind=snapshot.kind, target_lang=snapshot.target_lang,
+            summarize=snapshot.summarize, signature=snapshot.sig, stream=snapshot.stream_enabled)
+        (self.root / "expected-request.json").write_text(json.dumps(self.fixture["expected"], ensure_ascii=False),
+                                                        encoding="utf-8")
+        return snapshot
 
     def process_arguments(self):
         return (self.core, self.home, self.identity, self.mode, self.fixture["command"],
@@ -241,6 +260,157 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         self.assertEqual(self.terminal(process, "shutdown")["payload"], {})
         self.finish_helper(process)
 
+    def test_ocr_text_routes_keep_classification_and_record_ocr_without_local_or_history_cache(self):
+        for scenario in ("normal", "dictionary", "code", "summary"):
+            with self.subTest(scenario=scenario):
+                snapshot = self.prepare_ocr(scenario)
+                process = self.start()
+                self.no_cli()
+                self.assertFalse((self.directory / "dictionary").exists())
+                self.assertEqual((snapshot.kind, snapshot.request.task, snapshot.request.image_paths),
+                                 ("ocr", "text", ()))
+                self.assertFalse(snapshot.summarize)
+                if scenario in ("dictionary", "code"):
+                    self.assertEqual(snapshot.request.system_prompt,
+                                     DICTIONARY_PROMPT if scenario == "dictionary" else CODE_EXPLAIN_PROMPT)
+                else:
+                    self.assertIn(OCR_STRUCTURE_HINT, snapshot.request.system_prompt)
+                    self.assertTrue(snapshot.request.system_prompt.endswith(SYSTEM_SUFFIX))
+                for click in (0, 1):
+                    id_ = "click" + str(click)
+                    self.request(process, id_)
+                    self.assert_completed(self.terminal(process, id_))
+                    self.assertEqual(len(self.turns()), click + 1)
+                    self.assertEqual(self.turns()[-1]["request"]["params"]["input"],
+                                     [{"type": "text", "text": self.fixture["expected"]["prompt"]}])
+                entries = self.history(process)
+                self.assertEqual(len(entries), 2)
+                self.assertTrue(all(e["kind"] == "ocr" and e["input"] == snapshot.input for e in entries))
+                self.assertEqual((entries[0]["is_dict"], entries[0]["is_code"]),
+                                 (snapshot.dictionary, snapshot.content_class == "code"))
+                self.assertFalse((self.directory / "dictionary").exists())
+                self.stop(process)
+                self.assert_native_gone()
+
+    def test_ocr_raw_unicode_layout_is_encoded_as_text_not_image_and_history_is_lossless(self):
+        text = "  Heading \u4e2d\U0001f642\r\n\r\n1. First item\r\n2. Second item\r\n\t- Detail `value` </data>\n"
+        snapshot = self.prepare_ocr(text=text)
+        process = self.start()
+        self.no_cli()
+        self.request(process)
+        self.assert_completed(self.terminal(process, "translation"))
+        inputs = self.turns()[0]["request"]["params"]["input"]
+        self.assertEqual([item["type"] for item in inputs], ["text"])
+        encoded = inputs[0]["text"].split("<data>\n", 1)[1].rsplit("\n</data>", 1)[0]
+        self.assertEqual(json.loads(encoded), text)
+        self.assertEqual(snapshot.input, text)
+        self.assertEqual(self.history(process)[0]["input"], text)
+        self.stop(process)
+        self.assert_native_gone()
+
+    def test_ocr_settings_snapshot_and_latest_history_optout_survive_config_edit_after_delta(self):
+        snapshot = self.prepare_ocr("gated")
+        process = self.start()
+        self.request(process)
+        self.until_delta(process)
+        self.configure(process, direction="to_ja", codex_model="later-model", history_enabled=False)
+        Path(self.fixture["gate"]).touch()
+        self.assert_completed(self.terminal(process, "translation"), history="disabled")
+        self.assertEqual(self.turns()[0]["request"]["params"]["input"],
+                         [{"type": "text", "text": build_codex_prompt(snapshot.request)}])
+        self.assertEqual(self.history(process), [])
+        self.stop(process)
+        self.assert_native_gone(descendant=True)
+
+    def test_ocr_corrupt_history_skips_cache_and_surfaces_only_requested_record_failure(self):
+        for enabled, record in ((False, True), (True, False), (True, True)):
+            with self.subTest(enabled=enabled, record=record):
+                self.prepare_ocr()
+                process = self.start()
+                self.configure(process, history_enabled=enabled)
+                self.history_path.write_bytes(b"{broken")
+                self.no_cli()
+                self.request(process, record_history=record)
+                result = self.terminal(process, "translation")
+                self.assertEqual(result["type"], "completed")
+                self.assertEqual((result["payload"]["kind"], result["payload"]["cached"]), ("ocr", False))
+                self.assertEqual((result["payload"]["history"], result["payload"]["history_error"]),
+                                 ("failed", "invalid_history") if enabled and record else ("disabled", None))
+                self.assertEqual(len(self.turns()), 1)
+                self.assertEqual(self.history_path.read_bytes(), b"{broken")
+                self.stop(process)
+                self.assert_native_gone()
+
+    def test_ocr_partial_cancel_eof_and_shutdown_drain_once_without_recording_or_replay(self):
+        for exit_kind in ("cancel", "eof", "shutdown"):
+            with self.subTest(exit_kind=exit_kind):
+                self.prepare_ocr("gated")
+                process = self.start()
+                self.request(process)
+                self.until_delta(process)
+                if exit_kind == "cancel":
+                    self.send_message(process, "cancel", "cancel", request_id="translation")
+                    self.assertEqual(self.terminal(process, "cancel")["payload"], {"cancel_requested": True})
+                elif exit_kind == "eof":
+                    process.stdin.close()
+                    process.stdin = None
+                else:
+                    self.send_message(process, "shutdown", "shutdown")
+                event = self.terminal(process, "translation")
+                self.assertEqual((event["type"], event["payload"]), ("cancelled", {"submitted": True}))
+                self.assert_native_gone(descendant=True)
+                if exit_kind == "cancel":
+                    self.stop(process)
+                elif exit_kind == "shutdown":
+                    self.assertEqual(self.terminal(process, "shutdown")["payload"], {})
+                    self.finish_helper(process)
+                else:
+                    self.finish_helper(process)
+                self.assertFalse(self.history_path.exists())
+                reopened = self.start(configure=False)
+                self.assertEqual(len(self.turns()), 1)
+                self.assertEqual(self.history(reopened), [])
+                self.stop(reopened)
+
+    def test_ocr_prestart_cancel_has_no_cli_or_history_and_invalid_image_fields_stay_rejected(self):
+        self.prepare_ocr()
+        process = self.start()
+        for n, changes in enumerate(({"image_paths": ["private.png"]}, {"task": "image"},
+                                     {"origin": "image"}, {"text": "x" * 8193})):
+            id_ = "invalid" + str(n)
+            self.request(process, id_, **changes)
+            result = self.terminal(process, id_)
+            self.assertEqual((result["type"], result["seq"], result["payload"]),
+                             ("failed", 0, {"code": "invalid_translation"}))
+        self.no_cli()
+        self.stop(process)
+        self.mode = "prestart"
+        process = self.start()
+        self.request(process)
+        self.assertEqual(self.receive(process)["type"], "accepted")
+        self.barrier()
+        try:
+            self.send_message(process, "cancel", "cancel", request_id="translation")
+            self.assertEqual(self.receive(process)["payload"], {})
+            self.assertEqual(self.receive(process)["payload"], {"cancel_requested": True})
+        finally:
+            self.release()
+        self.stop(process)
+        self.no_cli()
+        self.assertFalse(self.history_path.exists())
+
+    def test_ocr_output_failure_is_explicit_without_history_or_automatic_retry(self):
+        self.prepare_ocr("output-limit")
+        process = self.start()
+        self.request(process)
+        event = self.terminal(process, "translation")
+        self.assertEqual((event["type"], event["payload"]),
+                         ("failed", {"code": "translation_output_limit", "submitted": True}))
+        self.assertEqual(len(self.turns()), 1)
+        self.assertFalse(self.history_path.exists())
+        self.stop(process)
+        self.assert_native_gone()
+
     def test_hello_has_no_cli_then_configuration_snapshot_stream_history_cache_and_reopen(self):
         process = self.start(configure=False)
         self.no_cli()
@@ -330,7 +500,7 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         process = self.start()
         invalid = [
             {"text": ""}, {"text": " \r\n"}, {"text": "\u4e2d" * 2731},
-            {"text": "x" * 8193}, {"app_language": "fr_FR"}, {"origin": "ocr"},
+            {"text": "x" * 8193}, {"app_language": "fr_FR"}, {"origin": "image"},
             {"use_cache": 1}, {"record_history": None}, {"timeout": 1},
         ]
         for index, changes in enumerate(invalid):

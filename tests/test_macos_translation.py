@@ -16,10 +16,11 @@ from cc_config import CFG, Config, DEFAULT_CONFIG
 from cc_direction import DIRECTION_MODES, LANGUAGES, direction_prompt, resolve_target_lang
 from cc_prompts import (
     CODE_EXPLAIN_APPEND_PROMPT, CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT,
-    RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
+    OCR_STRUCTURE_HINT, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
 )
 from cc_summary import codex_summary_instruction
 from cc_providers.base import ProviderResult
+from cc_providers.codex_cli import build_codex_prompt
 from cc_providers.darwin_process import ProcessError
 from cc_macos import configuration, translation
 from cc_macos.protocol import RESERVED_ID, ProtocolError, decode_frame
@@ -33,6 +34,7 @@ else:
 
 TEXT = "Synthetic input with a complete sentence."
 OUTPUT = "Synthetic translated sentence."
+OCR_TEXT = "  Heading \u4e2d\U0001f642\r\n\r\n1. First item\r\n2. Second item\r\n\t- Detail `value`\r\n"
 
 
 def request(**changes):
@@ -177,6 +179,82 @@ class ResultActionContracts(unittest.TestCase):
 
 
 class TranslationContracts(unittest.TestCase):
+    def test_ocr_origin_is_text_only_with_unchanged_utf8_and_configuration_limits(self):
+        for origin in ("text", "selection", "ocr"):
+            translation.validate_translation_request(request(origin=origin, text="\U0001f642" * 2048))
+        for changes in ({"origin": "OCR"}, {"origin": "image"}, {"origin": None},
+                        {"text": "\U0001f642" * 2049}, {"text": "\ud800"}, {"text": " \r\n"},
+                        {"image_paths": []}, {"image_paths": ["private.png"]}, {"task": "image"},
+                        {"image": "base64"}, {"path": "private.png"}, {"ocr": True}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ProtocolError, "^invalid_translation$"):
+                translation.validate_translation_request(request(origin="ocr") | changes)
+        with self.assertRaisesRegex(translation.TranslationError, "^invalid_translation_settings$"):
+            translation.snapshot_for_translation(Config({CFG.MAX_CHARS: 1}), request(origin="ocr"))
+        self.assertFalse(translation.DarwinCodexProvider.capabilities.images)
+
+    def test_ocr_snapshot_preserves_raw_layout_and_text_only_provider_encoding(self):
+        payload = request(origin="ocr", text=OCR_TEXT)
+        config = Config({CFG.CODEX_MODEL: "explicit-model", CFG.DIRECTION: "to_ja",
+                         CFG.SUMMARY_ENABLED: True, "future": {"items": ["original"]}})
+        snapshot = translation.snapshot_for_translation(config, payload)
+        expected_prompt = direction_prompt("to_ja", "en_US") + OCR_STRUCTURE_HINT + SYSTEM_SUFFIX
+        self.assertEqual(snapshot.request.system_prompt, expected_prompt)
+        self.assertEqual((snapshot.origin, snapshot.kind, snapshot.input), ("ocr", "ocr", OCR_TEXT))
+        self.assertEqual((snapshot.request.task, snapshot.request.image_paths, snapshot.request.user_text),
+                         ("text", (), OCR_TEXT))
+        self.assertEqual((snapshot.target_lang, snapshot.summarize, snapshot.action), ("ja", False, "translation"))
+        encoded = build_codex_prompt(snapshot.request)
+        self.assertEqual(json.loads(encoded.split("<data>\n", 1)[1].rsplit("\n</data>", 1)[0]), OCR_TEXT)
+        payload.update(origin="text", text="changed")
+        config.update(codex_model="changed", direction="to_ko", summary_enabled=False)
+        config["future"]["items"].append("changed")
+        self.assertEqual((snapshot.request.model, snapshot.selection.model), ("explicit-model", "explicit-model"))
+        self.assertEqual(snapshot.config["future"]["items"], ("original",))
+        self.assertEqual(snapshot.request.system_prompt, expected_prompt)
+        self.assertEqual(snapshot.history_metadata["origin"], "ocr")
+        self.assertEqual(snapshot.history_metadata["input"], OCR_TEXT)
+        with self.assertRaises(TypeError):
+            snapshot.history_metadata["kind"] = "text"
+
+    def test_ocr_keeps_word_code_and_mixed_classification_but_always_has_ocr_history_kind(self):
+        mixed = "This sentence explains the call below.\n```python\nprint(value)\n```"
+        for text, content_class, is_dict in (("hello", "text", True),
+                                            ("def greeting():\n    return 42", "code", False),
+                                            (mixed, "mixed", False)):
+            with self.subTest(text=text):
+                snapshot = translation.snapshot_for_translation(Config(), request(origin="ocr", text=text))
+                self.assertEqual((snapshot.content_class, snapshot.dictionary, snapshot.kind),
+                                 (content_class, is_dict, "ocr"))
+                expected = (CODE_EXPLAIN_PROMPT if content_class == "code" else DICTIONARY_PROMPT if is_dict
+                            else direction_prompt("auto", "en_US") + OCR_STRUCTURE_HINT + SYSTEM_SUFFIX)
+                self.assertEqual(snapshot.request.system_prompt, expected)
+                self.assertEqual(snapshot.history_metadata["is_code"], content_class == "code")
+                self.assertFalse(snapshot.summarize)
+                self.assertEqual(snapshot.request.task, "text")
+                self.assertEqual(snapshot.request.image_paths, ())
+                if content_class == "code" or is_dict:
+                    self.assertIsNone(snapshot.target_lang)
+
+    def test_ocr_long_prose_never_evaluates_summary_and_all_directions_keep_layout_hint(self):
+        prose = "This is synthetic prose with complete sentences for the summary contract. " * 8
+        for direction in DIRECTION_MODES:
+            for language in ("en_US", "zh_CN"):
+                config = Config({CFG.SUMMARY_ENABLED: True, CFG.DIRECTION: direction})
+                with self.subTest(direction=direction, language=language), \
+                        patch.object(translation, "is_summarizable_prose", side_effect=AssertionError("summary classifier")), \
+                        patch.object(translation, "codex_summary_instruction", side_effect=AssertionError("summary prompt")):
+                    snapshot = translation.snapshot_for_translation(config, request(
+                        origin="ocr", text=prose, app_language=language))
+                self.assertEqual(snapshot.request.system_prompt,
+                                 direction_prompt(direction, language) + OCR_STRUCTURE_HINT + SYSTEM_SUFFIX)
+                self.assertEqual(snapshot.target_lang, resolve_target_lang(direction, language, prose))
+                self.assertEqual((snapshot.summarize, snapshot.request.task), (False, "text"))
+        for origin in ("text", "selection"):
+            snapshot = translation.snapshot_for_translation(Config(), request(origin=origin, text=prose))
+            self.assertTrue(snapshot.summarize)
+            self.assertEqual(snapshot.request.system_prompt, codex_summary_instruction(snapshot.target_lang))
+            self.assertNotIn(OCR_STRUCTURE_HINT, snapshot.request.system_prompt)
+
     def test_version_failure_categories_remain_distinct_and_allowlisted(self):
         for suffix in ("unsupported", "unreadable", "prerelease"):
             code = translation.provider_failure("appserver_version_" + suffix)
@@ -354,6 +432,80 @@ assert not any(name in sys.modules for name in ("cc_core", "cc_providers", "tkin
                     report = translation_fixture.verify(fixture["root"])
                     self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
 
+    def test_fixture_origin_preserves_defaults_and_generates_exact_ocr_provider_expectations_without_cli(self):
+        from cc_macos import translation_fixture
+        from cc_config import plan_config_migration
+
+        with tempfile.TemporaryDirectory(prefix=".origin-fixture-", dir=Path.cwd()) as directory:
+            root = Path(directory)
+            with patch.object(subprocess, "Popen", side_effect=AssertionError("prepare must not execute CLI")):
+                default = translation_fixture.prepare(root / "default", "synthetic")
+                explicit = translation_fixture.prepare(root / "explicit", "synthetic", origin="text")
+                self.assertEqual(default["request"], explicit["request"])
+                self.assertEqual(default["expected"], explicit["expected"])
+                for origin in ("text", "selection", "ocr"):
+                    for scenario in ("normal", "dictionary", "code", "summary"):
+                        with self.subTest(origin=origin, scenario=scenario):
+                            fixture = translation_fixture.prepare(
+                                root / (origin + "-" + scenario), "synthetic", scenario, origin=origin)
+                            self.assertEqual(fixture["request"]["origin"], origin)
+                            normalized = Config(fixture["config"])
+                            plan_config_migration(fixture["config"], normalized)
+                            snapshot = translation.snapshot_for_translation(normalized, fixture["request"])
+                            self.assertEqual(fixture["expected"]["prompt"], build_codex_prompt(snapshot.request))
+                            self.assertEqual(set(fixture["expected"]), {
+                                "prompt", "model", "task", "output", "kind", "target_lang",
+                                "summarize", "signature", "stream",
+                            })
+                            self.assertEqual(json.loads((Path(fixture["root"]) / "expected-request.json").read_bytes()),
+                                             fixture["expected"])
+                            if origin == "ocr":
+                                self.assertEqual((fixture["expected"]["kind"], fixture["expected"]["task"],
+                                                  fixture["expected"]["summarize"]), ("ocr", "text", False))
+                                self.assertTrue(fixture["request"]["use_cache"])
+                                self.assertTrue(fixture["request"]["record_history"])
+                            if scenario == "normal":
+                                self.assertEqual(fixture["request"]["text"], translation_fixture.INPUT)
+                                self.assertIn("\U0001f642", fixture["request"]["text"])
+                                self.assertTrue(fixture["request"]["text"].endswith("\r\n"))
+                            report = translation_fixture.verify(fixture["root"])
+                            self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
+
+    def test_fixture_invalid_origin_and_result_action_combination_have_no_side_effects(self):
+        from cc_macos import translation_fixture
+
+        with tempfile.TemporaryDirectory(prefix=".origin-fixture-", dir=Path.cwd()) as directory:
+            for index, origin in enumerate((None, False, [], "image", "OCR")):
+                root = Path(directory) / str(index)
+                with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, "^synthetic_origin_required$"):
+                    translation_fixture.prepare(root, "synthetic", origin=origin)
+                self.assertFalse(root.exists())
+            root = Path(directory) / "action"
+            with self.assertRaisesRegex(ValueError, "^synthetic_origin_not_applicable$"):
+                translation_fixture.prepare(root, "synthetic", result_action="summary", origin="ocr")
+            self.assertFalse(root.exists())
+
+    def test_fixture_cli_origin_prepares_ocr_expected_data_without_submission_or_checkout_fallback(self):
+        from cc_macos import translation_fixture
+
+        script = Path(configuration.__file__).resolve().with_name("translation_fixture.py")
+        with tempfile.TemporaryDirectory(prefix=".origin-cli-", dir=Path.cwd()) as directory:
+            for scenario in ("normal", "summary"):
+                root = Path(directory) / scenario
+                result = subprocess.run(
+                    [sys.executable, "-I", "-B", "-X", "utf8", str(script), "--prepare", str(root),
+                     "--application-id", "synthetic", "--scenario", scenario, "--origin", "ocr"],
+                    cwd=directory, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, b"")
+                fixture = json.loads(result.stdout)
+                self.assertEqual(fixture["request"]["origin"], "ocr")
+                self.assertEqual((fixture["expected"]["kind"], fixture["expected"]["task"],
+                                  fixture["expected"]["summarize"]), ("ocr", "text", False))
+                self.assertIn(OCR_STRUCTURE_HINT, fixture["expected"]["prompt"])
+                report = translation_fixture.verify(fixture["root"])
+                self.assertEqual((report["submitted_turns"], report["processes"]), (0, 0))
+
 
 class ScriptedProvider:
     def __init__(self, *args, **kwargs):
@@ -439,6 +591,194 @@ class _TranslationDirectory(_ConfigurationDirectory):
     def history(self):
         return self.session.perform_history(
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
+
+
+class OCRTranslationServiceTests(_TranslationDirectory):
+    def test_explicit_ocr_streams_once_per_click_without_cache_or_local_dictionary_and_records_flags(self):
+        self.session.perform({"operation": "config_save", "config": self.config | {
+            CFG.SUMMARY_ENABLED: True, CFG.LOCAL_DICTIONARY_ENABLED: True}})
+        self.assertEqual(self.provider.requests, [])
+        self.assertFalse((self.directory / "dictionary").exists())
+        inputs = [(OCR_TEXT, False, False), ("hello", True, False),
+                  ("def greeting():\n    return 42", False, True)]
+        with patch.object(self.session._history, "find_cached", side_effect=AssertionError("OCR cache")), \
+                patch.object(self.session._dictionary, "perform", side_effect=AssertionError("OCR local dictionary")):
+            for index, (text, is_dict, is_code) in enumerate(inputs):
+                for click in (0, 1):
+                    id_ = "ocr" + str(index) + str(click)
+                    self.translate(id_, origin="ocr", text=text)
+                    self.assertTrue(self.stdout.terminal(id_))
+                    events = [e for e in self.stdout.events if e["id"] == id_]
+                    self.assertEqual([e["type"] for e in events], ["accepted", "started", "delta", "completed"])
+                    self.assertEqual([e["seq"] for e in events], [0, 1, 2, 3])
+                    payload = events[-1]["payload"]
+                    self.assertEqual(payload, {
+                        "text": OUTPUT, "submitted": True, "cached": False, "kind": "ocr",
+                        "target_lang": None if is_dict or is_code else "zh", "summarize": False,
+                        "history": "recorded", "history_error": None,
+                    })
+                    entry = self.history()[0]
+                    self.assertEqual((entry["input"], entry["output"], entry["kind"], entry["is_dict"], entry["is_code"]),
+                                     (text, OUTPUT, "ocr", is_dict, is_code))
+                    self.assertEqual(self.provider.requests[-1].user_text, text)
+                    self.assertEqual(self.provider.requests[-1].image_paths, ())
+        self.assertEqual(len(self.provider.requests), 6)
+        self.assertEqual(len(self.history()), 6)
+        self.assertFalse((self.directory / "dictionary").exists())
+
+    def test_ocr_complete_path_uses_same_contract_and_explicit_history_optout(self):
+        config = self.config | {CFG.CODEX_STREAMING_EXPERIMENTAL: False}
+        with patch.object(self.session, "perform", return_value={"config": config}), \
+                patch.object(self.session._history, "find_cached", side_effect=AssertionError("OCR cache")):
+            self.translate(origin="ocr", text=OCR_TEXT, record_history=False)
+            self.assertTrue(self.stdout.terminal("translate"))
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == "translate"],
+                         ["accepted", "started", "completed"])
+        self.assertEqual(self.stdout.result("translate")["payload"]["history"], "disabled")
+        self.assertEqual(self.provider.requests[0].timeout_seconds, 60)
+        self.assertEqual(self.history(), [])
+
+    def test_ocr_corrupt_history_never_blocks_cache_bypass_or_repairs_history(self):
+        path = self.directory / "history.json"
+        path.write_bytes(b"broken")
+        for index, (enabled, record, status, error) in enumerate((
+                (False, True, "disabled", None), (True, False, "disabled", None),
+                (True, True, "failed", "invalid_history"))):
+            self.session.perform({"operation": "config_save", "config": self.config | {CFG.HISTORY_ENABLED: enabled}})
+            with patch.object(self.session._history, "find_cached", side_effect=AssertionError("OCR cache")):
+                self.translate(str(index), origin="ocr", record_history=record)
+                self.assertTrue(self.stdout.terminal(str(index)))
+            result = self.stdout.result(str(index))
+            self.assertEqual(result["type"], "completed")
+            self.assertEqual((result["payload"]["text"], result["payload"]["kind"],
+                              result["payload"]["history"], result["payload"]["history_error"]),
+                             (OUTPUT, "ocr", status, error))
+            self.assertEqual(path.read_bytes(), b"broken")
+        self.assertEqual(len(self.provider.requests), 3)
+
+    def test_ocr_running_snapshot_ignores_later_config_and_honors_latest_history_optout(self):
+        self.provider.release.clear()
+        self.translate(origin="ocr", text=OCR_TEXT)
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.session.perform({"operation": "config_save", "config": self.config | {
+                CFG.CODEX_MODEL: "next-model", CFG.DIRECTION: "to_ja", CFG.HISTORY_ENABLED: False}})
+        finally:
+            self.provider.release.set()
+        self.assertTrue(self.stdout.terminal("translate"))
+        captured = self.provider.requests[0]
+        self.assertEqual((captured.model, captured.user_text, captured.image_paths), ("synthetic", OCR_TEXT, ()))
+        self.assertEqual(captured.system_prompt, direction_prompt("auto", "en_US") + OCR_STRUCTURE_HINT + SYSTEM_SUFFIX)
+        result = self.stdout.result("translate")["payload"]
+        self.assertEqual((result["target_lang"], result["history"]), ("zh", "disabled"))
+        self.assertEqual(self.history(), [])
+
+    def test_ocr_prestart_cancel_and_finish_rejection_never_record_or_replay(self):
+        queued = []
+        with patch.object(self.server, "_start_translation",
+                          side_effect=lambda req, payload: queued.append((req, payload)) or True):
+            self.translate(origin="ocr")
+        self.server._handle(message("cancel", "cancel", request_id="translate"))
+        self.server._translate(*queued[0])
+        self.assertEqual([(e["type"], e["payload"]) for e in self.stdout.events if e["id"] == "translate"],
+                         [("accepted", {"operation": "translate"}), ("cancelled", {})])
+        self.assertEqual(self.provider.requests, [])
+        cancel = threading.Event()
+        cancel.set()
+        result = self.session.translate(request(origin="ocr"), cancel, lambda _: None, lambda: True)
+        self.assertEqual(result, ("cancelled", {"submitted": False}))
+        self.assertEqual(self.provider.requests, [])
+        result = self.session.translate(request(origin="ocr"), threading.Event(), lambda _: None, lambda: False)
+        self.assertEqual(result, ("cancelled", {"submitted": True}))
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.history(), [])
+
+    def test_ocr_partial_cancel_waits_for_drain_and_cleanup_failure_remains_a_failure(self):
+        for cleanup_failure in (False, True):
+            emitted, release = threading.Event(), threading.Event()
+            def partial(captured, on_delta, cancel):
+                self.provider.requests.append(captured)
+                on_delta("Partial OCR text")
+                emitted.set()
+                if not release.wait(3):
+                    raise AssertionError("Synthetic drain not released")
+                return ProviderResult(False, error_code="group_cleanup_failed" if cleanup_failure else "cancelled",
+                                      metrics=(("turn_submitted", True),))
+            id_ = "ocr" + str(cleanup_failure)
+            with patch.object(self.provider, "stream", side_effect=partial):
+                self.translate(id_, origin="ocr")
+                try:
+                    self.assertTrue(emitted.wait(1))
+                    self.server._handle(message("cancel" + id_, "cancel", request_id=id_))
+                    self.assertTrue(self.stdout.result("cancel" + id_)["payload"]["cancel_requested"])
+                    self.assertFalse(any(e["id"] == id_ and e["type"] in ("cancelled", "failed")
+                                         for e in self.stdout.events))
+                finally:
+                    release.set()
+                self.assertTrue(self.stdout.terminal(id_))
+            expected = ({"code": "provider_cleanup_failed", "submitted": True}
+                        if cleanup_failure else {"submitted": True})
+            self.assertEqual(self.stdout.result(id_)["payload"], expected)
+            self.assertEqual(self.stdout.result(id_)["type"], "failed" if cleanup_failure else "cancelled")
+        self.assertEqual(len(self.provider.requests), 2)
+        self.assertEqual(self.history(), [])
+
+    def test_ocr_provider_errors_and_output_limits_never_record_partial_success(self):
+        for code, expected in (("rpc_timeout", "translation_timeout"), ("PRIVATE", "provider_failed"),
+                                ("invalid_appserver_message", "provider_protocol_error")):
+            self.provider.result_code = code
+            self.translate(code, origin="ocr")
+            self.assertTrue(self.stdout.terminal(code))
+            self.assertEqual(self.stdout.result(code)["payload"], {"code": expected, "submitted": True})
+        self.provider.result_code = ""
+        self.provider.chunks = ["\0" * 4000]
+        self.translate("overflow", origin="ocr")
+        self.assertTrue(self.stdout.terminal("overflow"))
+        self.assertEqual(self.stdout.result("overflow")["payload"],
+                         {"code": "translation_output_limit", "submitted": True})
+        self.assertEqual(self.history(), [])
+        self.assertEqual(len(self.provider.requests), 4)
+
+    def test_ocr_unknown_transport_has_no_fabricated_terminal_or_retry(self):
+        def unknown(captured, on_delta, _cancel):
+            self.provider.requests.append(captured)
+            on_delta("Partial OCR")
+            raise ProcessError("PRIVATE transport")
+        with patch.object(self.provider, "stream", side_effect=unknown):
+            self.translate(origin="ocr")
+            self.server._join_workers()
+        self.assertEqual([e["type"] for e in self.stdout.events if e["id"] == "translate"],
+                         ["accepted", "started", "delta"])
+        self.assertEqual(self.stdout.result(RESERVED_ID)["payload"], {"code": "internal_error"})
+        self.assertTrue(self.server._stopping)
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.history(), [])
+
+    def test_ocr_shutdown_drains_before_releasing_provider_and_state_owners(self):
+        self.provider.release.clear()
+        self.translate(origin="ocr")
+        try:
+            self.assertTrue(self.provider.entered.wait(1))
+            self.assertFalse(self.server._handle(message("shutdown", "shutdown")))
+            self.assertEqual(self.provider.closed, 0)
+            self.assertIsNotNone(self.session._owner)
+        finally:
+            self.provider.release.set()
+        self.server._join_workers()
+        self.session.close()
+        self.assertEqual(self.stdout.result("translate")["type"], "cancelled")
+        self.assertEqual(self.provider.closed, 1)
+        self.assertIsNone(self.session._owner)
+        self.assertIsNone(self.session._history)
+        self.assertFalse((self.directory / "history.json").exists())
+
+    def test_ocr_config_failure_remains_pre_submission_and_does_not_call_provider(self):
+        self.path.write_bytes(b"{broken")
+        self.translate(origin="ocr")
+        self.assertTrue(self.stdout.terminal("translate"))
+        self.assertEqual(self.stdout.result("translate")["payload"], {"code": "invalid_config", "submitted": False})
+        self.assertEqual(self.path.read_bytes(), b"{broken")
+        self.assertEqual(self.provider.requests, [])
 
 
 class TranslationServiceTests(_TranslationDirectory):

@@ -20,7 +20,7 @@ def _root(root):
     return root
 
 
-def prepare(root, application_id, scenario="normal", *, result_action=None, target_language=None):
+def prepare(root, application_id, scenario="normal", *, result_action=None, target_language=None, origin="text"):
     from cc_config import Config, plan_config_migration
     from cc_providers.codex_cli import build_codex_prompt
     from cc_storage import macos_user_paths
@@ -30,6 +30,10 @@ def prepare(root, application_id, scenario="normal", *, result_action=None, targ
     root = _root(root)
     if scenario not in SCENARIOS:
         raise ValueError("synthetic_scenario_required")
+    if type(origin) is not str or origin not in ("text", "selection", "ocr"):
+        raise ValueError("synthetic_origin_required")
+    if result_action is not None and origin != "text":
+        raise ValueError("synthetic_origin_not_applicable")
     macos_user_paths(root, application_id)
     root.mkdir(parents=True, exist_ok=True)
     native = root / "native"
@@ -62,7 +66,7 @@ def prepare(root, application_id, scenario="normal", *, result_action=None, targ
     elif scenario == "envelope-limit":
         output = "x" * 12_000
     request = {"operation": "translate", "text": text, "app_language": "zh_CN",
-               "origin": "text", "use_cache": True, "record_history": True}
+               "origin": origin, "use_cache": True, "record_history": True}
     normalized = Config(config)
     plan_config_migration(config, normalized)
     if result_action is None:
@@ -144,6 +148,8 @@ def main(arguments=None):
     action.add_argument("--verify", type=Path)
     parser.add_argument("--application-id")
     parser.add_argument("--scenario", choices=SCENARIOS, default="normal")
+    parser.add_argument("--origin", choices=("text", "selection", "ocr"), default="text",
+                        help="Origin for prepared text translation requests.")
     parser.add_argument("--result-action",
                         choices=("concise", "formal", "summary", "explain_code", "as_text", "retranslate"))
     parser.add_argument("--target-language")
@@ -154,7 +160,8 @@ def main(arguments=None):
         if arguments.application_id is None:
             parser.error("--prepare requires --application-id")
         result = prepare(arguments.prepare, arguments.application_id, arguments.scenario,
-                         result_action=arguments.result_action, target_language=arguments.target_language)
+                         result_action=arguments.result_action, target_language=arguments.target_language,
+                         origin=arguments.origin)
     else:
         result = verify(arguments.verify, require_cleanup=arguments.require_cleanup,
                         require_descendant=arguments.require_descendant)

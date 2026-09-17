@@ -222,6 +222,44 @@ final class TranslationHelperConnectionTests: XCTestCase {
     }
 
     @MainActor
+    func testOCRTextTypedAPIKeepsUnicodeLayoutAndOriginWithoutImageTransport() async throws {
+        let text = "Heading\n  1. \u{4e2d}\u{6587}\n  2. second line"
+        var result = completion
+        result["kind"] = .string("ocr")
+        let script = try connectedScript("""
+        \(readLine)
+        printf '%s' "$line" > "$HOME/ocr-request"
+        \(try emit("ocr", 0, "accepted", operation))
+        \(try emit("ocr", 1, "started", operation))
+        \(try emit("ocr", 2, "delta", ["text": .string("partial"), "submitted": .bool(true)]))
+        \(try emit("ocr", 3, "completed", result))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let terminal = notices.terminal("ocr")
+        XCTAssertEqual(notices.connection.translate(text: text, appLanguage: "zh_CN", origin: "ocr",
+                                                    useCache: false, id: "ocr"), "ocr")
+        await fulfillment(of: [terminal], timeout: 10)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        let captured = try JSONValue.parse(Data(contentsOf: context.home.appendingPathComponent("ocr-request")))
+        XCTAssertEqual(captured.object?["payload"], .object([
+            "operation": .string("translate"), "text": .string(text), "app_language": .string("zh_CN"),
+            "origin": .string("ocr"), "use_cache": .bool(false), "record_history": .bool(true)
+        ]))
+        XCTAssertEqual(notices.events.filter { $0.id == "ocr" }.map(\.type), ["accepted", "started", "delta", "completed"])
+        XCTAssertEqual(notices.events.first { $0.id == "ocr" && $0.type == "completed" }?.payload, result)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.codex.path))
+    }
+
+    @MainActor
     func testResultActionTypedAPIEncodesExactRequestAndStreamsWithoutHistory() async throws {
         let action: [String: JSONValue] = ["operation": .string("result_action")]
         var result = completion

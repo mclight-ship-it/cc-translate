@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 import cc_app_results
+import cc_prompts
 from cc_providers.base import ProviderRequest, ProviderResult, ProviderSelection
 from tests._tr import tr
 from tests import test_full as fixtures
@@ -88,6 +89,64 @@ def stub_rendering(app):
 
 
 class RequestSnapshotWindowsTests(unittest.TestCase):
+    def test_ocr_layout_prompt_is_shared_with_unchanged_windows_bytes_and_no_image_task(self):
+        self.assertIs(tr.OCR_STRUCTURE_HINT, cc_prompts.OCR_STRUCTURE_HINT)
+        self.assertIs(tr.with_ocr_structure_hint, cc_prompts.with_ocr_structure_hint)
+        text = "  Heading \u4e2d\U0001f642\r\n\r\n1. First item\r\n2. Second item\r\n"
+        for direction in ("auto", "to_ja"):
+            for origin in ("text", "selection", "ocr"):
+                app = app_for(text, direction=direction, language="en_US", summary_enabled=True)
+                app._last_origin = origin
+                meta = app._history_meta()
+                snapshot = meta["snapshot"]
+                expected = (tr.direction_prompt(direction, "en_US")
+                            + (cc_prompts.OCR_STRUCTURE_HINT if origin == "ocr" else "") + tr.SYSTEM_SUFFIX)
+                self.assertEqual(snapshot.request.system_prompt.encode("utf-8"), expected.encode("utf-8"))
+                self.assertEqual((snapshot.request.user_text, snapshot.request.image_paths, snapshot.request.task),
+                                 (text, (), "text"))
+                self.assertEqual(snapshot.kind, "ocr" if origin == "ocr" else "text")
+
+    def test_local_ocr_dispatch_skips_dictionary_and_cache_but_keeps_word_code_and_summary_rules(self):
+        for text, prompt in (
+                ("hello", tr.DICTIONARY_PROMPT),
+                ("def greeting():\n    return 42", tr.CODE_EXPLAIN_PROMPT),
+                ("A natural language source sentence with context. " * 30,
+                 tr.direction_prompt("auto", "en_US") + cc_prompts.OCR_STRUCTURE_HINT + tr.SYSTEM_SUFFIX)):
+            app = app_for(text, language="en_US", summary_enabled=True,
+                          history_enabled=True, local_dictionary_enabled=True)
+            app._local_dictionary = mock.Mock()
+            app._local_dictionary.lookup.side_effect = AssertionError("OCR local lookup")
+            with mock.patch.object(tr, "find_cached_translation", side_effect=AssertionError("OCR cache")), \
+                    mock.patch.object(tr.threading, "Thread") as worker:
+                app._show_loading(text, origin="ocr")
+            snapshot = worker.call_args.kwargs["args"][2]["snapshot"]
+            self.assertEqual((snapshot.origin, snapshot.kind, snapshot.summarize), ("ocr", "ocr", False))
+            self.assertEqual(snapshot.request.system_prompt, prompt)
+            self.assertEqual(snapshot.request.task, "text")
+            self.assertEqual(snapshot.request.image_paths, ())
+            self.assertEqual(snapshot.content_class, tr.classify_selection(text))
+            self.assertEqual(snapshot.dictionary, tr.is_single_word(text))
+            app._provider_registry.get.assert_not_called()
+
+    def test_local_ocr_worker_reuses_captured_text_request_and_records_ocr_metadata(self):
+        for text in ("hello", "def greeting():\n    return 42", "  OCR line one.\r\nOCR line two. \n"):
+            app = app_for(text, language="en_US", history_enabled=True)
+            with mock.patch.object(tr.threading, "Thread") as worker:
+                app._show_loading(text, origin="ocr", use_cache=False)
+            target, args = worker.call_args.kwargs["target"], worker.call_args.kwargs["args"]
+            snapshot = args[2]["snapshot"]
+            app._last_input, app._last_origin = "later request", "text"
+            app.cfg.update(codex_model="later model", direction="to_ja")
+            with mock.patch.object(tr, "log_perf"), mock.patch.object(tr, "add_history") as write:
+                target(*args)
+            captured = app._provider_registry.get.return_value.complete.call_args.args[0]
+            self.assertIs(captured, snapshot.request)
+            self.assertEqual(captured.user_text, text)
+            self.assertEqual(captured.image_paths, ())
+            write.assert_called_once_with(text, "SYNTHETIC RESULT", tr.is_single_word(text),
+                                          app.cfg[tr.CFG.HISTORY_LIMIT], is_code=snapshot.content_class == "code",
+                                          kind="ocr", sig=snapshot.sig)
+
     def test_oracle_matches_fixed_source_ast_fingerprint(self):
         body = ast.Module(body=ast.parse(LEGACY_META).body[0].body, type_ignores=[])
         self.assertEqual(

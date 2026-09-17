@@ -8,7 +8,7 @@ from cc_config import CFG
 from cc_direction import DIRECTION_MODES, LANGUAGES, direction_prompt, resolve_target_lang
 from cc_prompts import (
     CODE_EXPLAIN_APPEND_PROMPT, CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT,
-    PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
+    PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX, with_ocr_structure_hint,
 )
 from cc_providers.base import CODEX_PROVIDER, ProviderRequest, ProviderSelection
 from cc_providers.codex_darwin import DarwinCodexProvider
@@ -66,7 +66,7 @@ def validate_translation_request(payload):
     if (payload["operation"] != "translate" or type(payload["text"]) is not str
             or not payload["text"].strip()
             or payload["app_language"] not in ("zh_CN", "en_US")
-            or payload["origin"] not in ("text", "selection")
+            or payload["origin"] not in ("text", "selection", "ocr")
             or type(payload["use_cache"]) is not bool or type(payload["record_history"]) is not bool):
         raise ProtocolError("invalid_translation")
     try:
@@ -120,7 +120,7 @@ def snapshot_for_translation(config, payload):
     model, direction, language = _snapshot_settings(config, payload)
     text = payload["text"]
     content_class, dictionary = classify_selection(text), is_single_word(text)
-    summarize = bool(config[CFG.SUMMARY_ENABLED] and content_class in ("text", "mixed")
+    summarize = bool(payload["origin"] != "ocr" and config[CFG.SUMMARY_ENABLED] and content_class in ("text", "mixed")
                      and not dictionary and len(text) >= SUMMARY_MIN_CHARS and is_summarizable_prose(text))
     target = None if content_class == "code" or dictionary else resolve_target_lang(direction, language, text)
     if content_class == "code":
@@ -130,7 +130,7 @@ def snapshot_for_translation(config, payload):
     elif summarize:
         prompt = codex_summary_instruction(target)
     else:
-        prompt = direction_prompt(direction, language) + SYSTEM_SUFFIX
+        prompt = with_ocr_structure_hint(direction_prompt(direction, language), payload["origin"]) + SYSTEM_SUFFIX
     return RequestSnapshot(
         request=ProviderRequest("translation_summary" if summarize else "text", model, prompt, text,
                                 timeout_seconds=90 if config[CFG.CODEX_STREAMING_EXPERIMENTAL] else 60),
@@ -221,7 +221,7 @@ class TranslationSession(ConfigurationSession):
             config = self.perform({"operation": "config_load"})["config"]
             snapshot = snapshot_for_translation(config, payload)
             cached = None
-            if payload["use_cache"] and config[CFG.HISTORY_ENABLED]:
+            if snapshot.origin != "ocr" and payload["use_cache"] and config[CFG.HISTORY_ENABLED]:
                 from .history import HistoryError
                 try:
                     cached = self._history.find_cached(snapshot.input, snapshot.kind, snapshot.sig)

@@ -31,13 +31,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var resultPanel: NSPanel?
     private var historyPanel: NSPanel?
     private var settingsPanel: NSPanel?
+    private var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
+    private var selectionOverlay: RegionSelectionOverlay?
+    private weak var captureReturnWindow: NSWindow?
+    private weak var captureReturnResponder: NSResponder?
+    private var captureReturnApplication: NSRunningApplication?
     private var menuTarget: FocusTarget?
-    private let model = ProbeModel()
-    private let diagnostics = ProbeModel(persistsPreferences: false)
+    private let model: ProbeModel
+    private let capture: CaptureModel
+    private let diagnostics: ProbeModel
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
+    private var captureObservation: AnyCancellable?
+
+    override convenience init() {
+        self.init(model: ProbeModel(), capture: CaptureModel(), diagnostics: ProbeModel(persistsPreferences: false))
+    }
+
+    init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel) {
+        self.model = model
+        self.capture = capture
+        self.diagnostics = diagnostics
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.loadPresentation()
@@ -48,18 +66,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         configureMenus()
         model.onSelection = { [weak self] result in
             guard let self = self else { return }
+            // Reviewing a capture never opts its text into passive translation.
+            guard self.selectionOverlay == nil, self.capturePanel?.isKeyWindow != true else { return }
             if self.model.translatePassiveSelections {
                 self.model.translateSelection(result)
             }
         }
         model.onTranslationStarted = { [weak self] in
-            guard let self, self.model.translationOrigin == "selection" else { return }
+            guard let self, ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
             self.showTranslationResults = true
             self.showResult()
         }
         model.onTranslationResult = { [weak self] _ in
             guard let self = self, !self.terminating, self.showTranslationResults else { return }
-            if self.model.translationOrigin == "selection" { self.showResult() }
+            if ["selection", "ocr"].contains(self.model.translationOrigin) { self.showResult() }
         }
         model.onConfigurationRequired = { [weak self] in self?.openSettings() }
         model.onPresentationChanged = { [weak self] in
@@ -78,6 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         model.onStopped = { [weak self] in self?.finishTermination() }
         diagnostics.onStopped = { [weak self] in self?.finishTermination() }
+        captureObservation = capture.$phase.dropFirst().removeDuplicates().sink { [weak self] phase in
+            DispatchQueue.main.async {
+                guard let self, !self.terminating, self.capture.phase == phase else { return }
+                self.updateCapturePresentation()
+            }
+        }
         // Intentionally no window, helper, TCC check, event monitor, or network at launch.
     }
 
@@ -94,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.delegate = self
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: menu)
         add(model.text("Translate selected text", "翻译选中文字"), action: #selector(translateSelection), to: menu)
+        add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: menu)
         add(model.text("Show last result", "显示上次结果"), action: #selector(recallResult), to: menu)
         menu.addItem(.separator())
         add(model.text("Double ⌘C to translate", "双击 ⌘C 翻译"), action: #selector(toggleMonitor), to: menu).tag = 10
@@ -116,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let file = NSMenu(title: model.text("File", "文件"))
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: file)
         add(model.text("Translate text", "翻译当前文字"), action: #selector(submitInput), key: "\r", to: file)
+        add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: file)
         add(model.text("History…", "历史记录…"), action: #selector(openHistory), key: "y", to: file)
         file.addItem(NSMenuItem(title: model.text("Close", "关闭"), action: #selector(NSWindow.performClose(_:)),
                                keyEquivalent: "w"))
@@ -141,9 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         historyPanel?.title = model.text("History", "历史记录")
         settingsPanel?.title = model.text("Settings", "设置")
         diagnosticsPanel?.title = model.text("Diagnostics", "诊断")
+        capturePanel?.title = model.text("Screenshot translation", "截图翻译")
         let appearance: NSAppearance? = model.appearance == "dark" ? NSAppearance(named: .darkAqua) :
             model.appearance == "light" ? NSAppearance(named: .aqua) : nil
-        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel] { panel?.appearance = appearance }
+        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel] { panel?.appearance = appearance }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -164,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             panel.delegate = self
             panel.contentView = NSHostingView(rootView: TranslatorView(model: model,
                 showHistory: { [weak self] in self?.openHistory() },
-                showSettings: { [weak self] in self?.openSettings() }))
+                showSettings: { [weak self] in self?.openSettings() },
+                showCapture: { [weak self] in self?.startCapture() }))
             panel.center()
             inputPanel = panel
         }
@@ -179,7 +209,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if selectionOverlay != nil { return menuItem.action == #selector(quit) }
         if menuItem.action == #selector(submitInput) {
+            if capturePanel?.isKeyWindow == true {
+                let composing = (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+                return !composing && capture.canTranslate && !model.active && !model.preparing
+            }
             let composing = (inputPanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
             return inputPanel?.isKeyWindow == true && !composing && !model.active && !model.preparing &&
                 !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -188,7 +223,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return true
     }
 
-    @objc private func submitInput() { model.translate() }
+    @objc private func submitInput() {
+        if capturePanel?.isKeyWindow == true {
+            guard (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+            capture.translate(using: model)
+        } else if inputPanel?.isKeyWindow == true {
+            guard (inputPanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+            model.translate()
+        }
+    }
+
+    @objc private func startCapture() {
+        if (capturePanel == nil || NSApp.keyWindow !== capturePanel) && selectionOverlay == nil {
+            captureReturnWindow = NSApp.keyWindow
+            captureReturnResponder = NSApp.keyWindow?.firstResponder
+            let application = NSWorkspace.shared.frontmostApplication
+            captureReturnApplication = application?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                ? nil : application
+        }
+        selectionOverlay?.dismiss()
+        discardCapturePanel()
+        capture.start()
+        ensureCapturePanel()
+        activate(capturePanel)
+    }
+
+    private func ensureCapturePanel() {
+        guard capturePanel == nil else { return }
+        capturePanel = makePanel(title: model.text("Screenshot translation", "截图翻译"),
+            width: 860, height: 680, minimum: NSSize(width: 620, height: 600),
+            root: CaptureView(capture: capture, model: model,
+                captureAgain: { [weak self] in self?.startCapture() },
+                reselect: { [weak self] in self?.capture.reselect() },
+                close: { [weak self] in self?.capturePanel?.performClose(nil) }))
+    }
+
+    private func updateCapturePresentation() {
+        switch capture.phase {
+        case .selecting:
+            let appearance = capturePanel?.appearance
+            discardCapturePanel()
+            let overlay = RegionSelectionOverlay(text: { [weak self] english, chinese in
+                self?.model.text(english, chinese) ?? english
+            })
+            selectionOverlay?.dismiss()
+            selectionOverlay = overlay
+            overlay.present(frames: capture.frames, appearance: appearance) { [weak self] outcome in
+                guard let self else { return }
+                self.selectionOverlay = nil
+                switch outcome {
+                case .selected(let rectangle): self.capture.select(rectangle)
+                case .cancelled: self.capture.cancel()
+                case .pending, .tooSmall: break
+                }
+            }
+        case .cancelled, .idle:
+            selectionOverlay?.dismiss()
+            selectionOverlay = nil
+            discardCapturePanel()
+            restoreCaptureFocus()
+        case .capturing, .recognizing, .ready, .empty, .failed:
+            selectionOverlay?.dismiss()
+            selectionOverlay = nil
+            let shouldActivate = capturePanel?.isVisible != true || capturePanel?.isKeyWindow == true
+            ensureCapturePanel()
+            if shouldActivate { activate(capturePanel) }
+            else { applyAppearance() }
+            if capture.phase == .ready || capture.phase == .empty || capture.phase == .failed,
+               let capturePanel, capturePanel.isKeyWindow {
+                NSAccessibility.post(element: capturePanel, notification: .announcementRequested,
+                    userInfo: [.announcement: capture.message(using: model),
+                               .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            }
+        }
+    }
+
+    private func restoreCaptureFocus() {
+        if let application = captureReturnApplication, !application.isTerminated {
+            application.activate(options: [.activateIgnoringOtherApps])
+            return
+        }
+        guard let window = captureReturnWindow, window.isVisible else { return }
+        window.makeKeyAndOrderFront(nil)
+        if let responder = captureReturnResponder { window.makeFirstResponder(responder) }
+    }
+
+    private func discardCapturePanel() {
+        let panel = capturePanel
+        capturePanel = nil
+        panel?.delegate = nil
+        panel?.contentView = nil
+        panel?.orderOut(nil)
+        panel?.close()
+    }
 
     @objc private func toggleMonitor() {
         if model.monitorEnabled {
@@ -287,7 +414,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         if window === resultPanel {
             showTranslationResults = false
-            if model.translationOrigin == "selection" { model.cancel() }
+            if ["selection", "ocr"].contains(model.translationOrigin) { model.cancel() }
+        }
+        if window === capturePanel {
+            selectionOverlay?.dismiss()
+            selectionOverlay = nil
+            capture.cancel()
+            capturePanel?.contentView = nil
+            capturePanel = nil
         }
         if window === diagnosticsPanel {
             diagnostics.stopMonitor()
@@ -297,6 +431,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        selectionOverlay?.dismiss()
+        selectionOverlay = nil
+        capture.cancel()
+        discardCapturePanel()
         let waitForProcesses = model.hasProcesses || diagnostics.hasProcesses
         model.prepareToQuit()
         diagnostics.prepareToQuit()
@@ -304,6 +442,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        selectionOverlay?.dismiss()
+        capture.cancel()
+        discardCapturePanel()
         model.prepareToQuit()
         diagnostics.prepareToQuit()
     }

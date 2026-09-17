@@ -34,7 +34,7 @@ from cc_prompts import (
     DICTIONARY_SUPPLEMENT_REVISION, DICTIONARY_SUPPLEMENT_PROMPT,
     CODE_EXPLAIN_PROMPT, CODE_EXPLAIN_APPEND_PROMPT,
     RESULT_CONCISE_PROMPT, RESULT_FORMAL_PROMPT, RESULT_SUMMARY_PROMPT,
-    RESULT_ACTION_PROMPTS,
+    RESULT_ACTION_PROMPTS, OCR_STRUCTURE_HINT,
 )
 
 
@@ -667,11 +667,6 @@ def fit_box_size(src_w, src_h, max_w, max_h):
 # Claude Vision (OCR screenshot translation): the CLI attaches the referenced
 # image as multimodal content; Claude reads the text and translates it. We show
 # only the translation, matching the app's normal double-Ctrl+C experience.
-OCR_STRUCTURE_HINT = (
-    "\n请尽量保留原文排版结构：保留段落换行、项目符号/编号列表和短行分段；"
-    "不要把多行内容合并成一整段，也不要自行增删条目。"
-)
-
 OCR_VISION_PROMPT = (
     "你是一个截图翻译助手。用户会提供一张图片。请识别图片中的文字并翻译："
     "如果原文主要是中文，翻译成自然流畅的英文；否则翻译成自然流畅的简体中文。"

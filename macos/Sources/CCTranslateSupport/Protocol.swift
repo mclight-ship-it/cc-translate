@@ -478,7 +478,7 @@ enum TranslationDocument {
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
               text.utf8.count <= maxInputBytes,
               let language = payload["app_language"]?.string, ["zh_CN", "en_US"].contains(language),
-              let origin = payload["origin"]?.string, ["text", "selection"].contains(origin),
+              let origin = payload["origin"]?.string, ["text", "selection", "ocr"].contains(origin),
               payload["use_cache"]?.bool != nil, payload["record_history"]?.bool != nil else {
             throw ProbeError.invalidPayload
         }
@@ -491,7 +491,7 @@ enum TranslationDocument {
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
               let submitted = payload["submitted"]?.bool, !streamed || submitted,
               let cached = payload["cached"]?.bool,
-              let kind = payload["kind"]?.string, ["text", "dict", "code"].contains(kind),
+              let kind = payload["kind"]?.string, ["text", "dict", "code", "ocr"].contains(kind),
               payload["target_lang"] == .null ||
                 targetLanguages.contains(payload["target_lang"]?.string ?? ""),
               payload["summarize"]?.bool != nil,

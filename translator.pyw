@@ -70,6 +70,7 @@ from cc_summary import (
     _LIST_MARKER_RE, _CONFIG_KV_LINE_RE, _CONFIG_ASSIGN_LINE_RE,
 )
 from cc_request import RequestSnapshot
+from cc_prompts import with_ocr_structure_hint
 from cc_storage import atomic_write_json as _atomic_write_json
 from cc_history import HistoryRepository, read_history as _read_history, filter_history_entries, history_entry_kind
 from cc_config import Config, plan_config_migration
@@ -1549,9 +1550,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return DICTIONARY_PROMPT
         mode = self.cfg.get(CFG.DIRECTION, "auto")
         app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
-        base_prompt = direction_prompt(mode, app_language)
-        if self._last_origin == "ocr":
-            base_prompt += OCR_STRUCTURE_HINT
+        base_prompt = with_ocr_structure_hint(direction_prompt(mode, app_language), self._last_origin)
         if self._should_summarize(text):
             # Summary + translation must share ONE language: the language this
             # text is translated INTO, not the app UI language. In auto mode

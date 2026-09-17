@@ -17,16 +17,16 @@ final class ProductRenderingTests: XCTestCase {
             output: "用于原生布局验证的合成句子。"))
 
         let light = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-light", size: NSSize(width: 1120, height: 760), scheme: .light)
         let dark = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-dark", size: NSSize(width: 1120, height: 760), scheme: .dark)
         _ = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-narrow-light", size: NSSize(width: 660, height: 540), scheme: .light)
         _ = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-narrow-dark", size: NSSize(width: 660, height: 540), scheme: .dark)
 
         XCTAssertNotEqual(light, dark, "The actual native view must respond to its color scheme.")
@@ -87,13 +87,13 @@ final class ProductRenderingTests: XCTestCase {
         let model = try XCTUnwrap(fixture.model)
         model.loadPresentation()
         _ = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-empty", size: NSSize(width: 960, height: 720), scheme: .light)
         model.input = "Synthetic pending translation"
         model.translate()
         XCTAssertEqual(model.productPhase, .preparing)
         _ = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-preparing", size: NSSize(width: 960, height: 720), scheme: .light)
         let helper = try XCTUnwrap(fixture.helpers.last)
         helper.event("ready")
@@ -101,7 +101,7 @@ final class ProductRenderingTests: XCTestCase {
                      payload: ["code": .string("config_unavailable")])
         XCTAssertEqual(model.productPhase, .failed)
         _ = try render(
-            TranslatorView(model: model, showHistory: {}, showSettings: {}),
+            TranslatorView(model: model, showHistory: {}, showSettings: {}, showCapture: {}),
             named: "translator-failure", size: NSSize(width: 960, height: 720), scheme: .dark)
 
         XCTAssertTrue(helper.translations.isEmpty)
@@ -407,6 +407,128 @@ final class ProductRenderingTests: XCTestCase {
         XCTAssertTrue(downloader.tickets.isEmpty)
         XCTAssertFalse(helper.dictionaryRequests.contains { $0.request == .delete || $0.request == .prepareInstall })
         XCTAssertTrue(helper.configurationSaves.isEmpty)
+    }
+
+    @MainActor
+    func testCapturePreviewEditorAndExplicitTranslateRenderLightDarkAndNarrowWithoutHelper() async throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.loadPresentation()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        let probe = ScreenProbe(source: source, makeOCRJob: {
+            CaptureTestOCR(text: "Captured local words\nReview before translation")
+        }, notificationCenter: NotificationCenter())
+        let capture = CaptureModel(screen: probe)
+        defer { capture.cancel() }
+        try await CaptureProductFixture.recognize(capture, source: source)
+        for (size, layout) in [(NSSize(width: 860, height: 720), "wide"),
+                               (NSSize(width: 620, height: 600), "narrow")] {
+            for scheme in [ColorScheme.light, .dark] {
+                let png = try render(
+                    CaptureView(capture: capture, model: fixture.model, captureAgain: {}, reselect: {}, close: {}),
+                    named: "capture-ready-\(layout)-\(scheme == .light ? "light" : "dark")",
+                    size: size, scheme: scheme, inspect: { host in
+                        XCTAssertTrue(self.textViews(in: host).contains {
+                            $0.string == capture.text && $0.isEditable && $0.isSelectable
+                        })
+                    })
+                let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+                let words = try LocalOCR.recognize(image).text.lowercased()
+                    .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                XCTAssertTrue(words.contains("screenshot"))
+                XCTAssertTrue(words.contains("translate text"))
+                XCTAssertTrue(words.contains("capture again"))
+            }
+        }
+        XCTAssertEqual(source.permissionCalls, 1)
+        XCTAssertEqual(source.requests.count, 1)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+        XCTAssertTrue(fixture.copiedText.isEmpty)
+    }
+
+    @MainActor
+    func testCaptureEmptyRecognitionRemainsEditableAndReadableWithoutAutomaticTranslation() async throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.loadPresentation()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        let probe = ScreenProbe(source: source, makeOCRJob: { CaptureTestOCR(text: "") },
+                                notificationCenter: NotificationCenter())
+        let capture = CaptureModel(screen: probe)
+        defer { capture.cancel() }
+        try await CaptureProductFixture.recognize(capture, source: source)
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                CaptureView(capture: capture, model: fixture.model, captureAgain: {}, reselect: {}, close: {}),
+                named: "capture-empty-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 860, height: 720), scheme: scheme)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            XCTAssertTrue(words.contains("no readable text"))
+            XCTAssertTrue(words.contains("editable"))
+        }
+        XCTAssertFalse(capture.canTranslate)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    func testCaptureDeniedPermissionRendersRecoverableStatusInBothAppearances() throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.loadPresentation()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        source.permission = false
+        let capture = CaptureModel(screen: ScreenProbe(source: source, notificationCenter: NotificationCenter()))
+        defer { capture.cancel() }
+        capture.start()
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                CaptureView(capture: capture, model: fixture.model, captureAgain: {}, reselect: {}, close: {}),
+                named: "capture-permission-denied-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 620, height: 600), scheme: scheme)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            XCTAssertTrue(words.contains("denied"))
+            XCTAssertTrue(words.contains("system settings"))
+            XCTAssertTrue(words.contains("capture again"))
+        }
+        XCTAssertTrue(source.requests.isEmpty)
+        XCTAssertEqual(source.layoutCalls, 0)
+        XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    func testCaptureOCRFailureAndOversizedEditRemainReadableAndNeverTruncate() async throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        fixture.model.loadPresentation()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        let probe = ScreenProbe(source: source, makeOCRJob: { CaptureTestOCR(fails: true) },
+                                notificationCenter: NotificationCenter())
+        let capture = CaptureModel(screen: probe)
+        defer { capture.cancel() }
+        try await CaptureProductFixture.recognize(capture, source: source)
+        let longText = String(repeating: "Complete reviewed words. ", count: 450)
+        capture.text = longText
+        for scheme in [ColorScheme.light, .dark] {
+            let png = try render(
+                CaptureView(capture: capture, model: fixture.model, captureAgain: {}, reselect: {}, close: {}),
+                named: "capture-ocr-error-budget-\(scheme == .light ? "light" : "dark")",
+                size: NSSize(width: 860, height: 780), scheme: scheme, inspect: { host in
+                    XCTAssertTrue(self.textViews(in: host).contains { $0.string == longText })
+                })
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            XCTAssertTrue(words.contains("recognition failed"))
+            XCTAssertTrue(words.contains("retry local"))
+            XCTAssertTrue(words.contains("shorten"))
+        }
+        XCTAssertEqual(capture.text, longText)
+        XCTAssertFalse(capture.canTranslate)
+        XCTAssertTrue(fixture.helpers.isEmpty)
     }
 
     @MainActor

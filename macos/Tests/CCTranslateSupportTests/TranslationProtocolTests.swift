@@ -111,7 +111,7 @@ final class TranslationProtocolTests: XCTestCase {
             ["text": .string(String(repeating: "a", count: 8193))],
             ["text": .string(String(repeating: "\u{1f600}", count: 2048) + "a")],
             ["app_language": .string("zh")], ["app_language": .string("en_us")], ["app_language": .bool(true)],
-            ["origin": .string("ocr")], ["origin": .string("clipboard")], ["origin": .null],
+            ["origin": .string("image")], ["origin": .string("clipboard")], ["origin": .null],
             ["use_cache": .integer(1)], ["use_cache": .number(1)], ["use_cache": .string("true")],
             ["record_history": .integer(0)], ["record_history": .null], ["record_history": .array([])],
             ["timeout": .integer(90)], ["provider": .string("codex")], ["fixture": .bool(false)],
@@ -123,7 +123,7 @@ final class TranslationProtocolTests: XCTestCase {
         }
         var index = 0
         for language in ["zh_CN", "en_US"] {
-            for origin in ["text", "selection"] {
+            for origin in ["text", "selection", "ocr"] {
                 for enabled in [true, false] {
                     var valid = request
                     valid["text"] = .string(String(repeating: "\u{1f600}", count: 2048))
@@ -200,6 +200,36 @@ final class TranslationProtocolTests: XCTestCase {
         _ = try state.receive(Data(good.replacingOccurrences(of: "\"text\":\"x\"",
                                                             with: "\"text\":\"\\uD83D\\uDE00\"").utf8))
         _ = try state.receive(event("t", 3, "completed", completion))
+    }
+
+    func testOCRTextRequestPreservesLayoutAndAcceptsStreamedOCRResultWithoutImageFields() throws {
+        var state = try connected()
+        let text = "Heading\n\n  1. \u{4e2d}\u{6587}\n  2. second item\n"
+        var payload = request
+        payload["text"] = .string(text)
+        payload["origin"] = .string("ocr")
+        payload["use_cache"] = .bool(false)
+        let message = ClientMessage(id: "ocr", type: "request", payload: payload)
+        let encoded = try message.encoded()
+        XCTAssertEqual(try JSONValue.parse(Data(encoded.dropLast())).object?["payload"], .object(payload))
+        try state.register(message)
+        _ = try state.receive(event("ocr", 0, "accepted", operation))
+        _ = try state.receive(event("ocr", 1, "started", operation))
+        _ = try state.receive(event("ocr", 2, "delta", ["text": .string("Heading\n"), "submitted": .bool(true)]))
+        var result = completion
+        result["text"] = .string(text)
+        result["kind"] = .string("ocr")
+        let received = try state.receive(event("ocr", 3, "completed", result))
+        XCTAssertEqual(received.payload, result)
+        XCTAssertFalse(state.hasPendingTranslation)
+        XCTAssertNil(state.pendingOutcomeUnknown)
+        for field in ["image_paths", "image", "screenshot"] {
+            var invalid = payload
+            invalid[field] = .string("synthetic-image")
+            let imageRequest = ClientMessage(id: "image", type: "request", payload: invalid)
+            XCTAssertThrowsError(try imageRequest.encoded())
+            XCTAssertThrowsError(try state.register(imageRequest))
+        }
     }
 
     func testTranslationAcceptedStartedDeltaAndTerminalSequencesStayStrict() throws {
@@ -307,7 +337,7 @@ final class TranslationProtocolTests: XCTestCase {
             ["text": .string("\u{001c}\u{001d}\u{001e}\u{001f}")], ["text": .bool(true)],
             ["submitted": .integer(1)], ["submitted": .string("true")],
             ["cached": .integer(0)], ["cached": .null], ["summarize": .integer(0)], ["summarize": .null],
-            ["kind": .string("ocr")], ["kind": .string("dictionary")], ["kind": .bool(false)],
+            ["kind": .string("image")], ["kind": .string("dictionary")], ["kind": .bool(false)],
             ["target_lang": .string("zh_CN")], ["target_lang": .string("")], ["target_lang": .bool(false)],
             ["history": .string("pending")], ["history": .bool(true)],
             ["history_error": .string("history_io_failed")],
@@ -320,7 +350,7 @@ final class TranslationProtocolTests: XCTestCase {
             ["fixture": .bool(false)], ["usage": .object([:])]
         ]
         for variant in variants { try assertInvalidCompletion(completion.merging(variant) { _, new in new }) }
-        for kind in ["text", "dict", "code"] {
+        for kind in ["text", "dict", "code", "ocr"] {
             for language: JSONValue in [.null] + ["zh", "en", "ja", "ko", "fr", "de", "es"].map(JSONValue.string) {
                 var state = try pending()
                 var payload = completion

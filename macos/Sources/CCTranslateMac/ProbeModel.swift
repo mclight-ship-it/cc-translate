@@ -172,6 +172,7 @@ final class ProbeModel: ObservableObject {
     private var locatingForUpgrade = false
     private var activeAction: (id: String, content: ActionDraft)?
     private var resultGeneration = UUID()
+    private(set) var translationIntentID = UUID()
     private var presentationLoaded = false
     private var loadingConfiguration = false
     private var directionEdited = false
@@ -427,10 +428,11 @@ final class ProbeModel: ObservableObject {
                                  "请输入要翻译的文字（最多 8192 UTF-8 字节）。"))
             return
         }
-        draft = Draft(text: input, origin: origin, useCache: useCache,
+        translationIntentID = UUID()
+        draft = Draft(text: input, origin: origin, useCache: origin == "ocr" ? false : useCache,
                       direction: direction, model: modelProfile, language: usesChinese ? "zh_CN" : "en_US",
-                      useSavedDirection: !settingsReady && !directionEdited,
-                      useSavedModel: !settingsReady && !modelEdited)
+                      useSavedDirection: origin != "ocr" && !settingsReady && !directionEdited,
+                      useSavedModel: origin != "ocr" && !settingsReady && !modelEdited)
         translationOrigin = origin
         productPhase = .preparing
         productMessage = text("Preparing translation…", "正在准备翻译…")
@@ -457,6 +459,7 @@ final class ProbeModel: ObservableObject {
             return
         }
         let title = resultActionTitle(action, targetLanguage: targetLanguage)
+        translationIntentID = UUID()
         draft = Draft(text: source, origin: translationOrigin, useCache: false,
                       direction: direction, model: modelProfile, language: language,
                       useSavedDirection: !settingsReady && !directionEdited,
@@ -474,7 +477,7 @@ final class ProbeModel: ObservableObject {
     private func resumeTranslation() {
         guard var requested = draft, connectionMode != .diagnostic, ready, settingsReady, !settingsBusy,
               !active, !stopping, !dictionary.committing, let connection = connection else { return }
-        if requested.action == nil, requested.useCache, !requested.lookupFinished {
+        if requested.action == nil, requested.origin != "ocr", requested.useCache, !requested.lookupFinished {
             let id = UUID().uuidString
             draft = nil
             dictionaryLookup = (id, requested, false)
@@ -567,7 +570,7 @@ final class ProbeModel: ObservableObject {
             primaryResult = ""
             output = ""
             resultInput = requested.text
-            resultKind = "text"
+            resultKind = requested.origin == "ocr" ? "ocr" : "text"
             isLocalDictionaryResult = false
             productMessage = text("Translating…", "正在翻译…")
         }
@@ -807,6 +810,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func reuseHistory(_ row: HistoryRow) {
+        translationIntentID = UUID()
         cancel()
         translationOrigin = "text"
         discardBufferedDelta()
@@ -823,6 +827,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func clearTranslation() {
+        translationIntentID = UUID()
         cancel()
         translationOrigin = "text"
         discardBufferedDelta()
@@ -1423,6 +1428,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func closePanel() {
+        translationIntentID = UUID()
         discardBufferedDelta()
         historySearchActive = false
         invalidateHistory(retireActive: true)
