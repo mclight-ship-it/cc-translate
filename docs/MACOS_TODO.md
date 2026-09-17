@@ -103,6 +103,82 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
+<a id="native-model-catalog-checkpoint"></a>
+
+## 模型目录检查点：同包三系统已通过，继续图片翻译
+
+已接通设置中的“刷新模型”、主翻译/截图共享模型选择，以及 helper 到 Darwin Codex
+受监督的 `debug models` 读取。打开设置不查询目录；刷新不会发送模型请求、验证账号权限、
+改写 Codex 配置或自动保存模型。空目录是正常结果；失败仍可用 Fast/Default 或手填 ID。
+模型名称/说明允许缺失和上游新增字段；ID 保留原始字节，不做大小写或 Unicode 归一化。
+
+本轮源码 `d637beabc61fff9fa1af093217feed9567361293` /
+[run35229459129](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129)
+**实际watch退出0，attempt1的3jobs/40steps全部success**，现已替换推荐开发包。
+正常 Windows privacy/full hook **1778 / 106.048s，OK**；原生源码库存为522方法
+（较纯粘贴增加53、未删除旧方法）、20后置Foundation、222process/604core，
+并已逐方法核对新增52个非集成方法、1个新增Foundation、8process/19core均实际执行通过。
+
+| 实际环境 | 本轮结果 |
+|---|---|
+| macOS15.7.9 producer | 便携836 / 14.908s；Swift编译41.02s，522方法中500通过、22构包前可选skip，289.359s；222process / 443.183s、604core / 5.833s、20后置Foundation / 168.383s |
+| macOS14.8.9同包consumer | 222process / 477.575s、604core / 5.538s、20Foundation / 174.134s |
+| macOS26.6.2同包consumer | 222process / 458.227s、604core / 5.419s、20Foundation / 173.797s |
+| 后置原生测试 | 两consumer各20Foundation、About1、Vision4、粘贴46全部逐方法一次通过、零skip；producer后置20Foundation/About1亦通过 |
+| 私有剪贴板修复复核 | 三系统混合文件fixture前后C与AppKit计数均为2，不履约/不改changeCount断言通过；原多文本发布/换行边界断言通过；未修改生产粘贴实现 |
+| 原生界面 | 84张真实PNG，旧71张全部保留、新增恰好13张；660最小主窗口名称/ID、Capture共享选择器、设置深色直接查看；合成状态不等于物理GUI验收 |
+| 本地词典 | 产品URLSession下载67,948,544字节；同源模型到原生离屏绘制P95 67.543334ms，非物理键盘/打包GUI延迟 |
+
+[完整App](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129/artifacts/10502020234)、
+[界面截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129/artifacts/10500633203)、
+[macOS14报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129/artifacts/10501832665)、
+[macOS26报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129/artifacts/10502037302)
+已独立下载核验，不混用失败run的包。内层ZIP **19,276,300 bytes**，
+SHA-256 `1e5e3acff01ce084e96a2ff047b27598df5416ab7249a93d663439413fe3d73b`，
+tree `07600d5f0543dd38bd58786dc36facfd60f82b55f72adfb49493871d4ac75a5b`。
+实际688库存/78资源/50源码路径（49唯一）/6个Mach-O/19许可；633固定runtime与许可条目
+和已验2f逐字节一致，bridge仅排除已知构建元数据后亦一致。
+21文件consumer harness独立Git重建SHA
+`fe2ba0dc37419b5249c6c708db0996d19b9e10f2fb103c7d8625294b429ec605`
+与报告一致。HTTPS证书/随包CA、SQLite、取消/EOF、bundle不可变及临时清理均通过；
+官方0.146.0/0.154.0仅版本/预热，未调用真实账号或模型。
+
+首次 `572e1aa` / run35219286731 实际watch退出1：生产App已链接，但新测试的同步启动
+回调被推断为throwing，无法赋给nonthrowing回调，尚未执行原生测试或构包。
+修复仅把该测试断言换成明确的 `do/try/catch/XCTFail`，没有改生产代码、删断言或降低门槛。
+第二次 `09917e0` / run35219785537 已实际编译（52.63s），521方法、22构包前可选skip，
+35断言失败（232.954s），全部来自新增App目录/渲染测试。根因是协议扩展方法的默认参数
+绕过了具体client实现；已改成与现有配置API一致的显式便利重载转发，并新增默认/显式超时
+派发回归。失败日志与5张新状态PNG保留，不作为完整目录界面或App通过证据。
+本次正常push曾再次被未改动的Windows历史矩阵WinError5阻断（1778 / 99.905s，2fail）；
+同方法单独1 / 2.960s及完整正常重试均通过。没有更改Windows存储逻辑、跳过hook或声称修复权限问题。
+第三次 `b1aa782` / run35220890958 编译49.67s，522方法、22构包前可选skip、2failure，
+248.025s；30项目录App状态测试全部通过。实际PNG发现主窗口固定180宽选择器截断了模型ID，
+另有原有中文纯文本粘贴结果字号过小的可读性失败。已改成弹性宽度并增加660×540最小窗口
+的模型名称/ID断言，将原生粘贴结果改用与其他状态一致的callout字号；保留两项原断言。
+当时预期84张PNG尚待执行；最终已下载本轮自己的84张，不借用失败轮截图作为修复证据。
+第四次 run35221817416 的producer已通过：836便携、Swift522（500通过、22构包前可选skip）、
+84张真实PNG、222process/604core/20后置Foundation，完整App也通过独立归档审计。
+macOS14同包全部通过；macOS26的目录相关进程/核心/Foundation同样通过，但最后旧纯粘贴
+私有C剪贴板测试出现2项失败（混合文件fixture仅1个item、多文本fixture发布时报OSStatus -25134）。
+因此整run实际watch仍退出1，**不作为同包三系统绿色交付**。
+两个粘贴生产模块、C支持与该测试文件相对原纯粘贴包均无源码差异；原始报告与日志完整保留。
+仅做了一次同源码全流程复核run35224904618，实际watch仍退出1：producer通过，
+但macOS14/26均复现旧混合文件fixture的AppKit计数1与预期2不符，不再无改动重试。
+SDK定义的-25134是duplicatePasteboardFlavorErr，而非同步错误。候选修正bc9563f
+将重复整数item ID替换为进程内保留对象的唯一opaque标识，保留原AppKit计数/不履约/
+changeCount断言，新增前后C API计数诊断；未更改生产粘贴逻辑。
+该候选run35228884435实际watch退出1，测试编译时发现ItemCount未作为Swift类型导入，
+尚无候选运行结果。d637bea改为复用生产代码的计数类型推断，并将旧编码诊断的硬编码
+item ID改为PasteboardGetItemIdentifier实际返回值；上述本轮三系统实测现已全部通过。
+这验证了修正后fixture，不把一次成功宣称为所有系统长期稳定性保证。
+整合另修复了目录清理失败后重用已失效provider导致“重试”持续失败的问题：
+下一次用户明确刷新或翻译才关闭/drain旧helper并重建；不会自动重试目录或重放翻译。
+
+使用步骤见[模型目录](MACOS_DEVELOPMENT.md#native-model-catalog)。
+下一项继续真正图片provider/明确发送所选图片，剩余设置与P4–P6仍待实现；
+不把OCR文字翻译等同于图片发送，不等待用户再说“继续”。
+
 <a id="native-plain-paste-checkpoint"></a>
 
 ### P3 主动纯文本粘贴：同包三系统已通过，继续其余功能对齐
@@ -1599,6 +1675,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
 - [x] 手动自定义模型设置、精确保存/重开/请求及中英混合OCR改进；b33515d同包验证见模型设置检查点。
+- [x] 明确刷新Codex模型目录、设置/主窗口/Capture共享选择、空/失败不阻断手填ID；d637bea同包三系统验证见模型目录检查点。
 - [ ] 完整设置/模型管理。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。
 - [ ] 真实外部编辑器、多格式/跨设备Universal Clipboard、访问ask/allow/deny及更新后权限保持验收；不以合成数据代替。

@@ -59,7 +59,16 @@ macOS26发现的跨句柄同步问题已用MainActor AppKit真实changeCount/立
 可能等待的数据仍在后台读取；不以只通过15/14的旧包替代最终证据。
 原始编译/状态/编码/渲染失败、旧Windows访问拒绝及完整制品核验见
 [纯文本粘贴检查点](MACOS_TODO.md#native-plain-paste-checkpoint)。
-下一项继续动态模型目录/完整模型管理；真正图片provider及其余P3–P6仍未完成。
+动态模型目录与共享原生选择已接线，源码`d637bea` /
+[run35229459129](https://github.com/mclight-ship-it/cc-translate/actions/runs/35229459129)
+已实际watch0、attempt1的3jobs/40steps通过；正常完整hook1778，
+Swift522（500通过、22构包前可选skip）、84PNG与完整App已独立核验并替换推荐下载。
+同App三系统各222process/604core/20Foundation，后置About1/Vision4/粘贴46均通过。
+跨系统旧剪贴板fixture使用唯一opaque item ID，保留原断言，C/AppKit前后计数各2；
+未修改生产粘贴实现，不把失败重试当修复。仅明确刷新读取所选Codex目录；空/失败不阻断
+Fast/Default、手工ID或普通翻译，不引入精确版本白名单、账号探针或自动重试。
+Mac测试编译、协议派发、实际可读性、旧fixture受控复现及修复保留于[模型目录检查点](MACOS_TODO.md#native-model-catalog-checkpoint)。
+完整模型/设置余项、真正图片provider及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 
