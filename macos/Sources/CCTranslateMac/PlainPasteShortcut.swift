@@ -29,6 +29,27 @@ private final class PlainPasteHotKeyContext {
     func deactivate() { lock.lock(); live = false; lock.unlock() }
 }
 
+// Deinit transfers sole cleanup ownership of these opaque Carbon handles to the main actor.
+private struct PlainPasteHotKeyCleanup: @unchecked Sendable {
+    let key: EventHotKeyRef?
+    let eventHandler: EventHandlerRef?
+    let retainedContext: Unmanaged<PlainPasteHotKeyContext>
+
+    @MainActor
+    func run() {
+        if let key {
+            let status = UnregisterEventHotKey(key)
+            if status != noErr { NSLog("CCTranslate plain-paste hotkey cleanup: %d", status) }
+        }
+        if let eventHandler {
+            let status = RemoveEventHandler(eventHandler)
+            // Failed removal leaves Carbon holding this inert context; never free its callback pointer.
+            if status == noErr { retainedContext.release() }
+            else { NSLog("CCTranslate plain-paste handler cleanup: %d", status) }
+        }
+    }
+}
+
 @MainActor
 private final class CarbonPlainPasteLease: PlainPasteShortcutLease {
     private var key: EventHotKeyRef?
@@ -64,21 +85,9 @@ private final class CarbonPlainPasteLease: PlainPasteShortcutLease {
 
     deinit {
         context.deactivate()
-        let key = key, eventHandler = eventHandler, retainedContext = retainedContext
-        let cleanup = {
-            if let key {
-                let status = UnregisterEventHotKey(key)
-                if status != noErr { NSLog("CCTranslate plain-paste hotkey cleanup: %d", status) }
-            }
-            if let eventHandler {
-                let status = RemoveEventHandler(eventHandler)
-                // Failed removal leaves Carbon holding this inert context; never free its callback pointer.
-                if status == noErr { retainedContext.release() }
-                else { NSLog("CCTranslate plain-paste handler cleanup: %d", status) }
-            }
-        }
-        if Thread.isMainThread { cleanup() }
-        else { DispatchQueue.main.async(execute: cleanup) }
+        let cleanup = PlainPasteHotKeyCleanup(key: key, eventHandler: eventHandler, retainedContext: retainedContext)
+        if Thread.isMainThread { MainActor.assumeIsolated { cleanup.run() } }
+        else { DispatchQueue.main.async { cleanup.run() } }
     }
 }
 
@@ -108,7 +117,7 @@ struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
             guard let event, let pointer, Thread.isMainThread else { return OSStatus(eventNotHandledErr) }
             var identity = EventHotKeyID()
             guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
-                                    nil, UInt32(MemoryLayout<EventHotKeyID>.size), nil, &identity) == noErr,
+                                    nil, MemoryLayout<EventHotKeyID>.size, nil, &identity) == noErr,
                   identity.signature == 0x43435054, identity.id == 1 else {
                 return OSStatus(eventNotHandledErr)
             }
@@ -122,7 +131,7 @@ struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
                 box.handler(kind == UInt32(kEventHotKeyPressed) ? .pressed : .released)
             }
             return noErr
-        }, UInt32(types.count), &types, retained.toOpaque(), &eventHandler)
+        }, types.count, &types, retained.toOpaque(), &eventHandler)
         guard installed == noErr, let eventHandler else {
             retained.release()
             return .failure(.unavailable(installed == noErr ? OSStatus(paramErr) : installed))
