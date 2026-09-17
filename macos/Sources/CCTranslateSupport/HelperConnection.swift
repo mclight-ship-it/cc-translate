@@ -207,6 +207,18 @@ public final class HelperConnection {
     }
 
     @discardableResult
+    public func translateImage(imagePath: String, imageBytes: Int, imageSHA256: String, appLanguage: String,
+                               recordHistory: Bool = true, id: String = UUID().uuidString,
+                               timeout: TimeInterval = 110) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string(ImageTranslationDocument.operation), "image_path": .string(imagePath),
+            "image_bytes": .integer(Int64(imageBytes)), "image_sha256": .string(imageSHA256),
+            "app_language": .string(appLanguage), "record_history": .bool(recordHistory)
+        ]), timeout: timeout)
+        return id
+    }
+
+    @discardableResult
     public func resultAction(_ action: ResultAction, text: String, appLanguage: String,
                              targetLanguage: String? = nil, id: String = UUID().uuidString,
                              timeout: TimeInterval = 110) -> String {

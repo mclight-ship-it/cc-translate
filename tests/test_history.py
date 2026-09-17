@@ -88,6 +88,15 @@ class TestHistoryRepository(unittest.TestCase):
         self.repo = history.HistoryRepository(self.path, lock=ObservedLock())
         self.addCleanup(self.repo.close)
 
+    def test_null_input_preservation_is_explicit_and_legacy_default_stays_empty(self):
+        self.repo.add(None, "legacy", False, 10, kind="ocr")
+        self.repo.add(None, "image", False, 10, kind="ocr", preserve_null_input=True)
+        self.repo.add("text", "out", False, 10, preserve_null_input=True)
+        entries = self.repo.load()
+        self.assertEqual([(e["input"], e["output"]) for e in entries],
+                         [("text", "out"), (None, "image"), ("", "legacy")])
+        self.assertIsNone(self.repo.find_cached(None, "ocr", ""))
+
     def test_constructor_and_close_do_not_touch_disk(self):
         self.assertEqual(self.repo.path, self.path)
         self.repo.close()

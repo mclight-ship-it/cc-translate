@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
     private var captureObservation: AnyCancellable?
+    var imageCleanupQuitChoice: (@MainActor () -> Bool)?
+    var terminationReply: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
+    private var reviewingImageCleanup = false
+    private var terminationResolved = false
 
     override convenience init() {
         self.init(model: ProbeModel(), capture: CaptureModel(), diagnostics: ProbeModel(persistsPreferences: false))
@@ -58,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.diagnostics = diagnostics
         self.aboutModel = about ?? AboutModel()
         super.init()
+        model.onStopped = { [weak self] in self?.finishTermination() }
+        diagnostics.onStopped = { [weak self] in self?.finishTermination() }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -99,8 +105,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                                 .priority: NSAccessibilityPriorityLevel.medium.rawValue])
             }
         }
-        model.onStopped = { [weak self] in self?.finishTermination() }
-        diagnostics.onStopped = { [weak self] in self?.finishTermination() }
         captureObservation = capture.$phase.dropFirst().removeDuplicates().sink { [weak self] phase in
             DispatchQueue.main.async {
                 guard let self, !self.terminating, self.capture.phase == phase else { return }
@@ -466,6 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        terminationResolved = false
         aboutModel.close()
         selectionOverlay?.dismiss()
         selectionOverlay = nil
@@ -474,7 +479,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let waitForProcesses = model.hasProcesses || diagnostics.hasProcesses
         model.prepareToQuit()
         diagnostics.prepareToQuit()
-        return waitForProcesses ? .terminateLater : .terminateNow
+        if waitForProcesses || model.hasProcesses || diagnostics.hasProcesses { return .terminateLater }
+        if !allowQuitAfterImageCleanup() { return .terminateLater }
+        terminationResolved = true
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -487,8 +495,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func finishTermination() {
-        if terminating && !model.hasProcesses && !diagnostics.hasProcesses {
-            NSApp.reply(toApplicationShouldTerminate: true)
+        if terminating && !terminationResolved && !model.hasProcesses &&
+            !diagnostics.hasProcesses && !reviewingImageCleanup {
+            if allowQuitAfterImageCleanup() {
+                terminationResolved = true
+                terminationReply(true)
+            }
         }
+    }
+
+    private func allowQuitAfterImageCleanup() -> Bool {
+        guard model.imageTranslation.cleanupFailureCount > 0 else { return true }
+        reviewingImageCleanup = true
+        let quit: Bool
+        if let imageCleanupQuitChoice {
+            quit = imageCleanupQuitChoice()
+        } else {
+            let alert = NSAlert()
+            alert.messageText = model.text("A temporary image could not be removed", "无法删除临时图片")
+            alert.informativeText = model.text("Retry removal, or quit knowing the image may remain on this Mac.",
+                                               "请重试删除，或确认图片可能仍保留在此 Mac 上后退出。")
+            alert.addButton(withTitle: model.text("Retry cleanup", "重试清理"))
+            alert.addButton(withTitle: model.text("Quit anyway", "仍然退出"))
+            quit = alert.runModal() == .alertSecondButtonReturn
+        }
+        reviewingImageCleanup = false
+        if !quit { model.imageTranslation.retryCleanup() }
+        return quit
     }
 }

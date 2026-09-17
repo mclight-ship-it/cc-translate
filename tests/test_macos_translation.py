@@ -191,7 +191,7 @@ class TranslationContracts(unittest.TestCase):
                 translation.validate_translation_request(request(origin="ocr") | changes)
         with self.assertRaisesRegex(translation.TranslationError, "^invalid_translation_settings$"):
             translation.snapshot_for_translation(Config({CFG.MAX_CHARS: 1}), request(origin="ocr"))
-        self.assertFalse(translation.DarwinCodexProvider.capabilities.images)
+        self.assertTrue(translation.DarwinCodexProvider.capabilities.images)
 
     def test_ocr_snapshot_preserves_raw_layout_and_text_only_provider_encoding(self):
         payload = request(origin="ocr", text=OCR_TEXT)
@@ -612,7 +612,7 @@ class ScriptedProvider:
             raise CatalogProbeError("cancelled")
         return self.catalog_models
 
-    def shutdown(self):
+    def shutdown(self, *, require_cleanup=False):
         self.closed += 1
         self.release.set()
 
@@ -1141,7 +1141,7 @@ class TranslationServiceTests(_TranslationDirectory):
     def test_ready_is_native_and_first_request_streams_records_then_hits_cache(self):
         ready = self.stdout.events[0]["payload"]
         self.assertEqual((ready["backend"], ready["fixture"]), ("native_appserver", False))
-        self.assertEqual(len(ready["capabilities"]), 14)
+        self.assertEqual(len(ready["capabilities"]), 15)
         self.assertIn("result_action", ready["capabilities"])
         self.assertEqual(ready["capabilities"][-6:], [
             "dictionary_status", "dictionary_lookup", "dictionary_prepare_install",

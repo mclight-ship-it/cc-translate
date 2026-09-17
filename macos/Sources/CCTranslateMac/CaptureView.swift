@@ -21,8 +21,8 @@ struct CaptureView: View {
                 Spacer()
                 Button(model.text("Close", "关闭"), action: close)
             }
-            Text(model.text("Capture and text recognition stay on this Mac. Only reviewed text is sent when you choose Translate text.",
-                            "截图和文字识别仅在此 Mac 上进行。只有点击“翻译文字”后，才会发送你确认的文字。"))
+            Text(model.text("Capture and OCR are local. Translate text sends reviewed text. Send image sends only this region using the selected Codex model and account.",
+                            "截图和识别在本地进行。“翻译文字”发送确认后的文字。“发送图片翻译”仅通过所选 Codex 模型和账号发送此区域。"))
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
@@ -31,11 +31,12 @@ struct CaptureView: View {
                     ProgressView().controlSize(.small)
                         .accessibilityLabel(statusText)
                 }
+                ImageCleanupView(model: model)
                 Text(statusText)
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if capture.busy || capture.submitting {
-                    Button(model.text("Cancel", "取消")) { capture.cancel() }
+                    Button(model.text("Cancel", "取消")) { capture.cancelCurrentAction() }
                 }
             }
             if let preview = capture.preview {
@@ -70,8 +71,8 @@ struct CaptureView: View {
                         .font(.system(size: 36)).foregroundStyle(.secondary).accessibilityHidden(true)
                     Text(model.text("Select a region, review the text, then translate.", "选择区域、确认文字，然后翻译。"))
                         .font(.headline)
-                    Text(model.text("No image upload. No clipboard access. No image is saved.",
-                                    "不上传图片，不读取剪贴板，不保存图片。"))
+                    Text(model.text("Nothing is sent automatically. No clipboard access.",
+                                    "不会自动发送内容，也不会读取剪贴板。"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,12 +92,10 @@ struct CaptureView: View {
                 ModelPicker(model: model, selection: $model.modelProfile)
             }
             .disabled(model.active || model.preparing)
-            HStack(alignment: .center) {
-                Text(model.text("Uses your Codex CLI and account for text translation only.",
-                                "仅文字翻译使用你的 Codex CLI 和账号。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 12)
+            Text(model.text("Image translation creates a private temporary PNG of this region. It is removed after the request finishes or drains. History may keep the translated text, not the image.",
+                            "图片翻译会为此区域创建私有临时 PNG，并在请求结束或排空后删除。历史记录可能保留翻译文字，但不会保留图片。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
                 Button {
                     capture.translate(using: model)
                 } label: {
@@ -104,6 +103,16 @@ struct CaptureView: View {
                 }
                 .buttonStyle(.bordered).controlSize(.large)
                 .disabled(!capture.canTranslate || model.active || model.preparing)
+                Button {
+                    capture.translateImage(using: model)
+                } label: {
+                    Label(model.text("Send image for translation", "发送图片翻译"), systemImage: "photo")
+                }
+                .buttonStyle(.bordered).controlSize(.large)
+                .disabled(!capture.canTranslateImage || model.active || model.preparing)
+                .help(model.text("Send the displayed region even if local text recognition found no text or failed.",
+                                 "即使本地文字识别没有结果或失败，也可发送显示的截图区域。"))
+                Spacer(minLength: 0)
             }
         }
         .padding(18)
@@ -126,8 +135,8 @@ struct CaptureView: View {
             Image(nsImage: image).resizable().scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .textBackgroundColor))
-                .accessibilityLabel(model.text("Screenshot region used for this local recognition",
-                                              "此次本地识别使用的截图区域"))
+                .accessibilityLabel(model.text("Selected screenshot region. Only this image is sent by Send image for translation.",
+                                              "所选截图区域。“发送图片翻译”仅发送此图片。"))
             Text(model.text("Multiple displays are sampled sequentially, not at exactly the same instant.",
                             "多个屏幕逐一采样，并非严格同时曝光。"))
                 .font(.caption2).foregroundStyle(.secondary)

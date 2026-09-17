@@ -109,7 +109,13 @@ def verify(root, *, require_cleanup=False, require_descendant=False):
                 if path.exists() else [])
     turns = [row for row in records("native-rpc.jsonl")
              if row["kind"] == "provider" and row["request"]["method"] == "turn/start"]
-    if any(row["request"]["params"]["input"] != [{"type": "text", "text": expected["prompt"]}]
+    expected_input = [{"type": "text", "text": expected["prompt"]}]
+    if expected["task"] == "image":
+        from cc_macos.image_fixture import VERIFIED_IMAGE_PATH
+        expected_input.append({"type": "localImage", "path": VERIFIED_IMAGE_PATH})
+        if records("image-read.jsonl") != [{"verified": True, "task": "image"}] * len(turns):
+            raise ValueError("synthetic_image_evidence_missing")
+    if any(row["request"]["params"]["input"] != expected_input
            for row in turns):
         raise ValueError("synthetic_prompt_mismatch")
     processes = [row for name in ("native-processes.jsonl", "version.jsonl", "calls.jsonl")

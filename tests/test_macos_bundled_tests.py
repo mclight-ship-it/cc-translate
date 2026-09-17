@@ -129,21 +129,22 @@ class InventoryTests(unittest.TestCase):
             "test_codex_config_process", "test_codex_catalog_process", "test_history_owner_process",
             "test_config_owner_process", "test_configuration_ipc_process", "test_history_ipc_process",
             "test_darwin_rpc_process", "test_native_provider_process", "test_translation_ipc_process",
-            "test_dictionary_ipc_process"))
+            "test_image_translation_ipc_process", "test_dictionary_ipc_process"))
         self.assertEqual(bundled_tests.CORE_TEST_MODULES, (
             "test_classify", "test_is_single_word", "test_direction", "test_classify_import",
             "test_prompts", "test_provider_contracts", "test_dictionary_store_portable",
             "test_catalog_storage_portable", "test_result_rules", "test_storage", "test_history",
             "test_config_rules", "test_config_store", "test_macos_configuration", "test_macos_history",
             "test_request_snapshot", "test_darwin_rpc_contract", "test_codex_darwin",
-            "test_summary_rules", "test_macos_translation", "test_codex_version", "test_macos_dictionary"))
+            "test_summary_rules", "test_macos_translation", "test_macos_image",
+            "test_codex_version", "test_macos_dictionary"))
         self.assertNotIn("test_dictionary_portable", bundled_tests.CORE_TEST_MODULES,
                          "The Windows formatter test must not pull desktop facades into the bundle.")
         self.assertEqual(bundled_tests.SUITE_MODULES, {
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
         self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
             "process": ("owner_process_support", "state_ipc_process_support"), "core": ()})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 222, "core": 604})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 231, "core": 644})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:
@@ -161,7 +162,8 @@ class InventoryTests(unittest.TestCase):
             "cc_config", "cc_config_store", "cc_macos.file_owner",
             "cc_macos.config_owner", "cc_macos.config_store_fixture",
             "cc_macos.configuration", "cc_macos.server", "cc_macos.protocol", "cc_macos.history",
-            "cc_macos.translation", "cc_macos.translation_fixture", "cc_summary",
+            "cc_macos.translation", "cc_macos.translation_fixture",
+            "cc_macos.image", "cc_macos.image_fixture", "cc_summary",
             "cc_dictionary_store", "cc_dictionary_lookup", "cc_dictionary_artifact_core",
             "cc_dictionary_presentation", "cc_macos.dictionary"))
         self.assertEqual(bundled_tests.CORE_BUNDLE_MODULES, (
@@ -170,7 +172,8 @@ class InventoryTests(unittest.TestCase):
             "cc_result_rules", "cc_storage", "cc_macos.storage_fixture", "cc_history",
             "cc_config", "cc_config_store", "cc_macos.configuration", "cc_macos.server", "cc_macos.protocol",
             "cc_macos.history", "cc_request", "cc_summary", "cc_macos.translation",
-            "cc_macos.translation_fixture", "cc_macos.native_provider_fixture",
+            "cc_macos.translation_fixture", "cc_macos.image", "cc_macos.image_fixture",
+            "cc_macos.native_provider_fixture",
             "cc_dictionary_lookup", "cc_dictionary_artifact_core", "cc_dictionary_presentation",
             "cc_macos.dictionary"))
 

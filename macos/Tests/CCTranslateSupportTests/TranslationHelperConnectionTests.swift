@@ -3,6 +3,201 @@ import XCTest
 
 final class TranslationHelperConnectionTests: XCTestCase {
     @MainActor
+    func testImageConvenienceForwardsExactAttachmentMetadataAndStreamsOCRResult() async throws {
+        let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
+        var imageCompletion = completion
+        imageCompletion["kind"] = .string("ocr")
+        imageCompletion["history"] = .string("disabled")
+        let script = try connectedScript("""
+        \(readLine)
+        printf '%s\\n' "$line" > "$HOME/image-request.json"
+        \(try emit("image", 0, "accepted", imageOperation))
+        \(try emit("image", 1, "started", imageOperation))
+        \(try emit("image", 2, "delta", ["text": .string("synthetic"), "submitted": .bool(true)]))
+        \(try emit("image", 3, "completed", imageCompletion))
+        \(shutdown)
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let png = try ImageTranslationFixture.png()
+        let attachment = try ImageTranslationAttachment(pngData: png, temporaryParent: context.home)
+        defer {
+            do { try attachment.cleanup() }
+            catch { XCTFail("Explicit synthetic image cleanup failed") }
+        }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.home.appendingPathComponent("image-request.json").path))
+        let terminal = notices.terminal("image")
+        XCTAssertEqual(notices.connection.translateImage(
+            imagePath: attachment.url.path, imageBytes: attachment.byteCount, imageSHA256: attachment.sha256,
+            appLanguage: "zh_CN", recordHistory: false, id: "image", timeout: 15), "image")
+        await fulfillment(of: [terminal], timeout: 10)
+        let encoded = try Data(contentsOf: context.home.appendingPathComponent("image-request.json"))
+        XCTAssertLessThan(encoded.count, 1024)
+        XCTAssertEqual(try JSONValue.parse(encoded).object?["payload"], .object([
+            "operation": .string("translate_image"), "image_path": .string(attachment.url.path),
+            "image_bytes": .integer(Int64(png.count)), "image_sha256": .string(attachment.sha256),
+            "app_language": .string("zh_CN"), "record_history": .bool(false)
+        ]))
+        XCTAssertEqual(notices.events.filter { $0.id == "image" }.map(\.type), ["accepted", "started", "delta", "completed"])
+        XCTAssertEqual(notices.events.last { $0.id == "image" }?.payload, imageCompletion)
+        XCTAssertEqual(try Data(contentsOf: attachment.url), png, "The connection must not delete the caller's attachment")
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+        try attachment.cleanup()
+    }
+
+    @MainActor
+    func testImageFailurePreservesSubmittedReceiptAndAllowsLaterExplicitText() async throws {
+        let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
+        for code in ImageTranslationDocument.failureCodes.sorted() {
+            let failure: [String: JSONValue] = ["code": .string(code), "submitted": .bool(code == "image_cleanup_failed")]
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("image", 0, "accepted", imageOperation))
+            \(try emit("image", 1, "started", imageOperation))
+            \(try emit("image", 2, "failed", failure))
+            \(readLine)
+            \(try emit("text", 0, "accepted", operation))
+            \(try emit("text", 1, "started", operation))
+            \(try emit("text", 2, "completed", completion))
+            \(shutdown)
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            let failed = notices.terminal("image")
+            notices.connection.translateImage(imagePath: "/synthetic/not-opened/region.png", imageBytes: 80,
+                                              imageSHA256: String(repeating: "a", count: 64),
+                                              appLanguage: "en_US", id: "image")
+            await fulfillment(of: [failed], timeout: 10)
+            XCTAssertEqual(notices.events.last { $0.id == "image" }?.payload, failure)
+            XCTAssertEqual(notices.events.last { $0.id == "image" }?.safeFailureCode, code)
+            let translated = notices.terminal("text")
+            notices.connection.translate(text: "synthetic", appLanguage: "en_US", id: "text")
+            await fulfillment(of: [translated], timeout: 10)
+            notices.connection.stop()
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertTrue(notices.failures.isEmpty)
+            XCTAssertEqual(notices.events.filter { $0.id == "image" && $0.isTerminal }.count, 1)
+        }
+    }
+
+    @MainActor
+    func testImageCancellationRetainsAttachmentUntilTerminalAndHelperDrain() async throws {
+        let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("image", 0, "accepted", imageOperation))
+        \(try emit("image", 1, "started", imageOperation))
+        \(readLine)
+        \(try emit("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        \(readLine)
+        printf drained > "$HOME/image-drained"
+        \(try emit("image", 2, "cancelled", ["submitted": .bool(true)]))
+        printf '%s\\n' "$line" | /usr/bin/sed 's/"type":"shutdown"/"seq":0,"type":"completed"/'
+        """)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let png = try ImageTranslationFixture.png()
+        let attachment = try ImageTranslationAttachment(pngData: png, temporaryParent: context.home)
+        defer {
+            do { try attachment.cleanup() }
+            catch { XCTFail("Explicit synthetic image cleanup failed") }
+        }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("image"), terminal = notices.terminal("image")
+        notices.connection.translateImage(imagePath: attachment.url.path, imageBytes: attachment.byteCount,
+                                          imageSHA256: attachment.sha256, appLanguage: "en_US", id: "image")
+        await fulfillment(of: [started], timeout: 10)
+        let cancelled = notices.terminal("cancel")
+        notices.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("image")]))
+        await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertFalse(notices.events.contains { $0.id == "image" && $0.isTerminal })
+        XCTAssertEqual(try Data(contentsOf: attachment.url), png)
+        notices.connection.stop()
+        await fulfillment(of: [terminal, notices.stopped], timeout: 10, enforceOrder: true)
+        XCTAssertTrue(notices.failures.isEmpty)
+        XCTAssertEqual(notices.events.last { $0.id == "image" }?.payload, ["submitted": .bool(true)])
+        XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("image-drained"), encoding: .utf8), "drained")
+        XCTAssertEqual(try Data(contentsOf: attachment.url), png)
+        try attachment.cleanup()
+    }
+
+    @MainActor
+    func testImageEOFAndExplicitTimeoutKeepOutcomeUnknownUntilDrainWithoutReplay() async throws {
+        let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
+        for timeout in [false, true] {
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("image", 0, "accepted", imageOperation))
+            \(try emit("image", 1, "started", imageOperation))
+            \(timeout ? "while IFS= read -r line; do :; done" : "exec 1>&-")
+            printf drained > "$HOME/image-drained"
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            notices.connection.translateImage(imagePath: "/synthetic/region.png", imageBytes: 80,
+                                              imageSHA256: String(repeating: "a", count: 64), appLanguage: "en_US",
+                                              id: "image", timeout: timeout ? 0.5 : 20)
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertEqual(notices.failures, [.translationOutcomeUnknown])
+            XCTAssertEqual(notices.events.filter { $0.id == "image" }.map(\.type), ["accepted", "started"])
+            XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("image-drained"), encoding: .utf8), "drained")
+        }
+    }
+
+    @MainActor
+    func testImageMalformedAndLateCompletionsAreNeverDeliveredAsSuccessTwice() async throws {
+        let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
+        var imageCompletion = completion
+        imageCompletion["kind"] = .string("ocr")
+        for late in [false, true] {
+            let body = late ? """
+            \(try emit("image", 2, "completed", imageCompletion))
+            \(try emit("image", 3, "completed", imageCompletion))
+            """ : try emit("image", 2, "completed", completion)
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("image", 0, "accepted", imageOperation))
+            \(try emit("image", 1, "started", imageOperation))
+            \(body)
+            while IFS= read -r line; do :; done
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            notices.connection.translateImage(imagePath: "/synthetic/region.png", imageBytes: 80,
+                                              imageSHA256: String(repeating: "a", count: 64), appLanguage: "en_US", id: "image")
+            await fulfillment(of: [notices.stopped], timeout: 10)
+            XCTAssertEqual(notices.failures, [late ? .invalidTransition : .translationOutcomeUnknown])
+            XCTAssertEqual(notices.events.filter { $0.id == "image" && $0.type == "completed" }.count, late ? 1 : 0)
+        }
+    }
+
+    @MainActor
     private final class Notices {
         let ready = XCTestExpectation(description: "helper ready")
         let stopped = XCTestExpectation(description: "helper and pipes stopped")
@@ -109,7 +304,7 @@ final class TranslationHelperConnectionTests: XCTestCase {
     private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "model_catalog"] : [])
+                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "translate_image", "model_catalog"] : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
@@ -409,25 +604,27 @@ final class TranslationHelperConnectionTests: XCTestCase {
 
     @MainActor
     func testTranslationShutdownCleanupFailureIsDeliveredAsDeterminateControlTerminal() async throws {
-        let script = try connectedScript("""
-        \(readLine)
-        \(try emit("shutdown", 0, "failed", ["code": .string("provider_cleanup_failed")]))
-        """)
-        let context = try fixture(script: script)
-        defer { remove(context) }
-        let notices = Notices()
-        defer { notices.connection.forceStop() }
-        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
-                                           environment: context.environment)
-        await fulfillment(of: [notices.ready], timeout: 10)
-        let shutdown = notices.terminal("shutdown")
-        notices.connection.send(ClientMessage(id: "shutdown", type: "shutdown"))
-        await fulfillment(of: [shutdown, notices.stopped], timeout: 10)
-        XCTAssertTrue(notices.failures.isEmpty)
-        XCTAssertEqual(notices.events.last?.id, "shutdown")
-        XCTAssertEqual(notices.events.last?.sequence, 0)
-        XCTAssertEqual(notices.events.last?.type, "failed")
-        XCTAssertEqual(notices.events.last?.payload, ["code": .string("provider_cleanup_failed")])
+        for code in ["provider_cleanup_failed", "image_cleanup_failed"] {
+            let script = try connectedScript("""
+            \(readLine)
+            \(try emit("shutdown", 0, "failed", ["code": .string(code)]))
+            """)
+            let context = try fixture(script: script)
+            defer { remove(context) }
+            let notices = Notices()
+            defer { notices.connection.forceStop() }
+            notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                               environment: context.environment)
+            await fulfillment(of: [notices.ready], timeout: 10)
+            let shutdown = notices.terminal("shutdown")
+            notices.connection.send(ClientMessage(id: "shutdown", type: "shutdown"))
+            await fulfillment(of: [shutdown, notices.stopped], timeout: 10)
+            XCTAssertTrue(notices.failures.isEmpty)
+            XCTAssertEqual(notices.events.last?.id, "shutdown")
+            XCTAssertEqual(notices.events.last?.sequence, 0)
+            XCTAssertEqual(notices.events.last?.type, "failed")
+            XCTAssertEqual(notices.events.last?.payload, ["code": .string(code)])
+        }
     }
 
     @MainActor

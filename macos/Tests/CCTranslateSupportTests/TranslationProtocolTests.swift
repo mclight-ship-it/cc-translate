@@ -7,7 +7,7 @@ final class TranslationProtocolTests: XCTestCase {
     private var ready: [String: JSONValue] {
         [
             "protocol": .integer(1),
-            "capabilities": .array((storage + ["translate", "result_action", "model_catalog"]).map(JSONValue.string)),
+            "capabilities": .array((storage + ["translate", "result_action", "translate_image", "model_catalog"]).map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(false), "backend": .string("native_appserver")
         ]
     }

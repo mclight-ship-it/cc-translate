@@ -179,7 +179,7 @@ struct TranslationResultView: View {
 
     private var busy: Bool { model.preparing || model.active }
     private var canRetranslate: Bool {
-        !busy && !model.output.isEmpty && model.resultInput.utf8.count <= 8192 &&
+        !busy && model.resultHasOriginalInput && !model.output.isEmpty && model.resultInput.utf8.count <= 8192 &&
         !model.resultInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -220,6 +220,14 @@ struct TranslationResultView: View {
             }
             .frame(minHeight: compact ? 120 : 180)
             phaseStatus
+            ImageCleanupView(model: model)
+            if !model.resultHasOriginalInput && !model.output.isEmpty {
+                Text(model.resultKind == "ocr"
+                     ? model.text("Image result · No original text retained. To send the image again, use the capture preview.",
+                                  "图片结果 · 未保留原文。如需再次发送图片，请使用截图预览。")
+                     : model.text("No original text is stored for this result.", "此结果未保存原文。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
                     copyButtons
@@ -264,7 +272,10 @@ struct TranslationResultView: View {
     }
 
     private var emptyTitle: String {
-        if busy { return model.text("Working on your words", "正在处理你的文字") }
+        if busy {
+            return model.translatingImage ? model.text("Working on your image", "正在处理你的图片") :
+                model.text("Working on your words", "正在处理你的文字")
+        }
         switch model.productPhase {
         case .failed: return model.text("Translation needs attention", "翻译遇到问题")
         case .cancelled: return model.text("Translation cancelled", "翻译已取消")
@@ -314,7 +325,7 @@ struct TranslationResultView: View {
         .disabled(model.output.isEmpty)
         .help(model.text("Copy the current result as plain text", "以纯文本复制当前结果"))
         Button(model.text("Copy bilingual", "复制双语")) { model.copyBilingual() }
-            .disabled(model.output.isEmpty)
+            .disabled(model.output.isEmpty || !model.resultHasOriginalInput)
             .help(model.text("Copy the original text and its result", "复制原文及其翻译结果"))
     }
 
@@ -327,13 +338,16 @@ struct TranslationResultView: View {
                 }
                 Divider()
                 Button(model.resultActionTitle(.explainCode)) { model.performResultAction(.explainCode) }
+                    .disabled(!model.resultHasOriginalInput)
                 Button(model.resultActionTitle(.asText)) { model.performResultAction(.asText) }
+                    .disabled(!model.resultHasOriginalInput)
                 Menu(model.resultActionTitle(.retranslate)) {
                     ForEach(ProbeModel.targetLanguages.indices, id: \.self) { index in
                         let language = ProbeModel.targetLanguages[index]
                         Button(model.text(language.1, language.2)) {
                             model.performResultAction(.retranslate, targetLanguage: language.0)
                         }
+                        .disabled(!model.resultHasOriginalInput)
                     }
                 }
             }
@@ -470,7 +484,9 @@ struct TranslationHistoryView: View {
             List(selection: $selectedID) {
                 ForEach(model.historyPage) { row in
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(row.input).font(.body).lineLimit(2)
+                        Text(row.hasOriginalInput ? row.input : row.kind == "ocr"
+                             ? model.text("Image translation", "图片翻译") : model.text("Translation", "翻译结果"))
+                            .font(.body).lineLimit(2)
                         Text(row.output).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         HStack {
                             Text(resultKindName(row.kind, model: model))
@@ -558,9 +574,14 @@ struct HistoryTranslationDetail: View {
             }
             Text(model.text("Original", "原文")).font(.subheadline.bold())
                 .accessibilityAddTraits(.isHeader)
-            NativeResultText(text: row.input, formatted: false, streaming: false,
-                             label: model.text("Saved original text", "已保存的原文"))
-                .frame(minHeight: 80, maxHeight: 150)
+            if row.hasOriginalInput {
+                NativeResultText(text: row.input, formatted: false, streaming: false,
+                                 label: model.text("Saved original text", "已保存的原文"))
+                    .frame(minHeight: 80, maxHeight: 150)
+            } else {
+                Text(model.text("Original text is not stored in this record.", "此记录未保存原文。"))
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Divider()
             Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
                 .accessibilityAddTraits(.isHeader)
@@ -582,7 +603,8 @@ struct HistoryTranslationDetail: View {
         Button(model.text("Copy bilingual", "复制双语")) {
             model.copyText(row.input + "\n\n" + row.output)
         }
-        Button(model.text("Reuse original", "复用原文")) {
+        .disabled(!row.hasOriginalInput)
+        Button(row.hasOriginalInput ? model.text("Reuse original", "复用原文") : model.text("Open result", "打开结果")) {
             model.reuseHistory(row)
             useEntry()
         }

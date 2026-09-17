@@ -453,6 +453,114 @@ class TestDarwinCodexProvider(unittest.TestCase):
             self.assert_failure(provider.complete(request), "unsupported_task")
         self.assert_no_activity()
 
+    def test_image_requires_exactly_one_absolute_utf8_path_without_probing_or_reading_image(self):
+        provider = self.provider()
+        for paths in ([], ["a", "b"]):
+            self.assert_failure(provider.complete(self.request(task="image", image_paths=paths)), "unsupported_task")
+        for paths in ([None], ["relative.png"], [self.work + "\0"], [self.work + "\ud800"], [1]):
+            with self.subTest(paths=paths), self.assertRaises((TypeError, ValueError)):
+                provider.complete(self.request(task="image", image_paths=paths))
+        self.assert_no_activity()
+
+    def test_image_shared_transport_sends_real_localimage_block_and_later_text_is_unchanged(self):
+        provider = self.provider()
+        path = os.path.join(self.work, "private-\u4e2d-e\u0301.png")
+        image = self.request(task="image", image_paths=[path])
+        deltas = []
+        self.assertTrue(provider.stream(image, deltas.append).ok)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(deltas, [TEXT])
+        turns = [r["params"] for proc in self.processes for r in proc.sent if r["method"] == "turn/start"]
+        self.assertEqual(turns[0]["input"], [{"type": "text", "text": build_codex_prompt(image)},
+                                            {"type": "localImage", "path": path}])
+        self.assertEqual(turns[1]["input"], [{"type": "text", "text": build_codex_prompt(self.request())}])
+        for turn in turns:
+            self.assertEqual(turn["sandboxPolicy"], {"type": "readOnly", "networkAccess": False})
+            self.assertEqual(turn["approvalPolicy"], "never")
+        self.assertEqual(len(self.processes), 1)
+        self.popen.assert_not_called()
+
+    def test_image_path_list_is_frozen_before_waiting_for_provider_lock(self):
+        provider = self.provider()
+        paths = [os.path.join(self.work, "captured.png")]
+        request = self.request(task="image", image_paths=paths)
+        provider._operation_lock.acquire()
+        try:
+            running = self.start(lambda: provider.complete(request))
+            self.wait_for(lambda: provider._foreground_waiters == 1)
+            paths[0] = os.path.join(self.work, "mutated.png")
+            self.assert_no_activity()
+        finally:
+            provider._operation_lock.release()
+        self.assertTrue(self.finish(running).ok)
+        turn = next(r for r in self.processes[0].sent if r["method"] == "turn/start")
+        self.assertEqual(turn["params"]["input"][1]["path"], os.path.join(self.work, "captured.png"))
+
+    def test_image_zero_and_partial_turn_writes_have_same_no_retry_submission_contract(self):
+        for partial in (False, True):
+            self.send_error = ("turn/start", partial)
+            self.assert_failure(self.provider().complete(self.request(
+                task="image", image_paths=[os.path.join(self.work, "image.png")])), "rpc_io_failed", partial)
+            self.assertEqual(self.methods(self.processes[-1]).count("turn/start"), 1)
+            self.assertEqual(self.processes[-1].close_count, 1)
+
+    def test_image_cancel_waits_for_owned_provider_cleanup_before_returning(self):
+        provider, cancel = self.provider(), threading.Event()
+        self.block_method = "turn/start"
+        running = self.start(lambda: provider.complete(self.request(
+            task="image", image_paths=[os.path.join(self.work, "image.png")]), cancel))
+        self.wait_for(lambda: self.processes and self.processes[0].waiting.is_set())
+        proc = self.processes[0]
+        proc.close_release.clear()
+        try:
+            cancel.set()
+            self.assertTrue(proc.close_entered.wait(1))
+            self.assertTrue(running[0].is_alive())
+            self.assertEqual(running[1], [])
+        finally:
+            proc.close_release.set()
+        self.assert_failure(self.finish(running), "cancelled", True)
+        self.assertTrue(proc.closed)
+
+    def test_image_precancel_timeout_and_shutdown_do_not_gain_new_model_probes(self):
+        provider, cancel = self.provider(), threading.Event()
+        image = self.request(task="image", image_paths=[os.path.join(self.work, "image.png")])
+        cancel.set()
+        self.assert_failure(provider.complete(image, cancel), "cancelled")
+        self.assert_no_activity()
+        self.block_method = "turn/start"
+        self.assert_failure(provider.complete(replace(image, timeout_seconds=0.05)), "timeout", True)
+        provider.shutdown(require_cleanup=True)
+        self.assert_failure(provider.complete(image), "appserver_shutdown")
+        self.assertEqual(len(self.processes), 1)
+
+    def test_waiting_image_cancel_does_not_submit_or_probe_before_releasing_provider_lock(self):
+        provider, cancel = self.provider(), threading.Event()
+        provider._operation_lock.acquire()
+        try:
+            running = self.start(lambda: provider.complete(self.request(
+                task="image", image_paths=[os.path.join(self.work, "image.png")]), cancel))
+            self.wait_for(lambda: provider._foreground_waiters == 1)
+            cancel.set()
+            self.assert_failure(self.finish(running), "cancelled")
+            self.assert_no_activity()
+        finally:
+            provider._operation_lock.release()
+        self.assertTrue(provider.complete(self.request()).ok)
+
+    def test_strict_shutdown_retains_sticky_image_cleanup_failure_without_replay(self):
+        provider = self.provider()
+        image = self.request(task="image", image_paths=[os.path.join(self.work, "image.png")])
+        def responses(proc, request):
+            proc.close_error = ProcessError("probe_cleanup_failed")
+            return [None] if request["method"] == "turn/start" else reply_messages(request, proc.cwd)
+        self.responses = responses
+        self.assert_failure(provider.complete(image), "provider_cleanup_failed", True)
+        with self.assertRaisesRegex(ProcessError, "^provider_cleanup_failed$"):
+            provider.shutdown(require_cleanup=True)
+        self.assert_failure(provider.complete(image), "provider_cleanup_failed")
+        self.assertEqual(len(self.processes), 1)
+
     def test_invalid_request_and_callback_are_rejected_without_any_probe(self):
         provider = self.provider()
         for request in (None, {}, self.request(timeout_seconds=True),
@@ -546,7 +654,7 @@ class TestDarwinCodexProvider(unittest.TestCase):
                          (True, None, self.command, "native_appserver"))
         self.assertEqual((status.error_code, status.error_detail), ("", ""))
         self.assertEqual(self.methods(self.processes[0]), ["initialize", "initialized", "hooks/list"])
-        self.assertEqual(provider.capabilities.images, False)
+        self.assertEqual(provider.capabilities.images, True)
         self.assertEqual(provider.capabilities.warm_sessions, True)
 
     def test_translation_summary_uses_unchanged_shared_prompt(self):

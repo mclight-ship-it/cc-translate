@@ -667,13 +667,7 @@ def fit_box_size(src_w, src_h, max_w, max_h):
 # Claude Vision (OCR screenshot translation): the CLI attaches the referenced
 # image as multimodal content; Claude reads the text and translates it. We show
 # only the translation, matching the app's normal double-Ctrl+C experience.
-OCR_VISION_PROMPT = (
-    "你是一个截图翻译助手。用户会提供一张图片。请识别图片中的文字并翻译："
-    "如果原文主要是中文，翻译成自然流畅的英文；否则翻译成自然流畅的简体中文。"
-    "翻译时请尽量保留原文排版结构（换行、项目符号、编号等）。"
-    "只输出翻译结果本身，不要输出原文、图片描述、语言名称或任何解释、前后缀。"
-    "如果图片中没有可识别的文字，只回复：未识别到文字。"
-)
+from cc_prompts import OCR_VISION_PROMPT
 
 
 def vision_image_mention(img_path):

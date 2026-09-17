@@ -437,7 +437,7 @@ public enum ResultAction: String, CaseIterable {
 }
 
 enum TranslationDocument {
-    static let modelOperations: Set<String> = ["translate", "result_action"]
+    static let modelOperations: Set<String> = ["translate", "result_action", "translate_image"]
     static let targetLanguages: Set<String> = ["zh", "en", "ja", "ko", "fr", "de", "es"]
     static let maxInputBytes = 8192
     static let maxDeltaBytes = 4096
@@ -460,6 +460,10 @@ enum TranslationDocument {
     ]
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
+        if payload["operation"] == .string(ImageTranslationDocument.operation) {
+            try ImageTranslationDocument.validateRequest(payload)
+            return
+        }
         if payload["operation"] == .string("result_action") {
             guard Set(payload.keys) == ["operation", "action", "text", "app_language", "target_language"],
                   let rawAction = payload["action"]?.string,
@@ -635,6 +639,11 @@ private enum HelperFailureCode: String {
     case providerFailed = "provider_failed"
     case modelCatalogFailed = "model_catalog_failed"
     case modelCatalogTooLarge = "model_catalog_too_large"
+    case invalidImageTranslation = "invalid_image_translation"
+    case imageUnavailable = "image_unavailable"
+    case imageTooLarge = "image_too_large"
+    case imageChanged = "image_changed"
+    case imageCleanupFailed = "image_cleanup_failed"
     case invalidDictionary = "invalid_dictionary"
     case dictionaryUnavailable = "dictionary_unavailable"
     case dictionaryIOFailed = "dictionary_io_failed"
@@ -744,7 +753,7 @@ public struct ProtocolState {
                 throw ProbeError.invalidPayload
             }
             switch operation {
-            case "translate", "result_action":
+            case "translate", "result_action", "translate_image":
                 _ = try message.encoded()
             case "model_catalog":
                 try ModelCatalogDocument.validateRequest(payload)
@@ -885,6 +894,9 @@ public struct ProtocolState {
                     try TranslationDocument.validateCompletion(
                         payload, streamed: !entry.deltaText.isEmpty,
                         resultAction: entry.operation == "result_action")
+                    if entry.operation == ImageTranslationDocument.operation {
+                        try ImageTranslationDocument.validateCompletion(payload)
+                    }
                 } else if entry.isDictionaryRequest {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     try DictionaryDocument.validateCompletion(payload, operation: entry.operation)
@@ -963,7 +975,9 @@ public struct ProtocolState {
             if entry.isModelRequest, entry.started {
                 guard seq >= 2, Set(payload.keys) == ["code", "submitted"],
                       let code = payload["code"]?.string,
-                      TranslationDocument.failureCodes.union(TranslationDocument.storageFailureCodes).contains(code),
+                      TranslationDocument.failureCodes.union(TranslationDocument.storageFailureCodes)
+                        .union(entry.operation == ImageTranslationDocument.operation ? ImageTranslationDocument.failureCodes : [])
+                        .contains(code),
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
             } else if entry.isModelCatalogRequest, entry.started {
@@ -972,13 +986,18 @@ public struct ProtocolState {
                     throw ProbeError.invalidPayload
                 }
             } else {
-                guard validFailure(payload) else { throw ProbeError.invalidPayload }
+                let imageFailure = entry.operation == ImageTranslationDocument.operation ||
+                    (entry.type == "shutdown" && payload["code"] == .string("image_cleanup_failed"))
+                guard validFailure(payload, image: imageFailure) else {
+                    throw ProbeError.invalidPayload
+                }
             }
             if isBusiness, entry.type == "shutdown" {
                 guard seq == 0,
                       payload["code"] == .string("state_io_failed") ||
                         payload["code"] == .string("dictionary_cleanup_failed") ||
-                        (mode == .translation && payload["code"] == .string("provider_cleanup_failed")) else {
+                        (mode == .translation && (payload["code"] == .string("provider_cleanup_failed") ||
+                                                  payload["code"] == .string("image_cleanup_failed"))) else {
                     throw ProbeError.invalidPayload
                 }
             }
@@ -1067,9 +1086,10 @@ public struct ProtocolState {
         return Set(network.keys) == ["status"] && network["status"] == .string("not_run")
     }
 
-    private func validFailure(_ payload: [String: JSONValue]) -> Bool {
+    private func validFailure(_ payload: [String: JSONValue], image: Bool = false) -> Bool {
         guard Set(payload.keys) == ["code"], let code = payload["code"]?.string else { return false }
         if isBusiness {
+            if ImageTranslationDocument.failureCodes.contains(code) { return mode == .translation && image }
             // Discovery-specific errors are legal only on the started native catalog operation.
             guard !ModelCatalogDocument.discoveryFailureCodes.contains(code) else { return false }
             return HelperFailureCode(rawValue: code) != nil &&

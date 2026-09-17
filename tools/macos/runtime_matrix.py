@@ -39,6 +39,7 @@ INTEGRATION_TESTS = (
     "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
     "testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID",
     "testBundledModelCatalogReadsExactMetadataWithoutTurnsThenTranslatesKnownModel",
+    "testBundledImageTranslationOwnsPNGStreamsWithoutCacheAndDrainsCancellationOrUnknown",
     "testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary",
     "testBundledTranslationConcurrentOptoutAndCancellationDrain",
     "testBundledTranslationCorruptionAndOutputBudgets",

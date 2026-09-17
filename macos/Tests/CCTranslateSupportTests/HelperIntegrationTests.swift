@@ -311,7 +311,7 @@ extension HelperIntegrationTests {
     }
 
     private func translationFixture(runtime: BundleRuntime, home: URL,
-                                    arguments: [String]) throws -> [String: JSONValue] {
+                                    arguments: [String], image: Bool = false) throws -> [String: JSONValue] {
         let process = Process(), output = Pipe(), errors = Pipe()
         var handles = [output.fileHandleForReading, output.fileHandleForWriting,
                        errors.fileHandleForReading, errors.fileHandleForWriting]
@@ -330,7 +330,8 @@ extension HelperIntegrationTests {
             }
         }
         let fixture = runtime.launcher.deletingLastPathComponent()
-            .appendingPathComponent("cc_macos/translation_fixture.py")
+            .appendingPathComponent("cc_macos")
+            .appendingPathComponent(image ? "image_fixture.py" : "translation_fixture.py")
         process.executableURL = runtime.executable
         process.arguments = ["-I", "-B", fixture.path] + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath,
@@ -353,7 +354,8 @@ extension HelperIntegrationTests {
 
     private func translationContext(scenario: String = "normal", resultAction: ResultAction? = nil,
                                     targetLanguage: String? = nil, origin: String? = nil,
-                                    model: String? = nil) throws -> TranslationContext {
+                                    model: String? = nil, image: Bool = false,
+                                    imageDirection: String = "auto") throws -> TranslationContext {
         let base = try configurationContext()
         do {
             let identifier = try base.runtime.configurationApplicationIdentifier()
@@ -365,7 +367,9 @@ extension HelperIntegrationTests {
             if let targetLanguage { arguments += ["--target-language", targetLanguage] }
             if let origin { arguments += ["--origin", origin] }
             if let model { arguments += ["--model", model] }
-            let fixture = try translationFixture(runtime: base.runtime, home: base.home, arguments: arguments)
+            if image { arguments += ["--direction", imageDirection] }
+            let fixture = try translationFixture(runtime: base.runtime, home: base.home,
+                                                  arguments: arguments, image: image)
             let home = URL(fileURLWithPath: try XCTUnwrap(fixture["home"]?.string), isDirectory: true)
             let environment = try XCTUnwrap(fixture["environment"]?.object)
                 .mapValues { try XCTUnwrap($0.string) }
@@ -441,6 +445,163 @@ extension HelperIntegrationTests {
         XCTAssertEqual(evidence["prompt_verified"], .bool(true))
         XCTAssertEqual(evidence["cleanup_verified"], .bool(cleanup))
         if descendant { XCTAssertGreaterThan(try XCTUnwrap(evidence["descendants"]?.integer), 0) }
+    }
+
+    @MainActor
+    func testBundledImageTranslationOwnsPNGStreamsWithoutCacheAndDrainsCancellationOrUnknown() async throws {
+        for action in ["normal", "cancel", "eof", "optout"] {
+            let gated = action != "normal"
+            let model = "provider/Exact-Image-e\u{0301}"
+            let context = try translationContext(scenario: gated ? "gated" : "normal",
+                                                 model: model, image: true, imageDirection: "to_ja")
+            let png: Data
+            let attachment: ImageTranslationAttachment
+            do {
+                let source = URL(fileURLWithPath: try XCTUnwrap(context.request["image_path"]?.string))
+                png = try Data(contentsOf: source)
+                attachment = try ImageTranslationAttachment(pngData: png, temporaryParent: context.home)
+                XCTAssertNotEqual(attachment.url, source)
+            } catch {
+                removeConfigurationHome(context.cleanupRoot)
+                throw error
+            }
+            let session = ConfigurationNotices()
+            defer {
+                if session.didStop {
+                    do {
+                        try attachment.cleanup()
+                        try FileManager.default.removeItem(at: context.cleanupRoot)
+                    } catch { XCTFail("Synthetic image attachment/home cleanup failed") }
+                } else {
+                    session.connection.forceStop()
+                    XCTFail("Synthetic image home retained because helper drain was not observed")
+                }
+            }
+            @MainActor
+            func sendImage(_ id: String, sha256: String? = nil) {
+                session.connection.translateImage(imagePath: attachment.url.path, imageBytes: attachment.byteCount,
+                                                   imageSHA256: sha256 ?? attachment.sha256,
+                                                   appLanguage: "en_US", recordHistory: true, id: id, timeout: 40)
+            }
+            startTranslation(session, context)
+            await fulfillment(of: [session.ready], timeout: 10)
+            guard case let .array(capabilities)? = session.events.first?.payload["capabilities"] else {
+                throw ProbeError.invalidPayload
+            }
+            XCTAssertTrue(capabilities.contains(.string("translate_image")))
+            assertNoTranslationCLI(context)
+            let saved = session.terminal("save")
+            session.connection.saveConfiguration(context.config, id: "save")
+            await fulfillment(of: [saved], timeout: 10)
+            session.assertOperation("save")
+            XCTAssertTrue(try XCTUnwrap(context.expected["model"]?.string).utf8.elementsEqual(model.utf8))
+            assertNoTranslationCLI(context)
+            let workspace = context.configFile.deletingLastPathComponent().appendingPathComponent("NativeWorkspace")
+            func assertNoHelperImages(file: StaticString = #filePath, line: UInt = #line) throws {
+                let directories = try FileManager.default.contentsOfDirectory(at: workspace,
+                                                                              includingPropertiesForKeys: nil)
+                XCTAssertFalse(directories.contains { $0.lastPathComponent.hasPrefix(".cc-image-") },
+                               "Helper-owned PNGs must be gone at terminal, not merely at shutdown", file: file, line: line)
+            }
+            if action == "normal" {
+                let rejected = session.terminal("changed")
+                sendImage("changed", sha256: String(repeating: "0", count: 64))
+                await fulfillment(of: [rejected], timeout: 15)
+                XCTAssertEqual(session.result("changed")?.type, "failed")
+                XCTAssertEqual(session.result("changed")?.payload,
+                               ["code": .string("image_changed"), "submitted": .bool(false)])
+                assertNoTranslationCLI(context)
+            }
+            let terminal = session.terminal("image")
+            let delta = gated ? session.firstDelta("image") : nil
+            sendImage("image")
+            if let delta {
+                await fulfillment(of: [delta], timeout: 25)
+                XCTAssertNil(session.result("image"), "Only the explicit synthetic gate holds completion")
+                XCTAssertEqual(try Data(contentsOf: attachment.url), png)
+                let directories = try FileManager.default.contentsOfDirectory(at: workspace,
+                                                                              includingPropertiesForKeys: nil)
+                XCTAssertEqual(directories.filter { $0.lastPathComponent.hasPrefix(".cc-image-") }.count, 1)
+                switch action {
+                case "cancel":
+                    let cancelled = session.terminal("cancel")
+                    session.connection.send(ClientMessage(id: "cancel", type: "cancel",
+                                                          payload: ["request_id": .string("image")]))
+                    await fulfillment(of: [cancelled, terminal], timeout: 15)
+                    XCTAssertEqual(session.result("cancel")?.payload, ["cancel_requested": .bool(true)])
+                    XCTAssertEqual(session.result("image")?.type, "cancelled")
+                    XCTAssertEqual(session.result("image")?.payload, ["submitted": .bool(true)])
+                case "eof":
+                    // forceStop closes helper stdin and signals only its owned process; the
+                    // in-flight model result stays unknown even when native cleanup succeeds.
+                    session.connection.forceStop()
+                    await fulfillment(of: [session.stopped], timeout: 20)
+                    XCTAssertEqual(session.failures, [.translationOutcomeUnknown])
+                    XCTAssertFalse(session.events.contains { $0.id == "image" && $0.type == "completed" })
+                case "optout":
+                    var config = context.config
+                    config["history_enabled"] = .bool(false)
+                    config["direction"] = .string("to_en")
+                    let optedOut = session.terminal("optout")
+                    session.connection.saveConfiguration(config, id: "optout")
+                    await fulfillment(of: [optedOut], timeout: 10)
+                    session.assertOperation("optout")
+                    try Data("release".utf8).write(to: context.gate)
+                    await fulfillment(of: [terminal], timeout: 15)
+                    assertTranslation(session, context, id: "image", history: "disabled")
+                    XCTAssertEqual(session.result("image")?.payload["target_lang"], .string("ja"))
+                default: XCTFail("Unexpected synthetic image action")
+                }
+            } else {
+                await fulfillment(of: [terminal], timeout: 25)
+                assertTranslation(session, context, id: "image")
+                try assertNoHelperImages()
+                let repeated = session.terminal("repeat")
+                sendImage("repeat")
+                await fulfillment(of: [repeated], timeout: 25)
+                assertTranslation(session, context, id: "repeat")
+            }
+            if action != "eof" {
+                try assertNoHelperImages()
+                let history = session.terminal("history")
+                session.connection.loadHistory(id: "history")
+                await fulfillment(of: [history], timeout: 10)
+                session.assertOperation("history")
+                let entries = try session.historyEntries("history")
+                XCTAssertEqual(entries.count, action == "normal" ? 2 : 0)
+                for entry in entries {
+                    XCTAssertEqual(entry["input"], .null)
+                    XCTAssertEqual(entry["kind"], .string("ocr"))
+                    XCTAssertEqual(entry["output"], context.expected["output"])
+                }
+                if action == "normal" {
+                    let historyText = try String(contentsOf: context.historyFile, encoding: .utf8)
+                    for privateValue in [attachment.url.path, attachment.sha256, png.base64EncodedString()] {
+                        XCTAssertFalse(historyText.contains(privateValue), "Image metadata must not enter history")
+                    }
+                }
+                session.connection.stop()
+                await fulfillment(of: [session.stopped], timeout: 15)
+                XCTAssertTrue(session.failures.isEmpty)
+            }
+            XCTAssertTrue(session.didStop)
+            guard session.didStop else { throw ProbeError.requestTimeout }
+            try verifyTranslation(context, turns: action == "normal" ? 2 : 1, cleanup: true, descendant: gated)
+            let imageReads = try String(contentsOf: context.root.appendingPathComponent("image-read.jsonl"),
+                                        encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(imageReads.count, action == "normal" ? 2 : 1)
+            for row in imageReads {
+                XCTAssertEqual(try JSONValue.parse(Data(row.utf8)),
+                               .object(["verified": .bool(true), "task": .string("image")]))
+            }
+            try assertNoHelperImages()
+            XCTAssertFalse(FileManager.default.fileExists(atPath:
+                context.configFile.deletingLastPathComponent().appendingPathComponent("state.json").path))
+            if action != "normal" { XCTAssertFalse(FileManager.default.fileExists(atPath: context.historyFile.path)) }
+            XCTAssertEqual(try Data(contentsOf: attachment.url), png)
+            try attachment.cleanup()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: attachment.url.deletingLastPathComponent().path))
+        }
     }
 
     @MainActor
@@ -970,6 +1131,7 @@ final class HelperIntegrationTests: XCTestCase {
         let stopped = XCTestExpectation(description: "configuration helper exited")
         private(set) var events: [ServerEvent] = []
         private(set) var failures: [ProbeError] = []
+        private(set) var didStop = false
         private var terminals: [String: XCTestExpectation] = [:]
         private var starts: [String: XCTestExpectation] = [:]
         private var deltas: [String: XCTestExpectation] = [:]
@@ -987,7 +1149,9 @@ final class HelperIntegrationTests: XCTestCase {
                         if event.type == "delta" { self.deltas.removeValue(forKey: event.id)?.fulfill() }
                         if event.isTerminal { self.terminals[event.id]?.fulfill() }
                     case .failure(let error): self.failures.append(error)
-                    case .stopped: self.stopped.fulfill()
+                    case .stopped:
+                        self.didStop = true
+                        self.stopped.fulfill()
                     }
                 }
             }

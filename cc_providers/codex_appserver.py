@@ -598,6 +598,8 @@ class CodexAppServerTransport:
                     "networkAccess": False,
                 },
             }
+            if request.task == "image":
+                turn_params["input"].extend({"type": "localImage", "path": path} for path in request.image_paths)
             if runtime_model and runtime_model != "auto":
                 turn_params["model"] = runtime_model
             if request.model == "gpt-5.4-mini":

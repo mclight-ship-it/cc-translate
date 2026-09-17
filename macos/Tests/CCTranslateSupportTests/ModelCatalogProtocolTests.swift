@@ -21,7 +21,7 @@ final class ModelCatalogProtocolTests: XCTestCase {
 
     private func ready(_ mode: ProtocolState.Mode = .translation) -> [String: JSONValue] {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
-            storage + (mode == .translation ? ["translate", "result_action", "model_catalog"] : [])
+            storage + (mode == .translation ? ["translate", "result_action", "translate_image", "model_catalog"] : [])
         var payload: [String: JSONValue] = [
             "protocol": .integer(1), "max_frame_bytes": .integer(65_536),
             "fixture": .bool(mode == .diagnostic), "capabilities": .array(operations.map(JSONValue.string))
@@ -60,8 +60,8 @@ final class ModelCatalogProtocolTests: XCTestCase {
         var hello = ProtocolState(mode: .translation)
         try hello.register(ClientMessage(id: "hello", type: "hello"))
         for capabilities in [
-            storage + ["translate", "result_action"],
-            storage + ["translate", "result_action", "model_catalog", "model_catalog"]
+            storage + ["translate", "result_action", "translate_image"],
+            storage + ["translate", "result_action", "translate_image", "model_catalog", "model_catalog"]
         ] {
             var invalid = ready()
             invalid["capabilities"] = .array(capabilities.map(JSONValue.string))

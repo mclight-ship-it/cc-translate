@@ -71,6 +71,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var resultKind = "text"
     @Published private(set) var isLocalDictionaryResult = false
     @Published private(set) var resultInput = ""
+    @Published private(set) var resultHasOriginalInput = true
     @Published private(set) var primaryResult = ""
     private(set) var translationOrigin = "text"
     @Published private(set) var historyPage: [HistoryRow] = []
@@ -112,6 +113,10 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var cliBusy = false
     let dictionary: DictionaryModel
     let plainPaste: PlainPasteModel
+    let imageTranslation: ImageTranslationState
+    private var imageObservation: AnyCancellable?
+    private var imageTranslationSupported = false
+    private var publishingImageRequest = false
     let screen = ScreenProbe()
     let monitor = PassiveCopyMonitor()
     var onSelection: ((SelectionResult) -> Void)?
@@ -127,6 +132,7 @@ final class ProbeModel: ObservableObject {
         var kind = "text"
         var timestamp = ""
         var signature = ""
+        var hasOriginalInput = true
         var isLocalDictionary: Bool { signature.hasPrefix("local-dictionary|") }
 
         @MainActor
@@ -137,7 +143,8 @@ final class ProbeModel: ObservableObject {
             let kind = ProbeModel.historyKinds.contains(rawKind) ? rawKind :
                 entry["is_code"] == .bool(true) ? "code" : entry["is_dict"] == .bool(true) ? "dict" : "text"
             return HistoryRow(id: id, input: entry["input"]?.string ?? "", output: entry["output"]?.string ?? "",
-                              kind: kind, timestamp: entry["ts"]?.string ?? "", signature: entry["sig"]?.string ?? "")
+                              kind: kind, timestamp: entry["ts"]?.string ?? "", signature: entry["sig"]?.string ?? "",
+                              hasOriginalInput: entry["input"]?.string != nil)
         }
     }
     private struct HistoryCriteria: Equatable {
@@ -164,6 +171,7 @@ final class ProbeModel: ObservableObject {
         var configurationSaved = false
         var lookupFinished = false
         var action: ActionDraft?
+        var imageIntent: UUID?
     }
     private struct ActionDraft {
         let action: ResultAction
@@ -172,7 +180,13 @@ final class ProbeModel: ObservableObject {
         let prefix: String
         let title: String
     }
-    private var draft: Draft?
+    private var draft: Draft? {
+        didSet {
+            if let old = oldValue?.imageIntent, old != draft?.imageIntent {
+                imageTranslation.discardPending(old)
+            }
+        }
+    }
     private var dictionaryLookup: (id: String, draft: Draft, cancelled: Bool)?
     private var upgradingForDraft = false
     private var locatingForUpgrade = false
@@ -230,8 +244,12 @@ final class ProbeModel: ObservableObject {
     private var cliRun: CLIVersionRun?
     private var cliGeneration = UUID()
     private var userCLI: [String: URL] = [:]
-    var hasProcesses: Bool { connection != nil || cliRun != nil || dictionary.busy || plainPaste.serviceState.busy }
+    var hasProcesses: Bool {
+        connection != nil || cliRun != nil || dictionary.busy || plainPaste.serviceState.busy ||
+            imageTranslation.working
+    }
     var preparing: Bool { productPhase == .preparing }
+    var translatingImage: Bool { draft?.imageIntent != nil || imageTranslation.owns(requestID: latest.id) }
     var canRunResultAction: Bool {
         !primaryResult.isEmpty && !active && !preparing && !stopping
     }
@@ -274,9 +292,10 @@ final class ProbeModel: ObservableObject {
              CLILocator.candidates(name: $0, userURL: $1)
          }, dictionaryDownloader: DictionaryDownloading? = nil,
          writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil,
-         plainPaste: PlainPasteModel? = nil) {
+         plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil) {
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
         self.plainPaste = plainPaste ?? PlainPasteModel()
+        self.imageTranslation = imageTranslation ?? ImageTranslationState(factory: NativeImageAttachment.make)
         self.homeDirectory = homeDirectory
         self.writeClipboard = writeClipboard ?? {
             NSPasteboard.general.clearContents()
@@ -305,6 +324,18 @@ final class ProbeModel: ObservableObject {
         }
         dictionaryObservation = dictionary.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         plainPasteObservation = self.plainPaste.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        imageObservation = self.imageTranslation.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        self.imageTranslation.onPrepared = { [weak self] intent in
+            guard let self, self.draft?.imageIntent == intent, self.translationIntentID == intent else { return }
+            self.openProduct()
+            self.resumeTranslation()
+        }
+        self.imageTranslation.onPreparationFailed = { [weak self] intent in
+            guard let self, self.draft?.imageIntent == intent else { return }
+            self.failPreparation(self.text("The selected image could not be prepared. Nothing was sent. Try a smaller region.",
+                                          "无法准备所选图片，未发送任何内容。请尝试较小选区。"))
+        }
+        self.imageTranslation.onSettled = { [weak self] in self?.notifyStoppedIfIdle() }
         self.plainPaste.onDrained = { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 self?.resumeModelCatalog()
@@ -437,8 +468,10 @@ final class ProbeModel: ObservableObject {
 
     private func startConnection(mode: ConnectionMode, preserveProduct: Bool = false) {
         guard connection == nil else { return }
+        let imageIntent = draft?.imageIntent
         do {
             let runtime = try runtimeProvider()
+            if let imageIntent, draft?.imageIntent != imageIntent || imageTranslation.isShutDown { return }
             if preserveProduct {
                 guard modelCatalog.pending, modelCatalog.matches(scope: selectedCLI),
                       !catalogShutDown else { return }
@@ -452,6 +485,7 @@ final class ProbeModel: ObservableObject {
                     self.receive(notice)
                 }
             }
+            if let imageIntent, draft?.imageIntent != imageIntent || imageTranslation.isShutDown { return }
             if preserveProduct {
                 guard modelCatalog.pending, modelCatalog.matches(scope: selectedCLI),
                       CodexModelSettings.sameID(command, selectedCLI), !catalogShutDown else { return }
@@ -464,6 +498,7 @@ final class ProbeModel: ObservableObject {
             nativeTranslation = mode == .translation
             connectedCLI = mode == .translation ? command : ""
             catalogSupported = false
+            imageTranslationSupported = false
             catalogNeedsReconnect = false
             catalogPreservesPreparation = preserveProduct
             settingsReady = false
@@ -544,6 +579,27 @@ final class ProbeModel: ObservableObject {
         resumeTranslation()
     }
 
+    @discardableResult
+    func translateImage(_ image: CGImage) -> UUID? {
+        guard !active, !preparing, !stopping, !imageTranslation.isShutDown else {
+            productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
+            return nil
+        }
+        catalogWasLastRequest = false
+        loadPresentation()
+        let intent = UUID()
+        translationIntentID = intent
+        draft = Draft(text: "", origin: "ocr", useCache: false, direction: direction, model: modelProfile,
+                      language: usesChinese ? "zh_CN" : "en_US", useSavedDirection: false,
+                      useSavedModel: false, imageIntent: intent)
+        translationOrigin = "ocr"
+        productPhase = .preparing
+        productMessage = text("Preparing the selected image…", "正在准备所选图片…")
+        guard draft?.imageIntent == intent, translationIntentID == intent else { return nil }
+        imageTranslation.prepare(image, intent: intent)
+        return intent
+    }
+
     func performResultAction(_ action: ResultAction, targetLanguage: String? = nil) {
         catalogWasLastRequest = false
         guard !active, !preparing else {
@@ -553,6 +609,14 @@ final class ProbeModel: ObservableObject {
         guard !primaryResult.isEmpty else {
             failPreparation(text("Complete a translation or choose a history result first.",
                                  "请先完成翻译或选择一条历史结果。"))
+            return
+        }
+        guard !action.usesOriginalInput || resultHasOriginalInput else {
+            productMessage = text("This result has no original text.", "此结果没有原文。")
+            if resultKind == "ocr" {
+                productMessage += text(" Use the capture preview to send the image again.",
+                                       " 如需再次发送图片，请使用截图预览。")
+            }
             return
         }
         let source = action.usesOriginalInput ? resultInput : primaryResult
@@ -580,7 +644,9 @@ final class ProbeModel: ObservableObject {
 
     private func resumeTranslation() {
         guard var requested = draft, connectionMode != .diagnostic, ready, settingsReady, !settingsBusy,
-              !active, !stopping, !dictionary.committing, let connection = connection else { return }
+              !active, !stopping, !publishingImageRequest, !dictionary.committing,
+              let connection = connection else { return }
+        if let intent = requested.imageIntent, imageTranslation.attachment(for: intent) == nil { return }
         if requested.action == nil, requested.origin != "ocr", requested.useCache, !requested.lookupFinished {
             let id = UUID().uuidString
             draft = nil
@@ -613,6 +679,7 @@ final class ProbeModel: ObservableObject {
             locatingForUpgrade = true
             if !candidates.contains(where: { $0.executable && $0.url.path == selectedCLI }) { locateCLI() }
             locatingForUpgrade = false
+            if let intent = requested.imageIntent, draft?.imageIntent != intent { return }
             guard candidates.contains(where: { $0.executable && $0.url.path == selectedCLI }) else {
                 needsCLI = true
                 failPreparation(requested.lookupFinished
@@ -632,6 +699,11 @@ final class ProbeModel: ObservableObject {
             upgradingForDraft = true
             openAfterStop = true
             stopHelper()
+            return
+        }
+        if requested.imageIntent != nil && !imageTranslationSupported {
+            failPreparation(text("Image translation is unavailable in this connection. Translate text is still available.",
+                                 "当前连接不支持图片翻译，仍可使用“翻译文字”。"))
             return
         }
         let savedLanguage = savedConfiguration?["language"]?.string
@@ -656,8 +728,23 @@ final class ProbeModel: ObservableObject {
                                  "显示的结果已更改，请对当前结果选择操作。"))
             return
         }
-        draft = nil
         let id = UUID().uuidString
+        if let intent = requested.imageIntent {
+            guard draft?.imageIntent == intent, translationIntentID == intent else { return }
+            guard imageTranslation.reserve(intent: intent, requestID: id, connectionID: connectionID) else {
+                failPreparation(text("The selected image is no longer available. Send it again from the capture preview.",
+                                     "所选图片已不可用，请从截图预览重新发送。"))
+                return
+            }
+            publishingImageRequest = true
+        }
+        defer {
+            if requested.imageIntent != nil {
+                publishingImageRequest = false
+                if draft != nil && !active { resumeTranslation() }
+            }
+        }
+        draft = nil
         latest.select(id)
         pending.insert(id)
         active = true
@@ -674,9 +761,31 @@ final class ProbeModel: ObservableObject {
             primaryResult = ""
             output = ""
             resultInput = requested.text
+            resultHasOriginalInput = requested.imageIntent == nil
             resultKind = requested.origin == "ocr" ? "ocr" : "text"
             isLocalDictionaryResult = false
-            productMessage = text("Translating…", "正在翻译…")
+            productMessage = requested.imageIntent == nil ? text("Translating…", "正在翻译…") :
+                text("Translating the selected image…", "正在翻译所选图片…")
+        }
+        if let intent = requested.imageIntent {
+            status = "Image translation requested. No automatic retry."
+            guard translationIntentID == intent, latest.id == id, !stopping,
+                  let attachment = imageTranslation.attachment(for: intent),
+                  imageTranslation.markSent(intent: intent) else {
+                _ = imageTranslation.cancelUnsent(requestID: id)
+                pending.remove(id)
+                if latest.id == id { active = false }
+                if translationIntentID == intent && draft == nil && !stopping {
+                    productPhase = .cancelled
+                    productMessage = text("Cancelled", "已取消")
+                }
+                return
+            }
+            _ = connection.translateImage(imagePath: attachment.imagePath, imageBytes: attachment.imageBytes,
+                                          imageSHA256: attachment.imageSHA256, appLanguage: requested.language,
+                                          recordHistory: historyEnabled, id: id, timeout: 110)
+            onTranslationStarted?()
+            return
         }
         onTranslationStarted?()
         status = "Translation requested. Uses the selected native CLI; no automatic retry."
@@ -1088,6 +1197,11 @@ final class ProbeModel: ObservableObject {
     }
 
     func copyBilingual() {
+        guard resultHasOriginalInput else {
+            productMessage = text("No original text is available for this result. Use Copy for the translated text.",
+                                  "此结果没有可用原文。请使用“复制”复制翻译文字。")
+            return
+        }
         guard !output.isEmpty else { return }
         copyText(resultInput + "\n\n" + output)
     }
@@ -1097,8 +1211,9 @@ final class ProbeModel: ObservableObject {
         cancel()
         translationOrigin = "text"
         discardBufferedDelta()
-        input = row.input
+        if row.hasOriginalInput { input = row.input }
         resultInput = row.input
+        resultHasOriginalInput = row.hasOriginalInput
         output = row.output
         primaryResult = row.output
         resultGeneration = UUID()
@@ -1120,6 +1235,7 @@ final class ProbeModel: ObservableObject {
         isLocalDictionaryResult = false
         resultGeneration = UUID()
         resultInput = ""
+        resultHasOriginalInput = true
         hideCurrentOutput = true
         productPhase = .idle
         productMessage = ""
@@ -1157,7 +1273,18 @@ final class ProbeModel: ObservableObject {
     private func requestCancellation() {
         if dictionaryLookup != nil { dictionaryLookup?.cancelled = true }
         guard let id = latest.id, pending.contains(id), let connection = connection else { return }
+        if imageTranslation.cancelUnsent(requestID: id) {
+            pending.remove(id)
+            active = !pending.isEmpty
+            productPhase = .cancelled
+            productMessage = text("Cancelled", "已取消")
+            return
+        }
         status = "Cancellation requested; waiting for the original request's terminal event."
+        if imageTranslation.owns(requestID: id) {
+            productMessage = text("Cancelling image translation… Waiting for the request to finish.",
+                                  "正在取消图片翻译… 等待请求结束。")
+        }
         connection.send(ClientMessage(
             id: UUID().uuidString, type: "cancel", payload: ["request_id": .string(id)]
         ))
@@ -1184,16 +1311,43 @@ final class ProbeModel: ObservableObject {
         dictionary.prepareToStop { stoppingConnection?.stop() }
     }
 
+    private func imageFailureMessage(_ event: ServerEvent) -> String {
+        switch event.payload["code"]?.string {
+        case "image_too_large":
+            return text("The image is too large. Select a smaller region and send it again.",
+                        "图片过大。请选取较小区域后重新发送。")
+        case "image_cleanup_failed":
+            return text("The helper could not remove a temporary image. It may remain on this Mac.",
+                        "助手无法删除临时图片，它可能仍保留在此 Mac 上。")
+        case "image_changed", "image_unavailable", "invalid_image_translation":
+            return text("The image could not be used. Send it again from the capture preview, or translate the text.",
+                        "无法使用此图片。请从截图预览重新发送，或翻译文字。")
+        default:
+            return event.payload["submitted"] == .bool(true)
+                ? text("Image translation failed after possible submission. Nothing was retried. Try another model or translate the text.",
+                       "图片可能已提交，但翻译失败。未重试。可尝试其他模型或翻译文字。")
+                : text("Image translation failed. Retry explicitly or translate the text.",
+                       "图片翻译失败。请手动重试，或翻译文字。")
+        }
+    }
+
     private func receive(_ notice: HelperNotice) {
         defer { resumeModelCatalog() }
         switch notice {
         case .event(let event):
+            let imageRequest = imageTranslation.owns(requestID: event.id)
+            // Target terminals release resources even when their output is hidden or the helper is stopping.
+            if event.isTerminal { imageTranslation.terminal(requestID: event.id) }
             if dictionary.handle(event) { return }
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
                 if case .array(let capabilities)? = event.payload["capabilities"] {
                     catalogSupported = nativeTranslation && capabilities.contains(.string("model_catalog"))
-                } else { catalogSupported = false }
+                    imageTranslationSupported = nativeTranslation && capabilities.contains(.string("translate_image"))
+                } else {
+                    catalogSupported = false
+                    imageTranslationSupported = false
+                }
                 ready = true
                 status = nativeTranslation
                     ? "Native connection ready. CLI/account/model availability is not yet verified."
@@ -1288,7 +1442,9 @@ final class ProbeModel: ObservableObject {
                         output += "\n\n[" + text("Result action cancelled", "结果操作已取消") + "]"
                     }
                     productPhase = .cancelled
-                    productMessage = text("Cancelled", "已取消")
+                    productMessage = imageRequest && event.payload["submitted"] == .bool(true)
+                        ? text("Cancelled · The image may already have been sent.", "已取消 · 图片可能已经发送。")
+                        : text("Cancelled", "已取消")
                 }
             case "failed":
                 flushBufferedDelta()
@@ -1298,7 +1454,7 @@ final class ProbeModel: ObservableObject {
                         output += "\n\n[" + text("Result action failed", "结果操作失败") + "]"
                     }
                     productPhase = .failed
-                    productMessage = event.safeFailureMessage
+                    productMessage = imageRequest ? imageFailureMessage(event) : event.safeFailureMessage
                 }
             default: break
             }
@@ -1310,6 +1466,7 @@ final class ProbeModel: ObservableObject {
             }
         case .failure(let error):
             let isolatedCatalog = (modelCatalog.busy || catalogWasLastRequest) && !active && draft == nil
+            let hiddenImageResult = imageTranslation.owns(requestID: latest.id) && hideCurrentOutput && draft == nil
             modelCatalog.disconnect()
             catalogReconnectIntent = nil
             modelSettings.connectionLost()
@@ -1335,7 +1492,10 @@ final class ProbeModel: ObservableObject {
             dictionary.connectionLost()
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
             if error == .translationOutcomeUnknown {
-                status = activeAction == nil
+                status = imageTranslation.owns(requestID: latest.id)
+                    ? text("Image translation outcome unknown. The image may have been sent and history may have changed. Not retried.",
+                           "图片翻译结果未知。图片可能已经发送，历史记录可能已更改。未重试。")
+                    : activeAction == nil
                     ? "Translation outcome unknown. The CLI may have received the request and history may have changed. Not retried."
                     : "Result action outcome unknown. The CLI may have received the request. Original result retained; no automatic retry."
             } else if error == .dictionaryOutcomeUnknown {
@@ -1352,9 +1512,12 @@ final class ProbeModel: ObservableObject {
             if activeAction != nil, !hideCurrentOutput {
                 output += "\n\n[" + text("Result action interrupted", "结果操作已中断") + "]"
             }
-            if !isolatedCatalog { failPreparation(status) }
-            if !isolatedCatalog && (nativeTranslation || hadLocalLookup) { onTranslationResult?(status + "\n\n" + output) }
+            if !isolatedCatalog && !hiddenImageResult { failPreparation(status) }
+            if !isolatedCatalog && !hiddenImageResult && (nativeTranslation || hadLocalLookup) {
+                onTranslationResult?(status + "\n\n" + output)
+            }
         case .stopped:
+            imageTranslation.drained(connectionID: connectionID)
             let restartCatalog = catalogReconnectIntent == modelCatalog.intent && modelCatalog.pending &&
                 (modelCatalog.matches(scope: selectedCLI) ||
                  (modelCatalog.scope == nil && selectedCLI.isEmpty)) && !catalogShutDown
@@ -1401,6 +1564,7 @@ final class ProbeModel: ObservableObject {
             connection = nil
             connectedCLI = ""
             catalogSupported = false
+            imageTranslationSupported = false
             catalogPreservesPreparation = false
             dictionaryLookup = nil
             dictionary.connectionLost()
@@ -1472,6 +1636,7 @@ final class ProbeModel: ObservableObject {
             if let value = result.result, let resultText = value["text"]?.string {
                 discardBufferedDelta()
                 resultInput = lookup.draft.text
+                resultHasOriginalInput = true
                 resultKind = "dict"
                 isLocalDictionaryResult = true
                 resultGeneration = UUID()
@@ -1791,6 +1956,7 @@ final class ProbeModel: ObservableObject {
         productPhase = .idle
         productMessage = ""
         resultInput = ""
+        resultHasOriginalInput = true
         primaryResult = ""
         resultGeneration = UUID()
         activeAction = nil
@@ -1808,6 +1974,7 @@ final class ProbeModel: ObservableObject {
 
     func prepareToQuit() {
         catalogShutDown = true
+        imageTranslation.shutdown()
         plainPasteConfigAfterStop = false
         plainPaste.shutdown()
         stopMonitor()

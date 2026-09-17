@@ -27,6 +27,15 @@ def addition(text="synthetic", **changes):
 
 
 class HistoryRequestTests(unittest.TestCase):
+    def test_only_ocr_writes_can_preserve_null_input_without_relaxing_other_fields(self):
+        history.validate_history_request(addition(input=None, kind="ocr"))
+        for kind in ("text", "dict", "code"):
+            with self.assertRaisesRegex(ProtocolError, "^invalid_history_record$"):
+                history.validate_history_request(addition(input=None, kind=kind))
+        for changes in ({"output": None}, {"sig": None}, {"input": []}):
+            with self.assertRaisesRegex(ProtocolError, "^invalid_history_record$"):
+                history.validate_history_request(addition(kind="ocr", **changes))
+
     def test_load_optional_filters_keep_required_fields_and_strict_value_types(self):
         original = {"operation": "history_load", "page_size": 1, "cursor": None}
         for filters in ({}, {"query": ""}, {"kind": "all"}, *(

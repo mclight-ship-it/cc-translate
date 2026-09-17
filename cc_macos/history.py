@@ -87,6 +87,8 @@ def validate_history_request(payload):
         for field, limit in (("input", MAX_HISTORY_TEXT_BYTES), ("output", MAX_HISTORY_TEXT_BYTES),
                              ("sig", MAX_SIGNATURE_BYTES)):
             value = payload[field]
+            if field == "input" and value is None and payload["kind"] == "ocr":
+                continue
             if not isinstance(value, str):
                 raise ProtocolError("invalid_history_record")
             try:
@@ -221,7 +223,8 @@ class HistoryService:
                 return self._page(payload, request_id, sequence)
             if operation == "history_add":
                 self._owner.add(payload["input"], payload["output"], payload["is_dict"], payload["limit"],
-                                is_code=payload["is_code"], kind=payload["kind"], sig=payload["sig"])
+                                is_code=payload["is_code"], kind=payload["kind"], sig=payload["sig"],
+                                **({"preserve_null_input": True} if payload["input"] is None else {}))
                 self._generation += 1
                 return {"recorded": True, "revision": self._revision()}
             self._owner.clear()

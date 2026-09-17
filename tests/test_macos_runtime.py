@@ -316,6 +316,7 @@ class RuntimeMatrixTests(unittest.TestCase):
             "testBundledTranslationConfigurationStreamHistoryCacheAndReopen",
             "testBundledCustomModelSettingsSurviveReopenAndReachExactProviderID",
             "testBundledModelCatalogReadsExactMetadataWithoutTurnsThenTranslatesKnownModel",
+            "testBundledImageTranslationOwnsPNGStreamsWithoutCacheAndDrainsCancellationOrUnknown",
             "testBundledOCRTextPreservesLayoutClassificationAndNeverUsesCacheOrAutomaticSummary",
             "testBundledTranslationConcurrentOptoutAndCancellationDrain",
             "testBundledTranslationCorruptionAndOutputBudgets",
@@ -330,12 +331,15 @@ class RuntimeMatrixTests(unittest.TestCase):
         timing = {"scope": "config_only_foundation_helper_round_trip_not_gui", "unit": "ms",
                   "samples": [2.5] * 8, "use_cache": False, "record_history": False}
         measurements = "CC_TRANSLATE_DICTIONARY_TIMINGS " + json.dumps(timing)
-        summary = "Executed 20 tests, with 0 failures (0 unexpected)"
+        summary = "Executed 21 tests, with 0 failures (0 unexpected)"
         result = runtime.integration_result(methods + "\n" + measurements + "\n" + summary)
-        self.assertEqual(result, {"tests_run": 20, "failures": 0, "skipped": 0,
+        self.assertEqual(result, {"tests_run": 21, "failures": 0, "skipped": 0,
                                   "methods": list(runtime.INTEGRATION_TESTS), "dictionary_warm_lookup": timing})
         for text in ("0 tests passed", summary, methods,
                      methods + "\nExecuted 0 tests, with 0 failures",
+                     methods + "\nExecuted 21 tests, with 1 test skipped and 0 failures",
+                     methods + "\nExecuted 21 tests, with 1 failures",
+                     methods + "\nExecuted 20 tests, with 0 failures",
                      methods + "\nExecuted 20 tests, with 1 test skipped and 0 failures",
                      methods + "\nExecuted 20 tests, with 1 failures",
                      methods + "\nExecuted 19 tests, with 0 failures",

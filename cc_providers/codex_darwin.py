@@ -316,7 +316,7 @@ class DarwinCodexProvider:
     """Caller-bound native provider; complete also uses app-server, never exec."""
 
     provider_id = CODEX_PROVIDER
-    capabilities = ProviderCapabilities(text=True, images=False, streaming=True, warm_sessions=True)
+    capabilities = ProviderCapabilities(text=True, images=True, streaming=True, warm_sessions=True)
 
     def __init__(self, command, work_dir, *, environment, catalog_cache_dir, log_error):
         if sys.platform != "darwin":
@@ -355,7 +355,14 @@ class DarwinCodexProvider:
             raise TypeError("request must be ProviderRequest")
         if type(request.task) is not str or type(request.image_paths) not in (list, tuple):
             raise ValueError("invalid_provider_request")
-        if request.task not in ("text", "translation_summary") or request.image_paths:
+        if request.task == "image":
+            if len(request.image_paths) != 1:
+                return None
+            image_paths = tuple(_absolute(path) for path in request.image_paths)
+            image_paths[0].encode("utf-8")
+        elif request.task in ("text", "translation_summary") and not request.image_paths:
+            image_paths = ()
+        else:
             return None
         if (type(request.user_text) is not str or type(request.system_prompt) is not str
                 or type(request.model) not in (str, type(None))
@@ -366,7 +373,7 @@ class DarwinCodexProvider:
         request.system_prompt.encode("utf-8")
         return ProviderRequest(
             request.task, request.model, request.system_prompt, request.user_text,
-            image_paths=(), timeout_seconds=request.timeout_seconds)
+            image_paths=image_paths, timeout_seconds=request.timeout_seconds)
 
     def complete(self, request, cancel_event=None):
         return self.stream(request, lambda _delta: None, cancel_event)
@@ -505,7 +512,9 @@ class DarwinCodexProvider:
             installed=os.path.isfile(self.command), authenticated=None, command=self.command,
             error_code=result.error_code, backend="native_appserver")
 
-    def shutdown(self):
+    def shutdown(self, *, require_cleanup=False):
         self._closing.set()
         with self._operation_lock:
             self._transport.shutdown()
+            if require_cleanup and (self._transport.cleanup_failed.is_set() or self._fatal == "provider_cleanup_failed"):
+                raise ProcessError("provider_cleanup_failed")

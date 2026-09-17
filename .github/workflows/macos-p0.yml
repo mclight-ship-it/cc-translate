@@ -51,6 +51,7 @@ jobs:
           tests.test_macos_history
           tests.test_request_snapshot
           tests.test_summary_rules tests.test_macos_translation
+          tests.test_macos_image
           tests.test_darwin_rpc_contract tests.test_codex_darwin tests.test_codex_version
           tests.test_codex_version_smoke
           tests.test_macos_runtime tests.test_macos_bundled_tests

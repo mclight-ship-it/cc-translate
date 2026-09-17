@@ -8,6 +8,8 @@ protocol AppHelperClient: AnyObject {
     func send(_ message: ClientMessage, timeout: TimeInterval)
     func translate(text: String, appLanguage: String, origin: String, useCache: Bool,
                    recordHistory: Bool, id: String, timeout: TimeInterval) -> String
+    func translateImage(imagePath: String, imageBytes: Int, imageSHA256: String,
+                        appLanguage: String, recordHistory: Bool, id: String, timeout: TimeInterval) -> String
     func resultAction(_ action: ResultAction, text: String, appLanguage: String,
                       targetLanguage: String?, id: String, timeout: TimeInterval) -> String
     func modelCatalog(id: String, timeout: TimeInterval) -> String
@@ -24,6 +26,16 @@ extension HelperConnection: AppHelperClient {}
 
 extension AppHelperClient {
     func send(_ message: ClientMessage) { send(message, timeout: 25) }
+    @discardableResult
+    func translateImage(imagePath: String, imageBytes: Int, imageSHA256: String,
+                        appLanguage: String, recordHistory: Bool, id: String, timeout: TimeInterval) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string("translate_image"), "image_path": .string(imagePath),
+            "image_bytes": .integer(Int64(imageBytes)), "image_sha256": .string(imageSHA256),
+            "app_language": .string(appLanguage), "record_history": .bool(recordHistory)
+        ]), timeout: timeout)
+        return id
+    }
     @discardableResult
     func modelCatalog(id: String) -> String { modelCatalog(id: id, timeout: 40) }
     @discardableResult

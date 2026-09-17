@@ -26,9 +26,11 @@ class MacHistoryOwner(MacFileOwner, HistoryRepository):
         self._ensure_process()
         return super().load()
 
-    def add(self, input_text, output_text, is_dict, limit, is_code=False, kind=None, sig=None):
+    def add(self, input_text, output_text, is_dict, limit, is_code=False, kind=None, sig=None,
+            *, preserve_null_input=False):
         self._ensure_process()
-        return super().add(input_text, output_text, is_dict, limit, is_code, kind, sig)
+        return super().add(input_text, output_text, is_dict, limit, is_code, kind, sig,
+                           **({"preserve_null_input": True} if preserve_null_input else {}))
 
     def find_cached(self, text, kind, sig):
         self._ensure_process()

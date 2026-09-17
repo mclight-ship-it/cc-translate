@@ -30,6 +30,7 @@ final class CaptureModel: ObservableObject {
     private weak var translationModel: ProbeModel?
     private var translationIntent: UUID?
     private var submittedText: String?
+    private var submittedImage = false
 
     var busy: Bool { phase == .capturing || phase == .recognizing }
     var submitting: Bool {
@@ -38,13 +39,18 @@ final class CaptureModel: ObservableObject {
     }
     var showsTranslationStatus: Bool {
         guard let translationModel else { return false }
+        if submittedImage && busy && !submitting { return false }
         return submitted && translationIntent == translationModel.translationIntentID &&
             !translationModel.productMessage.isEmpty &&
-            (submitting || text == submittedText)
+            (submitting || submittedImage || text == submittedText)
     }
     var canTranslate: Bool {
         preview != nil && !busy && phase != .selecting && !submitting &&
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 8192
+    }
+    var canTranslateImage: Bool {
+        preview != nil && screen.selectedRegion != nil && phase != .capturing &&
+            phase != .selecting && phase != .cancelled && !submitting
     }
 
     convenience init() { self.init(screen: ScreenProbe()) }
@@ -162,6 +168,30 @@ final class CaptureModel: ObservableObject {
         translationIntent = model.translationIntentID
         submittedText = reviewed
         submitted = true
+        submittedImage = false
+    }
+
+    func translateImage(using model: ProbeModel) {
+        guard !model.active, !model.preparing else {
+            notice = .translationBusy
+            objectWillChange.send()
+            return
+        }
+        guard canTranslateImage, let image = screen.selectedRegion?.image else {
+            failure = .noSelection
+            return
+        }
+        let generation = self.generation
+        guard let intent = model.translateImage(image) else { return }
+        guard generation == self.generation else {
+            if model.translationIntentID == intent { model.cancel() }
+            return
+        }
+        translationModel = model
+        translationIntent = intent
+        submittedText = nil
+        submittedImage = true
+        submitted = true
     }
 
     func cancel() {
@@ -177,11 +207,20 @@ final class CaptureModel: ObservableObject {
         phase = .cancelled
     }
 
+    func cancelCurrentAction() {
+        if submittedImage && submitting {
+            translationModel?.cancel()
+        } else {
+            cancel()
+        }
+    }
+
     private func cancelTranslationIfOwned() {
         if submitting { translationModel?.cancel() }
         translationModel = nil
         translationIntent = nil
         submittedText = nil
+        submittedImage = false
         submitted = false
     }
 

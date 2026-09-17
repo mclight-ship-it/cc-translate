@@ -297,7 +297,8 @@ class Server:
             if request.catalog:
                 event, result = self._configuration.model_catalog(request.cancel, begin_finish)
             else:
-                execute = (self._configuration.result_action if payload["operation"] == "result_action"
+                execute = (self._configuration.translate_image if payload["operation"] == "translate_image"
+                           else self._configuration.result_action if payload["operation"] == "result_action"
                            else self._configuration.translate)
                 event, result = execute(payload, request.cancel, delta, begin_finish)
             self._send(request, event, result)
@@ -340,9 +341,10 @@ class Server:
                 except ProtocolError as error:
                     return error.code
                 return None
-            if operation in ("translate", "result_action") and self._translation_enabled:
+            if operation in ("translate", "result_action", "translate_image") and self._translation_enabled:
                 try:
-                    validate = (self._configuration.validate_result_action_request
+                    validate = (self._configuration.validate_image_request if operation == "translate_image"
+                                else self._configuration.validate_result_action_request
                                 if operation == "result_action"
                                 else self._configuration.validate_translation_request)
                     validate(payload)
@@ -405,7 +407,7 @@ class Server:
             capabilities = (["fixture", "runtime_probe"] if self._configuration is None
                             else ["config_load", "config_save", *HISTORY_OPERATIONS])
             if self._translation_enabled:
-                capabilities.extend(("translate", "result_action", "model_catalog"))
+                capabilities.extend(("translate", "result_action", "model_catalog", "translate_image"))
             if self._dictionary_enabled:
                 capabilities.extend(DICTIONARY_OPERATIONS)
             self._send(control, "ready", {
@@ -448,7 +450,7 @@ class Server:
                     self._send(control, "failed", {"code": "busy"})
                     return True
                 self._tasks[id_] = control
-                control.translating = payload["operation"] in ("translate", "result_action")
+                control.translating = payload["operation"] in ("translate", "result_action", "translate_image")
                 control.catalog = payload["operation"] == "model_catalog"
                 control.dictionary = payload["operation"] in DICTIONARY_OPERATIONS
                 self._send(control, "accepted", {"operation": payload["operation"]})

@@ -9,6 +9,7 @@ from cc_direction import DIRECTION_MODES, LANGUAGES, direction_prompt, resolve_t
 from cc_prompts import (
     CODE_EXPLAIN_APPEND_PROMPT, CODE_EXPLAIN_PROMPT, DICTIONARY_PROMPT,
     PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX, with_ocr_structure_hint,
+    image_translation_prompt,
 )
 from cc_providers.base import CODEX_PROVIDER, ProviderRequest, ProviderSelection
 from cc_providers.codex_darwin import DarwinCodexProvider
@@ -20,6 +21,7 @@ from cc_storage import macos_user_paths
 from cc_summary import SUMMARY_MIN_CHARS, codex_summary_instruction, is_summarizable_prose
 from .configuration import ConfigurationError, ConfigurationSession
 from .history import MAX_HISTORY_ENTRIES
+from .image import ImageCancelled, ImageError, OwnedPNG, validate_image_request
 from .protocol import (
     MAX_TEXT_BYTES, MAX_RESULT_ACTION_TEXT_BYTES, MAX_STREAM_BYTES, ProtocolError,
     decode_json_document,
@@ -37,6 +39,7 @@ TRANSLATION_FAILURE_CODES = {
     "provider_version_unsupported", "provider_version_unreadable", "provider_version_prerelease",
     "provider_cleanup_failed", "provider_protocol_error",
     "provider_failed",
+    "invalid_image_translation", "image_unavailable", "image_too_large", "image_changed", "image_cleanup_failed",
 }
 
 
@@ -102,18 +105,35 @@ def validate_result_action_request(payload):
         raise ProtocolError("invalid_result_action") from None
 
 
-def _snapshot_settings(config, payload, *, result_action=False):
+def _snapshot_settings(config, payload, *, result_action=False, image=False):
     if config[CFG.MODEL_PROVIDER] != CODEX_PROVIDER:
         raise TranslationError("unsupported_provider")
-    text, model, direction = payload["text"], config[CFG.CODEX_MODEL], config[CFG.DIRECTION]
+    model, direction = config[CFG.CODEX_MODEL], config[CFG.DIRECTION]
     language = config.get(CFG.LANGUAGE) or payload["app_language"]
     if (type(model) is not str or not model or len(model.encode("utf-8")) > 256
             or direction not in DIRECTION_MODES or language not in ("zh_CN", "en_US")
-            or config[CFG.MAX_CHARS] < 1
-            or not result_action and len(text) > config[CFG.MAX_CHARS]
+            or not image and config[CFG.MAX_CHARS] < 1
+            or not image and not result_action and len(payload["text"]) > config[CFG.MAX_CHARS]
             or not 1 <= config[CFG.HISTORY_LIMIT] <= MAX_HISTORY_ENTRIES):
         raise TranslationError("invalid_translation_settings")
     return model, direction, language
+
+
+def snapshot_for_image(config, payload, owned_path):
+    validate_image_request(payload)
+    model, direction, language = _snapshot_settings(config, payload, image=True)
+    return RequestSnapshot(
+        request=ProviderRequest(
+            "image", model, image_translation_prompt(direction, language),
+            "Translate the attached image while preserving its structure.",
+            image_paths=(owned_path,), timeout_seconds=90),
+        selection=ProviderSelection(CODEX_PROVIDER, model), config=config, input=None,
+        origin="ocr", content_class="ocr", kind="ocr",
+        sig=provider_cache_signature(CODEX_PROVIDER, model, direction, False, language,
+                                     PROVIDER_PROMPT_REVISIONS[CODEX_PROVIDER]),
+        direction=direction, app_language=language,
+        target_lang=None if direction == "auto" else direction[3:],
+        summarize=False, dictionary=False, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]))
 
 
 def snapshot_for_translation(config, payload):
@@ -190,11 +210,14 @@ class TranslationSession(ConfigurationSession):
     translation_enabled = True
     validate_translation_request = staticmethod(validate_translation_request)
     validate_result_action_request = staticmethod(validate_result_action_request)
+    validate_image_request = staticmethod(validate_image_request)
 
     def __init__(self, home, application_id, command, environment):
         super().__init__(home, application_id)
         self.command, self.environment = command, dict(environment)
         self._provider = None
+        self._images = set()
+        self._undrained_images = False
 
     def open(self):
         opened = False
@@ -251,6 +274,52 @@ class TranslationSession(ConfigurationSession):
         snapshot, cached = self._capture(payload)
         return self._execute(snapshot, cached, payload["record_history"], cancel, on_delta, begin_finish)
 
+    def _release_image(self, image, submitted):
+        try:
+            image.close()
+        except ImageError:
+            raise TranslationError("image_cleanup_failed", submitted) from None
+        with self._operations_lock:
+            self._images.discard(image)
+
+    def translate_image(self, payload, cancel, on_delta, begin_finish):
+        validate_image_request(payload)
+        if cancel.is_set():
+            return "cancelled", {"submitted": False}
+        with self._operations_lock:
+            config = self.perform({"operation": "config_load"})["config"]
+            _snapshot_settings(config, payload, image=True)
+            image = OwnedPNG(macos_user_paths(self.home, self.application_id).application_support / "NativeWorkspace")
+            self._images.add(image)
+        try:
+            owned_path = image.prepare(payload, cancel)
+            snapshot = snapshot_for_image(config, payload, owned_path)
+            # Final admission/history happen only after the provider drains and
+            # the private image is removed, including failures and cancellation.
+            event, result = self._execute(snapshot, None, False, cancel, on_delta, lambda: True, defer_history=True)
+        except ImageCancelled:
+            self._release_image(image, False)
+            return "cancelled", {"submitted": False}
+        except ImageError as error:
+            self._release_image(image, False)
+            raise TranslationError(error.code) from None
+        except TranslationError as error:
+            if error.code == "provider_cleanup_failed":
+                self._undrained_images = True
+            else:
+                self._release_image(image, error.submitted)
+            raise
+        except (ProtocolError, OSError):
+            self._undrained_images = True
+            raise
+        self._release_image(image, result["submitted"])
+        if event == "completed":
+            if not begin_finish():
+                return "cancelled", {"submitted": result["submitted"]}
+            result["history"], result["history_error"] = self._record(
+                snapshot, result["text"], payload["record_history"])
+        return event, result
+
     def result_action(self, payload, cancel, on_delta, begin_finish):
         with self._operations_lock:
             config = self.perform({"operation": "config_load"})["config"]
@@ -273,7 +342,7 @@ class TranslationSession(ConfigurationSession):
             return "cancelled", {}
         return "completed", {"models": models}
 
-    def _execute(self, snapshot, cached, record_history, cancel, on_delta, begin_finish):
+    def _execute(self, snapshot, cached, record_history, cancel, on_delta, begin_finish, *, defer_history=False):
         if cancel.is_set():
             return "cancelled", {"submitted": False}
         submitted, output, used_cache = False, cached, cached is not None
@@ -328,7 +397,7 @@ class TranslationSession(ConfigurationSession):
             raise TranslationError("translation_output_limit", bool(submitted))
         if not begin_finish():
             return "cancelled", {"submitted": bool(submitted)}
-        if snapshot.action != "translation":
+        if defer_history or snapshot.action != "translation":
             status, error = "disabled", None
         else:
             status, error = ("unchanged", None) if used_cache else self._record(
@@ -343,8 +412,20 @@ class TranslationSession(ConfigurationSession):
         try:
             if self._provider is not None:
                 try:
-                    self._provider.shutdown()
+                    if self._undrained_images:
+                        self._provider.shutdown(require_cleanup=True)
+                        self._undrained_images = False
+                    else:
+                        self._provider.shutdown()
                 except ProcessError:
                     raise ConfigurationError("provider_cleanup_failed") from None
+            cleanup_failed = False
+            for image in tuple(self._images):
+                try:
+                    self._release_image(image, False)
+                except TranslationError:
+                    cleanup_failed = True
+            if cleanup_failed:
+                raise ConfigurationError("image_cleanup_failed")
         finally:
             super().close()

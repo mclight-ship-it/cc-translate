@@ -89,6 +89,11 @@ def stub_rendering(app):
 
 
 class RequestSnapshotWindowsTests(unittest.TestCase):
+    def test_windows_vision_prompt_reexport_retains_exact_legacy_bytes(self):
+        self.assertIs(tr.OCR_VISION_PROMPT, cc_prompts.OCR_VISION_PROMPT)
+        self.assertEqual(hashlib.sha256(tr.OCR_VISION_PROMPT.encode("utf-8")).hexdigest(),
+                         "52883909f090b9cda4ef8e9060918808e04d7d08f67e03d8744d93ae1905afbb")
+
     def test_ocr_layout_prompt_is_shared_with_unchanged_windows_bytes_and_no_image_task(self):
         self.assertIs(tr.OCR_STRUCTURE_HINT, cc_prompts.OCR_STRUCTURE_HINT)
         self.assertIs(tr.with_ocr_structure_hint, cc_prompts.with_ocr_structure_hint)

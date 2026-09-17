@@ -258,7 +258,18 @@ def _serve():
             expected = (translation["prompt"] if translation is not None else
                         build_codex_prompt(ProviderRequest(
                             "text", "synthetic", SYSTEM_PROMPT, USER_TEXT)))
-            if request.get("params", {}).get("input") != [{"type": "text", "text": expected}]:
+            inputs = request.get("params", {}).get("input")
+            image_request = translation is not None and translation["task"] == "image"
+            if image_request:
+                from cc_macos.image_fixture import validate_turn_image, VERIFIED_IMAGE_PATH
+                validate_turn_image(inputs, cwd)
+                if inputs[0] != {"type": "text", "text": expected}:
+                    raise SystemExit(78)
+                # Only synthetic verification metadata is recorded, never the private path or bytes.
+                request = {**request, "params": {**request["params"], "input": [
+                    inputs[0], {"type": "localImage", "path": VERIFIED_IMAGE_PATH}]}}
+                _receipt(root, "image-read.jsonl", {"verified": True, "task": "image"})
+            elif inputs != [{"type": "text", "text": expected}]:
                 raise SystemExit(78)
         # Receipts contain only our synthetic request, never account/config data.
         _receipt(root, "native-rpc.jsonl", {"pid": os.getpid(), "kind": info["kind"],

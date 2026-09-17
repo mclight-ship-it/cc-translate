@@ -101,7 +101,8 @@ class HistoryRepository:
             self._ensure_open()
             return self._read()
 
-    def add(self, input_text, output_text, is_dict, limit, is_code=False, kind=None, sig=None):
+    def add(self, input_text, output_text, is_dict, limit, is_code=False, kind=None, sig=None,
+            *, preserve_null_input=False):
         if kind not in ("text", "dict", "code", "ocr"):
             if is_code:
                 kind = "code"
@@ -114,7 +115,7 @@ class HistoryRepository:
             entries = self._read()
             entries.insert(0, {
                 "ts": time.strftime("%Y-%m-%d %H:%M"),
-                "input": input_text or "",
+                "input": None if preserve_null_input and input_text is None else input_text or "",
                 "output": output_text or "",
                 "is_dict": bool(is_dict),
                 "is_code": bool(is_code),
