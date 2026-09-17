@@ -169,11 +169,34 @@ portable880/14.270s、232process/517.993s、648core/6.562s、Foundation21/184.68
 不对UTF-8结果任意删除U+FEFF。原4个编码矩阵场景和46个方法保持，新增4个
 literal-prefix/TSV场景，并检查最终发布UTF-8的精确字节。
 新增literal-prefix场景使用原始字节而非会消费前缀的AppKit string便捷转换作为判据，
-同时仍检查纯文本类型；原4场景的所有断言保留。Mac原生验证正在运行，尚不宣称修复成功。
+同时仍检查纯文本类型；原4场景的所有断言保留。最终验证仍失败，见下方实际结果。
 正常push首次被未改动的Windows历史矩阵测试挡住：1823/95.325s、仅日志存在断言失败；
 本日志未记录具体拒绝原因，不能直接归因为WinError5。独立该方法1/3.022s通过后，
 正常privacy/完整hook1823/88.733s通过并推送，未绕过hook，也不把重试称为Windows稳定性修复。
 并行双Cmd+C切片的未提交文件与此源码分开，不宣称共享工作树干净。
+
+237本轮实际watch退出1、attempt1：producer和同App macOS14完整通过，
+macOS26仅粘贴阶段失败。producer编译49.99s，616项/23构包前skip/0fail/286.254s，
+46粘贴/0fail/0.501s；18项Sources及76项图片方法逐项通过。
+同App三系统232process/648core/21后置Foundation全部通过，新增图片9process/40core、
+来源1process/4core及全部21Foundation逐项各通过一次：
+15为521.951s/5.693s/186.573s，14为527.800s/5.313s/185.364s，
+26为525.768s/6.624s/204.307s。
+14的46粘贴/0fail/0.745s、最终`passed/complete`与不可变门槛已核验；
+26的46项中两个方法共3fail：不可用C promise回调收到0xd、预期0x13；
+新增UTF-8 literal-prefix场景因优先读取自动UTF-16别名丢失U+FEFF，读取和写入字节断言都失败。
+这证明固定UTF-8-first和UTF-16-first互换仍不足，不删除新增用例或放宽promise身份断言。
+26报告保持`NOT PASSED/plain-text-paste-harness`；finally记录`bundle_unchanged=true`，
+但失败之后的完整audit-after与最终成功门槛没有执行，不能混为一谈。
+原Support实现者继续处理这两个文件；并行P2新复制读取也需复用一致的原始表示解码。
+
+本源码完整工程App10522635034已独立审计，仍不作为推荐版：
+19,376,266 bytes，SHA-256 `289b187a26174143ec5ed7488ab4572e464a9e00404691876ce4df3449140a3b`，
+tree `c435ee3b436be66a8a987fbd9365e334a048f3caa1f098ffc44054cdb59ede14`，
+690库存/80资源/52源码路径（51唯一）/6实际Mach-O/19 runtime许可；
+23文件harness `92642eb8554caab4270268cea1f9cb87323993b9ad9ad16984865d88f5e06a5d`。
+112张本源码PNG的完整清单、尺寸及CRC已核验，并直接查看来源按钮和仅输出历史。
+14/26小报告artifact分别10521688368/10522437488，原始失败日志与独立审计均保留。
 
 <a id="native-dictionary-sources-checkpoint"></a>
 
@@ -211,7 +234,23 @@ portable880/16.089s、232process/483.295s、648core/4.867s及21后置Foundation/
 新增4core/1process和全部21Foundation逐项各通过一次。
 API核验attempt1/source精确相符，原始unit门槛失败、没有App、消费者跳过；
 UI artifact10520356031保留，不能将它说成安装包。
-上方dbf5b33正在验证AppKit迁移；当前推荐下载不变，不把局部通过当完整移植完成。
+上方dbf5b33及237f3c9的实际迁移失败仍在修复；当前推荐下载不变，不把局部通过当完整移植完成。
+
+<a id="native-associated-copy-checkpoint"></a>
+
+### 双Cmd+C关联复制回退：实现已交付，尚未提交或原生验收
+
+现有明确开关和被动监听接通关联状态机；AX仍优先，仅unsupported时尝试同一前台
+进程生命周期/焦点、双键时间与新changeCount关联的文字。不吞原Cmd+C、不模拟copy、
+不写哨兵、不读取旧剪贴板、不恢复/重放。诊断启动明确AX-only，默认构造不监听或读业务状态；
+输入/来源变化、停止、取消、新请求、关闭和退出使待处理结果失效。
+时间及changeCount只是保守关联，不是写入者PID证明、跨进程原子CAS或Universal Clipboard验收。
+第二键采样前已完成的复制宁可不采用；同步系统读取不能承诺可抢占。
+原实现者交付10文件、37项新XCTest（15状态机/8监听/7私有剪贴板/7App），全部旧方法保留，
+预期原生库存616→653。父完整阅读交付，已有离线包/runtime回归66/11.133s通过；
+Windows编辑器没有发现可执行native测试，不称为Mac编译通过。
+这份未提交实现不在237的App中；原始文本表示/自动别名兼容需与正在修复的读取机制一致，
+暂不将“仅UTF-8”这一实现限制当产品计划要求。之后还需实际原生编译、方法发现及同包验收。
 
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；
@@ -1821,7 +1860,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   当时用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因该轮绿色改为通过。
 
 ## P2 — 正在实施正式原生主流程
-- [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史。
+- [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史；[已交付待原生验收](#native-associated-copy-checkpoint)。
 - [x] 原生结果/输入、流式合并刷新、选择滚动、取消、迟到事件隔离；同包自动化见上。
 - [x] 普通翻译/代码解释/摘要/重译/复制及六种追加动作闭环。
 - [x] 本地词典优先首屏及无Codex查词/安装管理闭环；b86507f同包三系统及原生下载/绘制证据见上。

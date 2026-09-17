@@ -93,7 +93,13 @@ dbf5b33改用AppKit单次交互条目读取；46项产品测试保持，明确�
 自动UTF-8别名把BOM带入文字；46粘贴45通过、18Sources及21后置Foundation通过。
 先前API步骤success为continue-on-error后的conclusion，不能当成原始通过；门槛实际阻止App发布。
 237f3c9优先解码UTF-16本身并增加literal-prefix/TSV及精确写入字节检查，
-正常完整hook1823/88.733s通过，run35277832576验证中，仍不宣称迁移验收或Apple内部机制已修复。
+正常完整hook1823/88.733s通过，但run35277832576实际watch1：
+producer和同App14完整通过；26仅粘贴阶段仍有C promise身份错误和UTF-8 literal前缀丢失，
+说明固定优先级不足，原断言继续保留并修复。237完整App已独立审计，仍不推荐；
+同包三系统232process/648core/21Foundation全部通过，不拿独立阶段替代整体验收。
+P2双Cmd+C关联回退另有37项新原生测试随实现交付，父已审阅、离线回归66通过；
+它尚未提交/编译，不在237的App中，需与原始文本表示修复一致后继续原生验收。
+详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
 推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。

@@ -876,9 +876,10 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 之后才请求精确文字类型或RTF数据；保持严格Unicode解码、取消、前后changeCount与一次性lease。
 46项产品测试保留；C已知ID/字节/promise回调与读取后的AppKit条目顺序共同验证产品语义，
 明确不再以C枚举器自身符合性作为测试目标。首次迁移实际发现UTF-16自动UTF-8别名将BOM
-变为文字前缀，237f3c9改为优先解码原UTF-16数据，并保留真正文字中的U+FEFF。
-原始字节及新增literal-prefix/TSV矩阵继续验证，不以AppKit string便捷转换隐藏字节差异。
-新源码尚待完整同包三系统验收，
+变为文字前缀，237f3c9尝试优先UTF-16。15/14通过，但26又通过自动UTF-16别名
+丢失原UTF-8的literal U+FEFF；固定优先级不足，仍在修复，不称无损解码已完成。
+原始字节及新增literal-prefix/TSV矩阵继续保留，不以AppKit string便捷转换隐藏字节差异。
+新源码尚未通过完整同包三系统验收，
 不能据API迁移声称修复了Apple内部机制；[当前证据](MACOS_TODO.md#native-image-translation-checkpoint)与推荐包分开。
 30秒读取期限后仍等待不能中断的调用drain；不承诺任意系统IPC绝不会阻塞。
 检查不是跨进程原子CAS，也不替代真人外部编辑器、Universal Clipboard或系统访问策略验收。
