@@ -1450,6 +1450,10 @@ final class PlainTextPasteTests: XCTestCase {
             ("public.utf16-plain-text", .utf16, " \u{4E2D}\u{6587}\tCafe\u{0301}\r\n\u{1F642}  "),
             ("public.utf16-plain-text", .utf16LittleEndian, " \u{4E2D}\u{6587}\tno BOM\r\n "),
             ("public.utf16-external-plain-text", .utf16, " \u{4E2D}\u{6587}\texternal BOM\r\n "),
+            ("public.utf16-plain-text", .utf16, "\u{FEFF}literal after BOM\r\n\u{1F642}"),
+            ("public.utf16-external-plain-text", .utf16, "\u{FEFF}external literal after BOM\r\n"),
+            ("public.utf8-plain-text", .utf8, "\u{FEFF}literal UTF-8 prefix\r\n"),
+            ("public.utf8-tab-separated-values-text", .utf8, " \u{4E2D}\tCafe\u{0301}\r\n "),
             ("com.apple.traditional-mac-plain-text", .macOSRoman, " Caf\u{00E9}\t42\r\n ")
         ]
         for (index, testCase) in cases.enumerated() {
@@ -1495,7 +1499,7 @@ final class PlainTextPasteTests: XCTestCase {
             }
             XCTAssertEqual(board.changeCount, count, label)
             XCTAssertEqual(token.outcome(.unavailableData).clipboard, .unchanged, label)
-            XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8))
+            XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8), label)
             let appKitItems = try verifyPublishedPasteboardItems(board, reference: sourceReference,
                                                                 expected: [(identifier, [type])])
             XCTAssertEqual(appKitItems[0].data(forType: NSPasteboard.PasteboardType(type)), bytes, label)
@@ -1504,7 +1508,18 @@ final class PlainTextPasteTests: XCTestCase {
                 XCTFail("Expected canonical UTF-8 publication for \(type): \(write), \(token.outcome(.writeFailed))")
                 continue
             }
-            assertPlainTextOnly(board, text: text)
+            if text.hasPrefix("\u{FEFF}") {
+                // AppKit's string convenience conversion can consume a literal prefix.
+                // These added cases use the canonical raw UTF-8 bytes as their oracle.
+                let types = board.types ?? []
+                XCTAssertTrue(types.contains(.string), label)
+                XCTAssertTrue(types.allSatisfy {
+                    $0.rawValue == "NSStringPboardType" || UTType($0.rawValue)?.conforms(to: .plainText) == true
+                }, label)
+            } else {
+                assertPlainTextOnly(board, text: text)
+            }
+            XCTAssertEqual(board.data(forType: .string), Data(text.utf8), label)
         }
     }
 
