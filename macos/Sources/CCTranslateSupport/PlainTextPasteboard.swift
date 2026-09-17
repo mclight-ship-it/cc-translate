@@ -142,12 +142,12 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             guard PasteboardClear(board) == noErr else { return .failure(.writeFailed) }
             cancellation.record(clipboard: .cleared)
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            // Adopt our clear on the observer, then check the mutating reference too: ownership is
-            // application-wide, so another component's intervening clear must not be mistaken for ours.
+            // Acknowledge our own clear on both references. Clear does not promise to synchronize
+            // the local reference; its modified flag alone is not evidence of a different owner.
             guard let witness = self.witness?.value else { return .failure(.clipboardChanged) }
             _ = PasteboardSynchronize(witness)
             let flags = PasteboardSynchronize(board)
-            guard !flags.contains(Self.modified), flags.contains(Self.clientIsOwner) else {
+            guard flags.contains(Self.clientIsOwner) else {
                 return .failure(.clipboardChanged)
             }
             guard self.unchanged(requireOwnership: true) else { return .failure(.clipboardChanged) }

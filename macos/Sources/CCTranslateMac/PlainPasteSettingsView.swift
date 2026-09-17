@@ -16,8 +16,8 @@ struct PlainPasteSettingsSection: View {
                 "Reserves Option–Shift–Command–V exclusively while enabled. In other apps, waits for key release, removes clipboard formatting and sends one paste action. In CC Translate, uses the native Paste and Match Style command without the external paste service or Accessibility permission. It does not translate or use a model.",
                 "开启后独占 Option–Shift–Command–V。在其他应用中，等待松开按键后移除剪贴板格式并发送一次粘贴操作。在 CC Translate 内使用原生“粘贴并匹配样式”，不调用外部粘贴服务，也不需要辅助功能权限。不翻译，也不使用模型。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            preferenceStatus
-            registrationStatus
+            preferenceStatus.font(.callout)
+            registrationStatus.font(.callout)
             if paste.serviceState.busy {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -63,7 +63,7 @@ struct PlainPasteSettingsSection: View {
                         Button(model.text("Accessibility…", "辅助功能…")) { model.requestAX() }
                     }
                 }
-                .font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             ViewThatFits(in: .horizontal) {
                 HStack { recoveryButtons }
@@ -99,10 +99,10 @@ struct PlainPasteSettingsSection: View {
         switch paste.preference.phase {
         case .unloaded:
             Text(model.text("Off until an enabled preference has been confirmed.", "确认已保存的开启偏好前保持关闭。"))
-                .font(.caption).foregroundStyle(.secondary)
+                .foregroundStyle(.secondary)
         case .waiting:
             Text(model.text("Preference change is waiting for the settings connection or current save.",
-                            "偏好更改正在等待设置连接或当前保存操作完成。")).font(.caption)
+                            "偏好更改正在等待设置连接或当前保存操作完成。"))
         case .saving:
             ProgressView(model.text("Saving paste preference…", "正在保存粘贴偏好…")).controlSize(.small)
         case .reading:
@@ -111,24 +111,23 @@ struct PlainPasteSettingsSection: View {
             Text(paste.preference.stored == true
                  ? model.text("Saved preference: enabled.", "已保存偏好：开启。")
                  : model.text("Saved preference: disabled.", "已保存偏好：关闭。"))
-                .font(.caption).foregroundStyle(.secondary)
+                .foregroundStyle(.secondary)
         case .failed(let failure):
             Label(preferenceFailure(failure), systemImage: "exclamationmark.triangle")
-                .font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
     private var registrationStatus: some View {
         switch paste.registration {
-        case .off: Text(model.text("Shortcut not registered.", "快捷键未注册。")).font(.caption).foregroundStyle(.secondary)
+        case .off: Text(model.text("Shortcut not registered.", "快捷键未注册。")).foregroundStyle(.secondary)
         case .registering: ProgressView(model.text("Reserving shortcut…", "正在注册独占快捷键…")).controlSize(.small)
         case .registered:
             Label(model.text("Shortcut reserved · ⌥⇧⌘V", "快捷键已独占注册 · ⌥⇧⌘V"), systemImage: "keyboard")
-                .font(.caption)
         case .failed(let error):
             Label(registrationFailure(error), systemImage: "exclamationmark.triangle")
-                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

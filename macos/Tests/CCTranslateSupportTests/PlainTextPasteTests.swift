@@ -280,13 +280,23 @@ private final class PastePromiseFixture {
 final class PlainTextPasteTests: XCTestCase {
     @MainActor
     private func publish(_ board: NSPasteboard, items: [NSPasteboardItem]) throws {
+        let representations = try items.map { item in
+            try item.types.map { type in
+                guard let data = item.data(forType: type) else { throw PasteboardFixtureError.missingItemData }
+                return (type.rawValue, data)
+            }
+        }
+        try publish(board, representations: representations)
+    }
+
+    @MainActor
+    private func publish(_ board: NSPasteboard, representations: [[(String, Data)]]) throws {
         let reference = try privatePasteboardReference(board)
         try checkPasteboardFixture(PasteboardClear(reference))
-        for (index, item) in items.enumerated() {
+        for (index, flavors) in representations.enumerated() {
             let identifier = try XCTUnwrap(PasteboardItemID(bitPattern: index + 1))
-            for type in item.types {
-                guard let data = item.data(forType: type) else { throw PasteboardFixtureError.missingItemData }
-                try checkPasteboardFixture(PasteboardPutItemFlavor(reference, identifier, type.rawValue as CFString,
+            for (type, data) in flavors {
+                try checkPasteboardFixture(PasteboardPutItemFlavor(reference, identifier, type as CFString,
                                                                   data as CFData, PasteboardFlavorFlags(rawValue: 0)))
             }
         }
@@ -1051,9 +1061,10 @@ final class PlainTextPasteTests: XCTestCase {
         for (type, encoding, text) in cases {
             let board = NSPasteboard.withUniqueName()
             defer { board.releaseGlobally() }
-            let item = NSPasteboardItem()
-            XCTAssertTrue(item.setData(try XCTUnwrap(text.data(using: encoding)), forType: NSPasteboard.PasteboardType(type)))
-            try publish(board, items: [item])
+            let bytes = try XCTUnwrap(text.data(using: encoding))
+            // NSPasteboardItem may translate legacy aliases, including their line endings.
+            // Publish the intended external bytes directly rather than pre-converting the fixture.
+            try publish(board, representations: [[(type, bytes)]])
             let adapter = SystemPlainTextPasteClipboard(name: board.name)
             let token = PlainTextPasteCancellation()
             guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
@@ -1061,8 +1072,9 @@ final class PlainTextPasteTests: XCTestCase {
                 continue
             }
             XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8))
-            guard case .written = await adapter.replace(snapshot, cancellation: token) else {
-                XCTFail("Expected canonical UTF-8 publication for \(type)")
+            let write = await adapter.replace(snapshot, cancellation: token)
+            guard case .written = write else {
+                XCTFail("Expected canonical UTF-8 publication for \(type): \(write), \(token.outcome(.writeFailed))")
                 continue
             }
             assertPlainTextOnly(board, text: text)
@@ -1100,8 +1112,9 @@ final class PlainTextPasteTests: XCTestCase {
         }
         XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8))
         XCTAssertEqual(provider.calls, 1)
-        guard case .written(let lease) = await adapter.replace(snapshot, cancellation: token) else {
-            return XCTFail("Fulfilled text must support explicit formatting removal")
+        let write = await adapter.replace(snapshot, cancellation: token)
+        guard case .written(let lease) = write else {
+            return XCTFail("Fulfilled text must support explicit formatting removal: \(write), \(token.outcome(.writeFailed))")
         }
         let owns = await adapter.stillOwns(lease)
         XCTAssertTrue(owns)
