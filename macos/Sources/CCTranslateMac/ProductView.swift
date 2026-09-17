@@ -795,13 +795,13 @@ struct TranslationSettingsView: View {
             }
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Text translation, local dictionary, result actions, history, and Codex settings are available here. Screenshot translation, model management, login items, and app updates are not yet implemented in the product interface.",
-                            "此界面已支持文字翻译、本地词典、结果操作、历史记录和 Codex 设置。截图翻译、模型管理、登录项和应用更新尚未在产品界面实现。"))
+            Text(model.text("Text translation, screenshot text recognition and translation, local dictionary, result actions, history, and Codex settings are available here. Direct image requests, model management, login items, and app updates are not yet implemented.",
+                            "此界面已支持文字翻译、截图文字识别与翻译、本地词典、结果操作、历史记录和 Codex 设置。直接发送图片、模型管理、登录项和应用更新尚未实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)
-            Text(model.text("Optional technical checks are separate from translation. Screen capture and local OCR are diagnostic probes, not a finished screenshot translation workflow.",
-                            "可选的技术检查独立于翻译。屏幕捕获和本地 OCR 仍是诊断探针，并非完整的截图翻译流程。"))
+            Text(model.text("Optional technical checks are separate from translation. Screenshot translation does not require diagnostics: capture and text recognition run locally, and only reviewed text is sent when you choose Translate text.",
+                            "可选的技术检查独立于翻译，无需先运行诊断即可使用截图翻译。截图与文字识别在本机完成，只有点击“翻译文字”时才发送编辑后的文字。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         } header: {
