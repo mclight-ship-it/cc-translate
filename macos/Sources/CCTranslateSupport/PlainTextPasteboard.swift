@@ -46,12 +46,11 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             _ = PasteboardSynchronize(board)
             self.nextToken += 1
             let token = self.nextToken
-            var itemCount: ItemCount = 0
-            let countStatus = PasteboardGetItemCount(board, &itemCount)
+            var count = 0
+            let countStatus = PasteboardGetItemCount(board, &count)
             if let failure = self.failure(after: countStatus, cancellation: cancellation) {
                 return .failure(failure)
             }
-            guard let count = Int(exactly: itemCount) else { return .failure(.unavailableData) }
             guard count > 0 else { return .failure(.noText) }
             var items: [(id: PasteboardItemID, flavors: [String])] = []
             for index in 1...count {
