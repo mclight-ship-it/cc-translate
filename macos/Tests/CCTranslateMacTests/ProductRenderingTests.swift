@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import SwiftUI
+import Vision
 @testable import CCTranslateMac
 @testable import CCTranslateSupport
 
@@ -556,7 +557,7 @@ final class ProductRenderingTests: XCTestCase {
         fixture.model.interfaceLanguage = "zh"
         let chinese = try render(AboutView(model: about, presentation: fixture.model, close: {}),
                                  named: "about-metadata-zh-narrow", size: NSSize(width: 660, height: 520), scheme: .dark)
-        try assertAboutNavigation(chinese, width: 660, labels: ["关于", "第三方许可"])
+        try assertAboutNavigation(chinese, width: 660, language: "zh-Hans", labels: ["关于", "第三方许可"])
         XCTAssertTrue(fixture.helpers.isEmpty)
         XCTAssertEqual(fixture.runtimeRequests, 0)
         XCTAssertEqual(fixture.locatorRequests, 0)
@@ -653,13 +654,21 @@ final class ProductRenderingTests: XCTestCase {
 
     @MainActor
     private func assertAboutNavigation(_ png: Data, width: CGFloat,
+                                       language: String = "en-US",
                                        labels: [String] = ["about", "third", "party", "licenses"]) throws {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         // Body copy can mention these labels too; inspect only the navigation strip.
         let height = min(CGFloat(image.height), 120 * CGFloat(image.width) / width)
         let navigation = try XCTUnwrap(image.cropping(to: CGRect(
             x: 0, y: 0, width: CGFloat(image.width), height: height)))
-        let words = try LocalOCR.recognize(navigation).text.lowercased().filter { !$0.isWhitespace }
+        // The UI locale is known; do not ask the product's mixed-language OCR to infer it.
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = [language]
+        try VNImageRequestHandler(cgImage: navigation, options: [:]).perform([request])
+        let words = try XCTUnwrap(request.results).compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n").lowercased().filter { !$0.isWhitespace }
         for label in labels {
             XCTAssertTrue(words.contains(label.lowercased()), "Unreadable About navigation: \(words)")
         }
