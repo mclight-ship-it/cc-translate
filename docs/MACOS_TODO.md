@@ -104,6 +104,22 @@ CI现继续收集独立随包检查，但归档、seal、上传之前始终要�
 bfd9382的unit真实通过才生成上述工程包，不能因此忽略随后两个消费者的失败。
 下一步仍是修复当前源码并完成整个同包消费者验收，不等待用户重新配置账号。
 
+后续只增加测试诊断的源码`667d17b7b4a07ab23de89789c8930a209797bb8d` /
+[run35263101241](https://github.com/mclight-ship-it/cc-translate/actions/runs/35263101241)
+实际watch退出1：编译39.22s，598/23构包前skip/2fail（1unexpected）/299.782s，
+仅一个旧私有剪贴板fixture构造失败。28个私有名称全不相同，**本次证据否定名称复用假说**：
+新资源发布ID4，但reader枚举出属于前一不同资源的ID3；同一reader的名称正确，
+查询ID4的flavor成功，查询返回的ID3失败；publisher也正确，第三个独立reference正确枚举ID4。
+前后publisher的内存地址复用已记录，但不能据此宣称已证明Apple内部缓存实现或完成修复。
+未改生产代码、未自动重试、未放宽断言；原46方法及23处创建/释放行为保持。
+正常privacy/full hook1819/95.292s；portable876/18.984s；
+随包231process/511.266s、644core/4.677s、21后置Foundation/178.680s均通过。
+新增76Swift、9process、40core及全部21Foundation已逐项核验各实际通过一次。
+归档前原始unit outcome门槛实际失败，**没有发布该源码App、没有执行消费者**；
+仅保留UI artifact10516310562。不以独立阶段通过掩盖整体失败。
+并行继续P2词典结果的来源/许可按钮，而非把“来源”误解为切回来源应用；
+界面需在追加结果更新时保持按钮和已打开详情的identity，仍未勾选完成。
+
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；
 36项模型测试中1项抓到准备期间的新模型选择被旧配置回读覆盖，其余35项通过。
