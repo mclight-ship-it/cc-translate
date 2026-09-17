@@ -107,7 +107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 self.updateCapturePresentation()
             }
         }
-        // Intentionally no window, helper, TCC check, event monitor, or network at launch.
+        // Default-off launch stays inert; an opt-in hint bootstraps only authoritative config loading.
+        model.restorePlainPastePreferenceIfNeeded()
     }
 
     @discardableResult
@@ -154,19 +155,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let fileItem = NSMenuItem(title: file.title, action: nil, keyEquivalent: "")
         fileItem.submenu = file
         main.addItem(fileItem)
-        let edit = NSMenu(title: model.text("Edit", "编辑"))
-        for (english, chinese, selector, key) in [
-            ("Undo", "撤销", "undo:", "z"), ("Cut", "剪切", "cut:", "x"),
-            ("Copy", "复制", "copy:", "c"), ("Paste", "粘贴", "paste:", "v"),
-            ("Select All", "全选", "selectAll:", "a")
-        ] {
-            edit.addItem(NSMenuItem(title: model.text(english, chinese),
-                                   action: Selector(selector), keyEquivalent: key))
-        }
+        let edit = makeEditMenu()
         let editItem = NSMenuItem(title: edit.title, action: nil, keyEquivalent: "")
         editItem.submenu = edit
         main.addItem(editItem)
         NSApp.mainMenu = main
+    }
+
+    func makeEditMenu() -> NSMenu {
+        let edit = NSMenu(title: model.text("Edit", "编辑"))
+        for (english, chinese, selector, key) in [
+            ("Undo", "撤销", "undo:", "z"), ("Cut", "剪切", "cut:", "x"),
+            ("Copy", "复制", "copy:", "c"), ("Paste", "粘贴", "paste:", "v"),
+            ("Paste and Match Style", "粘贴并匹配样式", "pasteAsPlainText:", "v"),
+            ("Select All", "全选", "selectAll:", "a")
+        ] {
+            let item = NSMenuItem(title: model.text(english, chinese),
+                                  action: Selector(selector), keyEquivalent: key)
+            if item.action == NativePlainPasteRouting.action {
+                item.keyEquivalentModifierMask = [.command, .option, .shift]
+            }
+            edit.addItem(item)
+        }
+        return edit
     }
 
     private func applyAppearance() {

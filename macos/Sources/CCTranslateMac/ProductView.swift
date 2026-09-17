@@ -614,6 +614,7 @@ struct TranslationSettingsView: View {
             translationSection
             DictionarySettingsSection(model: model, dictionary: model.dictionary)
             codexSection
+            PlainPasteSettingsSection(model: model, paste: model.plainPaste)
             shortcutSection
             aboutSection
         }

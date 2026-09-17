@@ -160,12 +160,13 @@ def prepare_harness(destination):
              "bundled About reader/test source changed")
     for relative in (
             "Tests/CCTranslateSupportTests/LocalOCRTests.swift",
+            "Tests/CCTranslateSupportTests/PlainTextPasteTests.swift",
             "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "macos" / relative, target)
         need(bundle.digest(target) == bundle.digest(ROOT / "macos" / relative),
-             "local OCR test/fixture source changed")
+             "native clipboard/OCR test/fixture source changed")
     return tree_digest(destination)
 
 
@@ -303,6 +304,60 @@ def local_ocr_result(text):
             "scope": "production_Vision_on_synthetic_images_not_screen_capture"}
 
 
+PLAIN_TEXT_PASTE_METHODS = (
+    "testDefaultConstructionAndSettingsDoNotTouchClipboardInputOrRegisterShortcut",
+    "testExplicitPasteWritesThenSubmitsOneUnconfirmedChordToCapturedTarget",
+    "testInitialTrustSecureInputOrTargetFailureNeverReadsClipboard",
+    "testCaptureBoundaryReentrantCancelCannotStartLateClipboardRead",
+    "testDelayedReadCancelKeepsMainActorResponsiveAndRejectsAnotherWorker",
+    "testDefaultClipboardDeadlineAllowsDelayedTransferBeyondTwoSeconds",
+    "testTimedOutPromisedReadCannotWriteWhenItEventuallyReturns",
+    "testCancelledOldCallbacksCannotCancelNewExplicitRequestAfterReaderDrains",
+    "testDisableAndShutdownDiscardLateReadsWithoutReplayWhenEnabledAgain",
+    "testUnavailableInvalidOrChangedClipboardReadCannotReachWriteOrPost",
+    "testModifiersAndTriggerKeyMustReleaseBeforeConversionAndPaste",
+    "testHeldModifiersTimeoutDoesNotChangeClipboard",
+    "testTargetTrustOrSecureInputChangeWhileWaitingPreventsWrite",
+    "testCancelWhileWaitingDiscardsTimerAndNeverReplaysAfterRelease",
+    "testWriteFailureDistinguishesUntouchedAndClearedClipboardWithoutRestore",
+    "testCancellationDuringWriteReportsUncertainThenActualPartialEffect",
+    "testDestinationChangeAfterConversionIsPartialNotSuccessfulPaste",
+    "testNewClipboardOwnerAfterWritePreventsPostAndDoesNotRestore",
+    "testTargetIsRevalidatedAfterAsynchronousClipboardOwnershipCheck",
+    "testModifiersPressedAgainAfterWriteWaitWithoutConvertingTwice",
+    "testDisableOrShutdownAfterWriteCannotPostLateVerificationResult",
+    "testPostFailureAndPartialSubmissionNeverClaimPasteSucceeded",
+    "testReentrantCancelAtPostingBoundaryPreventsKeysAndPreservesPartialOutcome",
+    "testLateCancelDisableAndShutdownDoNotClaimSubmittedEventsWerePrevented",
+    "testPrivateRichAndPlainClipboardPrefersExactUnicodePlainText",
+    "testPrivateTextWithAlternativeImageRepresentationDoesNotReadImageData",
+    "testPrivateRTFOnlyClipboardUsesAppKitConversion",
+    "testPrivateMultipleTextItemsHaveExplicitNewlineBoundariesAndNoTranslationCharacterLimit",
+    "testPrivateImageFileAndMixedFileTextClipboardsRemainUntouched",
+    "testPrivateHTMLOnlyIsNotRenderedOrConvertedViaNetworkCapableImporter",
+    "testPrivateMixedTextAndFileItemsAreNotPartiallyConverted",
+    "testPrivateTabularTextRetainsTabsAndLineBreaks",
+    "testPrivateInvalidRTFDoesNotClearClipboard",
+    "testPrivatePromisedButUnavailableTextReturnsFailureWithoutChangingClipboard",
+    "testPrivateRichHTMLProviderIsNeverAskedWhenPlainTextIsAvailable",
+    "testPrivateProviderChangingOwnerDuringReadCannotProduceStaleSnapshot",
+    "testPrivatePasteboardServiceStripsFormattingAndRequestsExactlyOneInjectedPaste",
+    "testPrivateNewOwnerBetweenReadAndWriteIsNeverOverwrittenOrRestored",
+    "testPrivateCancelledSnapshotCannotWriteAndEmptyStringIsStillValidText",
+)
+
+
+def plain_text_paste_result(text):
+    source = ROOT / "macos/Tests/CCTranslateSupportTests/PlainTextPasteTests.swift"
+    methods = re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8"))
+    need(len(methods) == len(PLAIN_TEXT_PASTE_METHODS) and set(methods) == set(PLAIN_TEXT_PASTE_METHODS),
+         "plain text paste source test inventory changed")
+    require_xctest_passes(text, "CCTranslateSupportTests.PlainTextPasteTests", PLAIN_TEXT_PASTE_METHODS)
+    return {"tests_run": len(PLAIN_TEXT_PASTE_METHODS), "failures": 0, "skipped": 0,
+            "methods": list(PLAIN_TEXT_PASTE_METHODS),
+            "scope": "same_source_service_and_private_pasteboards_with_injected_input_not_global_shortcut_or_editor"}
+
+
 def seal(args):
     verify_checkout(args.source_sha)
     environment = environment_record(15, "16.4")
@@ -373,7 +428,9 @@ def run_runtime(args):
                 ("about-resource-harness", "BundledAboutTests", "about", about_result,
                  "bundled About reader harness failed"),
                 ("local-ocr-harness", "LocalOCRTests", "local_ocr", local_ocr_result,
-                 "local OCR harness failed")):
+                 "local OCR harness failed"),
+                ("plain-text-paste-harness", "PlainTextPasteTests", "plain_text_paste", plain_text_paste_result,
+                 "plain text paste harness failed")):
             report["stage"] = stage
             result = subprocess.run(
                 ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),

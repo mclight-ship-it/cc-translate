@@ -107,6 +107,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var cliStatus = "Not located. Authentication: unknown."
     @Published private(set) var cliBusy = false
     let dictionary: DictionaryModel
+    let plainPaste: PlainPasteModel
     let screen = ScreenProbe()
     let monitor = PassiveCopyMonitor()
     var onSelection: ((SelectionResult) -> Void)?
@@ -190,6 +191,10 @@ final class ProbeModel: ObservableObject {
     private var bufferedDelta = ""
     private var renderUpdate: DispatchWorkItem?
     private var dictionaryObservation: AnyCancellable?
+    private var plainPasteObservation: AnyCancellable?
+    private var plainPasteRestoreStarted = false
+    private var plainPasteConfigAfterStop = false
+    private var plainPasteReconcileOnLoad = false
     private let preferences: UserDefaults?
     private let persistsPreferences: Bool
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
@@ -213,7 +218,7 @@ final class ProbeModel: ObservableObject {
     private var cliRun: CLIVersionRun?
     private var cliGeneration = UUID()
     private var userCLI: [String: URL] = [:]
-    var hasProcesses: Bool { connection != nil || cliRun != nil || dictionary.busy }
+    var hasProcesses: Bool { connection != nil || cliRun != nil || dictionary.busy || plainPaste.serviceState.busy }
     var preparing: Bool { productPhase == .preparing }
     var canRunResultAction: Bool {
         !primaryResult.isEmpty && !active && !preparing && !stopping
@@ -256,8 +261,10 @@ final class ProbeModel: ObservableObject {
          locateCandidates: @escaping (String, URL?) -> [CLICandidate] = {
              CLILocator.candidates(name: $0, userURL: $1)
          }, dictionaryDownloader: DictionaryDownloading? = nil,
-         writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil) {
+         writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil,
+         plainPaste: PlainPasteModel? = nil) {
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
+        self.plainPaste = plainPaste ?? PlainPasteModel()
         self.homeDirectory = homeDirectory
         self.writeClipboard = writeClipboard ?? {
             NSPasteboard.general.clearContents()
@@ -285,7 +292,12 @@ final class ProbeModel: ObservableObject {
             return self.ready && self.settingsReady && !self.settingsBusy && !self.stopping
         }
         dictionaryObservation = dictionary.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        plainPasteObservation = self.plainPaste.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        self.plainPaste.onDrained = { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.notifyStoppedIfIdle() }
+        }
         dictionary.onSettled = { [weak self] in
+            self?.flushPlainPastePreference()
             self?.resumeTranslation()
             self?.resumeDeferredCLIConnection()
             self?.notifyStoppedIfIdle()
@@ -344,6 +356,59 @@ final class ProbeModel: ObservableObject {
         startConnection(mode: .diagnostic)
     }
 
+    func restorePlainPastePreferenceIfNeeded() {
+        guard !plainPasteRestoreStarted, !plainPaste.isShutDown, persistsPreferences else { return }
+        plainPasteRestoreStarted = true
+        guard (preferences ?? .standard).bool(forKey: "plainPasteOptInHint") else { return }
+        plainPaste.beginRestore()
+        loadPlainPasteConfiguration()
+    }
+
+    func setPlainPasteEnabled(_ enabled: Bool) {
+        guard !plainPaste.isShutDown else { return }
+        plainPaste.choose(enabled)
+        persistPlainPasteHint(false)
+        if !connected || error != nil || stopping || connectionMode == .diagnostic { loadPlainPasteConfiguration() }
+        else if ready && !settingsBusy && !settingsReady { loadSettings() }
+        flushPlainPastePreference()
+    }
+
+    func reloadPlainPastePreference() {
+        guard !plainPaste.isShutDown else { return }
+        loadPlainPasteConfiguration(reconcile: true)
+    }
+
+    private func loadPlainPasteConfiguration(reconcile: Bool = false) {
+        guard !plainPaste.isShutDown else { return }
+        if !connected {
+            // The mirror permits only a config read, never CLI discovery or registration.
+            plainPasteReconcileOnLoad = reconcile
+            startConnection(mode: .configuration)
+        } else if error != nil || stopping || connectionMode == .diagnostic {
+            plainPasteConfigAfterStop = true
+            stopHelper()
+        } else if ready && !settingsBusy && !stopping && connectionMode != .diagnostic {
+            loadSettings(plainReconcile: reconcile)
+        }
+    }
+
+    private func persistPlainPasteHint(_ enabled: Bool) {
+        guard persistsPreferences else { return }
+        (preferences ?? .standard).set(enabled, forKey: "plainPasteOptInHint")
+    }
+
+    private func flushPlainPastePreference() {
+        guard plainPaste.preference.canWrite, !plainPaste.isShutDown,
+              ready, settingsReady, !settingsBusy, !stopping, !dictionary.committing,
+              connectionMode != .diagnostic, var config = savedConfiguration, let connection else { return }
+        let id = UUID().uuidString
+        guard let enabled = plainPaste.beginSave(id: id) else { return }
+        config["plain_text_paste_enabled"] = .bool(enabled)
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
     func startNativeTranslation() {
         guard cliName == "codex", candidates.contains(where: {
             $0.url.path == selectedCLI && $0.executable
@@ -393,6 +458,7 @@ final class ProbeModel: ObservableObject {
                 connection.start(runtime: runtime)
             }
         } catch let error as ProbeError {
+            plainPaste.connectionLost()
             self.error = error
             status = "Cannot start: \(error.rawValue). No host Python fallback."
             failPreparation(status)
@@ -401,6 +467,7 @@ final class ProbeModel: ObservableObject {
                                  "历史记录助手无法启动（\(error.rawValue)），请手动刷新。"))
             }
         } catch {
+            plainPaste.connectionLost()
             self.error = .launchFailed
             status = "Cannot start bundled helper. No host Python fallback."
             failPreparation(status)
@@ -622,13 +689,15 @@ final class ProbeModel: ObservableObject {
         onTranslationResult?(status + (output.isEmpty ? "" : "\n\n" + output))
     }
 
-    func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false) {
+    func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
         if modelRead { modelSettings.beginRead(id: id, afterSave: afterModelSave) }
+        plainPaste.beginRead(id: id, reconcile: plainReconcile || plainPasteReconcileOnLoad)
+        plainPasteReconcileOnLoad = false
         connection.loadConfiguration(id: id)
     }
 
@@ -932,6 +1001,7 @@ final class ProbeModel: ObservableObject {
 
     func stopHelper(preservePendingHistory: Bool = false) {
         guard !stopping else { return }
+        plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
         let keepHistory = preservePendingHistory && historyRead == nil && historyClearID == nil && queuedHistory != nil
         let interruptedHistory = historyBusy || queuedHistory != nil || historyDebounce != nil
         if !keepHistory { historySearchActive = false }
@@ -1070,6 +1140,7 @@ final class ProbeModel: ObservableObject {
             }
         case .failure(let error):
             modelSettings.connectionLost()
+            plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
             let hadSeparateModelRequest = active && !hadLocalLookup && nativeTranslation
@@ -1127,6 +1198,7 @@ final class ProbeModel: ObservableObject {
             pending.removeAll()
             savedConfiguration = nil
             modelSettings.connectionLost()
+            plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
             historyBusy = false
@@ -1160,8 +1232,12 @@ final class ProbeModel: ObservableObject {
             notifyStoppedIfIdle()
             let upgrade = reopen && upgradingForDraft && draft != nil && error == nil
             upgradingForDraft = false
+            let restartPlainPaste = plainPasteConfigAfterStop
+            plainPasteConfigAfterStop = false
+            if restartPlainPaste { plainPasteReconcileOnLoad = true }
             if upgrade { startNativeTranslation() }
             else if reopen { openProduct() }
+            else if restartPlainPaste { loadPlainPasteConfiguration(reconcile: true) }
         }
     }
 
@@ -1241,10 +1317,12 @@ final class ProbeModel: ObservableObject {
     private func handleBusinessEvent(_ event: ServerEvent) -> Bool {
         if event.id == configLoadID || event.id == configSaveID {
             guard event.isTerminal else { return true }
+            let pasteSave = plainPaste.preference.ownsSave(event.id)
             settingsBusy = false
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
+                    plainPaste.saved(id: event.id)
                     configSaveID = nil
                     status = "Settings saved. Reloading their normalized view; no write replay."
                     loadSettings(modelRead: modelSave, afterModelSave: modelSave)
@@ -1255,6 +1333,7 @@ final class ProbeModel: ObservableObject {
                       let savedDirection = config["direction"]?.string,
                       let profile = config["codex_model"]?.string else {
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
+                    plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
                     settingsReady = false
                     status = "Invalid normalized settings response; stopping the connection."
@@ -1262,6 +1341,12 @@ final class ProbeModel: ObservableObject {
                     return true
                 }
                 savedConfiguration = config
+                let pasteEnabled: Bool?
+                if case .bool(let enabled)? = config["plain_text_paste_enabled"] { pasteEnabled = enabled }
+                else { pasteEnabled = nil }
+                plainPaste.loaded(id: event.id, enabled: pasteEnabled)
+                if plainPaste.preference.authorized { persistPlainPasteHint(true) }
+                else if pasteEnabled == false { persistPlainPasteHint(false) }
                 let modelReadbackFailure = modelSettings.loaded(profile: profile, id: event.id)
                 if persistsPreferences, let custom = modelSettings.rememberedCustom,
                    CodexModelSettings.validateCustom(custom) == nil {
@@ -1301,8 +1386,9 @@ final class ProbeModel: ObservableObject {
                 }
             } else {
                 modelSettings.fail(id: event.id, failure: .operation(event.safeFailureCode))
+                plainPaste.failed(id: event.id, code: event.safeFailureCode)
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
-                failPreparation(status)
+                if !pasteSave || !active { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))
@@ -1311,6 +1397,7 @@ final class ProbeModel: ObservableObject {
             configLoadID = nil
             configSaveID = nil
             if settingsReady { dictionary.connectionReady() }
+            flushPlainPastePreference()
             resumeTranslation()
             resumeDeferredCLIConnection()
             if settingsReady { submitPendingHistory() }
@@ -1527,6 +1614,8 @@ final class ProbeModel: ObservableObject {
     }
 
     func prepareToQuit() {
+        plainPasteConfigAfterStop = false
+        plainPaste.shutdown()
         stopMonitor()
         closePanel()
     }
