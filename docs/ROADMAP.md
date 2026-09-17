@@ -79,6 +79,11 @@ Mac测试编译、协议派发、实际可读性、旧fixture受控复现及修�
 该源码的76新增Swift方法和231process/644core/21后置Foundation通过，
 原始unit失败门槛仍阻止App发布/消费者运行；没有用测试诊断冒充修复。
 P2词典来源与许可按钮的稳定identity接线并行继续，不冻结其余可实现产品工作。
+后续918f497释放顺序候选的producer通过，但同App两消费者仍在旧剪贴板阶段失败，
+因此没有宣称修复或推广新包。独立来源功能420928b已接通共享来源元数据、
+原生按钮/弹窗和生命周期回归；正常完整hook1823通过，新增18Swift/4core/1process，
+首次Mac CI35271286020仍待实际验收。集成前已修正一个误嵌套、无法被XCTest发现的新方法，
+不拿静态方法计数替代实际执行，详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
 推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，

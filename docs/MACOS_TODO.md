@@ -120,6 +120,43 @@ bfd9382的unit真实通过才生成上述工程包，不能因此忽略随后两
 并行继续P2词典结果的来源/许可按钮，而非把“来源”误解为切回来源应用；
 界面需在追加结果更新时保持按钮和已打开详情的identity，仍未勾选完成。
 
+资源释放顺序候选`918f4979298cd78b91f3ad5e438f9019d8999fae` /
+[run35268259169](https://github.com/mclight-ship-it/cc-translate/actions/runs/35268259169)
+**实际watch仍退出1，不是修复成功**。fixture先退休本测试的C发布者，再请求全局释放；
+新增HTML前驱场景复用原方法，仍检查真实ID/flavor/字节及零副作用，不做进程级引用保留。
+producer编译46.32s，598/23构包前skip/0fail/354.106s；46项粘贴通过。
+但两个独立消费者各4fail（2unexpected）：14的HTML与file发布、26的新增HTML前驱与
+替换owner的promise仍返回前一资源ID。相同reader查询新ID的flavor成功、第三个reference
+枚举正确；这证明释放顺序修正不足，不能把producer绿色当成根因已解。
+正常hook1823/95.175s包含当时尚未提交的独立来源功能4项Python测试，不声称是隔离918源码hook。
+同App三系统231process/644core/21后置Foundation均通过：
+producer 525.630s/4.936s；14为515.928s/6.458s/193.703s；
+26为501.217s/7.294s/193.906s。新增76Swift/9process/40core及全部21Foundation
+逐项实际通过，100张原生PNG全部CRC核验并查看本源码窄窗/仅输出历史截图。
+App10518163727独立审计：19,351,112 bytes，
+SHA-256 `06102c1b8fe54bfc01b082be06e10d880bfd1d8956eceabc810b60086a27f6c2`，
+tree `b87b0706154feedc3ef8cf947cec2984ad7fdaaa4e5e8aca485e37d91adecda0`，
+690库存/80资源/52源码路径（51唯一）/6实际Mach-O；
+23文件harness `1caf0549ea825de5573a216b36a801b662c297d072f2b2524f02247d58405049`
+与两个消费者相符。报告保持`NOT PASSED/plain-text-paste-harness`，
+未执行失败之后的最终消费者不可变门槛；不替换推荐包。
+
+<a id="native-dictionary-sources-checkpoint"></a>
+
+### 词典来源与许可按钮：已接线，等待实际原生验证
+
+源码`420928b0865bab9207991f7069670fc2944aac26` /
+[run35271286020](https://github.com/mclight-ship-it/cc-translate/actions/runs/35271286020)
+接通共享`source_details`、有界helper响应、类型化来源和原生按钮/弹窗。
+命中缓存仍取当前查询的结构化来源；复制文本、历史内容和缓存签名保持原样，
+旧历史或模型结果不从文字猜测来源。说明见[来源与许可](MACOS_DEVELOPMENT.md#native-dictionary-sources)。
+集成时发现一个新流式/取消测试被误嵌套于另一测试函数，已在首次CI前移至XCTest类成员，
+并以输出发布expectation替代固定80ms等待。静态清单新增18Swift、4core、1process，删除0；
+本源码预期616Swift/232process/648core/21Foundation/46粘贴与112张PNG，均需实际日志核验。
+针对性110/7.400s通过；正常privacy、5文件compile及完整hook1823/95.083s通过，
+推送时远端精确一致、工作树干净。Mac执行和截图结果尚未验收，不能据静态方法名宣称通过；
+当前推荐下载不变，也不将仍在处理的剪贴板问题隐藏为来源功能的成功。
+
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；
 36项模型测试中1项抓到准备期间的新模型选择被旧配置回读覆盖，其余35项通过。
@@ -1733,7 +1770,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 普通翻译/代码解释/摘要/重译/复制及六种追加动作闭环。
 - [x] 本地词典优先首屏及无Codex查词/安装管理闭环；b86507f同包三系统及原生下载/绘制证据见上。
 - [ ] 真人IME、键盘、VoiceOver与多屏交互矩阵，不将合成渲染当完整交互签收。
-- [ ] 来源按钮稳定 identity，按下时异步更新不吞 click。
+- [ ] 来源按钮稳定 identity，按下时异步更新不吞 click；[原生接线与验收进度](#native-dictionary-sources-checkpoint)。
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [x] 同帧区域截图、多显示器坐标转换、本地Vision及明确OCR文字翻译；082aad6同包验证见截图检查点，真人多屏/TCC仍另列待验。
