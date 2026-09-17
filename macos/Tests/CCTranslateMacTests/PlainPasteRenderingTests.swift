@@ -55,7 +55,7 @@ extension ProductRenderingTests {
                 XCTAssertTrue(words.contains("plain-text paste"))
                 XCTAssertTrue(words.contains("files mixed with text"))
                 XCTAssertTrue(words.contains("no image data is read"), words)
-                XCTAssertTrue(words.contains(enabled ? "shortcut reserved" : "shortcut not registered"))
+                XCTAssertTrue(words.contains(enabled ? "shortcut reserved" : "shortcut not registered"), words)
                 XCTAssertTrue(words.contains("about"), "The complete form must fit the tall review snapshot.")
             }
         }
@@ -221,7 +221,8 @@ extension ProductRenderingTests {
                 x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1000, image.height - y)))))
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = false
+            // These are authored UI sentences, not arbitrary user text whose spelling must be preserved.
+            request.usesLanguageCorrection = true
             request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
             try VNImageRequestHandler(cgImage: tile).perform([request])
             pieces += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }

@@ -344,6 +344,13 @@ PLAIN_TEXT_PASTE_METHODS = (
     "testPrivatePasteboardServiceStripsFormattingAndRequestsExactlyOneInjectedPaste",
     "testPrivateNewOwnerBetweenReadAndWriteIsNeverOverwrittenOrRestored",
     "testPrivateCancelledSnapshotCannotWriteAndEmptyStringIsStillValidText",
+    "testPrivateUTF16AndLegacyPlainTextDecodeWithoutLoss",
+    "testPrivateInvalidUTF8DoesNotBecomeReplacementCharacters",
+    "testPrivateFulfilledCPromisePreservesTextAndCanBeWrittenOnce",
+    "testPrivateWrittenLeaseIsInvalidatedBySameProcessAppKitOwner",
+    "testPrivateSnapshotCannotCrossAdaptersOrReplayAfterAnotherRead",
+    "testPrivateCancelWhileCPromiseWaitsDrainsWithoutPosting",
+    "testPrivateMixedFileClipboardDoesNotFulfillEarlierTextPromise",
 )
 
 
@@ -353,6 +360,8 @@ def plain_text_paste_result(text):
     need(len(methods) == len(PLAIN_TEXT_PASTE_METHODS) and set(methods) == set(PLAIN_TEXT_PASTE_METHODS),
          "plain text paste source test inventory changed")
     require_xctest_passes(text, "CCTranslateSupportTests.PlainTextPasteTests", PLAIN_TEXT_PASTE_METHODS)
+    need("NSPasteboard: synchronous promise fulfillment requested from a background thread" not in text,
+         "plain text paste still invokes AppKit background promise fulfillment")
     return {"tests_run": len(PLAIN_TEXT_PASTE_METHODS), "failures": 0, "skipped": 0,
             "methods": list(PLAIN_TEXT_PASTE_METHODS),
             "scope": "same_source_service_and_private_pasteboards_with_injected_input_not_global_shortcut_or_editor"}

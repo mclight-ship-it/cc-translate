@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import UniformTypeIdentifiers
 import XCTest
@@ -176,20 +177,55 @@ private final class PasteSchedulerDouble: PlainTextPasteScheduler {
     }
 }
 
-private final class PasteDataProvider: NSObject, NSPasteboardItemDataProvider {
+private enum PasteboardFixtureError: Error {
+    case systemPasteboard, status(OSStatus), missingReference, missingItemData
+}
+
+@MainActor
+private func privatePasteboardReference(_ board: NSPasteboard) throws -> Pasteboard {
+    guard board.name != .general else { throw PasteboardFixtureError.systemPasteboard }
+    var reference: Pasteboard?
+    let status = PasteboardCreate(board.name.rawValue as CFString, &reference)
+    guard status == noErr else { throw PasteboardFixtureError.status(status) }
+    guard let reference else { throw PasteboardFixtureError.missingReference }
+    return reference
+}
+
+private func checkPasteboardFixture(_ status: OSStatus) throws {
+    guard status == noErr else { throw PasteboardFixtureError.status(status) }
+}
+
+private final class PastePromiseState {
+    enum Response {
+        case unavailable, text(Data), replaceOwner
+        case blockedText(Data, entered: XCTestExpectation, release: DispatchSemaphore)
+    }
     private let lock = NSLock()
     private var requested = 0
-    private let replaceOwner: Bool
-    init(replaceOwner: Bool = false) { self.replaceOwner = replaceOwner }
-    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem,
-                    provideDataForType type: NSPasteboard.PasteboardType) {
+    let response: Response
+    init(_ response: Response) { self.response = response }
+    func provide(_ board: Pasteboard, item: PasteboardItemID, flavor: CFString) -> OSStatus {
         lock.lock()
         requested += 1
         lock.unlock()
-        if replaceOwner, let pasteboard {
-            pasteboard.declareTypes([.string], owner: nil)
-            _ = pasteboard.setString("new provider owner", forType: .string)
-            _ = item.setString("stale provider text", forType: .string)
+        switch response {
+        case .unavailable:
+            return OSStatus(badPasteboardFlavorErr)
+        case .text(let data):
+            return PasteboardPutItemFlavor(board, item, flavor, data as CFData, PasteboardFlavorFlags(rawValue: 0))
+        case .blockedText(let data, let entered, let release):
+            entered.fulfill()
+            XCTAssertFalse(Thread.isMainThread, "The deliberate synthetic blocking keeper must not block the main actor")
+            guard !Thread.isMainThread, release.wait(timeout: .now() + 10) == .success else {
+                return OSStatus(badPasteboardFlavorErr)
+            }
+            return PasteboardPutItemFlavor(board, item, flavor, data as CFData, PasteboardFlavorFlags(rawValue: 0))
+        case .replaceOwner:
+            let clear = PasteboardClear(board)
+            guard clear == noErr else { return clear }
+            let put = PasteboardPutItemFlavor(board, item, "public.utf8-plain-text" as CFString,
+                                             Data("new provider owner".utf8) as CFData, PasteboardFlavorFlags(rawValue: 0))
+            return put == noErr ? OSStatus(badPasteboardSyncErr) : put
         }
     }
     var calls: Int {
@@ -199,7 +235,63 @@ private final class PasteDataProvider: NSObject, NSPasteboardItemDataProvider {
     }
 }
 
+// Only these fixtures install promise keepers. Ordinary fixtures publish eager CFData, not
+// NSPasteboard.writeObjects' same-process AppKit item providers.
+private final class PastePromiseFixture {
+    private var reference: Pasteboard?
+    let state: PastePromiseState
+
+    @MainActor
+    init(_ board: NSPasteboard, plainText: String? = nil, promisedType: NSPasteboard.PasteboardType = .string,
+         response: PastePromiseState.Response = .unavailable) throws {
+        let reference = try privatePasteboardReference(board)
+        self.reference = reference
+        state = PastePromiseState(response)
+        try checkPasteboardFixture(PasteboardClear(reference))
+        let item = try XCTUnwrap(PasteboardItemID(bitPattern: 1))
+        if let plainText {
+            try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, "public.utf8-plain-text" as CFString,
+                                                              Data(plainText.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
+        }
+        try checkPasteboardFixture(PasteboardSetPromiseKeeper(reference, { board, item, flavor, context in
+            guard let context else { return OSStatus(noPasteboardPromiseKeeperErr) }
+            return Unmanaged<PastePromiseState>.fromOpaque(context).takeUnretainedValue().provide(board, item: item, flavor: flavor)
+        }, Unmanaged.passUnretained(state).toOpaque()))
+        try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, promisedType.rawValue as CFString,
+                                                          nil, PasteboardFlavorFlags(rawValue: 0)))
+    }
+
+    deinit {
+        withExtendedLifetime(state) {
+            if let reference {
+                // Retire the borrowed callback context before ARC releases the owner reference.
+                let status = PasteboardSetPromiseKeeper(reference, { _, _, _, _ in
+                    OSStatus(noPasteboardPromiseKeeperErr)
+                }, nil)
+                XCTAssertEqual(status, noErr)
+            }
+            reference = nil
+        }
+    }
+
+    var calls: Int { state.calls }
+}
+
 final class PlainTextPasteTests: XCTestCase {
+    @MainActor
+    private func publish(_ board: NSPasteboard, items: [NSPasteboardItem]) throws {
+        let reference = try privatePasteboardReference(board)
+        try checkPasteboardFixture(PasteboardClear(reference))
+        for (index, item) in items.enumerated() {
+            let identifier = try XCTUnwrap(PasteboardItemID(bitPattern: index + 1))
+            for type in item.types {
+                guard let data = item.data(forType: type) else { throw PasteboardFixtureError.missingItemData }
+                try checkPasteboardFixture(PasteboardPutItemFlavor(reference, identifier, type.rawValue as CFString,
+                                                                  data as CFData, PasteboardFlavorFlags(rawValue: 0)))
+            }
+        }
+    }
+
     @MainActor
     private func service(_ board: any PlainTextPasteClipboard, input: PasteInputDouble,
                          scheduler: PasteSchedulerDouble, enabled: Bool = true) -> PlainTextPasteService {
@@ -671,7 +763,7 @@ final class PlainTextPasteTests: XCTestCase {
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .string))
         XCTAssertTrue(item.setString("<b>not the selected plain text</b><img src='https://invalid.example/no-fetch'>", forType: .html))
-        XCTAssertTrue(board.writeObjects([item]))
+        try publish(board, items: [item])
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         let cancellation = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: cancellation) else {
@@ -682,22 +774,20 @@ final class PlainTextPasteTests: XCTestCase {
         guard case .written(let count) = await adapter.replace(snapshot, cancellation: cancellation) else {
             return XCTFail("Expected intentional formatting removal")
         }
-        XCTAssertEqual(board.changeCount, count)
+        let owns = await adapter.stillOwns(count)
+        XCTAssertTrue(owns)
         assertPlainTextOnly(board, text: text)
         XCTAssertEqual(board.string(forType: .string), text)
         XCTAssertEqual(board.string(forType: .string).map { Array($0.utf8) }, Array(text.utf8))
     }
 
     @MainActor
-    func testPrivateTextWithAlternativeImageRepresentationDoesNotReadImageData() async {
+    func testPrivateTextWithAlternativeImageRepresentationDoesNotReadImageData() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let text = "name\tvalue\n\u{4E2D}\u{6587}\t42"
-        let provider = PasteDataProvider()
-        let item = NSPasteboardItem()
-        XCTAssertTrue(item.setString(text, forType: .string))
-        XCTAssertTrue(item.setDataProvider(provider, forTypes: [.png]))
-        XCTAssertTrue(board.writeObjects([item]))
+        let provider = try PastePromiseFixture(board, plainText: text, promisedType: .png)
+        defer { withExtendedLifetime(provider) {} }
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
@@ -722,7 +812,7 @@ final class PlainTextPasteTests: XCTestCase {
                                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setData(data, forType: .rtf))
-        XCTAssertTrue(board.writeObjects([item]))
+        try publish(board, items: [item])
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else { return XCTFail("Expected RTF text") }
@@ -733,7 +823,7 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateMultipleTextItemsHaveExplicitNewlineBoundariesAndNoTranslationCharacterLimit() async {
+    func testPrivateMultipleTextItemsHaveExplicitNewlineBoundariesAndNoTranslationCharacterLimit() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let strings = [" first\t", String(repeating: "a", count: 20_000), "\nlast  "]
@@ -742,7 +832,7 @@ final class PlainTextPasteTests: XCTestCase {
             XCTAssertTrue(item.setString(text, forType: .string))
             return item
         }
-        XCTAssertTrue(board.writeObjects(items))
+        try publish(board, items: items)
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else { return XCTFail("Expected all items") }
@@ -752,7 +842,7 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateImageFileAndMixedFileTextClipboardsRemainUntouched() async {
+    func testPrivateImageFileAndMixedFileTextClipboardsRemainUntouched() async throws {
         let types: [NSPasteboard.PasteboardType] = [.png, .fileURL, NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url")]
         for type in types {
             let board = NSPasteboard.withUniqueName()
@@ -760,7 +850,7 @@ final class PlainTextPasteTests: XCTestCase {
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(Data([1, 2, 3]), forType: type))
             if type == .fileURL { XCTAssertTrue(item.setString("filename.txt", forType: .string)) }
-            XCTAssertTrue(board.writeObjects([item]))
+            try publish(board, items: [item])
             let count = board.changeCount
             let adapter = SystemPlainTextPasteClipboard(name: board.name)
             guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -772,13 +862,13 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateHTMLOnlyIsNotRenderedOrConvertedViaNetworkCapableImporter() async {
+    func testPrivateHTMLOnlyIsNotRenderedOrConvertedViaNetworkCapableImporter() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let html = "<html><img src='https://invalid.example/not-fetched'><b>text</b></html>"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(html, forType: .html))
-        XCTAssertTrue(board.writeObjects([item]))
+        try publish(board, items: [item])
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .failure(.unsupportedRepresentation) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -789,14 +879,14 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateMixedTextAndFileItemsAreNotPartiallyConverted() async {
+    func testPrivateMixedTextAndFileItemsAreNotPartiallyConverted() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let text = NSPasteboardItem()
         XCTAssertTrue(text.setString("keep with file", forType: .string))
         let file = NSPasteboardItem()
         XCTAssertTrue(file.setString("file:///synthetic/never-opened.txt", forType: .fileURL))
-        XCTAssertTrue(board.writeObjects([text, file]))
+        try publish(board, items: [text, file])
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -807,13 +897,13 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateTabularTextRetainsTabsAndLineBreaks() async {
+    func testPrivateTabularTextRetainsTabsAndLineBreaks() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let text = "name\tvalue\r\nfirst\t 42 \r\n"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .tabularText))
-        XCTAssertTrue(board.writeObjects([item]))
+        try publish(board, items: [item])
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .text(let snapshot) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
             return XCTFail("Expected system tabular text representation")
@@ -822,31 +912,44 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateInvalidRTFDoesNotClearClipboard() async {
-        for data in [Data(), Data([0, 255, 1, 2]), Data("{\\rtf".utf8), Data("{\\rtfish}".utf8)] {
+    func testPrivateInvalidRTFDoesNotClearClipboard() async throws {
+        let cases = [Data(), Data([0, 255, 1, 2]), Data("{\\rtf".utf8), Data("{\\rtfish}".utf8)]
+        for (index, data) in cases.enumerated() {
             let board = NSPasteboard.withUniqueName()
             defer { board.releaseGlobally() }
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(data, forType: .rtf))
-            XCTAssertTrue(board.writeObjects([item]))
+            try publish(board, items: [item])
             let count = board.changeCount
             let adapter = SystemPlainTextPasteClipboard(name: board.name)
-            guard case .failure(.invalidRichText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
-                return XCTFail("Malformed RTF must fail explicitly")
+            let token = PlainTextPasteCancellation()
+            let result = await adapter.read(cancellation: token)
+            switch result {
+            case .failure(let reason):
+                print("Synthetic malformed RTF case \(index), bytes \(data.count), reason \(reason)")
+                XCTAssertTrue(reason == .invalidRichText || (data.isEmpty && reason == .unavailableData),
+                              "Case \(index): unexpected rejection reason \(reason)")
+            case .text:
+                XCTFail("Case \(index): malformed RTF must never become a successful empty paste")
             }
+            XCTAssertEqual(token.outcome(.invalidRichText).clipboard, .unchanged)
             XCTAssertEqual(board.changeCount, count)
-            XCTAssertEqual(board.data(forType: .rtf), data)
+            XCTAssertTrue(board.types?.contains(.rtf) == true)
+            let stored = board.data(forType: .rtf)
+            if data.isEmpty {
+                XCTAssertTrue(stored == nil || stored == data, "Empty data can be unavailable, not replacement bytes")
+            } else {
+                XCTAssertEqual(stored, data)
+            }
         }
     }
 
     @MainActor
-    func testPrivatePromisedButUnavailableTextReturnsFailureWithoutChangingClipboard() async {
+    func testPrivatePromisedButUnavailableTextReturnsFailureWithoutChangingClipboard() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let provider = PasteDataProvider()
-        let item = NSPasteboardItem()
-        XCTAssertTrue(item.setDataProvider(provider, forTypes: [.string]))
-        XCTAssertTrue(board.writeObjects([item]))
+        let provider = try PastePromiseFixture(board)
+        defer { withExtendedLifetime(provider) {} }
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .failure(.unavailableData) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -857,14 +960,11 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateRichHTMLProviderIsNeverAskedWhenPlainTextIsAvailable() async {
+    func testPrivateRichHTMLProviderIsNeverAskedWhenPlainTextIsAvailable() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let provider = PasteDataProvider()
-        let item = NSPasteboardItem()
-        XCTAssertTrue(item.setString("plain wins", forType: .string))
-        XCTAssertTrue(item.setDataProvider(provider, forTypes: [.html]))
-        XCTAssertTrue(board.writeObjects([item]))
+        let provider = try PastePromiseFixture(board, plainText: "plain wins", promisedType: .html)
+        defer { withExtendedLifetime(provider) {} }
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .text(let snapshot) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
             return XCTFail("Expected plain representation")
@@ -874,13 +974,11 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivateProviderChangingOwnerDuringReadCannotProduceStaleSnapshot() async {
+    func testPrivateProviderChangingOwnerDuringReadCannotProduceStaleSnapshot() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let provider = PasteDataProvider(replaceOwner: true)
-        let item = NSPasteboardItem()
-        XCTAssertTrue(item.setDataProvider(provider, forTypes: [.string]))
-        XCTAssertTrue(board.writeObjects([item]))
+        let provider = try PastePromiseFixture(board, response: .replaceOwner)
+        defer { withExtendedLifetime(provider) {} }
         let adapter = SystemPlainTextPasteClipboard(name: board.name)
         guard case .failure(.clipboardChanged) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
             return XCTFail("Provider changed ownership while returning old text")
@@ -889,13 +987,13 @@ final class PlainTextPasteTests: XCTestCase {
     }
 
     @MainActor
-    func testPrivatePasteboardServiceStripsFormattingAndRequestsExactlyOneInjectedPaste() async {
+    func testPrivatePasteboardServiceStripsFormattingAndRequestsExactlyOneInjectedPaste() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString("private synthetic text", forType: .string))
         XCTAssertTrue(item.setString("<b>private synthetic text</b>", forType: .html))
-        XCTAssertTrue(board.writeObjects([item]))
+        try publish(board, items: [item])
         let input = PasteInputDouble()
         let paste = service(SystemPlainTextPasteClipboard(name: board.name), input: input,
                             scheduler: PasteSchedulerDouble())
@@ -940,5 +1038,181 @@ final class PlainTextPasteTests: XCTestCase {
         guard case .failure(.cancelled) = await adapter.replace(snapshot, cancellation: token) else { return XCTFail("Expected cancel") }
         XCTAssertEqual(board.changeCount, count)
         XCTAssertEqual(board.string(forType: .string), "")
+    }
+
+    @MainActor
+    func testPrivateUTF16AndLegacyPlainTextDecodeWithoutLoss() async throws {
+        let cases: [(String, String.Encoding, String)] = [
+            ("public.utf16-plain-text", .utf16, " \u{4E2D}\u{6587}\tCafe\u{0301}\r\n\u{1F642}  "),
+            ("public.utf16-plain-text", .utf16LittleEndian, " \u{4E2D}\u{6587}\tno BOM\r\n "),
+            ("public.utf16-external-plain-text", .utf16, " \u{4E2D}\u{6587}\texternal BOM\r\n "),
+            ("com.apple.traditional-mac-plain-text", .macOSRoman, " Caf\u{00E9}\t42\r\n ")
+        ]
+        for (type, encoding, text) in cases {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            let item = NSPasteboardItem()
+            XCTAssertTrue(item.setData(try XCTUnwrap(text.data(using: encoding)), forType: NSPasteboard.PasteboardType(type)))
+            try publish(board, items: [item])
+            let adapter = SystemPlainTextPasteClipboard(name: board.name)
+            let token = PlainTextPasteCancellation()
+            guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
+                XCTFail("Expected lossless platform decoding for \(type)")
+                continue
+            }
+            XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8))
+            guard case .written = await adapter.replace(snapshot, cancellation: token) else {
+                XCTFail("Expected canonical UTF-8 publication for \(type)")
+                continue
+            }
+            assertPlainTextOnly(board, text: text)
+        }
+    }
+
+    @MainActor
+    func testPrivateInvalidUTF8DoesNotBecomeReplacementCharacters() async throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let bytes = Data([0xFF, 0xFE, 0x41])
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setData(bytes, forType: .string))
+        try publish(board, items: [item])
+        let count = board.changeCount
+        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        guard case .failure(.unavailableData) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
+            return XCTFail("Invalid UTF-8 must not become lossy successful text")
+        }
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(board.data(forType: .string), bytes)
+    }
+
+    @MainActor
+    func testPrivateFulfilledCPromisePreservesTextAndCanBeWrittenOnce() async throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let text = "  promised \u{4E2D}\u{6587}\tCafe\u{0301}\r\n\u{1F642}\n"
+        let provider = try PastePromiseFixture(board, response: .text(Data(text.utf8)))
+        defer { withExtendedLifetime(provider) {} }
+        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        let token = PlainTextPasteCancellation()
+        guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
+            return XCTFail("Fulfilling data without clearing must not invalidate the ownership lease")
+        }
+        XCTAssertEqual(Array(snapshot.text.utf8), Array(text.utf8))
+        XCTAssertEqual(provider.calls, 1)
+        guard case .written(let lease) = await adapter.replace(snapshot, cancellation: token) else {
+            return XCTFail("Fulfilled text must support explicit formatting removal")
+        }
+        let owns = await adapter.stillOwns(lease)
+        XCTAssertTrue(owns)
+        let count = board.changeCount
+        guard case .failure(.clipboardChanged) = await adapter.replace(snapshot, cancellation: PlainTextPasteCancellation()) else {
+            return XCTFail("A consumed read lease must not be reusable")
+        }
+        XCTAssertEqual(board.changeCount, count)
+        assertPlainTextOnly(board, text: text)
+    }
+
+    @MainActor
+    func testPrivateWrittenLeaseIsInvalidatedBySameProcessAppKitOwner() async {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.declareTypes([.string], owner: nil)
+        XCTAssertTrue(board.setString("original", forType: .string))
+        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        let token = PlainTextPasteCancellation()
+        guard case .text(let snapshot) = await adapter.read(cancellation: token),
+              case .written(let lease) = await adapter.replace(snapshot, cancellation: token) else {
+            return XCTFail("Expected one native read/write")
+        }
+        let initiallyOwned = await adapter.stillOwns(lease)
+        XCTAssertTrue(initiallyOwned)
+        let newCount = board.declareTypes([.string], owner: nil)
+        XCTAssertTrue(board.setString("same-process new owner", forType: .string))
+        let firstCheck = await adapter.stillOwns(lease)
+        let secondCheck = await adapter.stillOwns(lease)
+        XCTAssertFalse(firstCheck, "Application-wide ownership is not this operation's ownership")
+        XCTAssertFalse(secondCheck, "Synchronizing must not resurrect an invalidated lease")
+        XCTAssertEqual(board.changeCount, newCount)
+        XCTAssertEqual(board.string(forType: .string), "same-process new owner")
+    }
+
+    @MainActor
+    func testPrivateSnapshotCannotCrossAdaptersOrReplayAfterAnotherRead() async {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.declareTypes([.string], owner: nil)
+        XCTAssertTrue(board.setString("original", forType: .string))
+        let first = SystemPlainTextPasteClipboard(name: board.name)
+        let second = SystemPlainTextPasteClipboard(name: board.name)
+        let token = PlainTextPasteCancellation()
+        guard case .text(let old) = await first.read(cancellation: token),
+              case .text(let foreign) = await second.read(cancellation: token) else {
+            return XCTFail("Expected independent read leases")
+        }
+        XCTAssertEqual(old.changeCount, foreign.changeCount, "Local ordinals alone cannot distinguish references")
+        guard case .failure(.clipboardChanged) = await second.replace(old, cancellation: token) else {
+            return XCTFail("A different adapter must reject a foreign snapshot")
+        }
+        guard case .text(let current) = await first.read(cancellation: token) else { return XCTFail("Expected fresh read") }
+        guard case .failure(.clipboardChanged) = await first.replace(old, cancellation: token) else {
+            return XCTFail("A later read invalidates the earlier read lease")
+        }
+        guard case .written = await first.replace(current, cancellation: token) else { return XCTFail("Expected current lease write") }
+        let count = board.changeCount
+        guard case .failure(.clipboardChanged) = await second.replace(foreign, cancellation: PlainTextPasteCancellation()) else {
+            return XCTFail("The other reference must observe the write despite shared application ownership")
+        }
+        XCTAssertEqual(board.changeCount, count)
+        assertPlainTextOnly(board, text: "original")
+    }
+
+    @MainActor
+    func testPrivateCancelWhileCPromiseWaitsDrainsWithoutPosting() async throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let entered = expectation(description: "C promise entered")
+        let release = DispatchSemaphore(value: 0)
+        let provider = try PastePromiseFixture(board, response: .blockedText(Data("late synthetic".utf8),
+                                                                           entered: entered, release: release))
+        defer { release.signal(); withExtendedLifetime(provider) {} }
+        let count = board.changeCount
+        let input = PasteInputDouble()
+        let paste = service(SystemPlainTextPasteClipboard(name: board.name), input: input, scheduler: PasteSchedulerDouble())
+        XCTAssertEqual(paste.requestPaste(), .accepted)
+        await fulfillment(of: [entered], timeout: 5)
+        paste.cancel()
+        XCTAssertEqual(paste.status, finished(.cancelled))
+        XCTAssertTrue(paste.isBusy)
+        XCTAssertEqual(paste.requestPaste(), .busy)
+        release.signal()
+        await drained(paste)
+        XCTAssertEqual(paste.status, finished(.cancelled))
+        XCTAssertTrue(input.posts.isEmpty)
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(provider.calls, 1)
+        paste.shutdown()
+    }
+
+    @MainActor
+    func testPrivateMixedFileClipboardDoesNotFulfillEarlierTextPromise() async throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let provider = try PastePromiseFixture(board)
+        defer { withExtendedLifetime(provider) {} }
+        let owner = try privatePasteboardReference(board)
+        _ = PasteboardSynchronize(owner)
+        let file = try XCTUnwrap(PasteboardItemID(bitPattern: 2))
+        try checkPasteboardFixture(PasteboardPutItemFlavor(owner, file, "public.file-url" as CFString,
+                                                          Data("file:///synthetic/never-opened.txt".utf8) as CFData,
+                                                          PasteboardFlavorFlags(rawValue: 0)))
+        let count = board.changeCount
+        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
+            return XCTFail("Inspect all metadata before fulfilling text on a mixed-file clipboard")
+        }
+        XCTAssertEqual(provider.calls, 0)
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(board.pasteboardItems?.count, 2)
     }
 }

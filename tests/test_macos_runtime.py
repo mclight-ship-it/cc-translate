@@ -131,18 +131,19 @@ class PlainTextPasteEvidenceTests(unittest.TestCase):
         for method in runtime.PLAIN_TEXT_PASTE_METHODS:
             case = "Test Case '-[CCTranslateSupportTests.PlainTextPasteTests " + method + "]' "
             cases.extend((case + "started.", case + "passed (0.1 seconds)."))
-        return "\n".join(cases) + "\nExecuted 39 tests, with 0 failures\n"
+        return "\n".join(cases) + "\nExecuted 46 tests, with 0 failures\n"
 
     def test_private_clipboard_methods_are_required_once_without_skip_or_failure(self):
         text = self.log()
         self.assertEqual(runtime.plain_text_paste_result(text), {
-            "tests_run": 39, "failures": 0, "skipped": 0, "methods": list(runtime.PLAIN_TEXT_PASTE_METHODS),
+            "tests_run": 46, "failures": 0, "skipped": 0, "methods": list(runtime.PLAIN_TEXT_PASTE_METHODS),
             "scope": "same_source_service_and_private_pasteboards_with_injected_input_not_global_shortcut_or_editor"})
         for invalid in ("", text + text, text.replace("passed", "skipped"),
                         text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
                         text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
-                        text.replace("Executed 39 tests", "Executed 38 tests"),
+                        text.replace("Executed 46 tests", "Executed 45 tests"),
                         text.replace("PlainTextPasteTests", "SomeOtherTests"),
+                        text + "\nNSPasteboard: synchronous promise fulfillment requested from a background thread!",
                         text.replace(runtime.PLAIN_TEXT_PASTE_METHODS[0], "testUnexpected")):
             with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
                 runtime.plain_text_paste_result(invalid)
@@ -391,6 +392,7 @@ class RuntimeMatrixTests(unittest.TestCase):
         self.assertEqual((harness / about_test).read_bytes(), (runtime.ROOT / "macos" / about_test).read_bytes())
         for relative in ("Tests/CCTranslateSupportTests/LocalOCRTests.swift",
                          "Sources/CCTranslateSupport/PlainTextPaste.swift",
+                         "Sources/CCTranslateSupport/PlainTextPasteboard.swift",
                          "Tests/CCTranslateSupportTests/PlainTextPasteTests.swift",
                          "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
             self.assertEqual((harness / relative).read_bytes(), (runtime.ROOT / "macos" / relative).read_bytes())

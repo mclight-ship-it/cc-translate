@@ -270,8 +270,16 @@ enum PlainTextPasteTargetResult {
 }
 
 struct PlainTextPasteSnapshot: Sendable {
+    // An adapter-local synchronization token, not an NSPasteboard absolute changeCount.
     let changeCount: Int
     let text: String
+    let sourceIdentity: UUID?
+
+    init(changeCount: Int, text: String, sourceIdentity: UUID? = nil) {
+        self.changeCount = changeCount
+        self.text = text
+        self.sourceIdentity = sourceIdentity
+    }
 }
 
 enum PlainTextPasteRead: Sendable {
@@ -332,98 +340,6 @@ final class PlainTextPasteCancellation: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return PlainTextPasteOutcome(reason: reason, clipboard: clipboard, events: events)
-    }
-}
-
-struct SystemPlainTextPasteClipboard: PlainTextPasteClipboard {
-    private static let queue = DispatchQueue(label: "CCTranslate.plain-text-paste.clipboard", qos: .userInitiated)
-    private let name: NSPasteboard.Name
-    init(name: NSPasteboard.Name = .general) { self.name = name }
-
-    func read(cancellation: PlainTextPasteCancellation) async -> PlainTextPasteRead {
-        await onQueue {
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            let board = NSPasteboard(name: name)
-            let count = board.changeCount
-            guard let items = board.pasteboardItems else { return .failure(.unavailableData) }
-            guard !items.isEmpty else { return .failure(.noText) }
-            var strings: [String] = []
-            for item in items {
-                guard !cancellation.isCancelled else { return .failure(.cancelled) }
-                guard board.changeCount == count else { return .failure(.clipboardChanged) }
-                let types = item.types
-                let hasFile = types.contains {
-                    $0 == .fileURL || $0.rawValue == "NSFilenamesPboardType" ||
-                    $0.rawValue == "NSFileContentsPboardType" ||
-                    $0.rawValue == "NSFilesPromisePboardType" ||
-                    $0.rawValue.hasPrefix("com.apple.pasteboard.promised-file-")
-                }
-                guard !hasFile else { return .failure(.noText) }
-                if let type = [.string, NSPasteboard.PasteboardType.tabularText].first(where: { types.contains($0) }) {
-                    let string = item.string(forType: type)
-                    guard !cancellation.isCancelled else { return .failure(.cancelled) }
-                    guard board.changeCount == count else { return .failure(.clipboardChanged) }
-                    guard let string else { return .failure(.unavailableData) }
-                    strings.append(string)
-                } else if types.contains(.rtf) {
-                    let data = item.data(forType: .rtf)
-                    guard !cancellation.isCancelled else { return .failure(.cancelled) }
-                    guard board.changeCount == count else { return .failure(.clipboardChanged) }
-                    guard let data else { return .failure(.unavailableData) }
-                    // AppKit can return an empty attributed string for non-RTF bytes.
-                    guard data.starts(with: Array("{\\rtf".utf8)),
-                          let version = data.dropFirst(5).first, (0x30...0x39).contains(version),
-                          let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
-                        return .failure(.invalidRichText)
-                    }
-                    var attachment = false
-                    rich.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rich.length), options: []) { value, _, stop in
-                        if value != nil { attachment = true; stop.pointee = true }
-                    }
-                    guard !attachment else { return .failure(.unsupportedRepresentation) }
-                    strings.append(rich.string)
-                } else {
-                    // Never feed HTML/RTFD to an importer that could render or resolve external resources.
-                    return .failure(types.contains(.html) || types.contains(.rtfd) ? .unsupportedRepresentation : .noText)
-                }
-            }
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            guard board.changeCount == count else { return .failure(.clipboardChanged) }
-            // Item boundaries become newlines; each item's original Unicode and whitespace remain unchanged.
-            return .text(PlainTextPasteSnapshot(changeCount: count, text: strings.joined(separator: "\n")))
-        }
-    }
-
-    func replace(_ snapshot: PlainTextPasteSnapshot, cancellation: PlainTextPasteCancellation) async -> PlainTextPasteWrite {
-        await onQueue {
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            let board = NSPasteboard(name: name)
-            guard board.changeCount == snapshot.changeCount else { return .failure(.clipboardChanged) }
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            cancellation.record(clipboard: .mayHaveChanged)
-            // NSPasteboard offers no compare-and-swap: an owner can still change between this check and declaration.
-            let ownedCount = board.declareTypes([.string], owner: nil)
-            cancellation.record(clipboard: .cleared)
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            guard board.changeCount == ownedCount else { return .failure(.clipboardChanged) }
-            guard board.setString(snapshot.text, forType: .string) else { return .failure(.writeFailed) }
-            cancellation.record(clipboard: .plainTextWritten)
-            guard board.changeCount == ownedCount else { return .failure(.clipboardChanged) }
-            return .written(ownedCount)
-        }
-    }
-
-    func stillOwns(_ count: Int) async -> Bool {
-        await onQueue { NSPasteboard(name: name).changeCount == count }
-    }
-
-    private func onQueue<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
-        await withCheckedContinuation { continuation in
-            Self.queue.async {
-                let value = autoreleasepool(invoking: work)
-                continuation.resume(returning: value)
-            }
-        }
     }
 }
 
