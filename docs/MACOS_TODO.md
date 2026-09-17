@@ -103,6 +103,74 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
+<a id="native-about-checkpoint"></a>
+
+### P3 关于与第三方许可：同包三系统已通过，继续完整设置
+
+当前源码`d699185fe8d020b928bd4a8091447fb366304401` /
+[run35176360537](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537)。
+实际watch exit0；API attempt1、3jobs/40steps全部success。当前下载已更新为经完整核验的关于/许可新包，
+不是旧版黑导航截图所对应的App，也不代表整个移植结束。
+
+- 原生About/许可视图、独立资源模型、菜单和设置入口已接通。构造无新增资源/业务I/O，
+  不要求CLI/helper、账号或权限探针；正文完整字面显示，元数据不冒充签名/公证验证。
+- 父直接复核交付并补齐第二个退出回调清理。
+  真实包读取方法拆成独立测试，producer和两个consumer都必须后置运行；
+  consumer的library-only harness使用原字节读取器/测试，未引入产品App构建目标。
+  原18个Foundation和词典测量验证保留独立，XCTest执行校验共用已有逻辑。
+- 新21个Swift方法：14资源/模型、3应用入口/生命周期、3渲染及1真实包读取；
+  源码总356，构包前20个既定可选skip；新7张PNG、总48张已在前两轮实际生成。
+  原214process/570core/18Foundation保持，另加每系统1个必须执行的包资源测试。
+- 父宿主runtime targeted19/1.142s通过；正常privacy及完整hook1728/104.052s通过，
+  保留既有Tk teardown stderr。编辑器没有报错不是Mac编译证据。
+- 首版`8caec77`的[run35174381690](https://github.com/mclight-ship-it/cc-translate/actions/runs/35174381690)
+  实际watch0：portable788/15.462s、Swift构建36.41s、356/106.734s、零失败；
+  真实About包读取在15/14/26各一次passed。但实际PNG中的TabView导航为不可读黑块，
+  因此没有把旧绿灯当作界面验收，也未下载即将替换的完整旧App。
+- `83405c7`改为原生横向单选导航，并为全部7张About图加入独立顶条像素断言。
+  [run35175862207](https://github.com/mclight-ship-it/cc-translate/actions/runs/35175862207)
+  实际watch1：构建34.35s，356/107.699s，同一中文方法的两个OCR断言失败，未进入构包。
+  实际中英/浅深PNG导航均可读，六张英文顶条通过；中文混合语言OCR误识别。
+  当前`d699185`仅让测试按已知UI语言设置Vision，保留全部裁剪和文字断言；
+  不改生产截图OCR、不放大图片、不注入预期词。正常完整hook1728/92.895s通过。
+  两轮七张About PNG逐字节相同；当前中文断言通过，修正的是已知UI语言的测试识别配置。
+- `83405c7`首次正常push的既有Windows历史矩阵明确遇到一次合成目录原子替换WinError5，
+  导致同一方法的子场景及最终断言共2fail（1728/120.131s）。精确单方法1/3.503s、
+  原样完整重试1728/93.333s均通过；未改Windows历史、权限或监控，也未解决其稳定性问题。
+  日志中的日期是固定测试时钟，不是本次发生时间；不反推此前只有log.exists失败的根因。
+
+最终`d699185`实测：portable788/17.271s；Swift构建46.01s；
+356/124.716s（336 passed、20个构包前可选skip、0fail）。固定Git方法清单335→356、+21/-0：
+20个新增前置原生方法各一次started/passed，新增真实包方法在三系统后置各一次started/passed。
+原18个Foundation源码逐字节未变，每系统后置逐方法各一次started/passed，没有后置skip。
+48张PNG实际保留，七张关于图均检查了独立顶条文字，且已实际查看中英/浅深/长正文/错误状态。
+
+| 同一个App的系统 | 真实进程 | 核心 | 原Foundation | 独立About包读取 |
+| --- | --- | --- | --- | --- |
+| 15.7.9 / Xcode16.4 | 214/392.641s | 570/4.577s | 18/105.934s | 1/0.017s |
+| 14.8.9 / Xcode16.2 harness | 214/377.144s | 570/3.900s | 18/103.942s | 1/0.014s |
+| 26.6.2 / Xcode26.6 harness | 214/408.655s | 570/4.348s | 18/111.222s | 1/0.017s |
+
+完整App artifact10479431166，内层zip19,073,485bytes，
+SHA-256 `bda9a33e1e29a9b2740cc5729ba34b89978b69da7eb43dcdc50e6b7cfe2b86a5`，
+tree `71421b23cdddf11e4fe0994f8e1facb7cd13faf07ef877f87ddfed09fcaf4ad0`。
+独立核验ZIP CRC/路径/模式/链接、688项库存、78资源散列、50个Core源路径（49唯一，
+包含非Python的Codex指令文本）、6个实际thin64 arm64 Mach-O及最低系统、
+19份运行时许可/14项必需覆盖；632个保留运行时/许可文件逐SHA与此前独立核验截图包一致，
+另有1个相同符号链接。两consumer的archive/tree/原16.4产品编译器均一致；
+15文件library-only harness也从固定Git原字节和模式独立重建散列并匹配
+`975b0863ec39824881a4a47190efa09b8618dc05c0b70ea5b4bcf59da72d7289`，没有产品App构建目标。
+UI artifact10478831534；14/26小报告分别为10479311615/10479047017。
+
+证书/HTTPS、SQLite、取消/EOF、不可变和临时清理逐字段通过。
+生产URLSession实取67,948,544bytes；同源模型到原生离屏绘制P95/最大39.15725ms，
+不是物理键盘、打包GUI或OCR延迟。官方0.146/0.154只做版本与native prewarm，
+没有账号、thread/turn或模型调用。下一片继续完整设置/模型管理；小字号中英混合识别质量、
+纯文本剪贴板及真正图片provider另有后续范围，不靠已知UI语言的像素测试宣称任意截图识别质量。
+
+技术合同见[原生关于/许可](MACOS_DEVELOPMENT.md#native-about-licenses)。
+完成这片仍不代表完整设置、真正图片provider或整个P3–P6完成。
+
 <a id="native-capture-checkpoint"></a>
 
 ### P3 区域截图与本地 OCR：同包三系统已通过，继续剩余P3
@@ -1373,7 +1441,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [ ] 真正图片provider及图片明确发送；不以OCR文字翻译冒充完成。
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
-- [ ] 完整设置/关于与第三方许可界面。
+- [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
+- [ ] 完整设置/模型管理。
 - [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
 
 ## P4 — 等待 P3（可行性已在 P0 提前检查）

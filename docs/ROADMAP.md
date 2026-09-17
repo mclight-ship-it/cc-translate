@@ -27,9 +27,16 @@ run实际watch exit0，完整App已独立核验，保留21张原生截图。
 [run35168220762](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762)
 已通过同App三系统各214process/570core/18后置Foundation，正常完整hook1726、
 Swift335（316通过及19构包前可选skip），41PNG和完整App均已独立核验。
-菜单/主窗口可截图、原生框选、编辑本地识别结果，再明确翻译文字；当前下载已换为此新包。
+菜单/主窗口可截图、原生框选、编辑本地识别结果，再明确翻译文字。
 历次编译/合同/测试fixture请求ID错误及修复保留于[截图/OCR检查点](MACOS_TODO.md#native-capture-checkpoint)。
-真正图片provider、完整设置/关于许可及其他P3功能仍继续开发。
+原生关于/完整第三方许可源码`d699185` /
+[run35176360537](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537)
+现已通过同包三系统各214process/570core/18Foundation及独立About1，实际watch0、3jobs/40steps全通过。
+正常完整hook1728、Swift356（336通过及20构包前可选skip）、48PNG和完整App已核验；
+新增20个原生方法及各系统的真实包读取逐方法确认。菜单/设置进入同一独立窗口，
+完整许可可选择/滚动，版本及构建元数据不冒充实时签名验证，不需要CLI或模型请求。
+导航黑块和中文像素测试语言修复的原始失败证据见[关于/许可检查点](MACOS_TODO.md#native-about-checkpoint)；
+当前下载已更新为此新包。真正图片provider、完整设置/模型管理及其他P3功能仍继续开发。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

@@ -770,28 +770,56 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 不要添加未经证明必要的宽泛 entitlement。未来每次更新是否保留 TCC 授权仍须实机验证。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
 
+<a id="native-about-licenses"></a>
+
+### 原生关于与第三方许可
+
+此片已经包含在下方同包三系统核验的新开发包中，证据见
+[关于/许可检查点](MACOS_TODO.md#native-about-checkpoint)。
+这是原生界面、生命周期及真实包资源验证，不冒充真人VoiceOver/Finder验收。
+
+- 应用菜单、菜单栏及Settings中的“关于 CC Translate 与第三方许可”进入同一个原生窗口。
+  可以在未配置Codex、未连接helper时单独打开关于，不运行CLI、模型、网络或权限探针。
+  构造不读取资源；明确打开后读取包内Info.plist、source-manifest及许可目录。
+- 版本、构建号、包标识及来源直接来自随包元数据；缺失不猜测，损坏显示错误并可重读。
+  清楚区分清单声明和实时验证，此界面不验证签名、公证、源码真实性或CLI安装状态。
+  不擅自为应用自身指定许可；第三方许可只适用于对应组件。
+- 文档目录包括THIRD_PARTY_NOTICES以及Python、certifi、词典等实际随包文本；
+  Python运行时结构JSON不冒充许可正文。选择文档后才读取全文，保留UTF-8原文、
+  CRLF、空白与Markdown字面符号，不走AI/Markdown渲染，不自动打开链接。
+  缺失、编码错误、不可读及清单校验不符均显示可恢复状态，不展示替换或截断内容。
+- 关于资源任务与翻译/截图分离；旧读取不能覆盖新选择或重开的窗口。
+  关闭只清理关于状态，不取消翻译/截图；两个退出回调都取消关于读取，不增加退出等待。
+  “复制应用信息”仅响应明确点击，并显示失败；不会自动读取/覆盖剪贴板。
+- 默认760×660、最小660×520；中英与系统/浅/深色沿现有模式。元数据、长原文、
+  缺失/损坏和窗口生命周期有原生测试，真实包读取另作后置测试，不用前置skip充当验证。
+  原TabView的离屏导航黑块已改为原生横向单选控件；七张About图的独立导航区文字断言通过。
+  consumer只拷贝同字节App资源读取器与同一个测试到library-only harness，
+  不包含产品App目标，也不重建或重签被测试的App；原18个Foundation测试保持独立。
+
 <a id="native-translation-user-check"></a>
 
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-当前新增原生区域截图、本地OCR、可编辑预览和明确文字翻译，保留全库历史搜索、
-本地词典下载/开关/删除/来源许可与六种结果动作。
-producer通过真实原生模型/渲染测试并保留41张PNG，同一个App在15.7.9/14.8.9/26.6.2
-各通过214进程/570核心/18后置Foundation，完整App已独立字节核验。
+当前新增原生关于/第三方许可窗口，保留区域截图、本地OCR、可编辑预览和明确文字翻译、
+全库历史搜索、本地词典下载/开关/删除/来源许可与六种结果动作。
+producer通过真实原生模型/渲染测试并保留48张PNG，同一个App在15.7.9/14.8.9/26.6.2
+各通过214进程/570核心/18后置Foundation及独立的1个About包资源测试，完整App已独立字节核验。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`082aad6f26c6364acf7075e8e541d847b574bd25`；
-  [run35168220762](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10476491349)；
-  [真实原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35168220762/artifacts/10475427508)。
-- 内层`CCTranslateMac-P0.zip`：18,957,188 bytes；
-  SHA-256 `a9c4d75d0dd10229c2f66f8ac8a5343af1f4990ff290b1c69966ce9ebfd26fe8`。
-  artifact保留到2026-09-24T01:03:01Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`d699185fe8d020b928bd4a8091447fb366304401`；
+  [run35176360537](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537/artifacts/10479431166)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35176360537/artifacts/10478831534)。
+- 内层`CCTranslateMac-P0.zip`：19,073,485 bytes；
+  SHA-256 `bda9a33e1e29a9b2740cc5729ba34b89978b69da7eb43dcdc50e6b7cfe2b86a5`。
+  artifact保留到2026-09-24T03:10:44Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包已有正式翻译、截图文字翻译、结果动作、设置、历史和本地词典界面；完整移植仍在继续。
+  本包已有正式翻译、截图文字翻译、结果动作、设置、历史、本地词典及关于/许可界面；
+  完整设置/模型管理等移植工作仍在继续。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
@@ -827,6 +855,18 @@ producer通过真实原生模型/渲染测试并保留41张PNG，同一个App在
 7. 选区翻译、双Cmd+C为可选工作流，只有使用它们时才检查相关权限。
    Diagnostics是独立次级窗口，不要求为翻译重做AX/OCR/HTTPS探针。
    IME、VoiceOver、Spaces/多屏和TCC可集中补验，不阻止继续开发其他功能。
+8. 应用菜单、菜单栏或Settings中的关于入口会打开同一个关于/第三方许可窗口。
+   可以查看版本和构建来源、选择并滚动完整许可文本、明确复制应用信息；
+   不需要Codex、helper连接或新的系统权限，不会发出模型请求。
+
+**关于/许可简短检查（可选，不是继续使用或开发的前置）：**
+
+1. 从菜单打开关于，再从Settings打开，应复用同一个窗口。
+   切换“关于 / 第三方许可”，检查当前中英/浅深色下两项文字可读。
+2. 在第三方许可页选择一份长文档，滚动到末尾并选择文字；
+   Markdown符号应保持字面内容，不自动打开其中的链接。
+3. 按Esc或关闭窗口应只关闭关于，不清空原翻译输入/结果或取消截图。
+   “复制应用信息”只在点击时写入剪贴板；不必重新测试已经确认可用的普通翻译。
 
 **截图集中测试（无需改动已可用的Codex配置）：**
 
