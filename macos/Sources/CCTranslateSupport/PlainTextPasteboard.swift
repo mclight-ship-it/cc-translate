@@ -147,12 +147,10 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             guard clearStatus == noErr else { return .failure(.writeFailed) }
             cancellation.record(clipboard: .cleared)
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            // Acknowledge our own clear on both references. Clear does not promise to synchronize
-            // the local reference; its modified flag alone is not evidence of a different owner.
-            guard let witness = self.witness?.value else { return .failure(.clipboardChanged) }
-            let witnessFlags = PasteboardSynchronize(witness)
+            // Synchronize the writer before publishing. A separate observer can receive our own
+            // clear later, so it cannot distinguish that notification from a subsequent owner's clear.
             let flags = PasteboardSynchronize(board)
-            self.trace?("after clear: witness \(witnessFlags.rawValue), writer \(flags.rawValue)")
+            self.trace?("after clear: writer \(flags.rawValue)")
             guard flags.contains(Self.clientIsOwner) else {
                 return .failure(.clipboardChanged)
             }
@@ -190,10 +188,11 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
     }
 
     private func unchanged(requireOwnership: Bool = false) -> Bool {
-        // Data/metadata calls must not acknowledge an intervening owner on our independent observer.
-        guard let witness = witness?.value else { return false }
-        let flags = PasteboardSynchronize(witness)
-        trace?("witness \(flags.rawValue), requireOwnership \(requireOwnership)")
+        // Reads use an independent witness because data calls can acknowledge changes. After our
+        // write, only synchronize the writer: no read may acknowledge a later owner's modification.
+        guard let board = requireOwnership ? reference?.value : witness?.value else { return false }
+        let flags = PasteboardSynchronize(board)
+        trace?("lease flags \(flags.rawValue), requireOwnership \(requireOwnership)")
         guard !flags.contains(Self.modified), !requireOwnership || flags.contains(Self.clientIsOwner) else {
             readableToken = nil
             writtenToken = nil
@@ -233,8 +232,9 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
     private static let textFlavors: [(type: String, encoding: String.Encoding)] = [
         ("public.utf8-plain-text", .utf8),
         ("public.utf8-tab-separated-values-text", .utf8),
-        ("public.utf16-plain-text", .utf16),
+        // An external UTF-16 flavor can acquire an unflagged native alias with normalized line endings.
         ("public.utf16-external-plain-text", .utf16),
+        ("public.utf16-plain-text", .utf16),
         ("com.apple.traditional-mac-plain-text", .macOSRoman)
     ]
 

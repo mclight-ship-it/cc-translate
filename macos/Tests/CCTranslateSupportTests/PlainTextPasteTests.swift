@@ -243,11 +243,12 @@ private final class PastePromiseFixture {
 
     @MainActor
     init(_ board: NSPasteboard, plainText: String? = nil, promisedType: NSPasteboard.PasteboardType = .string,
-         response: PastePromiseState.Response = .unavailable) throws {
+         response: PastePromiseState.Response = .unavailable, fileURL: String? = nil) throws {
         let reference = try privatePasteboardReference(board)
         self.reference = reference
         state = PastePromiseState(response)
         try checkPasteboardFixture(PasteboardClear(reference))
+        _ = PasteboardSynchronize(reference)
         let item = try XCTUnwrap(PasteboardItemID(bitPattern: 1))
         if let plainText {
             try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, "public.utf8-plain-text" as CFString,
@@ -259,6 +260,12 @@ private final class PastePromiseFixture {
         }, Unmanaged.passUnretained(state).toOpaque()))
         try checkPasteboardFixture(PasteboardPutItemFlavor(reference, item, promisedType.rawValue as CFString,
                                                           nil, PasteboardFlavorFlags(rawValue: 0)))
+        if let fileURL {
+            let file = try XCTUnwrap(PasteboardItemID(bitPattern: 2))
+            try checkPasteboardFixture(PasteboardPutItemFlavor(reference, file, "public.file-url" as CFString,
+                                                              Data(fileURL.utf8) as CFData, PasteboardFlavorFlags(rawValue: 0)))
+        }
+        _ = PasteboardSynchronize(reference)
     }
 
     deinit {
@@ -293,6 +300,7 @@ final class PlainTextPasteTests: XCTestCase {
     private func publish(_ board: NSPasteboard, representations: [[(String, Data)]]) throws {
         let reference = try privatePasteboardReference(board)
         try checkPasteboardFixture(PasteboardClear(reference))
+        _ = PasteboardSynchronize(reference)
         for (index, flavors) in representations.enumerated() {
             let identifier = try XCTUnwrap(PasteboardItemID(bitPattern: index + 1))
             for (type, data) in flavors {
@@ -300,6 +308,7 @@ final class PlainTextPasteTests: XCTestCase {
                                                                   data as CFData, PasteboardFlavorFlags(rawValue: 0)))
             }
         }
+        _ = PasteboardSynchronize(reference)
     }
 
     @MainActor
@@ -1220,14 +1229,8 @@ final class PlainTextPasteTests: XCTestCase {
     func testPrivateMixedFileClipboardDoesNotFulfillEarlierTextPromise() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let provider = try PastePromiseFixture(board)
+        let provider = try PastePromiseFixture(board, fileURL: "file:///synthetic/never-opened.txt")
         defer { withExtendedLifetime(provider) {} }
-        let owner = try privatePasteboardReference(board)
-        _ = PasteboardSynchronize(owner)
-        let file = try XCTUnwrap(PasteboardItemID(bitPattern: 2))
-        try checkPasteboardFixture(PasteboardPutItemFlavor(owner, file, "public.file-url" as CFString,
-                                                          Data("file:///synthetic/never-opened.txt".utf8) as CFData,
-                                                          PasteboardFlavorFlags(rawValue: 0)))
         let count = board.changeCount
         let adapter = SystemPlainTextPasteClipboard(name: board.name,
             trace: { print("PasteboardTrace mixedFile: \($0)") })
