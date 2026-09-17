@@ -784,7 +784,8 @@ final class PlainTextPasteTests: XCTestCase {
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .string))
         XCTAssertTrue(item.setString("<b>not the selected plain text</b><img src='https://invalid.example/no-fetch'>", forType: .html))
-        try publish(board, items: [item])
+        board.clearContents()
+        XCTAssertTrue(board.writeObjects([item]))
         let adapter = SystemPlainTextPasteClipboard(name: board.name,
             trace: { print("PasteboardTrace richPlain: \($0)") })
         let cancellation = PlainTextPasteCancellation()
