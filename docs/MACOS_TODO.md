@@ -103,14 +103,88 @@ tree `04f35ac58c05b058af5a02f81c99df2da7397b097d9981af2c30b8e7d8a5ed48`；
 词典优先首屏、完整动作、截图翻译、历史全库搜索及其余功能继续按P2/P3推进，
 不在这个界面检查点停止开发。新包正常使用步骤见[开发指南](MACOS_DEVELOPMENT.md#native-translation-user-check)。
 
+<a id="native-plain-paste-checkpoint"></a>
+
+### P3 主动纯文本粘贴：同包三系统已通过，继续其余功能对齐
+
+源码`2f371fa955876d70c84e2c53de16aad3b26e79c1` /
+[run35210321489](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489)
+已实际watch exit0，attempt1的3jobs/40steps全部success。当前推荐下载更新为
+[完整App10492197019](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489/artifacts/10492197019)；
+这不是整个P3或移植完成。操作见[纯文本粘贴](MACOS_DEVELOPMENT.md#native-plain-text-paste)。
+
+- Settings复用`plain_text_paste_enabled`，明确开启后独占注册Option+Shift+Command+V；
+  保存、回读、失败、注册冲突、取消及部分效果状态均已接入。重开只用曾明确开启的本机hint
+  引导config-only读取，真实配置确认前不注册；默认关闭仍无剪贴板/权限/监控/CLI/网络I/O。
+- 在其他应用中，等待触发键和修饰键释放，移除文字格式，再向捕获的目标提交一次粘贴；
+  不使用不能吞键的被动监听，避免目标应用也执行同一快捷键。禁用立即停止接收新动作，
+  旧保存/读取回调不能重新开启新关闭选择；退出等待未结束的数据读取。
+- CC Translate自己的编辑器走原生`pasteAsPlainText:` responder chain，不申请AX或发外部键；
+  非激活结果浮窗持有key window时也优先识别为本应用。全局功能关闭后仍保留Edit菜单的
+  Paste and Match Style。IME composition和Cmd+Return有原生回归，不以此冒充真人输入法验收。
+- AppKit的类型/条目元数据、变更计数和已准备好的UTF-8写入只在MainActor执行；
+  可能等待promise的数据读取和RTF解析在专用队列使用新建C Pasteboard引用，不把缓存的
+  NSPasteboard对象跨线程使用。读取前后和写入前后核对真实changeCount，保留一次性UUID/序号租约。
+  changeCount检查不是跨进程原子CAS；不恢复原格式、不自动重试、不把键事件提交当成已插入。
+- 保留Unicode/组合字符/制表符/换行；优先原始external UTF-16而非会改换行的兼容alias。
+  全部条目的文件/文件promise元数据先检查；真实文件混合内容保持不变，文字附带备用图片
+  则只读文字。HTML/RTFD-only、图片-only和RTF附件不进入外部资源转换。
+  30秒默认读取期限不截成2秒；超时/取消只门控后续效果，不能中断的系统读取仍等待drain。
+  不承诺任意系统daemon IPC绝不阻塞，也不把合成延迟当真实Universal Clipboard证据。
+
+**实际失败及修复保留：**
+
+| 源码/run | 发现与处理 |
+|---|---|
+| `2ceebb7` / 35196666915 | Carbon数量/大小参数实际Swift导入为Int，初版编译失败；修正ABI类型及MainActor最终清理后重跑，未执行的测试不计通过 |
+| `be3163b` / 35197243289；`a8fca8e` / 35198418797 | 462项分别9/4失败：注册回调重入吞掉新配置请求、无效RTF被平台当空文字、平台纯文本alias与小字OCR。修复请求退休顺序、RTF头校验、保留字节一致性检查；状态/权限正文改callout字号，精确渲染断言不删除 |
+| `09335b8` / 35202521292；`2f0f573` / 35202864582 | C适配器先因Swift不提供ItemCount别名而编译失败；改Int后469项17失败，揭示自有清空通知及UTF-16兼容转换问题 |
+| `1f5846a` / 35203902558；`361cbe5` / 35205209500 | 469项分别9/16个Support失败断言；全部新UI已通过。私有数据诊断证实独立观察句柄延迟收到自己的清空，原始external UTF-16未损坏，是读取了会规范化换行的alias；没有加入错字/换行替换表 |
+| `4df29f8` / 35206114383 | producer及macOS14通过，26的46项粘贴仍有3失败：文件混合元数据、读取期间换owner、另一适配器拒绝旧快照。整run实际exit1，不把15/14或该完整App当成最终交付 |
+| `135b732` / 35209372816；最终`2f371fa` / 35210321489 | 改用MainActor AppKit元数据/真实changeCount/立即写入，后台只读可能等待的数据；前者三系统通过后，最终再用真实AppKit.writeObjects强化正向publisher覆盖，最终源码三系统重新通过 |
+
+正常Windows完整hook最终1749/83.539s通过，targeted runtime23/0.999s通过。
+本轮曾在未改动的history/config矩阵复现Windows访问拒绝：早期push有history失败；
+push10的1749/88.051s出现26个config断言失败，日志含save_config WinError5。
+同一个config方法独立1/2.766s通过，正常完整重试1749/82.196s通过。
+没有改生产配置/历史或冻结oracle、跳hook、提权/关闭保护；旧访问拒绝问题仍未解决。
+
+最终portable807/13.564s、Swift构建35.17s，469项（448通过/21构包前可选skip）零失败。
+固定Git库存380→469，新增89个方法、零移除；46 Support及43 App方法逐项开始/通过一次。
+扩展原19个Foundation之一验证默认关闭→保存开启→重开仍开启→保存关闭，未移除原始字节/未知字段检查。
+
+| 同一个App/同源harness | process | core | 后置Foundation | About / OCR / 粘贴 |
+|---|---:|---:|---:|---|
+| macOS15.7.9 / Xcode16.4 | 214 / 398.672s | 585 / 4.517s | 19 / 171.151s | 1 / 4 / 46（粘贴0.173s） |
+| macOS14.8.9 / Xcode16.2 | 214 / 375.142s | 585 / 4.469s | 19 / 154.254s | 1 / 4 / 46（粘贴0.123s） |
+| macOS26.6.2 / Xcode26.6 | 214 / 398.085s | 585 / 5.702s | 19 / 164.241s | 1 / 4 / 46（粘贴0.179s） |
+
+三系统逐方法核验，无后置skip，无背景NSPasteboard promise警告，含真实同进程AppKit publisher。
+[71张原生PNG](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489/artifacts/10491961172)
+全部与已查看的字号修正布局逐字节相同，其中15张粘贴状态；不是物理键盘或打包GUI验收。
+两consumer小报告为10493001001/10494355100，20文件library-only harness由固定Git原字节/模式重建为
+`5d6bc07237078a64176f0bcbb1d4fb36911719a69b9a5029cbef2b42cdb663d1`，没有重建或重签被测App。
+
+完整内层zip19,233,998bytes，SHA-256
+`3ba7df479e738262b9656f915adc2277d0d89d772b97ea9a9b591c9780eebb1c`；
+tree `d59cce54ad6b58e78d60775338db830af58d41b34965444353cb2016c0a9068c`。
+CRC/路径/模式/链接、688库存、78资源hash、50 Core路径（49唯一）、6实际arm64 Mach-O及19运行时许可已独立核验。
+632个固定运行时/许可普通文件和1条symlink匹配前置审计。自有重编译process-support dylib单独计数：
+初版审计错误要求它与固定上游字节相同；实际差异限于UUID、ad-hoc签名及N_OSO对象时间戳，
+其余字节与4df29f8对应产物一致，C源码/Package亦未改动；不冒充可重现发行签名。
+证书/HTTPS/SQLite、取消/EOF、包不可变及临时清理逐字段通过；词典实际下载67,948,544bytes，
+同源原生离屏绘制P95为42.818959ms，不是实际粘贴或物理键盘延迟。
+官方CLI仍只做版本/native prewarm，无账号/模型调用。下一项继续完整模型目录/管理等P3，
+真人外部编辑器、Universal Clipboard、TCC/IME/VoiceOver、多屏及P4–P6仍单列，不等待用户再说“继续”。
+
 <a id="native-model-settings-checkpoint"></a>
 
-### P3 自定义模型设置与混合语言 OCR：同包三系统已通过，继续纯文本粘贴
+### P3 自定义模型设置与混合语言 OCR：前置同包三系统检查点
 
-当前修正源码`b33515d7ece10a82eb2dacdc68f6d5440d172cc2` /
+该轮修正源码`b33515d7ece10a82eb2dacdc68f6d5440d172cc2` /
 [run35185087510](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510)。
 实际watch exit0；API attempt1、3jobs/40steps全部success。完整App已独立核验，
-当前推荐下载已更新为此包。56张最终源码PNG全部保留，逐字节匹配已查看的首轮图；
+该包保留为前置证据，当前推荐下载见上方纯文本粘贴检查点。56张该轮最终源码PNG全部保留，逐字节匹配已查看的首轮图；
 新增8张模型设置状态及完整设置的中英/浅深布局均可读。这不是整个移植完成。
 
 - 设置增加自定义Codex模型ID、应用、重置草稿、重新读取及保存/回读/错误状态；
@@ -181,7 +255,7 @@ tree `e7678ec13e3db66bf5bf7b78f5cc57c886c6bdd9c29ca0d5ca13b2478d3b73a5`。
 没有账号、thread/turn或模型调用。
 
 技术合同见[自定义模型设置](MACOS_DEVELOPMENT.md#native-custom-model-settings)。
-下一片已开始原生纯文本粘贴支持服务；对应Windows的主动去格式并立即粘贴行为，
+该轮之后的原生纯文本粘贴现已在上方单独完成同包验证；对应Windows的主动去格式并立即粘贴行为，
 不是只给翻译输入框增加Paste。完整动态模型目录、真正图片provider及其他P3–P6仍继续，
 不等待用户再次“继续”。
 
@@ -1526,7 +1600,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
 - [x] 手动自定义模型设置、精确保存/重开/请求及中英混合OCR改进；b33515d同包验证见模型设置检查点。
 - [ ] 完整设置/模型管理。
-- [ ] 纯文本粘贴；剪贴板多格式/延迟数据/Universal Clipboard/访问拒绝验收。
+- [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。
+- [ ] 真实外部编辑器、多格式/跨设备Universal Clipboard、访问ask/allow/deny及更新后权限保持验收；不以合成数据代替。
 
 ## P4 — 等待 P3（可行性已在 P0 提前检查）
 - [ ] 免费分发完整性/资源/归档检查、最小权限和干净用户 Gatekeeper 首开；不全局关闭保护。

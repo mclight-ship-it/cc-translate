@@ -44,10 +44,22 @@ Swift335（316通过及19构包前可选skip），41PNG和完整App均已独立�
 同一App三系统各214process/585core/19后置Foundation及About1，同源生产OCR4也逐项通过。
 修复了合成CLI错误强求目录覆盖参数的前提，保留实际模型请求断言；
 Picker还补齐字节精确identity，避免Swift规范等价比较丢失不同ID。
-当前下载已更新为该源码的完整核验包，下一片已开始主动纯文本粘贴支持服务。
+该模型设置包保留为前置证据，当前下载已由下方纯文本粘贴新包替代。
 明确模型ID不再被重复默认迁移改写；没有增加版本白名单或账号探针作为使用前置。
 完整范围及原始失败/修复见[模型设置与OCR检查点](MACOS_TODO.md#native-model-settings-checkpoint)；
-动态模型目录、真正图片provider及其余P3–P6仍未完成。
+主动纯文本粘贴源码`2f371fa` /
+[run35210321489](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489)
+已实际watch0、attempt1的3jobs/40steps通过；正常完整hook1749，
+469原生方法（21构包前可选skip）、71PNG及完整App均已核验。
+Settings明确开启后独占⌥⇧⌘V，在外部应用去格式并提交一次粘贴；本应用编辑器走原生
+Paste and Match Style，默认关闭，无需CLI、账号或诊断前置。
+同一个App三系统各214process/585core/19后置Foundation、About1及同源OCR4/粘贴46通过，
+没有后置skip或背景AppKit promise警告，真实AppKit publisher也纳入正向回归。
+macOS26发现的跨句柄同步问题已用MainActor AppKit真实changeCount/立即写入修复，
+可能等待的数据仍在后台读取；不以只通过15/14的旧包替代最终证据。
+原始编译/状态/编码/渲染失败、旧Windows访问拒绝及完整制品核验见
+[纯文本粘贴检查点](MACOS_TODO.md#native-plain-paste-checkpoint)。
+下一项继续动态模型目录/完整模型管理；真正图片provider及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

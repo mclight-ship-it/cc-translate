@@ -586,9 +586,10 @@ Python 只从包内固定位置加载且要求 ABI 1，不搜索宿主库或降�
   探针可保守仅支持 AX；P2 再引入与本次目标/时间/changeCount 可证明关联的复制回退。
 - 全局事件监听与 AX 授权分别报告；不以 AX trusted 推断所有权限已允许。
   按需请求辅助功能/输入监控/屏幕内容；通知和登录项是另外的状态，P0 不请求。
-- Secure Input 下停用相关能力，不绕过。纯文本粘贴是后续显式操作。
+- Secure Input 下停用相关能力，不绕过。P3已实现的主动纯文本粘贴见[独立说明](#native-plain-text-paste)，不改变本节P0探针约束。
 - 临时剪贴板事务只保守恢复；`changeCount` 不是原子 CAS。多格式、延迟数据、
-  Universal Clipboard 和更新系统的 ask/allow/deny 单独验收。P0 不写剪贴板。
+  Universal Clipboard 和更新系统的 ask/allow/deny 单独验收。P0 不写剪贴板；
+  主动纯文本粘贴是用户明确的去格式操作，不恢复旧内容或自动重放。
 - 浮窗不激活并不等于无法接收键盘；快速输入主动激活、结果展示不抢焦点分别验证。
 
 <a id="native-capture-ocr"></a>
@@ -770,6 +771,34 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 不要添加未经证明必要的宽泛 entitlement。未来每次更新是否保留 TCC 授权仍须实机验证。
 最低 OS deployment target 的编译通过不等于 macOS 14 运行通过。
 
+<a id="native-plain-text-paste"></a>
+
+### 主动纯文本粘贴
+
+已包含在下方新的完整开发包中，见[同包三系统证据](MACOS_TODO.md#native-plain-paste-checkpoint)。
+它是“去掉剪贴板文字格式并粘贴到正在编辑的应用”，不只是翻译输入框的Paste按钮。
+
+- Settings → Plain-text paste / 纯文本粘贴中明确开启，快捷键为
+  **Option+Shift+Command+V（⌥⇧⌘V）**。不开启就不注册全局快捷键，不监听/读取剪贴板。
+  无需Codex、账号、模型请求或先运行Diagnostics；重开从已保存配置恢复明确开启的选择。
+- 在其他应用的文本编辑位置按快捷键并松开按键，应用使用剪贴板中的文字去格式，
+  再提交一次普通粘贴。需要时才提示辅助功能权限；开启开关不会弹权限请求。
+  快捷键被占用会显示冲突，可释放其他占用后明确重试注册，不暗换组合键。
+- 在CC Translate自己的编辑器中使用原生Paste and Match Style，不需要辅助功能权限，
+  不向其他应用发键。全局开关关闭时，Edit菜单仍保留这一原生编辑命令。
+  非激活浮窗持有键盘焦点时也不会把粘贴发给旧外部应用。
+- 保留Unicode、制表符和换行。文字附带备用图片表示时只取文字；包含文件/文件promise的
+  混合内容、图片-only、HTML/RTFD-only不转换，不为此加载图片或远程网页。
+  支持纯文本及无附件RTF；不把格式转换变成AI翻译。
+- 设置可显示保存/回读、注册、取消/停止和上次操作报告。关闭立即停止新动作；
+  正在等待的外部数据返回后不会继续写入或发键。若格式已经移除，则如实显示部分效果，
+  不恢复旧内容、自动重试或宣称目标编辑器已经插入成功。
+
+实现使用MainActor上的AppKit元数据/changeCount及立即UTF-8写入；可能等待外部提供者的
+数据读取和RTF解析留在后台队列，使用新建的C引用，不共享跨线程NSPasteboard缓存。
+30秒读取期限后仍等待不能中断的调用drain；不承诺任意系统IPC绝不会阻塞。
+检查不是跨进程原子CAS，也不替代真人外部编辑器、Universal Clipboard或系统访问策略验收。
+
 <a id="native-custom-model-settings"></a>
 
 ### 原生自定义模型设置
@@ -800,7 +829,7 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
   到library-only harness，不重建/重签被测App，也不把测试PNG加入产品资源。
 
 原生离屏渲染与合成请求不等同于真人IME/VoiceOver/TCC、屏幕多显示器或账号模型验收。
-本轮三系统自动化已通过；下一片继续主动纯文本粘贴，完整模型目录等仍属后续范围。
+本轮三系统自动化已通过；主动纯文本粘贴也已单独完成上方验证，完整模型目录等仍属后续范围。
 
 <a id="native-about-licenses"></a>
 
@@ -834,25 +863,27 @@ Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来�
 ### 当前正式原生界面开发包：下载与使用
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
-当前新增自定义模型设置、一次性模型迁移修复和中英混合OCR识别改进，
+当前新增主动纯文本粘贴、原生设置开关/独占快捷键及本应用Paste and Match Style，
+保留自定义模型设置、一次性模型迁移修复和中英混合OCR识别改进，
 保留原生关于/第三方许可、区域截图、可编辑预览和明确文字翻译、
 全库历史搜索、本地词典下载/开关/删除/来源许可与六种结果动作。
-producer通过380个原生测试（21构包前可选skip、零失败）并保留56张PNG，
+producer通过469个原生测试（21构包前可选skip、零失败）并保留71张PNG，
 同一个App在15.7.9/14.8.9/26.6.2各通过214进程/585核心/19后置Foundation及独立About1；
-三个系统的4项同源生产Vision测试也实际通过。完整App已独立字节核验。
+三个系统的4项同源生产Vision及46项粘贴服务/私有剪贴板测试也实际通过，含真实AppKit发布者。
+完整App已独立字节核验；不将这些测试冒充全局快捷键或真实目标编辑器的人工验收。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`b33515d7ece10a82eb2dacdc68f6d5440d172cc2`；
-  [run35185087510](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510/artifacts/10482227412)；
-  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35185087510/artifacts/10482335822)。
-- 内层`CCTranslateMac-P0.zip`：19,109,069 bytes；
-  SHA-256 `32cefda7ac9c9d1a526873a3799bea411ed9b958a964277f90f6dc1a73bde53f`。
-  artifact保留到2026-09-24T05:30:54Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`2f371fa955876d70c84e2c53de16aad3b26e79c1`；
+  [run35210321489](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489/artifacts/10492197019)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35210321489/artifacts/10491961172)。
+- 内层`CCTranslateMac-P0.zip`：19,233,998 bytes；
+  SHA-256 `3ba7df479e738262b9656f915adc2277d0d89d772b97ea9a9b591c9780eebb1c`。
+  artifact保留到2026-09-24T10:39:33Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
-  本包已有正式翻译、截图文字翻译、结果动作、设置、历史、本地词典及关于/许可界面；
+  本包已有正式翻译、截图文字翻译、结果动作、设置、历史、本地词典、纯文本粘贴及关于/许可界面；
   完整设置/模型管理等移植工作仍在继续。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
@@ -895,14 +926,19 @@ producer通过380个原生测试（21构包前可选skip、零失败）并保留
 8. 应用菜单、菜单栏或Settings中的关于入口会打开同一个关于/第三方许可窗口。
    可以查看版本和构建来源、选择并滚动完整许可文本、明确复制应用信息；
    不需要Codex、helper连接或新的系统权限，不会发出模型请求。
+9. 需要跨应用去格式粘贴时，在Settings开启纯文本粘贴，再在目标编辑位置按并松开⌥⇧⌘V。
+   不使用该功能就保持关闭；无需为了这一更新修改CLI或账号，详细边界见上方说明。
 
 **本轮简短检查（可选，不需要改已有CLI路径或账号）：**
 
-1. 在Settings保留Fast/Default，或只在需要时填写已有Codex可用的自定义ID。
-   点“应用模型”，再“重新读取已保存设置”，正常退出重开后应保持同一个选择。
-   应用设置本身不请求模型；需要实际翻译时再使用无敏感内容的短句。
-2. 截图可使用一行中文和一行英文的合成文字，查看本地识别预览；仍可编辑后明确翻译，
-   不会因为本地OCR就上传图片或调用模型。不必为了这次更新重跑全部权限流程。
+1. 在TextEdit准备带粗体/颜色的合成文字，复制后切到另一个文本编辑位置。
+   Settings开启纯文本粘贴，按并松开⌥⇧⌘V；应只插入一份文字，使用目标位置的样式，
+   不出现翻译/模型请求。只有系统实际提示时才决定辅助功能授权，不需要重跑全部权限探针。
+2. 关闭开关后全局动作应停止；在CC Translate输入框仍可从Edit菜单选择Paste and Match Style。
+   正常退出重开，设置应保持已保存选择，不自动粘贴。
+3. 可选再试文字中的中文/emoji/制表符/换行，或只复制图片/文件：不应重复插入，
+   图片/文件剪贴板不应被该功能清空。跨设备延迟、权限拒绝和多应用差异可集中后续补验，
+   不是继续开发的前置，也不要求重测已确认可用的普通翻译。
 
 **关于/许可简短检查（可选，不是继续使用或开发的前置）：**
 
