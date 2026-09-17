@@ -774,7 +774,8 @@ final class PlainTextPasteTests: XCTestCase {
         XCTAssertTrue(item.setString(text, forType: .string))
         XCTAssertTrue(item.setString("<b>not the selected plain text</b><img src='https://invalid.example/no-fetch'>", forType: .html))
         try publish(board, items: [item])
-        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        let adapter = SystemPlainTextPasteClipboard(name: board.name,
+            trace: { print("PasteboardTrace richPlain: \($0)") })
         let cancellation = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: cancellation) else {
             return XCTFail("Expected exact plain representation")
@@ -798,7 +799,8 @@ final class PlainTextPasteTests: XCTestCase {
         let text = "name\tvalue\n\u{4E2D}\u{6587}\t42"
         let provider = try PastePromiseFixture(board, plainText: text, promisedType: .png)
         defer { withExtendedLifetime(provider) {} }
-        let adapter = SystemPlainTextPasteClipboard(name: board.name)
+        let adapter = SystemPlainTextPasteClipboard(name: board.name,
+            trace: { print("PasteboardTrace alternativeImage: \($0)") })
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
             return XCTFail("An alternative image representation must not hide usable plain text")
@@ -1065,7 +1067,14 @@ final class PlainTextPasteTests: XCTestCase {
             // NSPasteboardItem may translate legacy aliases, including their line endings.
             // Publish the intended external bytes directly rather than pre-converting the fixture.
             try publish(board, representations: [[(type, bytes)]])
-            let adapter = SystemPlainTextPasteClipboard(name: board.name)
+            let sourceReference = try privatePasteboardReference(board)
+            _ = PasteboardSynchronize(sourceReference)
+            var fixtureBytes: CFData?
+            let fixtureStatus = PasteboardCopyItemFlavorData(sourceReference, try XCTUnwrap(PasteboardItemID(bitPattern: 1)),
+                                                             type as CFString, &fixtureBytes)
+            print("PasteboardFixture \(type), input \(Array(bytes)), copied \(fixtureBytes.map { Array($0 as Data) } ?? []), status \(fixtureStatus)")
+            let adapter = SystemPlainTextPasteClipboard(name: board.name,
+                trace: { print("PasteboardTrace encoding \(type): \($0)") })
             let token = PlainTextPasteCancellation()
             guard case .text(let snapshot) = await adapter.read(cancellation: token) else {
                 XCTFail("Expected lossless platform decoding for \(type)")
@@ -1220,9 +1229,11 @@ final class PlainTextPasteTests: XCTestCase {
                                                           Data("file:///synthetic/never-opened.txt".utf8) as CFData,
                                                           PasteboardFlavorFlags(rawValue: 0)))
         let count = board.changeCount
-        let adapter = SystemPlainTextPasteClipboard(name: board.name)
-        guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
-            return XCTFail("Inspect all metadata before fulfilling text on a mixed-file clipboard")
+        let adapter = SystemPlainTextPasteClipboard(name: board.name,
+            trace: { print("PasteboardTrace mixedFile: \($0)") })
+        let read = await adapter.read(cancellation: PlainTextPasteCancellation())
+        guard case .failure(.noText) = read else {
+            return XCTFail("Inspect all metadata before fulfilling text on a mixed-file clipboard: \(read), promise calls \(provider.calls)")
         }
         XCTAssertEqual(provider.calls, 0)
         XCTAssertEqual(board.changeCount, count)

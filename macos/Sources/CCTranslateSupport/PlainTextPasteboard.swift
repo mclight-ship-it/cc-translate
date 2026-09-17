@@ -10,6 +10,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
     private static let clientIsOwner = PasteboardSyncFlags(rawValue: 1 << 1) // Application-wide, not reference-wide.
     private let name: String
     private let identity = UUID()
+    private let trace: (@Sendable (String) -> Void)?
     private var reference: OwnedReference?
     private var witness: OwnedReference?
     private var nextToken = 0
@@ -31,8 +32,9 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         }
     }
 
-    init(name: NSPasteboard.Name = .general) {
+    init(name: NSPasteboard.Name = .general, trace: (@Sendable (String) -> Void)? = nil) {
         self.name = name == .general ? (kPasteboardClipboard as String) : name.rawValue
+        self.trace = trace
     }
 
     func read(cancellation: PlainTextPasteCancellation) async -> PlainTextPasteRead {
@@ -72,6 +74,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
                 for flavor in flavors {
                     var flags = PasteboardFlavorFlags(rawValue: 0)
                     let status = PasteboardGetItemFlavorFlags(board, item, flavor as CFString, &flags)
+                    self.trace?("flavor \(flavor), flags \(flags.rawValue), status \(status)")
                     if let failure = self.failure(after: status, cancellation: cancellation) {
                         return .failure(failure)
                     }
@@ -139,20 +142,24 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
             cancellation.record(clipboard: .mayHaveChanged)
             // Synchronize is a check, not an atomic compare-and-clear. Another owner can still race this call.
-            guard PasteboardClear(board) == noErr else { return .failure(.writeFailed) }
+            let clearStatus = PasteboardClear(board)
+            self.trace?("clear status \(clearStatus)")
+            guard clearStatus == noErr else { return .failure(.writeFailed) }
             cancellation.record(clipboard: .cleared)
             guard !cancellation.isCancelled else { return .failure(.cancelled) }
             // Acknowledge our own clear on both references. Clear does not promise to synchronize
             // the local reference; its modified flag alone is not evidence of a different owner.
             guard let witness = self.witness?.value else { return .failure(.clipboardChanged) }
-            _ = PasteboardSynchronize(witness)
+            let witnessFlags = PasteboardSynchronize(witness)
             let flags = PasteboardSynchronize(board)
+            self.trace?("after clear: witness \(witnessFlags.rawValue), writer \(flags.rawValue)")
             guard flags.contains(Self.clientIsOwner) else {
                 return .failure(.clipboardChanged)
             }
             guard self.unchanged(requireOwnership: true) else { return .failure(.clipboardChanged) }
             let result = PasteboardPutItemFlavor(board, item, "public.utf8-plain-text" as CFString,
                                                 data as CFData, PasteboardFlavorFlags(rawValue: 0))
+            self.trace?("put status \(result)")
             guard result == noErr else { return .failure(.writeFailed) }
             cancellation.record(clipboard: .plainTextWritten)
             guard self.unchanged(requireOwnership: true) else { return .failure(.clipboardChanged) }
@@ -186,6 +193,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         // Data/metadata calls must not acknowledge an intervening owner on our independent observer.
         guard let witness = witness?.value else { return false }
         let flags = PasteboardSynchronize(witness)
+        trace?("witness \(flags.rawValue), requireOwnership \(requireOwnership)")
         guard !flags.contains(Self.modified), !requireOwnership || flags.contains(Self.clientIsOwner) else {
             readableToken = nil
             writtenToken = nil
@@ -214,6 +222,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         var data: CFData?
         // This public call can synchronously wait on a promise keeper. Cancellation only gates its eventual result.
         let result = PasteboardCopyItemFlavorData(board, item, type as CFString, &data)
+        trace?("copy \(type), status \(result), bytes \(data.map { CFDataGetLength($0) } ?? -1)")
         if let failure = failure(after: result, cancellation: cancellation) {
             return .failure(failure)
         }
