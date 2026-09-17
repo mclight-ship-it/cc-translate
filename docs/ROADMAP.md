@@ -97,8 +97,11 @@ dbf5b33改用AppKit单次交互条目读取；46项产品测试保持，明确�
 producer和同App14完整通过；26仅粘贴阶段仍有C promise身份错误和UTF-8 literal前缀丢失，
 说明固定优先级不足，原断言继续保留并修复。237完整App已独立审计，仍不推荐；
 同包三系统232process/648core/21Foundation全部通过，不拿独立阶段替代整体验收。
-P2双Cmd+C关联回退另有37项新原生测试随实现交付，父已审阅、离线回归66通过；
-它尚未提交/编译，不在237的App中，需与原始文本表示修复一致后继续原生验收。
+P2双Cmd+C关联回退另有37项新原生测试，父已审阅并接上共享多编码读取、
+同包consumer私有剪贴板验证，离线回归68通过；它未完成Mac编译/验收，不在237的App中。
+237的26失败进一步归因已更正：case5读取完整25字节UTF-8，前缀丢失在Foundation解码，
+不是取了UTF-16别名。后续共享解码采用Swift逐字节回验，promise测试改用真实AppKit
+回调身份检查，原46方法和C eager字节oracle保留；同包消费者新增7项fresh-copy读取验证。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

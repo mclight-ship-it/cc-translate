@@ -163,6 +163,7 @@ def prepare_harness(destination):
     for relative in (
             "Tests/CCTranslateSupportTests/LocalOCRTests.swift",
             "Tests/CCTranslateSupportTests/PlainTextPasteTests.swift",
+            "Tests/CCTranslateSupportTests/FreshCopyClipboardTests.swift",
             "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -369,6 +370,28 @@ def plain_text_paste_result(text):
             "scope": "same_source_service_and_private_pasteboards_with_injected_input_not_global_shortcut_or_editor"}
 
 
+FRESH_COPY_METHODS = (
+    "testReaderConstructionAndInvalidAuthorizationDoNotAccessAnyPasteboard",
+    "testExactFreshUnicodeTextIsReadWithoutChangingAnyRepresentations",
+    "testOldRevisionAndChangeImmediatelyBeforeDataReadAreRejected",
+    "testCancellationAfterReadDiscardsTextWithoutClearingUserCopy",
+    "testFileImageConcealedUnknownAndRichOnlyCopiesAreNotTextFallbacks",
+    "testMultipleItemsAndEmptyBoardAreNotCollapsedIntoOldOrFirstText",
+    "testUTF8BudgetInvalidUnicodeEmptyAndNULAreNotInventedSelections",
+)
+
+
+def fresh_copy_result(text):
+    source = ROOT / "macos/Tests/CCTranslateSupportTests/FreshCopyClipboardTests.swift"
+    methods = re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8"))
+    need(len(methods) == len(FRESH_COPY_METHODS) and set(methods) == set(FRESH_COPY_METHODS),
+         "fresh copy source test inventory changed")
+    require_xctest_passes(text, "CCTranslateSupportTests.FreshCopyClipboardTests", FRESH_COPY_METHODS)
+    return {"tests_run": len(FRESH_COPY_METHODS), "failures": 0, "skipped": 0,
+            "methods": list(FRESH_COPY_METHODS),
+            "scope": "same_source_fresh_text_reader_private_pasteboards_not_global_events_or_TCC"}
+
+
 def seal(args):
     verify_checkout(args.source_sha)
     environment = environment_record(15, "16.4")
@@ -440,6 +463,8 @@ def run_runtime(args):
                  "bundled About reader harness failed"),
                 ("local-ocr-harness", "LocalOCRTests", "local_ocr", local_ocr_result,
                  "local OCR harness failed"),
+                ("fresh-copy-harness", "FreshCopyClipboardTests", "fresh_copy", fresh_copy_result,
+                 "fresh copy clipboard harness failed"),
                 ("plain-text-paste-harness", "PlainTextPasteTests", "plain_text_paste", plain_text_paste_result,
                  "plain text paste harness failed")):
             report["stage"] = stage

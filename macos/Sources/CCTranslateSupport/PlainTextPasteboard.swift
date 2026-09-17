@@ -144,12 +144,12 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         // membership avoids conformance-based object importers (notably HTML and file URLs).
         var strings: [String] = []
         for (item, flavors) in items {
-            if let flavor = Self.textFlavors.first(where: { flavors.contains($0.type) }) {
+            if let flavor = PasteboardTextRepresentation.preferred(in: flavors) {
                 switch copyData(board, item: item, type: flavor.type,
                                 expectedChangeCount: expectedChangeCount, cancellation: cancellation) {
                 case .failure(let reason): return .failure(reason)
                 case .success(let data):
-                    guard let text = Self.decodeText(data, type: flavor.type, encoding: flavor.encoding) else {
+                    guard let text = flavor.decode(data) else {
                         trace?("decode \(flavor.type) failed, bytes \(data.count)")
                         return .failure(.unavailableData)
                     }
@@ -198,25 +198,6 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
         guard let data else { return .failure(.unavailableData) }
         return .success(data)
-    }
-
-    private static let textFlavors: [(type: String, encoding: String.Encoding)] = [
-        // AppKit may advertise a converted UTF-8 alias that turns a UTF-16 BOM into
-        // a literal U+FEFF. Decode the UTF-16 representation itself when available.
-        // The unflagged native alias of external UTF-16 can normalize line endings.
-        ("public.utf16-external-plain-text", .utf16),
-        ("public.utf16-plain-text", .utf16),
-        ("public.utf8-plain-text", .utf8),
-        ("public.utf8-tab-separated-values-text", .utf8),
-        ("com.apple.traditional-mac-plain-text", .macOSRoman)
-    ]
-
-    private static func decodeText(_ data: Data, type: String, encoding: String.Encoding) -> String? {
-        if type == "public.utf16-plain-text", !data.starts(with: [0xFF, 0xFE]), !data.starts(with: [0xFE, 0xFF]) {
-            let native: String.Encoding = UInt16(littleEndian: 1) == 1 ? .utf16LittleEndian : .utf16BigEndian
-            return String(data: data, encoding: native)
-        }
-        return String(data: data, encoding: encoding)
     }
 
     private static let legacyFileFlavors: Set<String> = [

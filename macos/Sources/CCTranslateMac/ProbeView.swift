@@ -59,9 +59,12 @@ struct ProbeView: View {
                 Button("Request Input Monitoring") { model.requestInputMonitoring() }
             }
             Text("Use the menu-bar AX selection action while another app is focused. Result panel does not activate.")
-            Text("Selection: present / absent / unknown. Only selectedText; no clipboard access or simulated copy.")
+            Text(model.text("Manual AX probes read selectedText only. Starting AX-only monitoring below does not enable clipboard fallback or simulate Copy.",
+                            "手动辅助功能探针只读取选中文字。下方的仅辅助功能监听不会开启剪贴板回退或模拟复制。"))
             HStack {
-                Button("Start passive double Cmd+C") { model.startMonitor() }
+                Button(model.text("Start AX-only double Cmd+C", "启动仅辅助功能双击 Cmd+C")) {
+                    model.startMonitor(accessibilityOnly: true)
+                }
                 Button("Stop monitor") { model.stopMonitor() }
             }
             Text(model.monitorStatus).fixedSize(horizontal: false, vertical: true)

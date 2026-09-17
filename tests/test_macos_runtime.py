@@ -158,6 +158,38 @@ class PlainTextPasteEvidenceTests(unittest.TestCase):
                 runtime.plain_text_paste_result(self.log())
 
 
+class FreshCopyEvidenceTests(unittest.TestCase):
+    def log(self):
+        cases = []
+        for method in runtime.FRESH_COPY_METHODS:
+            case = "Test Case '-[CCTranslateSupportTests.FreshCopyClipboardTests " + method + "]' "
+            cases.extend((case + "started.", case + "passed (0.1 seconds)."))
+        return "\n".join(cases) + "\nExecuted 7 tests, with 0 failures\n"
+
+    def test_fresh_copy_requires_each_real_method_without_skip_failure_or_duplicate(self):
+        text = self.log()
+        self.assertEqual(runtime.fresh_copy_result(text), {
+            "tests_run": 7, "failures": 0, "skipped": 0, "methods": list(runtime.FRESH_COPY_METHODS),
+            "scope": "same_source_fresh_text_reader_private_pasteboards_not_global_events_or_TCC"})
+        for invalid in ("", text + text, text.replace("passed", "skipped"),
+                        text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
+                        text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
+                        text.replace("Executed 7 tests", "Executed 6 tests"),
+                        text.replace("FreshCopyClipboardTests", "SomeOtherTests"),
+                        text.replace(runtime.FRESH_COPY_METHODS[0], "testUnexpected")):
+            with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
+                runtime.fresh_copy_result(invalid)
+
+    def test_fresh_copy_source_inventory_cannot_silently_change(self):
+        for methods in ((), runtime.FRESH_COPY_METHODS[:-1],
+                        (*runtime.FRESH_COPY_METHODS, "testAnother"),
+                        (*runtime.FRESH_COPY_METHODS[:-1], runtime.FRESH_COPY_METHODS[0])):
+            source = "\n".join("func " + method + "() {}" for method in methods)
+            with self.subTest(methods=methods), patch.object(Path, "read_text", return_value=source), \
+                    self.assertRaises(bundle.BundleError):
+                runtime.fresh_copy_result(self.log())
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -402,6 +434,10 @@ class RuntimeMatrixTests(unittest.TestCase):
                          "Sources/CCTranslateSupport/PlainTextPaste.swift",
                          "Sources/CCTranslateSupport/PlainTextPasteboard.swift",
                          "Tests/CCTranslateSupportTests/PlainTextPasteTests.swift",
+                         "Sources/CCTranslateSupport/PasteboardText.swift",
+                         "Sources/CCTranslateSupport/FreshCopyClipboard.swift",
+                         "Sources/CCTranslateSupport/FreshCopySelection.swift",
+                         "Tests/CCTranslateSupportTests/FreshCopyClipboardTests.swift",
                          "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
             self.assertEqual((harness / relative).read_bytes(), (runtime.ROOT / "macos" / relative).read_bytes())
         package = (harness / "Package.swift").read_text()

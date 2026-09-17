@@ -790,8 +790,8 @@ struct TranslationSettingsView: View {
                     if enabled { model.startMonitor() } else { model.stopMonitor() }
                 }
             ))
-            Text(model.text("Off until you enable it. Reads the selected text through Accessibility; it does not read your clipboard or simulate Copy. Secure Input stops monitoring.",
-                            "主动开启后才会生效。通过辅助功能读取选中文字，不会读取剪贴板或模拟复制。安全输入模式会停止监听。"))
+            Text(model.text("Off until you enable it. Accessibility is tried first. After an explicit double ⌘C, unsupported selections may use only a new plain-text copy correlated with the same foreground source and focus. Old or uncorrelated clipboard contents are not used; Copy is never simulated or blocked. Secure Input stops monitoring.",
+                            "主动开启后才会生效。优先通过辅助功能读取选区。明确双击 ⌘C 后，无法读取的选区仅可回退至与同一前台来源及焦点关联的新纯文本复制。不使用旧或无法关联的剪贴板内容，不模拟或阻止复制。安全输入模式会停止监听。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ViewThatFits(in: .horizontal) {

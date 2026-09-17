@@ -41,6 +41,7 @@ public enum SelectionResult: Equatable {
 
     public enum Reason: String {
         case secureInput, accessibility, focusChanged, unavailable, unsupported, tooLarge
+        case inputMonitoring, copyNotObserved, clipboardChanged, clipboardUnsupported, clipboardUnavailable
     }
 
     public static func evaluate(
@@ -105,6 +106,7 @@ public enum SelectionProbe {
 }
 
 public struct DoubleCopyState {
+    public static let maximumInterval: TimeInterval = 0.5
     private var previous: (time: TimeInterval, pid: pid_t)?
     public init() {}
     public mutating func reset() { previous = nil }
@@ -121,7 +123,7 @@ public struct DoubleCopyState {
             return false
         }
         let interval = time - previous.time
-        if interval > 0, interval <= 0.5 {
+        if interval > 0, interval <= Self.maximumInterval {
             // Consume the pair; a third key press alone must not retrigger.
             self.previous = nil
             return true
@@ -132,68 +134,189 @@ public struct DoubleCopyState {
 }
 
 @MainActor
-public final class PassiveCopyMonitor {
-    private var token: Any?
-    private var secureTimer: Timer?
-    private var state = DoubleCopyState()
+public protocol PassiveSelectionMonitoring: AnyObject {
+    var running: Bool { get }
+    var onSelection: ((SelectionResult) -> Void)? { get set }
+    var onStop: ((String) -> Void)? { get set }
+    func setClipboardFallbackEnabled(_ enabled: Bool)
+    func start() throws
+    func stop()
+    func cancelPendingSelection()
+}
+
+@MainActor
+public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
+    private let selection: FreshCopySelection
+    private let events: any PassiveCopyEvents
+    private let securityFailure: () -> SelectionResult.Reason?
+    private let resetSource: () -> Void
+    private var registration = UUID()
     public private(set) var running = false
     public var onSelection: ((SelectionResult) -> Void)?
     public var onStop: ((String) -> Void)?
 
-    public init() {}
+    public convenience init() {
+        let resolver = PassiveCopySourceResolver()
+        let selection = FreshCopySelection(environment: PassiveCopyEnvironment(
+            now: { ProcessInfo.processInfo.systemUptime },
+            source: { resolver.capture(requireFocusIdentity: $0) },
+            securityFailure: { PassiveCopySourceResolver.securityFailure() },
+            selection: { SelectionProbe.read(target: $0) }
+        ), clipboard: SystemFreshCopyClipboard())
+        self.init(selection: selection, events: SystemPassiveCopyEvents(),
+                  securityFailure: { PassiveCopySourceResolver.securityFailure() },
+                  resetSource: { resolver.reset() })
+    }
+
+    init(selection: FreshCopySelection, events: any PassiveCopyEvents,
+         securityFailure: @escaping () -> SelectionResult.Reason?, resetSource: @escaping () -> Void = {}) {
+        self.selection = selection
+        self.events = events
+        self.securityFailure = securityFailure
+        self.resetSource = resetSource
+        selection.onSelection = { [weak self] result in
+            guard let self, self.running else { return }
+            if case .unknown(let reason) = result,
+               reason == .secureInput || reason == .accessibility || reason == .inputMonitoring {
+                self.stopForSecurity(reason)
+                return
+            }
+            self.onSelection?(result)
+        }
+    }
+
+    public func setClipboardFallbackEnabled(_ enabled: Bool) {
+        selection.setFallbackEnabled(enabled)
+    }
+
+    public func cancelPendingSelection() {
+        selection.cancel()
+        resetSource()
+    }
 
     public func start() throws {
         guard !running else { return }
-        guard !IsSecureEventInputEnabled() else { throw ProbeError.secureInput }
-        guard AXIsProcessTrusted(), CGPreflightListenEventAccess() else { throw ProbeError.permissionDenied }
-        state.reset()
-        token = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            // AppKit global event monitors are delivered on the main thread.
-            MainActor.assumeIsolated {
-                self?.observe(event)
-            }
+        if let failure = securityFailure() {
+            throw failure == .secureInput ? ProbeError.secureInput : ProbeError.permissionDenied
         }
-        guard token != nil else { throw ProbeError.permissionDenied }
+        cancelPendingSelection()
+        let registration = UUID()
+        self.registration = registration
+        do {
+            try events.install(observe: { [weak self] event in
+                guard let self, self.running, self.registration == registration else { return }
+                self.observe(event)
+            }, invalidate: { [weak self] in
+                guard let self, self.running, self.registration == registration else { return }
+                self.cancelPendingSelection()
+            }, tick: { [weak self] in
+                guard let self, self.running, self.registration == registration else { return }
+                self.heartbeat()
+            })
+        } catch {
+            stop()
+            throw error
+        }
         running = true
-        secureTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                if IsSecureEventInputEnabled() {
-                    self?.stop()
-                    self?.onStop?("Secure Input enabled; monitoring stopped. Restart explicitly.")
-                } else if !AXIsProcessTrusted() || !CGPreflightListenEventAccess() {
-                    self?.stop()
-                    self?.onStop?("Accessibility or Input Monitoring permission lost; monitoring stopped.")
-                }
-            }
-        }
     }
 
     public func stop() {
-        if let token = token { NSEvent.removeMonitor(token) }
-        token = nil
-        secureTimer?.invalidate()
-        secureTimer = nil
-        state.reset()
+        registration = UUID()
         running = false
+        cancelPendingSelection()
+        events.remove()
+    }
+
+    private func heartbeat() {
+        if let failure = securityFailure() {
+            stopForSecurity(failure)
+        } else {
+            selection.poll()
+        }
+    }
+
+    private func stopForSecurity(_ failure: SelectionResult.Reason) {
+        stop()
+        onStop?(failure == .secureInput
+                ? "Secure Input enabled; monitoring stopped. Restart explicitly."
+                : "Accessibility or Input Monitoring permission lost; monitoring stopped.")
     }
 
     private func observe(_ event: NSEvent) {
-        if IsSecureEventInputEnabled() {
-            stop()
-            onStop?("Secure Input enabled; monitoring stopped. Restart explicitly.")
+        guard running else { return }
+        if let failure = securityFailure() {
+            stopForSecurity(failure)
             return
         }
-        guard let target = SelectionProbe.currentTarget() else {
-            state.reset()
+        guard event.type == .keyDown else {
+            cancelPendingSelection()
             return
         }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock])
-        if state.observe(
-            time: event.timestamp, pid: target.pid,
+        selection.observe(
+            time: event.timestamp,
             isCopy: event.charactersIgnoringModifiers?.lowercased() == "c" && flags == [.command],
-            isRepeat: event.isARepeat, secureInput: false
-        ) {
-            onSelection?(SelectionProbe.read(target: target))
+            isRepeat: event.isARepeat
+        )
+    }
+}
+
+@MainActor
+protocol PassiveCopyEvents {
+    func install(observe: @escaping (NSEvent) -> Void, invalidate: @escaping () -> Void,
+                 tick: @escaping () -> Void) throws
+    func remove()
+}
+
+@MainActor
+final class SystemPassiveCopyEvents: PassiveCopyEvents {
+    private var token: Any?
+    private var localToken: Any?
+    private var workspaceTokens: [NSObjectProtocol] = []
+    private var secureTimer: Timer?
+
+    func install(observe: @escaping (NSEvent) -> Void, invalidate: @escaping () -> Void,
+                 tick: @escaping () -> Void) throws {
+        let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        token = NSEvent.addGlobalMonitorForEvents(matching: mask) { event in
+            // AppKit global event monitors are delivered on the main thread.
+            MainActor.assumeIsolated {
+                observe(event)
+            }
+        }
+        guard token != nil else { throw ProbeError.permissionDenied }
+        localToken = NSEvent.addLocalMonitorForEvents(matching: mask, handler: Self.localObserver(invalidate: invalidate))
+        guard localToken != nil else {
+            throw ProbeError.permissionDenied
+        }
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.willSleepNotification,
+                     NSWorkspace.didWakeNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            workspaceTokens.append(NSWorkspace.shared.notificationCenter.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { invalidate() }
+            })
+        }
+        secureTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+            MainActor.assumeIsolated { tick() }
+        }
+    }
+
+    func remove() {
+        if let token = token { NSEvent.removeMonitor(token) }
+        token = nil
+        if let localToken { NSEvent.removeMonitor(localToken) }
+        localToken = nil
+        for token in workspaceTokens { NSWorkspace.shared.notificationCenter.removeObserver(token) }
+        workspaceTokens = []
+        secureTimer?.invalidate()
+        secureTimer = nil
+    }
+
+    static func localObserver(invalidate: @escaping () -> Void) -> (NSEvent) -> NSEvent? {
+        { event in
+            MainActor.assumeIsolated { invalidate() }
+            return event
         }
     }
 }

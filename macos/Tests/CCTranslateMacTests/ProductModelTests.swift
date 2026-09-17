@@ -169,7 +169,8 @@ final class ProductTestHarness {
     var model: ProbeModel!
 
     init(savedCLI: Bool = true, autodetectFixture: Bool = false,
-         dictionaryDownloader: DictionaryDownloading? = nil) throws {
+         dictionaryDownloader: DictionaryDownloading? = nil,
+         selectionMonitor: (any PassiveSelectionMonitoring)? = nil) throws {
         let identifier = UUID().uuidString
         root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".fixtures-\(identifier)", isDirectory: true)
@@ -227,7 +228,8 @@ final class ProductTestHarness {
                     .filter { $0.url == alternateExecutable }
                 return candidates + alternate
             }, dictionaryDownloader: dictionaryDownloader,
-            writeClipboard: { calls.copiedText.append($0); return true })
+            writeClipboard: { calls.copiedText.append($0); return true },
+            selectionMonitor: selectionMonitor)
     }
 
     func cleanUp() {

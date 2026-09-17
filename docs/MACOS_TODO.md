@@ -184,8 +184,10 @@ macOS26仅粘贴阶段失败。producer编译49.99s，616项/23构包前skip/0fa
 26为525.768s/6.624s/204.307s。
 14的46粘贴/0fail/0.745s、最终`passed/complete`与不可变门槛已核验；
 26的46项中两个方法共3fail：不可用C promise回调收到0xd、预期0x13；
-新增UTF-8 literal-prefix场景因优先读取自动UTF-16别名丢失U+FEFF，读取和写入字节断言都失败。
-这证明固定UTF-8-first和UTF-16-first互换仍不足，不删除新增用例或放宽promise身份断言。
+新增UTF-8 literal-prefix场景丢失U+FEFF，读取和写入字节断言都失败。
+**进一步核对原始日志后的归因更正：**本case5的AppKit types只有UTF-8和测试identity，
+实际copy完整25字节，不是选择了UTF-16别名；丢失发生在Foundation的UTF-8 String初始化。
+固定编码优先级也无法修复这一解码问题，不删除新增用例或放宽promise身份断言。
 26报告保持`NOT PASSED/plain-text-paste-harness`；finally记录`bundle_unchanged=true`，
 但失败之后的完整audit-after与最终成功门槛没有执行，不能混为一谈。
 原Support实现者继续处理这两个文件；并行P2新复制读取也需复用一致的原始表示解码。
@@ -197,6 +199,15 @@ tree `c435ee3b436be66a8a987fbd9365e334a048f3caa1f098ffc44054cdb59ede14`，
 23文件harness `92642eb8554caab4270268cea1f9cb87323993b9ad9ad16984865d88f5e06a5d`。
 112张本源码PNG的完整清单、尺寸及CRC已核验，并直接查看来源按钮和仅输出历史。
 14/26小报告artifact分别10521688368/10522437488，原始失败日志与独立审计均保留。
+
+后续实现改为按每个item自己的广告顺序选纯文本表示，避免先取转换别名；
+UTF-8用Swift解码再逐字节回验，保留literal U+FEFF并拒绝非法序列，不接受替换字符修复。
+这份选择/解码逻辑已抽为共享`PasteboardTextRepresentation`，由主动粘贴及新复制回退共用。
+7个延迟数据场景改用真实AppKit provider，严格检查回调对象身份、board名称、类型和次数；
+保留取消排空/换owner/混合文件先拦截/原字节，独立C eager字节oracle仍在。
+这是明确替换C promise桥接器的符合性oracle，不声称修好Apple内部机制。
+原46方法及已有断言保留，编码矩阵8→11、非法UTF-8矩阵1→6，并增加相反表示顺序的双item场景；
+新源码尚待实际Mac编译和执行。下次同App消费者也将运行7项新复制读取测试，不只在producer运行。
 
 <a id="native-dictionary-sources-checkpoint"></a>
 
@@ -238,7 +249,7 @@ UI artifact10520356031保留，不能将它说成安装包。
 
 <a id="native-associated-copy-checkpoint"></a>
 
-### 双Cmd+C关联复制回退：实现已交付，尚未提交或原生验收
+### 双Cmd+C关联复制回退：共享解码已接通，待原生验收
 
 现有明确开关和被动监听接通关联状态机；AX仍优先，仅unsupported时尝试同一前台
 进程生命周期/焦点、双键时间与新changeCount关联的文字。不吞原Cmd+C、不模拟copy、
@@ -247,10 +258,14 @@ UI artifact10520356031保留，不能将它说成安装包。
 时间及changeCount只是保守关联，不是写入者PID证明、跨进程原子CAS或Universal Clipboard验收。
 第二键采样前已完成的复制宁可不采用；同步系统读取不能承诺可抢占。
 原实现者交付10文件、37项新XCTest（15状态机/8监听/7私有剪贴板/7App），全部旧方法保留，
-预期原生库存616→653。父完整阅读交付，已有离线包/runtime回归66/11.133s通过；
+静态原生库存616→653。父完整阅读交付，原离线包/runtime回归66/11.133s通过；
+接入7项同包consumer读取验证及2项Python证据解析回归后，68/12.394s通过。
 Windows编辑器没有发现可执行native测试，不称为Mac编译通过。
-这份未提交实现不在237的App中；原始文本表示/自动别名兼容需与正在修复的读取机制一致，
-暂不将“仅UTF-8”这一实现限制当产品计划要求。之后还需实际原生编译、方法发现及同包验收。
+这份实现不在237的App中；现在和主动纯文本粘贴共用表示选择/解码，
+支持UTF-8/UTF-16/TSV/Mac Roman，不再限定仅UTF-8。最终UTF-8仍最多8192字节，
+原始预算16386字节包含UTF-16的BOM，带/不带BOM均允许8192个ASCII字符。
+7个原读取方法扩展原字节、编码、相反表示顺序、非法序列和边界回归，库存不再增加。
+之后仍需实际原生编译、方法发现及同包验收；不是全局快捷键/TCC真人验收。
 
 首轮源码`59c2ab6`/[run35116345396](https://github.com/mclight-ship-it/cc-translate/actions/runs/35116345396)
 已实际编译全部原生界面和新XCTest（31.94秒），5项真实视图渲染通过；

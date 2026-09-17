@@ -55,7 +55,12 @@ final class ProbeModel: ObservableObject {
     }
     @Published private(set) var modelSettings = CodexModelSettings()
     @Published private(set) var modelCatalog = ModelCatalogState()
-    @Published var translatePassiveSelections = false
+    @Published var translatePassiveSelections = false {
+        didSet {
+            monitor.setClipboardFallbackEnabled(translatePassiveSelections && !monitorAXOnly)
+            if monitorEnabled { updateMonitorStatus() }
+        }
+    }
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
     @Published var historySearch = "" {
@@ -119,7 +124,8 @@ final class ProbeModel: ObservableObject {
     private var imageTranslationSupported = false
     private var publishingImageRequest = false
     let screen = ScreenProbe()
-    let monitor = PassiveCopyMonitor()
+    let monitor: any PassiveSelectionMonitoring
+    private var monitorAXOnly = false
     var onSelection: ((SelectionResult) -> Void)?
     var onStopped: (() -> Void)?
     var onTranslationResult: ((String) -> Void)?
@@ -294,10 +300,12 @@ final class ProbeModel: ObservableObject {
              CLILocator.candidates(name: $0, userURL: $1)
          }, dictionaryDownloader: DictionaryDownloading? = nil,
          writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil,
-         plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil) {
+         plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil,
+         selectionMonitor: (any PassiveSelectionMonitoring)? = nil) {
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
         self.plainPaste = plainPaste ?? PlainPasteModel()
         self.imageTranslation = imageTranslation ?? ImageTranslationState(factory: NativeImageAttachment.make)
+        monitor = selectionMonitor ?? PassiveCopyMonitor()
         self.homeDirectory = homeDirectory
         self.writeClipboard = writeClipboard ?? {
             NSPasteboard.general.clearContents()
@@ -308,7 +316,10 @@ final class ProbeModel: ObservableObject {
         self.makeConnection = makeConnection
         self.runtimeProvider = runtimeProvider
         self.locateCandidates = locateCandidates
-        monitor.onSelection = { [weak self] result in self?.onSelection?(result) }
+        monitor.onSelection = { [weak self] result in
+            guard let self, self.monitorEnabled, self.monitor.running else { return }
+            self.onSelection?(result)
+        }
         monitor.onStop = { [weak self] reason in
             self?.monitorStatus = reason
             self?.monitorEnabled = false
@@ -561,6 +572,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func translate(origin: String = "text", useCache: Bool = true) {
+        monitor.cancelPendingSelection()
         catalogWasLastRequest = false
         loadPresentation()
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf8.count <= 8192 else {
@@ -583,6 +595,7 @@ final class ProbeModel: ObservableObject {
 
     @discardableResult
     func translateImage(_ image: CGImage) -> UUID? {
+        monitor.cancelPendingSelection()
         guard !active, !preparing, !stopping, !imageTranslation.isShutDown else {
             productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
             return nil
@@ -603,6 +616,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func performResultAction(_ action: ResultAction, targetLanguage: String? = nil) {
+        monitor.cancelPendingSelection()
         catalogWasLastRequest = false
         guard !active, !preparing else {
             productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
@@ -828,7 +842,7 @@ final class ProbeModel: ObservableObject {
             status = "No selected text. Nothing submitted."
             failPreparation(text("No text selected.", "没有选中文字。"))
         case .unknown(let reason):
-            status = "Selection unavailable (\(reason.rawValue)). No clipboard fallback or submission."
+            status = "Selection unavailable (\(reason.rawValue)). Nothing submitted."
             failPreparation(text("Could not read the selection. Open Translate to type or paste instead.",
                                  "无法读取选中文字，请打开翻译窗口输入或粘贴。"))
         }
@@ -1266,6 +1280,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func cancel() {
+        monitor.cancelPendingSelection()
         if draft != nil {
             cancelledPreparation = (translationIntentID, connectionID)
             draft = nil
@@ -1867,14 +1882,18 @@ final class ProbeModel: ObservableObject {
         refreshPermissions()
     }
 
-    func startMonitor() {
+    func startMonitor(accessibilityOnly: Bool = false) {
         do {
+            monitorAXOnly = accessibilityOnly
+            monitor.setClipboardFallbackEnabled(translatePassiveSelections && !monitorAXOnly)
             try monitor.start()
             monitorEnabled = true
-            monitorStatus = "Observing double Cmd+C only; AX selectedText only; no clipboard fallback."
+            updateMonitorStatus()
         } catch let error as ProbeError {
+            monitorEnabled = monitor.running
             monitorStatus = "Monitor not started: \(error.rawValue)."
         } catch {
+            monitorEnabled = monitor.running
             monitorStatus = "Monitor not started."
         }
         refreshPermissions()
@@ -1883,7 +1902,15 @@ final class ProbeModel: ObservableObject {
     func stopMonitor() {
         monitor.stop()
         monitorEnabled = false
-        monitorStatus = "Passive monitor stopped."
+        monitorStatus = text("Passive monitor stopped.", "已停止选区快捷键监听。")
+    }
+
+    private func updateMonitorStatus() {
+        monitorStatus = translatePassiveSelections && !monitorAXOnly
+            ? text("Double Cmd+C: Accessibility first; only a newly changed, correlated plain-text copy can be used as fallback.",
+                   "双击 Cmd+C：优先使用辅助功能；仅在本次复制产生可关联的新纯文本时回退。")
+            : text("AX-only diagnostic monitoring. Clipboard fallback is off.",
+                   "仅监听辅助功能选区的诊断模式。剪贴板回退已关闭。")
     }
 
     func locateCLI() {
@@ -1948,6 +1975,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func closePanel() {
+        monitor.cancelPendingSelection()
         cancelModelCatalog()
         modelCatalog.disconnect()
         translationIntentID = UUID()
