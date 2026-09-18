@@ -39,7 +39,7 @@ protocol NativeRenderedTestRegion {
 }
 
 private enum RenderedLookupError: Error {
-    case detachedView, unavailableBitmap, missingOrAmbiguousControl, missingOrAmbiguousCaption, focusFailed, disabled
+    case detachedView, unavailableBitmap, missingOrAmbiguousControl, missingOrAmbiguousCaption, focusFailed, disabled, unexpectedEvent
 }
 
 @MainActor
@@ -149,6 +149,20 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         let up = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseUp, location: point, modifierFlags: [], timestamp: down.timestamp + 0.1,
             windowNumber: window.windowNumber, context: nil, eventNumber: number + 1, clickCount: 1, pressure: 0))
+        // Dequeue before dispatch so gesture-backed SwiftUI controls see the correct currentEvent.
+        NSApp.postEvent(down, atStart: true)
+        let pending = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseDown, until: .distantPast,
+                                                   inMode: .default, dequeue: false))
+        guard pending.eventNumber == down.eventNumber, pending.windowNumber == window.windowNumber else {
+            XCTFail("Only this fixture's queued pointer event may be dispatched.", file: file, line: line)
+            throw RenderedLookupError.unexpectedEvent
+        }
+        let press = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseDown, until: .distantPast,
+                                                 inMode: .default, dequeue: true))
+        let current = NSApp.currentEvent
+        let currentNumber = current?.type == .leftMouseDown ? current?.eventNumber : nil
+        try NativeRenderEvidence.record("Queued press \(identifier): currentEvent=\(String(describing: current?.type)), " +
+            "currentNumber=\(String(describing: currentNumber)), expectedNumber=\(number)")
         var releasedDuringTracking = false
         let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
             MainActor.assumeIsolated {
@@ -158,10 +172,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         }
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
-        control.mouseDown(with: down)
+        NSApp.sendEvent(press)
         if !releasedDuringTracking {
             timer.invalidate()
-            control.mouseUp(with: up)
+            NSApp.postEvent(up, atStart: true)
         }
         if let queued = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                         inMode: .default, dequeue: false),
@@ -169,7 +183,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertEqual(release.eventNumber, up.eventNumber)
-            control.mouseUp(with: release)
+            NSApp.sendEvent(release)
         }
         try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
             "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")

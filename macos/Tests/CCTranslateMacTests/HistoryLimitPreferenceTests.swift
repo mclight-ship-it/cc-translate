@@ -106,6 +106,10 @@ final class HistoryLimitPreferenceTests: XCTestCase {
         f.model.applyHistoryLimit()
         XCTAssertEqual(f.model.historyLimit.confirmation, HistoryLimitPreference.Reduction(from: 600, to: 17))
         XCTAssertEqual(helper.operations, operations)
+        f.model.editHistoryLimit("17")
+        XCTAssertEqual(f.model.historyLimit.confirmation, HistoryLimitPreference.Reduction(from: 600, to: 17),
+                       "Recommitting an unchanged native field must not cancel the confirmation.")
+        XCTAssertEqual(helper.operations, operations)
         f.model.cancelHistoryLimitReduction()
         XCTAssertNil(f.model.historyLimit.confirmation)
         XCTAssertEqual(helper.operations, operations)
@@ -116,6 +120,8 @@ final class HistoryLimitPreferenceTests: XCTestCase {
         XCTAssertTrue(f.model.hasNextHistoryPage)
 
         f.model.applyHistoryLimit()
+        f.model.editHistoryLimit("17")
+        XCTAssertEqual(f.model.historyLimit.confirmation, HistoryLimitPreference.Reduction(from: 600, to: 17))
         f.model.confirmHistoryLimitReduction()
         XCTAssertEqual(helper.configurationSaves.count, 1)
         XCTAssertEqual(helper.configurationSaves.last?.config["history_limit"], .integer(17))

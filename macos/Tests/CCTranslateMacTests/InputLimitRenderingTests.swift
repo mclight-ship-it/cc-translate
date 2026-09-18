@@ -217,8 +217,9 @@ final class InputLimitInteractionTests: XCTestCase {
         try await settings.button("apply-input-limit", "Apply input limit").press()
         try await settings.waitFor { helper.configurationSaves.count == 1 }
         try InputLimitFixture.finish(f, helper)
-        try await surface.waitFor { f.model.inputLimit.saved == 2 }
-        XCTAssertTrue(try surface.button("translate-input-text", "Translate").isEnabled)
+        let translate = try surface.button("translate-input-text", "Translate")
+        try await surface.waitFor { f.model.inputLimit.saved == 2 && translate.isEnabled }
+        XCTAssertTrue(translate.isEnabled)
         XCTAssertTrue(try surface.editor() === editor)
         XCTAssertEqual(Array(editor.string.utf8), Array("e\u{301}".utf8))
         XCTAssertEqual(editor.selectedRange(), selection)

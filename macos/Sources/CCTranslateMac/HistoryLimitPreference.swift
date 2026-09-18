@@ -20,6 +20,8 @@ struct HistoryLimitPreference {
     func owns(_ id: String) -> Bool { value.owns(id) }
 
     mutating func edit(_ text: String) {
+        // A native field can recommit the same draft while focus moves to confirmation.
+        guard !text.utf8.elementsEqual(value.draft.utf8) else { return }
         value.edit(text)
         confirmation = nil
     }

@@ -160,6 +160,8 @@ e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操�
 下一步继续本应用正常鼠标事件分派与失败图像诊断，没有修改产品权限或假造保存结果。
 76f01c1仍有6个原生方法失败，不宣称事件修正成功；已用实际截图区分计数可见与OCR漏读，
 继续修复测试交互和读回证据，后续P3设置与Claude接线并未完成。
+67f280c已通过两处OCR，仍有4个原生方法待修；继续历史确认态、摘要点击和按钮刷新时序，
+不因图片齐全或部分用例通过而宣称可交付新包。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
