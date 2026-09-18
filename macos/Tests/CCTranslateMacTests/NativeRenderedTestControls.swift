@@ -367,7 +367,7 @@ enum NativeSettingsTestControls {
             else if control is NSSwitch { name = "NSSwitch" }
             else if control is NSTextField { name = "NSTextField" }
             else { name = "NSControl (unsupported public control type)" }
-            return "\(name) layout=\(RenderedGeometry.frame(control)) " +
+            return "\(name) role=\(control.accessibilityRole()?.rawValue ?? "nil") layout=\(RenderedGeometry.frame(control)) " +
                 "nativeBounds=\(control.convert(control.bounds, to: nil)) visible=\(RenderedGeometry.visibleRect(control))"
         }
         let excerpts = readback?.matches.map { "caption=\($0.excerpt) bounds=\($0.rectangle)" } ?? []
@@ -454,6 +454,23 @@ enum NativeSettingsTestControls {
             result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
         } while result.candidates.isEmpty && Date() < deadline
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
+    }
+
+    static func uniqueActionWhenReady(in root: NSView, identifier: String,
+                                     label: String) async throws -> NativeSettingsTestControl {
+        let deadline = Date().addingTimeInterval(2)
+        var buttons: [NSButton]
+        repeat {
+            try await Task.sleep(nanoseconds: 10_000_000)
+            try prepare(root)
+            // Isolated fixtures can identify their sole action by native role, without OCR or enabled-state filtering.
+            buttons = views(in: root).compactMap { $0 as? NSButton }.filter {
+                $0.accessibilityRole() == .button && !RenderedGeometry.visibleRect($0).isEmpty
+            }
+        } while buttons.isEmpty && Date() < deadline
+        return try resolved(Lookup(candidates: buttons.map { .button($0) }, readback: nil,
+                                   route: "unique visible public AXButton role"),
+                            in: root, identifier: identifier, label: label, kind: .button)
     }
 
     static func caption(in root: NSView, identifier: String, label: String) throws -> NativeRenderedTestCaption {

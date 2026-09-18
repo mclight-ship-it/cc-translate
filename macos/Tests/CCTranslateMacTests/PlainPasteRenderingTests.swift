@@ -113,8 +113,16 @@ extension ProductRenderingTests {
         let draining = try renderPasteSettings(fixture, name: "plain-paste-settings-draining-zh-dark",
                                               scheme: .dark, chinese: true)
         let chinese = try pasteSettingsWords(draining, chinese: true).filter { !$0.isWhitespace }
-        XCTAssertTrue(chinese.contains("纯文本粘贴"))
-        XCTAssertTrue(chinese.contains("等待剪贴板任务结束"))
+        XCTAssertTrue(chinese.contains("纯文本粘贴"), chinese)
+        XCTAssertTrue(chinese.contains("等待剪贴板任务结束"), chinese)
+        let differentStatus = try render(
+            Text("正在停止，等待文件任务结束。").font(.callout).padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            named: "plain-paste-draining-negative-control-zh-dark",
+            size: NSSize(width: 820, height: 90), scheme: .dark)
+        XCTAssertFalse(try pasteSettingsWords(differentStatus, chinese: true)
+            .filter { !$0.isWhitespace }.contains("等待剪贴板任务结束"))
         XCTAssertTrue(fixture.paste.stoppingAction)
         fixture.service.finish(.cancelled, clipboard: .plainTextWritten)
         _ = try fixture.finishSave()
@@ -199,7 +207,7 @@ extension ProductRenderingTests {
         XCTAssertTrue(settings.model === fixture.model)
         // Tall native windows expose the complete production Form, including its lower sections.
         // Neither this window nor the application's menu/window actions are ordered or activated.
-        return try render(settings, named: name, size: NSSize(width: 820, height: 3000),
+        return try render(settings, named: name, size: NSSize(width: 820, height: 3400),
                           scheme: scheme, inspect: inspect)
     }
 
@@ -234,7 +242,10 @@ extension ProductRenderingTests {
             request.usesLanguageCorrection = true
             request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
             try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(tile)).perform([request])
-            pieces += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            // Small CJK UI glyphs can have several ranked readings; none are supplied or replaced by an expected caption.
+            pieces += (request.results ?? []).map {
+                $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
+            }
         }
         return pieces.joined(separator: " ").lowercased()
     }

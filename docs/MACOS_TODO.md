@@ -52,10 +52,12 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵、Claude独立后端及旧Windows稳定性追踪仍分别保留，但不冻结独立可做的Codex产品界面。
+最新推荐包现为[c7581a8：双击复制间隔及此前全部界面功能](#native-copy-interval-checkpoint)，
+已完成完整App同包三系统验收；后续截图全局快捷键仍在独立源码中验证。
 
 <a id="native-product-preferences-checkpoint"></a>
 
-### 当前已核验批次：图片、词典来源、复制隔离及四项设置
+### 已核验历史批次：图片、词典来源、复制隔离及四项设置
 
 源码`bf89495cc991bc75b9cc39b263d824120a36246e` /
 [run35320398227](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227)
@@ -78,11 +80,10 @@ producer另有903portable/13.287秒，process507.488秒、core5.857秒、后置F
 `6e56b0c974273d7b9a366f63d56c9a30c8a100b806a5fffa696ab70aff0fa0c5`；
 tree为`f714a5fbde432b2007f605eeb2c685ed0ff57283c0bdf854a98e69b38997160f`。
 690库存、80资源、52源码路径（51唯一）、6实际Mach-O、27许可已逐项核验。
-当前推荐下载已切到此包；以下保留此前失败和修复过程，不再将其当作当前批次仍被阻断。
+当时推荐下载切到此包；当前已继续升级至上方c7581a8，以下保留此前失败和修复过程。
 
-**不包含后续结果位置偏好**：018b9de首轮755项有3失败断言，修正源码6e2a341 /
-[run35323007731](https://github.com/mclight-ship-it/cc-translate/actions/runs/35323007731)仍在验证。
-双击间隔、截图全局热键开关、恢复默认、完整Claude及P4–P6继续开发；完整移植未完成。
+**该历史包不包含后续结果位置与双击间隔**；两者已在后续源码完成验证并包含于当前c7581a8。
+截图全局热键开关、恢复默认、完整Claude及P4–P6继续开发；完整移植未完成。
 真人TCC、外部应用、IME/VoiceOver、多屏/Spaces及Windows旧AccessDenied仍单列，不以本批合成自动化抹去。
 
 <a id="native-image-translation-checkpoint"></a>
@@ -419,12 +420,12 @@ HTTPS证书、SQLite、明确取消、EOF、包不可变及临时清理逐字段
 tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
 690库存/80资源/52 source路径（51唯一），并核验实际Mach-O/许可/固定运行时字节。
 14小报告10539457775、26小报告10539657356已单独下载核对；完整App未重复下载。
-推荐下载现在升级为9b55942，新增结果位置并保留bf89495已验功能。
+当时推荐下载升级为9b55942，新增结果位置并保留bf89495已验功能；当前又升级至下方c7581a8。
 这不等于后续双击间隔已打包通过，也不冒充真人多屏/Spaces、TCC、账号或完整移植验收。
 
 <a id="native-copy-interval-checkpoint"></a>
 
-### P3 双击复制间隔：c758原生通过，完整同包验收进行中
+### P3 双击复制间隔：c758原生与完整同包三系统验收通过
 
 设置的“划词快捷键与权限”区域新增秒数输入及“应用间隔”，沿用业务配置`double_press_window`，
 默认0.5秒；支持正小数和整数，不局限于速度选项白名单或0.2–1.5的建议范围。
@@ -443,8 +444,8 @@ tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
 新增25项测试（Support11/模型11/真实原生交互2/渲染1），预期原生总数780，
 保留23项构包前可选skip；预期增加2张中英深浅色PNG，总数127。
 交互复用实际原生文本编辑和单次按钮事件路线，不通过模型setter冒充点击。
-Windows编辑器无Swift测试提供器；c758现已完成真实Mac编译/运行，仍待完整同包验证，
-不包含在推荐的9b55942包中，更不代表P3–P6完成。
+Windows编辑器无Swift测试提供器；c758现已完成真实Mac编译/运行及完整同包三系统验证，
+已取代9b55942成为推荐开发包；更不代表P3–P6完成。
 操作见[双击复制间隔](MACOS_DEVELOPMENT.md#native-copy-interval)。
 
 首轮`ab83b48` / [run35326722484](https://github.com/mclight-ship-it/cc-translate/actions/runs/35326722484)
@@ -473,7 +474,18 @@ OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚
 [run35330446905](https://github.com/mclight-ship-it/cc-translate/actions/runs/35330446905)
 正常privacy/full hook1846项/104.103秒通过；Mac实际编译46.94秒，
 780项/23既定构包前skip/0失败/635.846秒，原私有剪贴板7、输入上限26及新间隔25方法均通过。
-127PNG的库存、CRC、尺寸和IDAT已独立核验，完整App和14/26消费者仍在继续，尚未替换推荐包。
+127PNG的库存、CRC、尺寸和IDAT已独立核验。完整run实际watch exit0已读取，
+attempt1的3jobs/42steps全部success；同一个App在15.7.9/14.8.9/26.6.2各通过232process/665core/
+21后置Foundation（每方法一次、零skip），以及About1、Vision4、主动粘贴46、关联复制读取7和实际worker11。
+producer另有903portable/20.472秒、232process/521.680秒、665core/5.261秒。
+三系统HTTPS证书、SQLite、取消、EOF、不可变和临时清理全部通过。
+完整[artifact10541762221](https://github.com/mclight-ship-it/cc-translate/actions/runs/35330446905/artifacts/10541762221)
+已实际下载一次并独立审计：内层zip19,545,325字节，
+SHA-256`73c2d718ec2ee43606480ad7e8b055955731ff59089e1b7098a5094c8ac36b67`，
+tree`383d32bf640966359c782efd5c60c2763aaeb4feb554943aae499a10cb95de4a`；
+690库存、80资源、52源码路径（51唯一）、6实际Mach-O及27许可均核验。
+macOS14小报告artifact10542278248和26小报告10541468890也已分别下载和独立审计。
+当前推荐包升级至此源码，新增双击间隔；不包含后续截图快捷键，不把一次回归通过声称为永久无时序问题。
 原ab/2d完整失败日志均已归档，实际watch分别exit1；portable/process/core分别为
 903/14.672秒、232/528.247秒、665/6.466秒，以及903/17.209秒、232/502.867秒、665/5.656秒；
 两轮后置Foundation均21方法各一次通过且零skip。没有把失败轮次当作完整App通过。
@@ -500,7 +512,18 @@ OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚
 应用控制器2、双语原生点击2、渲染1；预期798原生、23既定构包前skip和130PNG。
 Carbon用例注册独立测试键，只向本进程event target发送合成事件，不注入全局物理键盘；
 控制器使用合成screen/OCR，不触发真实TCC。保留原纯文本粘贴回归测试。
-当前未声称Swift已编译或该功能完整打包通过，仍需本源码CI及同包审计。
+首轮`4fa56e06b3ad9f0d6d01729584c53b31684ec34d` /
+[run35332402808](https://github.com/mclight-ship-it/cc-translate/actions/runs/35332402808)
+正常privacy/full hook1846项/97.798秒通过，实际编译35.64秒；
+798项/23构包前skip/3失败断言（1 unexpected）/550.045秒，130PNG完整。
+18新增方法中17通过，包含实际Carbon双lease/本进程路由、全部模型与控制器、双语开关/重开及渲染。
+另一交互方法的英文冲突/释放重试已实际通过，中文注册重试的107×20原生按钮可见，
+但OCR未匹配其标题；不是注册或截图链路失败。独立fixture改为读取唯一可见的公共AXButton角色，
+不按enabled状态选控件、不设置state，保留单次真实原生点击与前后状态/持久化断言。
+另一旧纯文本粘贴截图的中文等待语句被OCR漏识别，实际PNG中完整可见，真实stoppingAction断言通过。
+完整设置快照随新增section增高以容纳底部；中文OCR保留前三个实际候选而不提供/替换期望文字，
+原完整界面断言不删，并加入不同等待语句不能冒充目标语句的原生图片负对照（新增1PNG，预期131）。
+这两个测试修正仍待新源码Mac验证，未改变产品代码或CI门禁，不将首轮失败当完整App通过。
 使用说明见[截图全局快捷键](MACOS_DEVELOPMENT.md#native-capture-shortcut)。
 
 <a id="native-text-scale-checkpoint"></a>
@@ -2429,7 +2452,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 历史保留条数与修剪时机；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 最大字符数及UTF-8独立字节预算的准确呈现；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 结果位置偏好：[原生11方法及完整同包三系统验收通过](#native-result-position-checkpoint)；真人多屏/Spaces另验。
-  - [ ] 双击复制间隔：[c758原生通过，完整同包验收继续](#native-copy-interval-checkpoint)。
+  - [x] 双击复制间隔：[c758原生及完整同包三系统验收通过](#native-copy-interval-checkpoint)；真实外部应用另验。
   - [ ] 截图全局热键开关：[完整接线与18新测试待Mac验证](#native-capture-shortcut-checkpoint)。
   - [ ] 恢复默认设置。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。

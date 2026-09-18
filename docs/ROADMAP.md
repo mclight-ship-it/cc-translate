@@ -4,22 +4,23 @@
 
 ## 正在开发：P2 原生产品界面及后续功能对齐
 
-**最新已核验包：9b55942 / [run35324547280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35324547280)。**
-图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置已进入同一完整App，
-真实watch0、3jobs/42steps全通过；原生755项（23构包前可选skip）、125PNG已核验，
+**最新已核验包：c7581a8 / [run35330446905](https://github.com/mclight-ship-it/cc-translate/actions/runs/35330446905)。**
+图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔已进入同一完整App，
+真实watch0、3jobs/42steps全通过；原生780项（23构包前可选skip）、127PNG已核验，
 同App15/14/26各232process/665core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-result-position-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
+[完整审计](MACOS_TODO.md#native-copy-interval-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
-后续[双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
-已接入现有配置和实际监听，新增25项测试、2张渲染；不先声称新包可用。
+[双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
+已接入现有配置和实际监听，新增25项测试、2张渲染，现已完成验收并包含于推荐包。
 ab83b48首轮已编译并通过24项新增测试，仅剩禁用按钮的测试OCR定位失败；
 修正采用独立fixture唯一可见原生按钮的只读状态断言，实际保存交互保持，不改生产代码或删除断言。
 2d68fb6已通过全部25项间隔方法；旧输入设置动态reload查找和私有剪贴板发布fixture复现失败，
 修正c758 / run35330446905现已实际编译，780项/23构包前skip/0失败、127PNG完整，
-其中原剪贴板7、输入上限26及新间隔25均通过，完整同包验收继续；推荐9b55942不变。
+其中原剪贴板7、输入上限26及新间隔25均通过，完整同包验收已完成，当前推荐升级至c7581a8。
 [截图全局快捷键](MACOS_TODO.md#native-capture-shortcut-checkpoint)已继续接入原生设置、持久化、
-实际Carbon注册和既有截图入口，默认关闭；18项新测试及3张渲染待本源码Mac验证。
+实际Carbon注册和既有截图入口，默认关闭；4fa56e0实际编译且通过17/18新方法、130PNG完整。
+剩余中文重试的测试定位与一项旧中文设置图片识别正在修正，未当作完整绿色包。
 注册不启动helper或申请截图权限，按键不自动发送翻译；恢复默认、Claude及P4–P6继续。
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
@@ -197,7 +198,7 @@ bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整�
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
-上述早期候选当时不替换推荐下载；当前已升级为本节开头的9b55942核验包，已包含结果位置。
+上述早期候选当时不替换推荐下载；当前已升级为本节开头的c7581a8核验包，已包含结果位置和双击间隔。
 完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
