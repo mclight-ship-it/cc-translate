@@ -374,7 +374,7 @@ Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合�
 
 <a id="native-result-position-checkpoint"></a>
 
-### P3 结果窗口位置：原生通过，待完整App及同包三系统验收
+### P3 结果窗口位置：已通过完整App及同包三系统验收
 
 设置新增“记住上次位置（默认）/屏幕中央/鼠标附近”，只保存本Mac的呈现偏好，不写业务配置。
 默认保留窗口拖动位置并跨启动记住坐标；不覆盖当前窗口尺寸。首次无位置时居中。
@@ -383,7 +383,7 @@ Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合�
 新请求、隐藏后打开、明确召回才应用位置，流式更新不重复移动窗口，也不改变结果非激活面板属性。
 设置变化不启动helper、检查CLI或权限，不取消/重放翻译。新增11项几何/偏好/真实面板/渲染测试，
 预期增加3张中英深浅色原生PNG；Windows编辑器无Swift测试提供器，不能据无诊断宣称编译通过。
-这一实现候选尚未完成源码Mac验证，更不代表P3–P6完成。
+后续9b55942已完成该功能的源码原生与完整App自动化验收，详见下方最终证据；不代表P3–P6完成。
 说明见[结果窗口位置](MACOS_DEVELOPMENT.md#native-result-position)。
 
 首轮源码`018b9de` / [run35321609282](https://github.com/mclight-ship-it/cc-translate/actions/runs/35321609282)
@@ -408,7 +408,19 @@ fixture改用与既有主动粘贴测试相同的`NSPasteboard.withUniqueName()`
 新源码`9b55942` / [run35324547280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35324547280)
 真实原生755项/23构包前可选skip/0失败/489.102秒；位置11、摘要15、历史21、输入26、字号18
 及原关联复制方法逐冻结源码核验通过，125PNG完整。完整App和14/26同包消费者仍在运行，
-尚不切换推荐下载，也不将一次通过表述为永远消除了平台时序问题。
+当时尚不切换推荐下载，也不将一次通过表述为永远消除了平台时序问题。
+
+该run现已实际watch exit0，attempt1的3jobs/42steps全部success。完整App已真实下载并独立字节审计，
+同一个App在15.7.9/14.8.9/26.6.2各通过232process/665core/21后置Foundation，Foundation逐方法一次、零skip；
+各系统About1、生产Vision4、主动粘贴46、关联复制读取7、真实App只读worker11也通过。
+HTTPS证书、SQLite、明确取消、EOF、包不可变及临时清理逐字段通过。
+完整包[artifact10539345743](https://github.com/mclight-ship-it/cc-translate/actions/runs/35324547280/artifacts/10539345743)，
+内层zip19,532,818字节，SHA-256`567496d0fb34a9b0f72183f1f20a01bb3417a7dfcfd96c0322ab4861b9392b25`，
+tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
+690库存/80资源/52 source路径（51唯一），并核验实际Mach-O/许可/固定运行时字节。
+14小报告10539457775、26小报告10539657356已单独下载核对；完整App未重复下载。
+推荐下载现在升级为9b55942，新增结果位置并保留bf89495已验功能。
+这不等于后续双击间隔已打包通过，也不冒充真人多屏/Spaces、TCC、账号或完整移植验收。
 
 <a id="native-copy-interval-checkpoint"></a>
 
@@ -432,8 +444,19 @@ fixture改用与既有主动粘贴测试相同的`NSPasteboard.withUniqueName()`
 保留23项构包前可选skip；预期增加2张中英深浅色PNG，总数127。
 交互复用实际原生文本编辑和单次按钮事件路线，不通过模型setter冒充点击。
 Windows编辑器无Swift测试提供器；当前实现尚待真实Mac编译/运行和完整同包验证，
-不包含在推荐的bf89495包中，更不代表P3–P6完成。
+不包含在推荐的9b55942包中，更不代表P3–P6完成。
 操作见[双击复制间隔](MACOS_DEVELOPMENT.md#native-copy-interval)。
+
+首轮`ab83b48` / [run35326722484](https://github.com/mclight-ship-it/cc-translate/actions/runs/35326722484)
+正常privacy/full hook1846项/102.994秒通过；Mac实际编译31.94秒，
+780项/23构包前skip/2失败断言（1 unexpected）/538.633秒。
+新增25方法中24通过，包含全部Support11、模型11、双语保存失败恢复/错值回读交互和渲染；
+唯一失败在另一个交互方法检查无效输入后的禁用按钮：原生99×20按钮在树内可见，
+OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚未进入该方法的保存步骤。
+改为在独立fixture内要求唯一可见NSButton，并等待/断言其实际`isEnabled == false`；
+不按期望的禁用状态筛选控件，不设置原生state，不改真正保存/回读/重开的点击路线。
+127张图完整，已实际查看新增英浅/中深图片；原生结果位置、原设置、关联复制/worker方法仍通过。
+这一测试定位修正仍需新源码Mac验证，首轮失败和日志保留，不把24/25或截图齐全叫整包通过。
 
 <a id="native-text-scale-checkpoint"></a>
 
@@ -2360,7 +2383,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 长文自动摘要开关；[当前批次验证](#native-product-preferences-checkpoint)，不等同于手动“生成摘要”动作。
   - [x] 历史保留条数与修剪时机；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 最大字符数及UTF-8独立字节预算的准确呈现；[当前批次验证](#native-product-preferences-checkpoint)。
-  - [ ] 结果位置偏好：[原生方法已通过，待完整同包验收](#native-result-position-checkpoint)。
+  - [x] 结果位置偏好：[原生11方法及完整同包三系统验收通过](#native-result-position-checkpoint)；真人多屏/Spaces另验。
   - [ ] 双击复制间隔：[实现已接线，待本源码Mac验证](#native-copy-interval-checkpoint)。
   - [ ] 截图全局热键开关，以及恢复默认设置。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。

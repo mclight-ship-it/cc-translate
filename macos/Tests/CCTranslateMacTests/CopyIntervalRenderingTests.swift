@@ -30,7 +30,13 @@ final class CopyIntervalInteractionTests: XCTestCase {
             try await surface.waitForFieldValue("0.5")
             let operations = helper.operations
             try await surface.enterValue("0", draft: { f.model.copyInterval.draft })
-            XCTAssertFalse(try surface.button("apply-copy-interval", labels.applyTitle).isEnabled)
+            // This fixture has one action. Read its native state without OCR of a dimmed caption.
+            try await surface.waitFor {
+                let buttons = surface.visibleButtons()
+                return buttons.count == 1 && !buttons[0].isEnabled
+            }
+            XCTAssertEqual(surface.visibleButtons().count, 1)
+            XCTAssertFalse(try XCTUnwrap(surface.visibleButtons().first).isEnabled)
             try await surface.enterValue("0.75", draft: { f.model.copyInterval.draft })
             XCTAssertEqual(helper.operations, operations)
             try await surface.buttonWhenReady("apply-copy-interval", labels.applyTitle).press()

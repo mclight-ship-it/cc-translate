@@ -4,16 +4,17 @@
 
 ## 正在开发：P2 原生产品界面及后续功能对齐
 
-**最新已核验包：bf89495 / [run35320398227](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227)。**
-图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限已进入同一完整App，
-真实watch0、3jobs/42steps全通过；原生744项（23构包前可选skip）、122PNG已核验，
+**最新已核验包：9b55942 / [run35324547280](https://github.com/mclight-ship-it/cc-translate/actions/runs/35324547280)。**
+图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置已进入同一完整App，
+真实watch0、3jobs/42steps全通过；原生755项（23构包前可选skip）、125PNG已核验，
 同App15/14/26各232process/665core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-product-preferences-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
-结果位置偏好及其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
-结果位置候选`9b55942`已实际通过755原生方法（23构包前可选skip）及125张PNG核验，
-完整App/同包消费者仍在验证。后续[双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
+[完整审计](MACOS_TODO.md#native-result-position-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
+其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
+后续[双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
 已接入现有配置和实际监听，新增25项测试、2张渲染，尚待新源码Mac验证；不先声称新包可用。
+ab83b48首轮已编译并通过24项新增测试，仅剩禁用按钮的测试OCR定位失败；
+修正采用独立fixture唯一可见原生按钮的只读状态断言，实际保存交互保持，不改生产代码或删除断言。
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。

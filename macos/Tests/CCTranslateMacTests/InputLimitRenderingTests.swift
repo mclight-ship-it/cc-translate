@@ -81,7 +81,12 @@ final class NativeSettingsTestHost<Content: View> {
         try await enterValue(text, draft: { model.inputLimit.draft })
     }
 
-    func field() throws -> NSTextField { try InputLimitNativeViews.field(in: host) }
+    func visibleButtons() -> [NSButton] {
+        InputLimitNativeViews.views(NSButton.self, in: host).filter {
+            !$0.isHiddenOrHasHiddenAncestor &&
+                !host.convert($0.visibleRect, from: $0).intersection(host.visibleRect).isEmpty
+        }
+    }
 
     func waitForFieldValue(_ text: String) async throws {
         try await waitFor {
