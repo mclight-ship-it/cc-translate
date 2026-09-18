@@ -683,7 +683,7 @@ final class ProductRenderingTests: XCTestCase {
     // human GUI acceptance test, or evidence of Accessibility/Screen Recording permission.
     @MainActor
     func render<Content: View>(_ content: Content, named name: String, size: NSSize,
-                                      scheme: ColorScheme, inspect: ((NSView) -> Void)? = nil) throws -> Data {
+                                      scheme: ColorScheme, inspect: ((NSView) throws -> Void)? = nil) throws -> Data {
         _ = NSApplication.shared
         let host = NSHostingView(rootView: content.environment(\.colorScheme, scheme))
         let appearance = try XCTUnwrap(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
@@ -701,7 +701,7 @@ final class ProductRenderingTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
-        inspect?(host)
+        try inspect?(host)
         XCTAssertEqual(host.bounds.size, size)
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         appearance.performAsCurrentDrawingAppearance {

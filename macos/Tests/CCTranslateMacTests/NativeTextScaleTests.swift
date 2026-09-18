@@ -273,7 +273,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
         let responder = surface.window.firstResponder
         let original = view.string
-        var edits: [NSTextStorage.EditActions] = []
+        var edits: [NSTextStorageEditActions] = []
         let observation = NotificationCenter.default.publisher(
             for: NSTextStorage.didProcessEditingNotification, object: storage
         ).sink { _ in edits.append(storage.editedMask) }

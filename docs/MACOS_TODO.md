@@ -317,6 +317,12 @@ worker在自己的物理主线程枚举/读取/转换，宿主异步接收，取
 Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合并源码的Mac CI。
 推荐包不变，不能把源码接线或c7745ec旧方法通过写成这份App已经通过。
 
+首次源码`23cfd5e`的[run35292610415](https://github.com/mclight-ship-it/cc-translate/actions/runs/35292610415)
+已实际退出1：886便携测试通过（20.218秒），新增字体测试有两处编译错误，原生测试未执行。
+错误分别是把macOS编辑掩码写成UIKit式嵌套类型，以及渲染检查回调不允许抛出断言辅助错误。
+现改为`NSTextStorageEditActions`，并让既有render辅助器传播throwing inspect；不删任何断言或方法，
+不改变产品代码、不放宽发布门槛。必须用修正源码重新执行Mac CI，首轮原日志已保留。
+
 <a id="native-text-scale-checkpoint"></a>
 
 ### P3 原生文字大小：接线已交付，待新源码原生验证

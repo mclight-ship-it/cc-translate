@@ -110,6 +110,8 @@ P2双Cmd+C关联回退另有37项新原生测试，父已审阅并接上共享�
 消费者新增同App worker验收，本地bundle/runtime联合72项已过，Mac执行仍待新源码CI。
 P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，覆盖主界面/历史/截图，
 不依赖helper或重写业务配置。新增16项测试和3张预期截图尚待新源码Mac执行；不在c7745ec中。
+首次23cfd5e/run35292610415因字体测试编译错误退出1；已修正测试类型/throws声明，
+保留全部方法和断言，继续新源码验证，尚不提供替代推荐包。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
