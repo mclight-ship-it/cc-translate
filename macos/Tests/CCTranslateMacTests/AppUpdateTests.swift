@@ -279,11 +279,13 @@ final class AppUpdateTests: XCTestCase {
             let surface = NativeSettingsTestHost(AppUpdatePanelView(model: f.model, updates: updates),
                                                  size: NSSize(width: 760, height: 420))
             defer { surface.close() }
+            // Action words identify the native button; OCR ellipsis dot counts do not.
             let check = try await NativeSettingsTestControls.resolveWhenReady(
                 in: surface.host, identifier: "check-software-update",
-                label: f.model.text("Check for Updates…", "检查更新…"), kind: .button, authoredCaption: true)
+                label: f.model.text("Check for Updates", "检查更新"), kind: .button, authoredCaption: true)
             try await check.press()
             try await surface.waitFor { service.checks == 1 && !check.isEnabled }
+            XCTAssertEqual(downloads, 0)
             service.finish()
             try await surface.waitFor { check.isEnabled }
             let download = try await NativeSettingsTestControls.resolveWhenReady(
