@@ -4,12 +4,12 @@
 
 ## 正在开发：P2 原生产品界面及后续功能对齐
 
-**最新已核验包：3ffb141 / [run35338542005](https://github.com/mclight-ship-it/cc-translate/actions/runs/35338542005)。**
-图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键已进入同一完整App，
-真实watch0、3jobs/42steps全通过；原生798项（23构包前可选skip）、131PNG已核验，
-同App15/14/26各232process/665core/21Foundation及实际worker/剪贴板测试通过。
+**最新已核验包：8f898aa / [run35341468695](https://github.com/mclight-ship-it/cc-translate/actions/runs/35341468695)。**
+图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
+真实watch0、3jobs/42steps全通过；原生811项（23构包前可选skip）、134PNG已核验，
+同App15/14/26各232process/669core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-capture-shortcut-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
+[完整审计](MACOS_TODO.md#native-restore-defaults-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
 [双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
 已接入现有配置和实际监听，新增25项测试、2张渲染，现已完成验收并包含于推荐包。
@@ -28,14 +28,16 @@ f8a014b现已通过全部18项新增方法；仅余旧设置截图OCR把“结�
 现收窄双分辨率到目标图和负对照，保留其他截图原绘制路径及全部断言。
 3ffb141 / run35338542005现已原生798项/23既定skip/零失败，131PNG完整；
 新增18项及此前两个失败方法全部通过，完整App和同包15/14/26现也已完成独立核验。
-当前推荐已升级至3ffb141；包含截图快捷键，不包含后续恢复默认。
+当时推荐升级至3ffb141；该历史包包含截图快捷键，不包含后续恢复默认。
 注册不启动helper或申请截图权限，按键不自动发送翻译；恢复默认、Claude及P4–P6继续。
 [恢复默认设置](MACOS_TODO.md#native-restore-defaults-checkpoint)已接入原生只读预览、明确确认、
-保存回读和本机偏好恢复，保留CLI/账号/权限/历史/词典文件；13项新Swift测试已加入，当前修正待Mac复验。
-这部分后续源码不属于截图快捷键验收run，也尚未包含在当前推荐包。
+保存回读和本机偏好恢复，保留CLI/账号/权限/历史/词典文件；13项新Swift测试均已通过。
+这部分后续源码不借用截图快捷键验收run，已独立完成完整同包三系统验证并进入当前推荐包。
 91773dd首轮已编译且通过11/13新方法；已修复正常停止时未退休恢复请求的缺陷，
 并修正独立原生按钮的测试定位，保留全部断言。
-8f898aa / run35341468695已正常通过1850项hook，正在Mac复验；917实际watch exit1且未发布App。
+8f898aa / run35341468695已正常通过1850项hook、811原生测试、134PNG和完整App独立审计；
+4阶段断连与英中预览/取消/确认/回读均通过。实际watch exit0、全部3jobs/42steps成功；
+917原失败实际watch exit1且未发布App，原始证据保留。
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。
@@ -212,7 +214,7 @@ bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整�
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
-上述早期候选当时不替换推荐下载；当前已升级为本节开头的3ffb141核验包，已包含结果位置、双击间隔和截图快捷键。
+上述早期候选当时不替换推荐下载；当前已升级为本节开头的8f898aa核验包，已包含结果位置、双击间隔、截图快捷键和恢复默认。
 完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。

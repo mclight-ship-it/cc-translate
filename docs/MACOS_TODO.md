@@ -52,8 +52,8 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵、Claude独立后端及旧Windows稳定性追踪仍分别保留，但不冻结独立可做的Codex产品界面。
-最新推荐包现为[3ffb141：截图全局快捷键及此前全部界面功能](#native-capture-shortcut-checkpoint)，
-已完成完整App同包三系统验收；恢复默认设置仍在后续独立源码中验证。
+最新推荐包现为[8f898aa：恢复默认设置及此前全部界面功能](#native-restore-defaults-checkpoint)，
+已完成完整App同包三系统验收；接下来继续完整Claude服务与后续移植项。
 
 <a id="native-product-preferences-checkpoint"></a>
 
@@ -80,10 +80,10 @@ producer另有903portable/13.287秒，process507.488秒、core5.857秒、后置F
 `6e56b0c974273d7b9a366f63d56c9a30c8a100b806a5fffa696ab70aff0fa0c5`；
 tree为`f714a5fbde432b2007f605eeb2c685ed0ff57283c0bdf854a98e69b38997160f`。
 690库存、80资源、52源码路径（51唯一）、6实际Mach-O、27许可已逐项核验。
-当时推荐下载切到此包；当前已继续升级至上方3ffb141，以下保留此前失败和修复过程。
+当时推荐下载切到此包；当前已继续升级至上方8f898aa，以下保留此前失败和修复过程。
 
-**该历史包不包含后续结果位置与双击间隔**；两者已在后续源码完成验证并包含于当前3ffb141。
-截图全局热键开关也已进入当前包；恢复默认、完整Claude及P4–P6继续开发，完整移植未完成。
+**该历史包不包含后续结果位置与双击间隔**；两者已在后续源码完成验证并包含于当前8f898aa。
+截图全局热键开关与恢复默认也已进入当前包；完整Claude及P4–P6继续开发，完整移植未完成。
 真人TCC、外部应用、IME/VoiceOver、多屏/Spaces及Windows旧AccessDenied仍单列，不以本批合成自动化抹去。
 
 <a id="native-image-translation-checkpoint"></a>
@@ -420,7 +420,7 @@ HTTPS证书、SQLite、明确取消、EOF、包不可变及临时清理逐字段
 tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
 690库存/80资源/52 source路径（51唯一），并核验实际Mach-O/许可/固定运行时字节。
 14小报告10539457775、26小报告10539657356已单独下载核对；完整App未重复下载。
-当时推荐下载升级为9b55942，新增结果位置并保留bf89495已验功能；当前又升级至下方3ffb141。
+当时推荐下载升级为9b55942，新增结果位置并保留bf89495已验功能；当前又升级至下方8f898aa。
 这不等于后续双击间隔已打包通过，也不冒充真人多屏/Spaces、TCC、账号或完整移植验收。
 
 <a id="native-copy-interval-checkpoint"></a>
@@ -570,11 +570,11 @@ tree`5d82b65af08bb394a0ee26c62538ad7f18ced9ea7d01442c888153c272aa099d`；
 690库存、80资源、52源码路径（51唯一）、6实际Mach-O、27许可均核验。
 macOS14小报告artifact10545422653与26小报告10544689213已分别下载并核对同包hash、源码、harness及全部结果。
 完成审计后按确切字节数和SHA复核删除临时内层zip，保留日志、JSON与131PNG。
-当前推荐包升级至此源码，包含截图快捷键；不包含后续恢复默认，不冒充真实全局键盘/TCC或完整移植验收。
+当时推荐包升级至此源码，包含截图快捷键；此历史包不包含后续恢复默认，不冒充真实全局键盘/TCC或完整移植验收。
 
 <a id="native-restore-defaults-checkpoint"></a>
 
-### P3 恢复默认设置：原生接线已实现，待新源码Mac验证
+### P3 恢复默认设置：原生及完整同包三系统验收通过
 
 通过已有`config_load`的可选`defaults:true`读取canonical默认值，不新增ready能力或读写用户文件。
 原生设置采用现有历史条数确认样式：先只读预览，明确确认才合并支持键、保存并逐键核对回读；
@@ -588,7 +588,8 @@ macOS14小报告artifact10545422653与26小报告10544689213已分别下载并�
 既有Foundation配置集成方法增加缺文件/已有文件的真实打包helper默认预览与字节不变检查，方法数仍21。
 Python新增4方法后配置集41项通过；配置/打包/runtime联合113项/13.857秒通过，
 保留显式HTTPS未授权的预期负例输出。这些Windows结果不替代Mac，首轮实际Mac结果与修正见下。
-截图快捷键已在独立`3ffb141` / run35338542005完成验收，此恢复功能未混入该源码或推荐包。
+截图快捷键已在独立`3ffb141` / run35338542005完成验收，此恢复功能未混入该历史源码；
+恢复默认的独立完整验收如下。
 行为细节见[恢复默认设置](MACOS_DEVELOPMENT.md#native-restore-defaults)。
 
 首源码`91773dd` / [run35340058827](https://github.com/mclight-ship-it/cc-translate/actions/runs/35340058827)
@@ -602,7 +603,24 @@ Python新增4方法后配置集41项通过；配置/打包/runtime联合113项/1
 不按预期enabled/state选按钮，不改控件状态；确认和取消仍走各自原生动作。
 修正源码`8f898aaa25b75babe1591e922701e493ae0d48c8` /
 [run35341468695](https://github.com/mclight-ship-it/cc-translate/actions/runs/35341468695)
-正常privacy/full hook1850项/106.029秒通过，待独立Mac复验，不把其余11项或134PNG当作整包通过。
+正常privacy/full hook1850项/106.029秒通过。实际Swift编译35.41秒；
+811项/23既定构包前skip/0失败/578.275秒，134PNG库存、CRC、尺寸与IDAT完整。
+13新方法全部通过，包含四阶段断连/迟到消息/显式重连，以及英中预览/取消/再次预览/确认/回读的真实原生点击；
+原截图18方法及剪贴板方法均通过，无后台线程同步promise警告。
+完整run实际watch exit0，attempt1的3jobs/42steps全部success。
+producer907portable/15.822秒、232process/501.553秒、669core/5.312秒，
+扩展后的后置Foundation21方法各一次通过、零skip，包含真实打包helper默认预览与文件字节不变检查。
+同一个App在15.7.9/14.8.9/26.6.2各通过232process/669core/21Foundation，
+以及About1、生产Vision4、主动粘贴46、关联复制读取7和实际worker11；
+三系统HTTPS证书、SQLite、取消、EOF、不可变与临时清理均通过。
+[完整App artifact10546356416](https://github.com/mclight-ship-it/cc-translate/actions/runs/35341468695/artifacts/10546356416)
+实际下载一次并独立审计：内层zip19,589,258 bytes，
+SHA-256`72540b5d5bfe7322cea950af7cd718c55829291c96a790707d93370cf4d1df69`，
+tree`e0ddde1dc6437b7bc6d01464848dda878dfb7f918f201902a36c1d76ae7fb9a5`；
+690库存、80资源、52源码路径（51唯一）、6实际Mach-O、27许可均核验。
+macOS14小报告artifact10546254025及26小报告10546253874已分别下载，并核对同包hash、源码、harness与全部结果。
+按确切字节数和SHA复核后仅删除临时内层App zip，保留完整日志、JSON和134PNG。
+推荐下载升级到8f898aa，包含恢复默认；不把合成流程或原生离屏测试冒充真实账号、TCC或VoiceOver验收。
 首轮917完整失败日志已归档、实际watch exit1；907portable/17.839秒、232process/511.377秒、
 669core/4.919秒以及扩展后的后置Foundation21方法各一次通过、零skip。
 原生发布门禁实际失败，App归档、发布及消费者均跳过；没有把后端通过当作完整App通过。
@@ -2535,7 +2553,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 结果位置偏好：[原生11方法及完整同包三系统验收通过](#native-result-position-checkpoint)；真人多屏/Spaces另验。
   - [x] 双击复制间隔：[c758原生及完整同包三系统验收通过](#native-copy-interval-checkpoint)；真实外部应用另验。
   - [x] 截图全局热键开关：[3ffb141原生798项零失败及完整同包三系统验收通过](#native-capture-shortcut-checkpoint)；真实物理按键/TCC另验。
-  - [ ] 恢复默认设置：[原生预览/确认/保存回读及13新Swift测试已实现，待验证](#native-restore-defaults-checkpoint)。
+  - [x] 恢复默认设置：[原生13新方法及完整同包三系统验收通过](#native-restore-defaults-checkpoint)。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。
   - 原生Vision与明确图片发送、菜单栏菜单、语言/主题/字号保持Mac实现，不机械照搬Windows历史键或Tk行为。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。
