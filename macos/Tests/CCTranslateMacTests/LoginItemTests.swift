@@ -275,22 +275,22 @@ final class LoginItemTests: XCTestCase {
             try await toggle.press()
             try await surface.waitFor { login.status == .requiresApproval && !login.busy }
             XCTAssertEqual(toggle.state, .off, "Pending approval is not enabled.")
-            let remove = try await NativeSettingsTestControls.resolveWhenReady(
+            let remove = try await NativeSettingsTestControls.accessibleButtonWhenReady(
                 in: surface.host, identifier: "remove-pending-login-item",
-                label: f.model.text("Remove pending login item", "移除待批准的登录项"), kind: .button)
+                label: f.model.text("Remove pending login item", "移除待批准的登录项"))
             try await remove.press()
             try await surface.waitFor { login.status == .notRegistered && !login.busy }
             try await toggle.press()
             try await surface.waitFor { login.status == .requiresApproval && !login.busy }
-            let settings = try await NativeSettingsTestControls.resolveWhenReady(
+            let settings = try await NativeSettingsTestControls.accessibleButtonWhenReady(
                 in: surface.host, identifier: "open-login-items",
-                label: f.model.text("Open Login Items…", "打开登录项设置…"), kind: .button)
+                label: f.model.text("Open Login Items…", "打开登录项设置…"))
             try await settings.press()
             XCTAssertEqual(service.settingsOpens, 1)
             service.current = .enabled
-            let refresh = try await NativeSettingsTestControls.resolveWhenReady(
+            let refresh = try await NativeSettingsTestControls.accessibleButtonWhenReady(
                 in: surface.host, identifier: "refresh-login-item",
-                label: f.model.text("Refresh status", "刷新状态"), kind: .button)
+                label: f.model.text("Refresh status", "刷新状态"))
             try await refresh.press()
             try await surface.waitFor { toggle.state == .on }
             try await toggle.press()

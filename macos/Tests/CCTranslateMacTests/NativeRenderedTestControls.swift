@@ -478,6 +478,49 @@ enum NativeSettingsTestControls {
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
     }
 
+    static func accessibleButtonWhenReady(in root: NSView, identifier: String,
+                                          label: String) async throws -> NativeSettingsTestControl {
+        let deadline = Date().addingTimeInterval(2)
+        var candidates: [NativeSettingsTestControl.Backing] = []
+        var semanticCount = 0
+        repeat {
+            try await Task.sleep(nanoseconds: 10_000_000)
+            try prepare(root)
+            let window = try XCTUnwrap(root.window)
+            var visited = Set<ObjectIdentifier>()
+            var elements: [any NSAccessibilityProtocol] = []
+            func visit(_ value: Any) {
+                guard let element = value as? any NSAccessibilityProtocol,
+                      visited.insert(ObjectIdentifier(element)).inserted else { return }
+                if element.accessibilityIdentifier() == identifier,
+                   element.accessibilityRole() == .button {
+                    elements.append(element)
+                }
+                for child in element.accessibilityChildren() ?? [] { visit(child) }
+            }
+            visit(root)
+            semanticCount = elements.count
+            candidates = []
+            if elements.count == 1, let element = elements.first {
+                let name = element.accessibilityLabel() ?? element.accessibilityTitle()
+                XCTAssertEqual(name.map(normalize), normalize(label), "The actual accessible button must name its action.")
+                guard name.map(normalize) == normalize(label) else {
+                    throw RenderedLookupError.missingOrAmbiguousControl
+                }
+                // SwiftUI owns AX semantics above its NSButton; use its public screen geometry, not OCR.
+                let rectangle = window.convertFromScreen(element.accessibilityFrame())
+                candidates = views(in: root).compactMap { backing($0, kind: .button) }.filter {
+                    !RenderedGeometry.visibleRect($0.control).isEmpty &&
+                        matches($0.control, caption: rectangle, kind: .button, tolerance: 1)
+                }
+            }
+        } while candidates.isEmpty && Date() < deadline
+        try NativeRenderEvidence.record("Accessible button \(identifier): semanticMatches=\(semanticCount), nativeMatches=\(candidates.count)")
+        return try resolved(Lookup(candidates: candidates, readback: nil,
+                                   route: "public AX identifier/name/frame and actual NSButton"),
+                            in: root, identifier: identifier, label: label, kind: .button)
+    }
+
     static func remainingActionWhenReady(in root: NSView, excluding toggle: NativeSettingsTestControl? = nil,
                                         identifier: String, label: String) async throws -> NativeSettingsTestControl {
         if let toggle {
