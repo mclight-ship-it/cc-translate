@@ -36,6 +36,13 @@ struct NumericPreference<Value: Comparable & LosslessStringConvertible> {
         if phase == .invalidInput { phase = .idle }
     }
 
+    mutating func resetDraft() {
+        if let saved {
+            draft = String(saved)
+            edited = false
+        }
+    }
+
     mutating func propose() -> Value? {
         guard let value = proposed else { phase = .invalidInput; return nil }
         guard let saved, value != saved else { return nil }

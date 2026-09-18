@@ -989,7 +989,13 @@ struct TranslationSettingsView: View {
             CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
             shortcutSection
             aboutSection
+            Section {
+                SettingsDefaultsView(model: model)
+            } header: {
+                Text(model.text("Restore settings", "恢复设置"))
+            }
         }
+        .disabled(model.defaultsPhase.busy)
         .formStyle(.grouped)
         .frame(minWidth: 530, minHeight: 460)
         .preferredColorScheme(model.preferredColorScheme)

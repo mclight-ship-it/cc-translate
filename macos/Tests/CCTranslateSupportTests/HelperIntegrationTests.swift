@@ -1251,6 +1251,16 @@ final class HelperIntegrationTests: XCTestCase {
         XCTAssertEqual(session.result("missing")?.payload["config"]?.object?["plain_text_paste_enabled"], .bool(false))
         XCTAssertFalse(FileManager.default.fileExists(atPath: context.config.path), "Missing load must not write")
 
+        let defaults = session.terminal("defaults-missing")
+        session.connection.send(ClientMessage(id: "defaults-missing", type: "request",
+            payload: ["operation": .string("config_load"), "defaults": .bool(true)]))
+        await fulfillment(of: [defaults], timeout: 10)
+        session.assertOperation("defaults-missing")
+        let canonical = try XCTUnwrap(session.result("defaults-missing")?.payload["config"]?.object)
+        XCTAssertEqual(canonical["plain_text_paste_enabled"], .bool(false))
+        XCTAssertEqual(canonical["history_limit"], .integer(100))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.config.path), "Default preview must not create config")
+
         let saved = session.terminal("save")
         session.connection.saveConfiguration([
             "font_size": .string("23"), "future_setting": .string("synthetic-\u{4e2d}\u{6587}")
@@ -1261,6 +1271,15 @@ final class HelperIntegrationTests: XCTestCase {
         let bytes = try configurationIO { try Data(contentsOf: context.config) }
         let expected = Data("{\n  \"font_size\": \"23\",\n  \"future_setting\": \"synthetic-\u{4e2d}\u{6587}\"\n}".utf8)
         XCTAssertTrue(bytes == expected, "Save must preserve raw values and UTF-8 storage bytes")
+
+        let existingDefaults = session.terminal("defaults-existing")
+        session.connection.send(ClientMessage(id: "defaults-existing", type: "request",
+            payload: ["operation": .string("config_load"), "defaults": .bool(true)]))
+        await fulfillment(of: [existingDefaults], timeout: 10)
+        session.assertOperation("defaults-existing")
+        XCTAssertEqual(session.result("defaults-existing")?.payload["config"]?.object, canonical)
+        XCTAssertEqual(try configurationIO { try Data(contentsOf: context.config) }, bytes,
+                       "Default preview must not migrate or rewrite existing configuration")
 
         let loaded = session.terminal("load")
         session.connection.loadConfiguration(id: "load")

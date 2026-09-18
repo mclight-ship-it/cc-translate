@@ -352,7 +352,10 @@ class Server:
                     return error.code
                 return None
             if operation == "config_load":
-                return None if set(payload) == {"operation"} else "invalid_payload"
+                if not set(payload) <= {"operation", "defaults"}:
+                    return "invalid_payload"
+                return (None if "defaults" not in payload or type(payload["defaults"]) is bool
+                        else "invalid_payload")
             if operation == "config_save":
                 if set(payload) != {"operation", "config"}:
                     return "invalid_payload"

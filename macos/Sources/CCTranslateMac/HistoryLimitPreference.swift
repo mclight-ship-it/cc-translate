@@ -47,6 +47,11 @@ struct HistoryLimitPreference {
 
     mutating func cancelConfirmation() { confirmation = nil }
 
+    mutating func resetDraft() {
+        confirmation = nil
+        value.resetDraft()
+    }
+
     mutating func beginSave(id: String, value: Int64) {
         self.value.beginSave(id: id, value: value)
     }

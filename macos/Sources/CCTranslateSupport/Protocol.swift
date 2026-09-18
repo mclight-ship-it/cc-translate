@@ -767,7 +767,10 @@ public struct ProtocolState {
             case let operation where DictionaryRequest.operations.contains(operation):
                 try DictionaryDocument.validateRequest(payload)
             case "config_load":
-                guard Set(payload.keys) == ["operation"] else { throw ProbeError.invalidPayload }
+                guard Set(payload.keys).isSubset(of: ["operation", "defaults"]),
+                      payload["defaults"] == nil || payload["defaults"]?.bool != nil else {
+                    throw ProbeError.invalidPayload
+                }
             case "config_save":
                 guard Set(payload.keys) == ["operation", "config"], let config = payload["config"] else {
                     throw ProbeError.invalidPayload

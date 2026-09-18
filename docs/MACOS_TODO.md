@@ -493,7 +493,7 @@ macOS14小报告artifact10542278248和26小报告10541468890也已分别下载�
 
 <a id="native-capture-shortcut-checkpoint"></a>
 
-### P3 截图全局快捷键：生产接线与18项新测试已实现，待Mac验证
+### P3 截图全局快捷键：原生验证通过，待完整同包验收
 
 本机独立开关`nativeScreenshotShortcutEnabled`默认关闭，显式开启才注册全局`⌘⌥⇧X`。
 注册仅保留键位，不启动helper/CLI、不请求屏幕录制或辅助功能权限；
@@ -553,6 +553,31 @@ f8整体watch现已实际exit1，失败日志与逐方法证据已归档；produ
 OCR差异：own-app unavailable图片将“不读取图片数据”读成“不该取图片数据”；同一方法其余3条中文断言命中。
 下一修正把双分辨率限定于已证实需要它的draining完整Form及对应负对照；
 其他中文截图恢复前三轮实际通过的原绘制路径，所有断言保持。未更改产品或放宽发布门禁。
+
+第五轮`3ffb141` / [run35338542005](https://github.com/mclight-ship-it/cc-translate/actions/runs/35338542005)
+正常hook1846项/100.751秒通过；实际编译52.16秒，原生798项/23既定构包前skip/
+0失败/650.398秒，131PNG库存、CRC、尺寸与IDAT完整。新18项及此前失败的两个完整设置图方法
+均已通过，原剪贴板方法也通过。仅目标draining图和负对照采用双分辨率，其余图保持原路径。
+producer完整App和同包14/26仍在后续验证，未提前修改推荐下载。
+
+<a id="native-restore-defaults-checkpoint"></a>
+
+### P3 恢复默认设置：原生接线已实现，待新源码Mac验证
+
+通过已有`config_load`的可选`defaults:true`读取canonical默认值，不新增ready能力或读写用户文件。
+原生设置采用现有历史条数确认样式：先只读预览，明确确认才合并支持键、保存并逐键核对回读；
+未知配置/Windows专属字段、CLI路径、账号、系统权限、历史与词典文件不清除。
+本机偏好仅在回读一致后重置，粘贴沿用已有显式停用/保存/回读状态机；
+失败、未知写入结果、不同回读和快捷键释放失败分别显示，均不自动重放。
+
+新增10项纯合并/模型方法覆盖预览取消、canonical值来源、单次保存/回读、后来的草稿、
+4阶段断连及迟到消息、错误回读、非法默认值、释放失败与粘贴lease；
+另新增1项中英文真实原生点击交互、1项三状态渲染（3PNG）、1项Swift协议生命周期测试。
+既有Foundation配置集成方法增加缺文件/已有文件的真实打包helper默认预览与字节不变检查，方法数仍21。
+Python新增4方法后配置集41项通过；配置/打包/runtime联合113项/13.857秒通过，
+保留显式HTTPS未授权的预期负例输出。真实Swift编译和上述13新方法尚未执行，不以Windows通过代替。
+截图快捷键仍在独立`3ffb141` / run35338542005验收，此恢复功能未混入该源码或推荐包。
+行为细节见[恢复默认设置](MACOS_DEVELOPMENT.md#native-restore-defaults)。
 
 <a id="native-text-scale-checkpoint"></a>
 
@@ -2481,8 +2506,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 最大字符数及UTF-8独立字节预算的准确呈现；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 结果位置偏好：[原生11方法及完整同包三系统验收通过](#native-result-position-checkpoint)；真人多屏/Spaces另验。
   - [x] 双击复制间隔：[c758原生及完整同包三系统验收通过](#native-copy-interval-checkpoint)；真实外部应用另验。
-  - [ ] 截图全局热键开关：[完整接线与18新测试待Mac验证](#native-capture-shortcut-checkpoint)。
-  - [ ] 恢复默认设置。
+  - [ ] 截图全局热键开关：[3ffb141原生798项零失败，待完整同包验收](#native-capture-shortcut-checkpoint)。
+  - [ ] 恢复默认设置：[原生预览/确认/保存回读及13新Swift测试已实现，待验证](#native-restore-defaults-checkpoint)。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。
   - 原生Vision与明确图片发送、菜单栏菜单、语言/主题/字号保持Mac实现，不机械照搬Windows历史键或Tk行为。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。

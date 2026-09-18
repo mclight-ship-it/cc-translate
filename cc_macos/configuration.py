@@ -1,12 +1,13 @@
 """Explicit config/history connection ownership; never initialized by diagnostic hello."""
 
 from pathlib import Path
+from copy import deepcopy
 import json
 import os
 import sys
 import threading
 
-from cc_config import plan_config_migration
+from cc_config import DEFAULT_CONFIG, plan_config_migration
 from cc_config_store import normalize_config
 from cc_macos.config_owner import ConfigForkError, ConfigInUseError, MacConfigOwner
 from cc_macos.history import HistoryError, HistoryService
@@ -157,6 +158,11 @@ class ConfigurationSession:
             raise ConfigurationError("config_unavailable")
         try:
             if payload["operation"] == "config_load":
+                if payload.get("defaults") is True:
+                    self._owner._ensure_open()
+                    defaults = deepcopy(DEFAULT_CONFIG)
+                    validate_config(defaults)
+                    return {"config": defaults}
                 return {"config": self._owner.load(
                     validate=validate_config, decode=decode_config_file,
                     validate_migration=validate_stored_config)}

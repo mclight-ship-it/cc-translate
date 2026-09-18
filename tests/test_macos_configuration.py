@@ -149,6 +149,54 @@ class _ConfigurationDirectory(unittest.TestCase):
 
 
 class ConfigurationServiceTests(_ConfigurationDirectory):
+    def test_canonical_defaults_are_detached_without_reading_or_writing_user_configuration(self):
+        self.session.open()
+        self.assertFalse(self.path.exists())
+        with patch.object(self.session._owner, "load") as load, \
+                patch.object(self.session._owner, "save") as save, \
+                patch.dict(configuration.DEFAULT_CONFIG, {"future": {"values": ["preserved"]}}):
+            result = self.session.perform({"operation": "config_load", "defaults": True})["config"]
+            self.assertEqual(result, configuration.DEFAULT_CONFIG)
+            self.assertIsNot(result, configuration.DEFAULT_CONFIG)
+            result["codex_model"] = "caller changed"
+            result["future"]["values"].append("caller changed")
+            self.assertEqual(configuration.DEFAULT_CONFIG["future"]["values"], ["preserved"])
+            self.assertNotEqual(configuration.DEFAULT_CONFIG["codex_model"], result["codex_model"])
+            load.assert_not_called()
+            save.assert_not_called()
+        self.assertFalse(self.path.exists())
+
+    def test_defaults_lookup_preserves_existing_config_and_history_bytes(self):
+        self.session.open()
+        config = {"max_chars": 1234, "future": {"value": "keep"}, "codex_model": "custom-fixture-model"}
+        self.session.perform({"operation": "config_save", "config": config})
+        history = self.directory / "history.json"
+        history.write_bytes(b"SYNTHETIC_UNREAD_HISTORY")
+        dictionary = self.directory / "dictionary" / "fixture.db"
+        dictionary.parent.mkdir()
+        dictionary.write_bytes(b"SYNTHETIC_UNREAD_DICTIONARY")
+        files = (self.path, history, dictionary)
+        before = {path.relative_to(self.directory): path.read_bytes() for path in files}
+        self.assertEqual(self.session.perform({"operation": "config_load", "defaults": True})["config"],
+                         configuration.DEFAULT_CONFIG)
+        self.assertEqual({path.relative_to(self.directory): path.read_bytes() for path in files}, before)
+        self.assertEqual(self.session.perform({"operation": "config_load", "defaults": False})["config"]["max_chars"],
+                         1234)
+        self.assertEqual(history.read_bytes(), before[history.relative_to(self.directory)])
+        self.assertEqual(dictionary.read_bytes(), before[dictionary.relative_to(self.directory)])
+
+    def test_defaults_lookup_requires_a_live_explicit_owner(self):
+        payload = {"operation": "config_load", "defaults": True}
+        with self.assertRaisesRegex(configuration.ConfigurationError, "config_unavailable"):
+            self.session.perform(payload)
+        self.session.open()
+        with patch.object(self.session._owner, "_ensure_open", side_effect=configuration.ConfigForkError):
+            with self.assertRaisesRegex(configuration.ConfigurationError, "config_unavailable"):
+                self.session.perform(payload)
+        self.session.close()
+        with self.assertRaisesRegex(configuration.ConfigurationError, "config_unavailable"):
+            self.session.perform(payload)
+
     def test_max_chars_legacy_positive_and_safe_integer_limits_roundtrip_without_clamping_or_other_changes(self):
         self.session.open()
         original = dict(self.session.perform({"operation": "config_load"})["config"])
@@ -488,6 +536,37 @@ class ConfigurationSchedulingTests(_ConfigurationDirectory):
             server._handle(message(id_, "request", **payload))
         self.assertFalse(self.path.exists())
         self.assertEqual([item["type"] for item in self.events(output)], ["ready", "failed", "failed", "failed"])
+
+    def test_defaults_load_is_read_only_and_accepts_only_an_optional_boolean(self):
+        server, output, errors = self.server()
+        for index, value in enumerate((None, 0, 1, "true", [], {})):
+            server._handle(message(f"bad{index}", "request", operation="config_load", defaults=value))
+        for index, payload in enumerate((
+                {"operation": "config_load", "defaults": True, "path": "unused"},
+                {"operation": "config_save", "defaults": True, "config": {}})):
+            server._handle(message(f"extra{index}", "request", **payload))
+        invalid = [event for event in self.events(output) if event["id"] != "h"]
+        self.assertEqual(len(invalid), 8)
+        self.assertTrue(all(event["type"] == "failed" and event["payload"] == {"code": "invalid_payload"}
+                            for event in invalid))
+        finished = threading.Event()
+        send = server._send
+        def observe(request, event, payload):
+            send(request, event, payload)
+            if request.id == "defaults" and event in {"completed", "failed"}:
+                finished.set()
+        with patch.object(server, "_send", side_effect=observe):
+            try:
+                server._handle(message("defaults", "request", operation="config_load", defaults=True))
+                self.assertTrue(finished.wait(3))
+            finally:
+                server._stop()
+                server._join_workers()
+        actual = [event for event in self.events(output) if event["id"] == "defaults"]
+        self.assertEqual([event["type"] for event in actual], ["accepted", "started", "completed"])
+        self.assertEqual(actual[-1]["payload"], {"config": configuration.DEFAULT_CONFIG})
+        self.assertFalse(self.path.exists())
+        self.assertEqual(errors.getvalue(), "")
 
     def blocked_write(self):
         entered, release = threading.Event(), threading.Event()

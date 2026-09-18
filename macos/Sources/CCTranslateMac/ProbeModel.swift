@@ -28,6 +28,10 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var nativeTranslation = false
     @Published private(set) var settingsReady = false
     @Published private(set) var settingsBusy = false
+    @Published private(set) var defaultsPhase: SettingsDefaultsPhase = .idle
+    private var settingsDefaults: SettingsDefaults?
+    private var defaultsRequestID: String?
+    private var defaultsDrafts: [String: String] = [:]
     @Published private(set) var historyEnabled = true
     @Published private(set) var historyLimit = HistoryLimitPreference()
     @Published private(set) var inputLimit = IntegerPreference(
@@ -915,6 +919,7 @@ final class ProbeModel: ObservableObject {
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
+        if defaultsPhase == .readingBack { defaultsRequestID = id }
         if historyLimitRead { historyLimit.beginRead(id: id, afterSave: afterHistoryLimitSave) }
         if inputLimitRead { inputLimit.beginRead(id: id, afterSave: afterInputLimitSave) }
         if copyIntervalRead { copyInterval.beginRead(id: id, afterSave: afterCopyIntervalSave) }
@@ -926,6 +931,174 @@ final class ProbeModel: ObservableObject {
         plainPaste.beginRead(id: id, reconcile: plainReconcile || plainPasteReconcileOnLoad)
         plainPasteReconcileOnLoad = false
         connection.loadConfiguration(id: id)
+    }
+
+    var canRestoreDefaults: Bool {
+        defaultsServicesIdle && !defaultsPhase.busy && defaultsPhase != .confirming
+    }
+
+    private var defaultsServicesIdle: Bool {
+        canApplyModelSetting && !dictionary.busy && !modelCatalog.busy && !catalogShutDown &&
+            !plainPaste.serviceState.busy && !plainPaste.stoppingAction &&
+            !plainPaste.isShutDown && !captureShortcut.isShutDown
+    }
+
+    func prepareDefaultsRestore() {
+        guard canRestoreDefaults, let connection else {
+            if !defaultsPhase.busy && defaultsPhase != .confirming { defaultsPhase = .failed("settings_unavailable") }
+            return
+        }
+        settingsDefaults = nil
+        defaultsPhase = .loading
+        settingsBusy = true
+        let id = UUID().uuidString
+        defaultsRequestID = id
+        connection.send(ClientMessage(id: id, type: "request",
+                                      payload: ["operation": .string("config_load"), "defaults": .bool(true)]))
+    }
+
+    func cancelDefaultsRestore() {
+        guard defaultsPhase == .confirming else { return }
+        defaultsPhase = .idle
+        settingsDefaults = nil
+    }
+
+    func confirmDefaultsRestore() {
+        guard defaultsPhase == .confirming else { return }
+        guard canConfirmDefaultsRestore,
+              let settingsDefaults, let config = savedConfiguration, let connection else {
+            failDefaultsRestore("settings_unavailable")
+            return
+        }
+        defaultsDrafts = ["direction": direction, "profile": modelProfile, "model": modelSettings.draft,
+                          "history": historyLimit.draft, "input": inputLimit.draft, "interval": copyInterval.draft]
+        let id = UUID().uuidString
+        defaultsRequestID = id
+        defaultsPhase = .saving
+        settingsBusy = true
+        configSaveID = id
+        if let enabled = settingsDefaults.values["plain_text_paste_enabled"]?.bool {
+            plainPaste.choose(enabled)
+            guard plainPaste.beginSave(id: id) == enabled else {
+                configSaveID = nil
+                failDefaultsRestore("paste_settings_unavailable")
+                stopHelper()
+                return
+            }
+        }
+        dictionary.requestStatusWhenReady()
+        connection.saveConfiguration(settingsDefaults.merging(into: config), id: id)
+    }
+
+    var canConfirmDefaultsRestore: Bool {
+        defaultsPhase == .confirming && defaultsServicesIdle
+    }
+
+    var canReloadDefaults: Bool {
+        !defaultsPhase.busy && !settingsBusy && !stopping && !dictionary.committing &&
+            !catalogShutDown && connectionMode != .diagnostic
+    }
+
+    func reloadDefaultsSettings() {
+        guard canReloadDefaults else { return }
+        openProduct()
+        if ready && !settingsBusy { loadSettings() }
+    }
+
+    var defaultsConfirmationMessage: String {
+        let history = settingsDefaults?.values["history_enabled"] == .bool(true)
+            ? text("History saving will be turned on. ", "将开启保存翻译历史记录。")
+            : text("History saving will be turned off. ", "将关闭保存翻译历史记录。")
+        let dictionary = settingsDefaults?.values["local_dictionary_enabled"] == .bool(true)
+            ? text("An installed dictionary will be enabled. ", "将启用已安装的词典。")
+            : text("An installed dictionary will be kept but disabled. ", "保留已安装词典，但会停用。")
+        let paste = settingsDefaults?.values["plain_text_paste_enabled"] == .bool(true)
+            ? text("Plain-text paste will be enabled. ", "将开启纯文本粘贴。")
+            : text("Plain-text paste will be disabled. ", "将关闭纯文本粘贴。")
+        let limit = settingsDefaults?.values["history_limit"]?.integer.map(String.init) ?? ""
+        return history + text(
+            "The next new history record will keep only the newest \(limit) records. No records are deleted now. ",
+            "下次新增历史记录时将仅保留最新 \(limit) 条；现在不删除记录。") + dictionary + paste + text(
+            "Translation settings, appearance, language, text size and window placement return to defaults. Selection and screenshot shortcuts are turned off. Your Codex path, account and system permissions are kept.",
+            "翻译设置、外观、语言、字号和窗口位置策略恢复默认。划词和截图快捷键关闭。保留 Codex 路径、账号及系统权限。")
+    }
+
+    var defaultsMessage: String {
+        switch defaultsPhase {
+        case .idle, .confirming: return ""
+        case .loading: return text("Reading default settings…", "正在读取默认设置…")
+        case .saving: return text("Saving default settings…", "正在保存默认设置…")
+        case .readingBack: return text("Checking the saved settings…", "正在确认已保存的设置…")
+        case .restored: return text("Default settings restored.", "已恢复默认设置。")
+        case .shortcutCleanupRequired:
+            return text("Default settings saved. A shortcut could not be released; check the shortcut settings.",
+                        "默认设置已保存，但有快捷键未能释放，请查看快捷键设置。")
+        case .differentReadback:
+            return text("The saved settings differ from the defaults. Local appearance and selection/screenshot shortcuts were not reset. Reload settings before trying again.",
+                        "读回的设置与默认值不同，未重置本机外观及划词、截图快捷键。请重新读取设置后再试。")
+        case .failed(let code):
+            return text("Restore did not finish (\(code)). Saved settings may have changed; appearance and selection/screenshot shortcuts were not reset. Reload settings before trying again.",
+                        "恢复未完成（\(code)）。已保存的设置可能发生了变化；外观及划词、截图快捷键未重置。请重新读取设置后再试。")
+        }
+    }
+
+    private func resumeAfterSettingsOperation() {
+        if settingsReady { dictionary.connectionReady() }
+        flushPlainPastePreference()
+        resumeTranslation()
+        resumeDeferredCLIConnection()
+        if settingsReady { submitPendingHistory() }
+    }
+
+    private func failDefaultsRestore(_ code: String) {
+        defaultsPhase = .failed(code)
+        defaultsRequestID = nil
+        settingsDefaults = nil
+        defaultsDrafts.removeAll()
+    }
+
+    private func finishDefaultsRestore(config: [String: JSONValue], id: String) {
+        guard defaultsRequestID == id, defaultsPhase == .readingBack else { return }
+        defaultsRequestID = nil
+        guard settingsDefaults?.matches(config) == true else {
+            defaultsPhase = .differentReadback
+            settingsDefaults = nil
+            defaultsDrafts.removeAll()
+            return
+        }
+        if defaultsDrafts["history"] == historyLimit.draft { historyLimit.resetDraft() }
+        if defaultsDrafts["input"] == inputLimit.draft { inputLimit.resetDraft() }
+        if defaultsDrafts["interval"] == copyInterval.draft { copyInterval.resetDraft() }
+        if CodexModelSettings.sameID(defaultsDrafts["model"], modelSettings.draft),
+           let profile = config["codex_model"]?.string {
+            modelSettings = CodexModelSettings()
+            modelSettings.loaded(profile: profile, id: id)
+            if persistsPreferences { (preferences ?? .standard).removeObject(forKey: "lastCustomCodexModel") }
+        }
+        loadingConfiguration = true
+        if defaultsDrafts["direction"] == direction, let value = config["direction"]?.string {
+            direction = value
+            directionEdited = false
+        }
+        if CodexModelSettings.sameID(defaultsDrafts["profile"], modelProfile),
+           let value = config["codex_model"]?.string {
+            modelProfile = value
+            modelEdited = false
+        }
+        loadingConfiguration = false
+        interfaceLanguage = "system"
+        appearance = "system"
+        nativeTextScale = .standard
+        resultPlacement = .remembered
+        translatePassiveSelections = false
+        stopMonitor()
+        captureShortcut.choose(false)
+        persistPresentation()
+        defaultsPhase = .restored
+        if case .failed = captureShortcut.registration { defaultsPhase = .shortcutCleanupRequired }
+        if case .failed = plainPaste.registration { defaultsPhase = .shortcutCleanupRequired }
+        settingsDefaults = nil
+        defaultsDrafts.removeAll()
     }
 
     var canApplyModelSetting: Bool {
@@ -1753,6 +1926,7 @@ final class ProbeModel: ObservableObject {
             historyLimit.connectionLost()
             inputLimit.connectionLost()
             copyInterval.connectionLost()
+            if defaultsPhase.busy || defaultsPhase == .confirming { failDefaultsRestore("connection_closed") }
             plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
@@ -1956,6 +2130,20 @@ final class ProbeModel: ObservableObject {
     }
 
     private func handleBusinessEvent(_ event: ServerEvent) -> Bool {
+        if defaultsPhase == .loading, event.id == defaultsRequestID {
+            guard event.isTerminal else { return true }
+            defaultsRequestID = nil
+            settingsBusy = false
+            if event.type == "completed", let config = event.payload["config"]?.object,
+               let defaults = SettingsDefaults(config) {
+                settingsDefaults = defaults
+                defaultsPhase = .confirming
+            } else {
+                failDefaultsRestore(event.type == "completed" ? "invalid_defaults" : event.safeFailureCode)
+            }
+            resumeAfterSettingsOperation()
+            return true
+        }
         if event.id == configLoadID || event.id == configSaveID {
             guard event.isTerminal else { return true }
             let pasteSave = plainPaste.preference.ownsSave(event.id)
@@ -1965,6 +2153,7 @@ final class ProbeModel: ObservableObject {
             let copyIntervalOperation = copyInterval.owns(event.id)
             if event.type == "completed" {
                 if event.id == configSaveID {
+                    if defaultsRequestID == event.id { defaultsPhase = .readingBack }
                     let modelSave = modelSettings.requestID == event.id
                     let summaryExpected = summarySaveRequest?.id == event.id ? summarySaveRequest?.value : nil
                     summarySaveRequest = nil
@@ -1993,6 +2182,7 @@ final class ProbeModel: ObservableObject {
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
                     settingsReady = false
+                    if defaultsRequestID == event.id { failDefaultsRestore("invalid_config") }
                     status = "Invalid normalized settings response; stopping the connection."
                     stopHelper()
                     return true
@@ -2049,6 +2239,7 @@ final class ProbeModel: ObservableObject {
                     modelEdited = false
                 }
                 settingsReady = true
+                finishDefaultsRestore(config: config, id: event.id)
                 status = "Native settings loaded. Account and model access require an explicit translation."
                 let preservesCancellation = productPhase == .cancelled &&
                     cancelledPreparation?.intent == translationIntentID &&
@@ -2065,6 +2256,7 @@ final class ProbeModel: ObservableObject {
                                          "保存的模型与请求的 ID 不同。请检查模型设置，未发送模型请求。"))
                 }
             } else {
+                if defaultsRequestID == event.id { failDefaultsRestore(event.safeFailureCode) }
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
                 if historyLimitOperation || event.id == configLoadID { historyLimit.fail(event.safeFailureCode) }
                 if inputLimitOperation || event.id == configLoadID { inputLimit.fail(event.safeFailureCode) }
@@ -2091,11 +2283,7 @@ final class ProbeModel: ObservableObject {
             configSaveID = nil
             catalogPreservesPreparation = false
             settingsBusy = false
-            if settingsReady { dictionary.connectionReady() }
-            flushPlainPastePreference()
-            resumeTranslation()
-            resumeDeferredCLIConnection()
-            if settingsReady { submitPendingHistory() }
+            resumeAfterSettingsOperation()
             return true
         }
         if event.id == historyRead?.id {

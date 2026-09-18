@@ -128,6 +128,33 @@ final class ProtocolTests: XCTestCase {
         XCTAssertTrue(business.hasPendingConfiguration)
     }
 
+    func testConfigurationDefaultsFlagUsesTheExistingReadOnlyLifecycle() throws {
+        let operation: [String: JSONValue] = ["operation": .string("config_load")]
+        for flag in [true, false] {
+            var state = try configurationConnected()
+            var payload = operation
+            payload["defaults"] = .bool(flag)
+            try state.register(ClientMessage(id: "defaults", type: "request", payload: payload))
+            XCTAssertTrue(state.hasPendingConfiguration)
+            _ = try state.receive(event("defaults", 0, "accepted", operation))
+            _ = try state.receive(event("defaults", 1, "started", operation))
+            let config: [String: JSONValue] = ["codex_model": .string("auto-fast"), "history_limit": .integer(100)]
+            let result = try state.receive(event("defaults", 2, "completed", ["config": .object(config)]))
+            XCTAssertEqual(result.payload["config"], .object(config))
+            XCTAssertFalse(state.hasPendingConfiguration)
+        }
+        let invalidFlags: [JSONValue] = [.null, .integer(1), .string("true"), .array([]), .object([:])]
+        for invalid in invalidFlags {
+            var state = try configurationConnected()
+            var payload = operation
+            payload["defaults"] = invalid
+            XCTAssertThrowsError(try state.register(ClientMessage(id: "invalid", type: "request", payload: payload)))
+        }
+        var diagnostic = try connected()
+        XCTAssertThrowsError(try diagnostic.register(ClientMessage(id: "defaults", type: "request",
+            payload: ["operation": .string("config_load"), "defaults": .bool(true)])))
+    }
+
     func testConfigurationDocumentRejectsDuplicateKeysAndIllegalUnicode() throws {
         for json in [
             "[]", "null", "true", "1", "\"object required\"", "{\"x\":1,\"x\":2}",
