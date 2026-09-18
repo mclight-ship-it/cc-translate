@@ -872,6 +872,7 @@ struct TranslationSettingsView: View {
                 Text(model.text("Chinese", "中文")).tag("zh")
             }
             NativeTextScalePicker(model: model)
+            NativeResultPlacementPicker(model: model)
         } header: {
             Text(model.text("General", "通用"))
         }

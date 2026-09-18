@@ -168,6 +168,10 @@ e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操�
 27bc99f英文历史完整流程已执行，中文动态控件的渲染等待仍需修正，整体方法尚未通过。
 5774386已通过历史恢复方法，仅剩实际存在的中文确认按钮未被测试OCR识别；
 继续用公开原生角色定位与完整操作验证，不将测试识字问题当成产品不可用或移植完成。
+bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整通过；122图完整。
+完整App及同包消费者验收尚未完成，不提前宣称这批功能完成验收。
+并行推进[结果窗口位置](MACOS_TODO.md#native-result-position-checkpoint)：记住位置/居中/鼠标附近已接设置与真实面板，
+保持流式更新不移动窗口；新增11项测试及3张预期PNG，尚待本源码实际Mac验证。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

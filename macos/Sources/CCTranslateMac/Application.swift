@@ -29,7 +29,7 @@ private final class ResultPanel: ProductPanel {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem?
     private var inputPanel: NSPanel?
-    private var resultPanel: NSPanel?
+    private(set) var resultPanel: NSPanel?
     private var historyPanel: NSPanel?
     private var settingsPanel: NSPanel?
     private var capturePanel: NSPanel?
@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         model.onTranslationStarted = { [weak self] in
             guard let self, ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
             self.showTranslationResults = true
-            self.showResult()
+            self.showResult(reposition: true)
         }
         model.onTranslationResult = { [weak self] _ in
             guard let self = self, !self.terminating, self.showTranslationResults else { return }
@@ -405,7 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func recallResult() {
-        if model.output.isEmpty { openInput() } else { showResult() }
+        if model.output.isEmpty { openInput() } else { showResult(reposition: true) }
     }
     @objc func openAbout() {
         if aboutPanel == nil {
@@ -419,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
-    private func showResult() {
+    func showResult(reposition: Bool = false) {
         if resultPanel == nil {
             let panel = ResultPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 590, height: 400),
@@ -438,8 +438,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             panel.center()
             resultPanel = panel
         }
+        if let panel = resultPanel, reposition || !panel.isVisible {
+            if let frame = model.resultPlacement.frame(
+                current: panel.frame, remembered: model.rememberedResultFrame, pointer: NSEvent.mouseLocation,
+                visibleScreens: NSScreen.screens.map(\.visibleFrame)) {
+                panel.setFrame(frame, display: false)
+            }
+        }
         applyAppearance()
         resultPanel?.orderFrontRegardless()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        rememberResultWindow(notification)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        rememberResultWindow(notification)
+    }
+
+    private func rememberResultWindow(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === resultPanel else { return }
+        model.rememberResultFrame(window.frame)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -453,6 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             if model.translationOrigin == "text" { model.cancel() }
         }
         if window === resultPanel {
+            model.rememberResultFrame(window.frame)
             showTranslationResults = false
             if ["selection", "ocr"].contains(model.translationOrigin) { model.cancel() }
         }

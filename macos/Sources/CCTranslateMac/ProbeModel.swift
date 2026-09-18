@@ -76,6 +76,8 @@ final class ProbeModel: ObservableObject {
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
     @Published var nativeTextScale: NativeTextScale = .standard
+    @Published var resultPlacement: NativeResultPlacement = .remembered
+    private(set) var rememberedResultFrame: NSRect?
     @Published var historySearch = "" {
         didSet { if historySearch != oldValue { queueHistorySearch(debounce: true) } }
     }
@@ -382,6 +384,7 @@ final class ProbeModel: ObservableObject {
         defaults.set(interfaceLanguage, forKey: "interfaceLanguage")
         defaults.set(appearance, forKey: "appearance")
         defaults.set(nativeTextScale.rawValue, forKey: NativeTextScale.preferenceKey)
+        defaults.set(resultPlacement.rawValue, forKey: NativeResultPlacement.preferenceKey)
         if cliName == "codex", !selectedCLI.isEmpty {
             defaults.set(selectedCLI, forKey: "selectedCodexPath")
         }
@@ -397,6 +400,11 @@ final class ProbeModel: ObservableObject {
                 nativeTextScale = NativeTextScale(
                     rawValue: defaults.string(forKey: NativeTextScale.preferenceKey) ?? ""
                 ) ?? .standard
+                resultPlacement = NativeResultPlacement(
+                    rawValue: defaults.string(forKey: NativeResultPlacement.preferenceKey) ?? ""
+                ) ?? .remembered
+                rememberedResultFrame = NativeResultPlacement.restoredFrame(
+                    defaults.string(forKey: NativeResultPlacement.frameKey))
                 if let custom = defaults.string(forKey: "lastCustomCodexModel") {
                     modelSettings.restoreCustom(custom)
                 }
@@ -427,6 +435,12 @@ final class ProbeModel: ObservableObject {
         persistPresentation()
         if needsCLI { startConnection(mode: .configuration) }
         else { startNativeTranslation() }
+    }
+
+    func rememberResultFrame(_ frame: NSRect) {
+        rememberedResultFrame = frame
+        guard persistsPreferences else { return }
+        (preferences ?? .standard).set(NSStringFromRect(frame), forKey: NativeResultPlacement.frameKey)
     }
 
     func startHelper() {

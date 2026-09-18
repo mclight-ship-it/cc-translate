@@ -340,6 +340,20 @@ Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合�
 同一失败用例重查1项/2.706秒通过，随后正常完整hook1829项/89.337秒通过才推送，
 没有绕过hook；旧间歇存储问题保留未解决状态，重试通过不算修复。
 
+<a id="native-result-position-checkpoint"></a>
+
+### P3 结果窗口位置：原生设置与窗口接线，待Mac验证
+
+设置新增“记住上次位置（默认）/屏幕中央/鼠标附近”，只保存本Mac的呈现偏好，不写业务配置。
+默认保留窗口拖动位置并跨启动记住坐标；不覆盖当前窗口尺寸。首次无位置时居中。
+中央/鼠标附近使用指针所在屏幕；记住位置优先原窗口所在屏幕，显示器移除后回到可见范围。
+几何计算使用AppKit坐标和屏幕可用区域，包含负坐标屏幕并避让菜单栏/Dock；鼠标附近在边缘换侧。
+新请求、隐藏后打开、明确召回才应用位置，流式更新不重复移动窗口，也不改变结果非激活面板属性。
+设置变化不启动helper、检查CLI或权限，不取消/重放翻译。新增11项几何/偏好/真实面板/渲染测试，
+预期增加3张中英深浅色原生PNG；Windows编辑器无Swift测试提供器，不能据无诊断宣称编译通过。
+这一实现候选尚未完成源码Mac验证，更不代表P3–P6完成。
+说明见[结果窗口位置](MACOS_DEVELOPMENT.md#native-result-position)。
+
 <a id="native-text-scale-checkpoint"></a>
 
 ### P3 原生文字大小：接线已交付，待新源码原生验证
@@ -559,6 +573,14 @@ Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与
 并继续通过同一真实控件的cell tracking执行原有双语保存/回读/重开流程。
 只读取公开属性，不设置按钮role/state或模型；一般按钮/checkbox和原业务断言不变。
 该候选仍需真实Mac证明SwiftUI实际暴露此公开角色，不把Apple API存在当作集成通过。
+
+后续`bf89495` / [run35320398227](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227)
+正常完整hook1846项/107.218秒通过；真实Swift编译31.81秒，744项/23构包前skip/0失败/492.556秒。
+持久诊断确认英中确认按钮均实际暴露`hasDestructiveAction`；两个历史完整操作方法逐项通过，
+摘要15、输入26、字号18、剪贴板94均通过。122张PNG库存/CRC/尺寸/IDAT/SHA检查完成。
+这是原生测试成功，不是完整App与同包14/26验收；完整run仍在执行。
+前轮`5774386`实际watch exit1，903portable/20.550秒、232process/498.102秒、
+665core/5.604秒及21后置Foundation逐方法通过，不能因后端通过抹去该轮原生失败。
 
 <a id="native-history-limit-checkpoint"></a>
 
@@ -2256,7 +2278,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [ ] 长文自动摘要开关：[原生设置已接线，待验收](#native-summary-preference-checkpoint)；不等同于手动“生成摘要”动作。
   - [ ] 历史保留条数：[原生设置与修剪时机测试已交付，待验收](#native-history-limit-checkpoint)。
   - [ ] 最大字符数及与UTF-8字节预算的准确呈现：[设置与统一预检已接线，待原生验收](#native-input-limit-checkpoint)。
-  - [ ] 双击复制间隔、结果位置偏好、截图全局热键开关，以及恢复默认设置。
+  - [ ] 结果位置偏好：[设置与窗口接线已实现，待原生验收](#native-result-position-checkpoint)。
+  - [ ] 双击复制间隔、截图全局热键开关，以及恢复默认设置。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。
   - 原生Vision与明确图片发送、菜单栏菜单、语言/主题/字号保持Mac实现，不机械照搬Windows历史键或Tk行为。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。

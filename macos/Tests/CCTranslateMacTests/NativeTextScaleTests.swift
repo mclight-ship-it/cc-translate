@@ -7,24 +7,10 @@ import XCTest
 
 final class NativeTextScaleModelTests: XCTestCase {
     @MainActor
-    private func offline(_ defaults: UserDefaults, persists: Bool = true) -> ProbeModel {
-        ProbeModel(preferences: defaults, persistsPreferences: persists, makeConnection: { notice in
-            XCTFail("Presentation must not construct a helper.")
-            return ProductTestHelper(notice: notice)
-        }, runtimeProvider: {
-            XCTFail("Presentation must not request a runtime.")
-            throw ProbeError.bundleMissing
-        }, locateCandidates: { _, _ in
-            XCTFail("Presentation must not inspect CLI installations.")
-            return []
-        })
-    }
-
-    @MainActor
     func testMissingAndInvalidNativeScaleDefaultsTo100WithoutStartingServices() throws {
         let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
-        let fresh = offline(f.preferences)
+        let fresh = NativePresentationTestSupport.offline(f.preferences)
         XCTAssertEqual(fresh.nativeTextScale, .standard)
         fresh.loadPresentation()
         XCTAssertEqual(fresh.nativeTextScale, .standard)
@@ -33,7 +19,7 @@ final class NativeTextScaleModelTests: XCTestCase {
                                     ["scale": "150"], Data([0xff]), false]
         for invalid in invalidValues {
             f.preferences.set(invalid, forKey: NativeTextScale.preferenceKey)
-            let model = offline(f.preferences)
+            let model = NativePresentationTestSupport.offline(f.preferences)
             model.loadPresentation()
             XCTAssertEqual(model.nativeTextScale, .standard, "\(invalid)")
             XCTAssertEqual(model.nativeTextScale.points(15), 15)
@@ -50,7 +36,7 @@ final class NativeTextScaleModelTests: XCTestCase {
         defer { f.cleanUp() }
         XCTAssertEqual(NativeTextScale.allCases.map(\.rawValue), ["90", "100", "125", "150"])
         for scale in NativeTextScale.allCases {
-            let model = offline(f.preferences)
+            let model = NativePresentationTestSupport.offline(f.preferences)
             model.loadPresentation()
             model.nativeTextScale = scale
             model.interfaceLanguage = "zh"
@@ -59,7 +45,7 @@ final class NativeTextScaleModelTests: XCTestCase {
             model.onPresentationChanged = { notifications += 1 }
             model.persistPresentation()
             XCTAssertEqual(notifications, 1)
-            let reopened = offline(f.preferences)
+            let reopened = NativePresentationTestSupport.offline(f.preferences)
             reopened.loadPresentation()
             XCTAssertEqual(reopened.nativeTextScale, scale)
             XCTAssertEqual(reopened.interfaceLanguage, "zh")
@@ -79,7 +65,7 @@ final class NativeTextScaleModelTests: XCTestCase {
         let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
         f.preferences.set("150", forKey: NativeTextScale.preferenceKey)
-        let model = offline(f.preferences, persists: false)
+        let model = NativePresentationTestSupport.offline(f.preferences, persists: false)
         model.loadPresentation()
         XCTAssertEqual(model.nativeTextScale, .standard)
         model.nativeTextScale = .smaller
