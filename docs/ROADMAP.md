@@ -4,13 +4,14 @@
 
 ## 正在开发：原生产品已接通，继续 P4 分发生命周期
 
-**最新已核验包：4dfb04a，Mac 0.1.0/build146 / [run35374096842](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842)。**
+**最新已核验包：041df14，Mac 0.1.0/build150 / [run35387156483](https://github.com/mclight-ship-it/cc-translate/actions/runs/35387156483)。**
 图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
 另已补齐Claude完整后端、原生选择、独立路径/模型草稿、切换与恢复默认。
-真实watch0、3jobs/42steps全通过；原生845项（23构包前可选skip、零失败）、140PNG已核验，
+本轮新增Sparkle框架和原生检查更新菜单/设置/窗口，未发布渠道时提供明确手动下载入口。
+真实watch0、3jobs/42steps全通过；原生861项（23构包前可选skip、零失败）、143PNG已核验，
 同App15/14/26各253process/744core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-app-version-checkpoint)已绑定本源码与实际版本；
+[完整审计](MACOS_TODO.md#native-update-ui-checkpoint)已绑定本源码与实际版本；
 [登录项检查点](MACOS_TODO.md#native-login-item-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 继续更新/分发/卸载及P5–P6；真实账号、TCC/IME/VoiceOver仍另验，**整个移植尚未完成**。
 P4首项已接入SMAppService实际登录状态与原生设置，不自动注册、不以本地开关假装系统批准；
@@ -18,7 +19,7 @@ P4首项已接入SMAppService实际登录状态与原生设置，不自动注册
 系统批准、下一次登录启动和升级后保持仍待实机，不用合成服务冒充真实登录项更改。
 Mac独立版本/递增开发构建号与清单一致性已在4dfb04a自己的完整Mac包验证，
 保留已有bundle身份及数据位置；目标bundle/runtime80项、正常1933项hook通过，
-三系统实际About均核对0.1.0/build146，已更新当前推荐包。
+三系统实际About在该检查点核对0.1.0/build146；当前build150已在本轮重新核对。
 继续Sparkle接入、更新签名资产和N→N+1保护；已核对稳定2.10.0的官方依赖及延迟启动API，
 后续18d6d6d已完成原样framework/helper/许可打包及受限架构审计，13项新便携契约、联合93项及正常1946项通过，
 真实框架加载方法、846原生项和140PNG已通过；实际watch0、3jobs/42steps和build147完整App独立审计通过，
@@ -27,7 +28,8 @@ Mac独立版本/递增开发构建号与清单一致性已在4dfb04a自己的完
 未发布渠道时提供原生说明和独立下载入口；9fa9661已编译，但15项新Swift方法中两项UI检查失败，
 已确认透明背景问题并补系统背景及回归断言，保留原交互/文字检查，等待修正Mac验证；便携联合94项通过。
 11ffa24已实际通过三张更新图的正文/错误/背景/主题检查，剩一项英文按钮定位失败；
-继续修测试定位的末尾省略号依赖，实际按钮事件、状态和次数断言不删，不提前升级推荐包。
+随后041df14修正定位的末尾省略号依赖，实际按钮事件、状态和次数断言不删，新增15方法全部通过；
+完整App独立字节审计及同包三系统也已通过，推荐现已升级为build150。
 没有发布feed或签名升级验证，不把框架/界面准备当作自动更新完成。
 [双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
 已接入现有配置和实际监听，新增25项测试、2张渲染，现已完成验收并包含于推荐包。
