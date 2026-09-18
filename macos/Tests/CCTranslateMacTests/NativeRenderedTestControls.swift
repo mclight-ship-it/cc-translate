@@ -279,11 +279,12 @@ enum NativeSettingsTestControls {
     }
 
     private static func normalize(_ value: String) -> String {
-        value.filter { !$0.isWhitespace }.folding(
+        value.replacingOccurrences(of: "\u{2026}", with: "...")
+            .filter { !$0.isWhitespace }.folding(
             options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
 
-    private static func ranges(of caption: String, in text: String) -> [Range<String.Index>] {
+    static func ranges(of caption: String, in text: String) -> [Range<String.Index>] {
         let expected = Array(normalize(caption))
         guard !expected.isEmpty else { return [] }
         var characters: [Character] = []

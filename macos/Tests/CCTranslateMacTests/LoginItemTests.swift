@@ -56,6 +56,22 @@ private struct LoginItemTestSurface: View {
 
 final class LoginItemTests: XCTestCase {
     @MainActor
+    func testCaptionLookupMatchesEllipsisTypographyButNotDifferentWordsOrPunctuation() {
+        for label in ["Open Login Items", "打开登录项设置"] {
+            for suffix in ["\u{2026}", "...", "\u{ff0e}\u{ff0e}\u{ff0e}"] {
+                let text = label + suffix
+                let ranges = NativeSettingsTestControls.ranges(of: label + "\u{2026}", in: text)
+                XCTAssertEqual(ranges.count, 1, text)
+                if let range = ranges.first { XCTAssertEqual(String(text[range]), text) }
+            }
+        }
+        for text in ["Open Login ltems...", "Reopen Login Items...", "Open Login Items..",
+                     "Open Login Items?", "Open Login Items"] {
+            XCTAssertTrue(NativeSettingsTestControls.ranges(of: "Open Login Items\u{2026}", in: text).isEmpty, text)
+        }
+    }
+
+    @MainActor
     func testConstructionAndClosedSettingsActivationDoNotQueryOrRegister() throws {
         let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
