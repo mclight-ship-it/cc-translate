@@ -2133,6 +2133,7 @@ final class ProbeModel: ObservableObject {
             pending.removeAll()
             savedConfiguration = nil
             modelSettings.connectionLost()
+            failProviderChange("connection_closed")
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
             inputLimit.connectionLost()

@@ -29,6 +29,18 @@ enum ClaudeProductFixture {
     }
 }
 
+@MainActor
+private struct ClaudeSettingsSurface: View {
+    @ObservedObject var model: ProbeModel
+
+    var body: some View {
+        Form {
+            TranslationSettingsView(model: model, showDiagnostics: {}, showAbout: {}).translationSection
+        }
+        .formStyle(.grouped)
+    }
+}
+
 final class ClaudeProductTests: XCTestCase {
     @MainActor
     func testClaudeProtocolFailureNamesClaudeAndDoesNotSuggestCodexOrReplay() throws {
@@ -164,14 +176,22 @@ final class ClaudeProductTests: XCTestCase {
 
     @MainActor
     func testFailedOrDisconnectedServiceChangeDoesNotClaimSuccessOrRetry() throws {
-        for disconnect in [false, true] {
+        for (disconnect, readingBack) in [(false, false), (true, false), (false, true), (true, true)] {
             let f = try ProductTestHarness()
             defer { f.cleanUp() }
             let helper = try f.ready()
             f.model.selectTranslationProvider(.claude)
+            let save = try XCTUnwrap(helper.configurationSaves.last)
+            let requestID: String
+            if readingBack {
+                helper.event("completed", id: save.id)
+                requestID = try XCTUnwrap(helper.configurationLoads.last)
+            } else {
+                requestID = save.id
+            }
             if disconnect { helper.stopped() }
             else {
-                helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
+                helper.event("failed", id: requestID,
                              payload: ["code": .string("config_write_failed")])
             }
             XCTAssertEqual(f.model.translationProvider, .codex)
@@ -179,6 +199,7 @@ final class ClaudeProductTests: XCTestCase {
             XCTAssertTrue(f.model.providerMessage.contains("not confirmed"))
             XCTAssertEqual(helper.configurationSaves.count, 1)
             XCTAssertTrue(helper.translations.isEmpty)
+            XCTAssertEqual(f.helpers.count, 1)
         }
     }
 
@@ -303,13 +324,15 @@ final class ClaudeProductTests: XCTestCase {
         let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
         let helper = try f.localReady()
-        let surface = NativeSettingsTestHost(
-            Form {
-                TranslationSettingsView(model: f.model, showDiagnostics: {}, showAbout: {}).translationSection
-            }.formStyle(.grouped),
-            size: NSSize(width: 760, height: 980))
+        let surface = NativeSettingsTestHost(ClaudeSettingsSurface(model: f.model),
+                                             size: NSSize(width: 760, height: 980))
         defer { surface.close() }
-        try await surface.waitFor {
+        let diagnostics = {
+            "Service=\(f.model.translationProvider), pending=\(String(describing: f.model.pendingProvider)), " +
+                "saves=\(helper.configurationSaves.count), " +
+                "popups=\(ScaleTestSupport.views(NSPopUpButton.self, in: surface.host).map(\.title))"
+        }
+        try await surface.waitFor(diagnostics: diagnostics) {
             ScaleTestSupport.views(NSPopUpButton.self, in: surface.host).contains { $0.title == "Codex" }
         }
         let button = try XCTUnwrap(ScaleTestSupport.views(NSPopUpButton.self, in: surface.host)
@@ -335,13 +358,15 @@ final class ClaudeProductTests: XCTestCase {
         defer { timer.invalidate() }
         button.performClick(nil)
         XCTAssertTrue(invoked)
-        try await surface.waitFor { f.model.pendingProvider == .claude }
+        try await surface.waitFor(diagnostics: diagnostics) { f.model.pendingProvider == .claude }
         let save = try XCTUnwrap(helper.configurationSaves.last)
         XCTAssertEqual(save.config["model_provider"], .string("claude_cli"))
         XCTAssertEqual(f.model.translationProvider, .codex)
         helper.event("completed", id: save.id)
         try f.finishConfiguration(on: helper, configuration: save.config)
-        try await surface.waitFor { button.title == "Claude" && f.model.translationProvider == .claude }
+        try await surface.waitFor(diagnostics: diagnostics) {
+            button.title == "Claude" && f.model.translationProvider == .claude
+        }
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertEqual(helper.configurationSaves.count, 1)
     }
@@ -356,10 +381,8 @@ extension ProductRenderingTests {
         f.model.editCustomModelID("future/Claude-Custom")
         for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
             f.model.interfaceLanguage = language
-            _ = try render(Form {
-                TranslationSettingsView(model: f.model, showDiagnostics: {}, showAbout: {}).translationSection
-            }
-                .formStyle(.grouped), named: "claude-settings-\(language)-\(scheme == .light ? "light" : "dark")",
+            _ = try render(ClaudeSettingsSurface(model: f.model),
+                           named: "claude-settings-\(language)-\(scheme == .light ? "light" : "dark")",
                            size: NSSize(width: 760, height: 980), scheme: scheme, inspect: { host in
                 let buttons = ScaleTestSupport.views(NSPopUpButton.self, in: host)
                 XCTAssertTrue(buttons.contains { $0.title == "Claude" })

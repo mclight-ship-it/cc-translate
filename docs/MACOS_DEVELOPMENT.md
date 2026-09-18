@@ -1073,12 +1073,15 @@ run35348803751 producer已实际通过新9项Darwin provider用例与966portable
 失败原日志保留，原源码重跑35347450089已实际watch exit0，
 完整App与同包三系统审计通过，没有把首轮跳过的process/core当通过。
 后续已接通provider绑定的Python/Swift helper会话与业务快照、缓存、历史、图片，
-402目标契约与1925正常hook通过；3e53aec的新5Swift连接用例已实际通过，
-4Darwin业务链仍待该源码完整结果。
+402目标契约与1925正常hook通过；3e53aec的新5Swift连接及4Darwin业务链已实际通过，
+run35352153748实际watch exit0、3jobs/42steps全成功，完整App同包三系统独立审计通过。
 下一源码继续接入Claude设置入口、两套路径/模型草稿、保存读回后切换helper及两套模型恢复默认，
 首UI源码da41955正常hook通过，但首Mac运行因两处新增测试漏传视图回调而编译失败；
 已修复测试构造并补Claude错误身份提示，现有16项新原生产品/菜单/渲染测试。
-UI仍待修正源码Mac验证，不影响当前8f898aa推荐包，
+UI仍待修正源码Mac验证，不影响当前8f898aa推荐包。
+后续250e8c7已通过编译但832原生测试有4个失败方法：服务切换stopped清理遗漏、
+菜单测试宿主未观察模型及两个低分辨率OCR错字。已修相应生命周期/宿主，
+复用高分辨率渲染并保留全部语义断言；仍须下一源码自己的Mac结果。
 也不代表已使用真实Claude账号或模型验收。
 进度与验证边界见[Claude服务检查点](MACOS_TODO.md#native-claude-provider-checkpoint)。
 

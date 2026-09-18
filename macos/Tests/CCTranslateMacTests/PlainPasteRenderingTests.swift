@@ -105,7 +105,8 @@ extension ProductRenderingTests {
         _ = try fixture.ready(true)
         try XCTUnwrap(fixture.registrar.leases.last).fire(.pressed)
         fixture.service.progress(.waitingForKeys)
-        let busy = try renderPasteSettings(fixture, name: "plain-paste-settings-busy-light", scheme: .light)
+        let busy = try renderPasteSettings(fixture, name: "plain-paste-settings-busy-light",
+                                          scheme: .light, highResolution: true)
         let busyWords = try pasteSettingsWords(busy)
         try NativeRenderEvidence.record("Synthetic paste busy OCR: \(busyWords)")
         XCTAssertTrue(busyWords.contains("release the shortcut keys"), busyWords)

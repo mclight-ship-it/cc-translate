@@ -199,7 +199,7 @@ extension ProductRenderingTests {
                 XCTAssertTrue(button.isEnabled)
                 XCTAssertEqual(button.state, .on)
                 XCTAssertGreaterThan(button.visibleRect.height, 0)
-            })
+            }, highResolution: true)
             let words = try summarySettingsWords(png, chinese: language == "zh")
             for expected in language == "zh"
                 ? ["长文自动摘要", "400", "后续翻译", "生成摘要"]

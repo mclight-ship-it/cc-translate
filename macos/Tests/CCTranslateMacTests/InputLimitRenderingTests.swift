@@ -70,8 +70,10 @@ final class NativeSettingsTestHost<Content: View> {
         host.displayIfNeeded()
     }
 
-    func waitFor(_ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor {
+    func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                 diagnostics: @MainActor () -> String = { "" },
+                 _ condition: @MainActor () -> Bool) async throws {
+        try await CaptureProductFixture.waitFor(file: file, line: line, diagnostics: diagnostics) {
             self.flush()
             return condition()
         }
