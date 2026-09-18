@@ -314,7 +314,7 @@ extension ProductRenderingTests {
             }())
         })
         let words = try inputLimitWords(image, chinese: true)
-        print("Synthetic capture counter OCR (repeated input omitted): \(words.replacingOccurrences(of: "中", with: ""))")
+        try NativeRenderEvidence.record("Synthetic capture counter OCR (repeated input omitted): \(words.replacingOccurrences(of: "中", with: ""))")
         for expected in ["2731", "5000", "8193", "8192", "码点", "字节", "翻译文字"] {
             XCTAssertTrue(words.contains(expected), words)
         }
@@ -327,9 +327,10 @@ extension ProductRenderingTests {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
+        request.minimumTextHeight = 0
         request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         return try XCTUnwrap(request.results).compactMap { $0.topCandidates(1).first?.string }
             .joined().lowercased().filter { !$0.isWhitespace && $0 != "," }
     }

@@ -60,8 +60,12 @@ private final class SummarySettingsHost {
     }
 
     func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                 diagnostics: @MainActor () -> String = { "" },
                  _ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor(file: file, line: line) {
+        try await CaptureProductFixture.waitFor(file: file, line: line, diagnostics: {
+            "Summary enabled=\(String(describing: self.model.summaryEnabled)), " +
+                "phase=\(self.model.summaryPreferencePhase), busy=\(self.model.settingsBusy); \(diagnostics())"
+        }) {
             self.flush()
             return condition()
         }
@@ -95,7 +99,9 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             try await surface.waitFor { button.isFocused }
             let source = f.model.input
             try await button.press()
-            try await surface.waitFor { helper.configurationSaves.count == 1 && !button.isEnabled }
+            try await surface.waitFor(diagnostics: {
+                "saves=\(helper.configurationSaves.count), controlEnabled=\(button.isEnabled), state=\(String(describing: button.state))"
+            }) { helper.configurationSaves.count == 1 && !button.isEnabled }
             let save = try XCTUnwrap(helper.configurationSaves.last)
             XCTAssertEqual(save.config["summary_enabled"], .bool(false))
             XCTAssertEqual(f.model.summaryEnabled, true)
@@ -139,7 +145,9 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             defer { surface.close() }
             let button = try surface.toggle()
             try await button.press()
-            try await surface.waitFor { helper.configurationSaves.count == 1 }
+            try await surface.waitFor(diagnostics: { "saves=\(helper.configurationSaves.count)" }) {
+                helper.configurationSaves.count == 1
+            }
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
             try await surface.waitFor { !button.isEnabled && f.model.summaryEnabled == nil }

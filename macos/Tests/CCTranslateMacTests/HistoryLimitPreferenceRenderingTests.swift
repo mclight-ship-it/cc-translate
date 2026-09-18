@@ -68,7 +68,11 @@ private final class HistoryLimitSettingsHost {
 
     func waitFor(file: StaticString = #filePath, line: UInt = #line,
                  _ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor(file: file, line: line) {
+        try await CaptureProductFixture.waitFor(file: file, line: line, diagnostics: {
+            "History saved=\(String(describing: self.model.historyLimit.saved)), " +
+                "draft=\(self.model.historyLimit.draft), confirmation=\(String(describing: self.model.historyLimit.confirmation)), " +
+                "phase=\(self.model.historyLimit.phase), busy=\(self.model.settingsBusy)"
+        }) {
             self.flush()
             return condition()
         }

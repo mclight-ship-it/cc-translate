@@ -8,10 +8,10 @@ import Vision
 extension ProductRenderingTests {
     @MainActor
     func testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste() throws {
-        func stage(_ value: String) {
-            print("Synthetic paste render stage: \(value)")
+        func stage(_ value: String) throws {
+            try NativeRenderEvidence.record("Synthetic paste render stage: \(value)")
         }
-        stage("starting")
+        try stage("starting")
         let fixture = try PasteAppFixture()
         defer { fixture.cleanUp() }
         _ = try fixture.ready(true)
@@ -19,9 +19,9 @@ extension ProductRenderingTests {
         let lease = try XCTUnwrap(fixture.registrar.leases.last)
         lease.fire(.pressed)
         let native = try renderPasteSettings(fixture, name: "plain-paste-settings-own-native-light", scheme: .light)
-        stage("native rendered")
+        try stage("native rendered")
         let words = try pasteSettingsWords(native)
-        stage("native recognized")
+        try stage("native recognized")
         XCTAssertTrue(words.contains("native paste and match style was dispatched"))
         XCTAssertFalse(words.contains("pasted successfully"))
         fixture.routing.handlesNativePaste = false
@@ -29,9 +29,9 @@ extension ProductRenderingTests {
         lease.fire(.pressed)
         let unavailable = try renderPasteSettings(fixture, name: "plain-paste-settings-own-unavailable-zh-dark",
                                                  scheme: .dark, chinese: true)
-        stage("unavailable rendered")
+        try stage("unavailable rendered")
         let chinese = try pasteSettingsWords(unavailable, chinese: true).filter { !$0.isWhitespace }
-        print("Synthetic paste settings OCR: \(chinese)")
+        try NativeRenderEvidence.record("Synthetic paste settings OCR: \(chinese)")
         XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
         XCTAssertTrue(chinese.contains("未请求外部粘贴"), chinese)
         XCTAssertTrue(chinese.contains("文件与文字混合"), chinese)
@@ -233,7 +233,7 @@ extension ProductRenderingTests {
             // These are authored UI sentences, not arbitrary user text whose spelling must be preserved.
             request.usesLanguageCorrection = true
             request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-            try VNImageRequestHandler(cgImage: tile).perform([request])
+            try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(tile)).perform([request])
             pieces += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         }
         return pieces.joined(separator: " ").lowercased()

@@ -508,6 +508,18 @@ Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与
 计数截图的inspect错误保留为XCTAssertNoThrow失败，同时继续保存原始bitmap以定位丢失文字；
 不是跳过断言或把缺失视为成功。补充stdout诊断，旧中文OCR的具体失败原因仍待完整读回。
 
+`76f01c1`正常第二次push的完整hook1846项/99.505秒通过；首次hook和独立Windows历史模块
+均复现旧AccessDenied，未修改系统保护或宣称该问题已修。
+[run35312903796](https://github.com/mclight-ship-it/cc-translate/actions/runs/35312903796)
+提前实际744项/23前置skip/14失败断言（4 unexpected）/476.248秒，6方法失败：
+本应用sendEvent候选未解决摘要和历史二次操作，还出现历史恢复按钮未及时绘制的问题。
+保留下来的原始Capture PNG已直接查看，两行计数及独立字节超限提示均可见；
+因此计数用例的失败是OCR漏读，不能把它描述为产品隐藏计数。
+下一修正沿用仓库已有原生控件mouseDown/tracking timer释放方式；
+测试识别使用等比放大副本，原始PNG不变、不注入预期词、不改原断言。
+原生控件/失败状态/合成OCR诊断另写附件文本，避免console缺少输出时凭猜测判定原因。
+该候选仍待新源码实际验证，完整App及消费者尚未通过。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证

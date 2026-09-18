@@ -82,7 +82,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cc-translate-native-ui-${{ github.sha }}
-          path: tools/macos/.build/ui-screenshots/*.png
+          path: |
+            tools/macos/.build/ui-screenshots/*.png
+            tools/macos/.build/ui-screenshots/*.txt
           if-no-files-found: warn
           retention-days: 7
       - name: Build and audit development-only bundle with pinned runtime

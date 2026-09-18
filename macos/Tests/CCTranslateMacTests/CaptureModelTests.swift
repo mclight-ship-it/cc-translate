@@ -102,12 +102,15 @@ enum CaptureProductFixture {
     }
 
     static func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                        diagnostics: @MainActor () -> String = { "" },
                         _ condition: @MainActor () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTFail("The synthetic capture lifecycle did not reach the expected state.", file: file, line: line)
+        let details = diagnostics()
+        if !details.isEmpty { try NativeRenderEvidence.record(details) }
+        XCTFail("The synthetic capture lifecycle did not reach the expected state. \(details)", file: file, line: line)
         throw CaptureFixtureError.timeout
     }
 

@@ -2,6 +2,32 @@ import AppKit
 import Vision
 import XCTest
 
+@MainActor
+enum NativeRenderEvidence {
+    private static var messages: [String] = []
+
+    static func record(_ message: String) throws {
+        print(message)
+        guard let directory = ProcessInfo.processInfo.environment["CC_TRANSLATE_UI_SCREENSHOTS_DIR"] else { return }
+        let folder = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        messages.append(message)
+        try messages.joined(separator: "\n").write(
+            to: folder.appendingPathComponent("native-render-diagnostics.txt"), atomically: true, encoding: .utf8)
+    }
+
+    static func recognitionImage(_ image: CGImage) throws -> CGImage {
+        // Enlarge a recognition-only copy of small UI glyphs; keep the original review PNG unchanged.
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: image.width * 2, height: image.height * 2, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(image.width * 2), height: CGFloat(image.height * 2)))
+        return try XCTUnwrap(context.makeImage())
+    }
+}
+
 enum NativeRenderedControlKind: String {
     case button, toggle
 }
@@ -91,7 +117,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         let control = backing.control
         guard control.window === window, root.window === window else { throw RenderedLookupError.detachedView }
         window.makeKeyAndOrderFront(nil)
-        print("Rendered focus \(identifier): acceptsFirstResponder=\(control.acceptsFirstResponder)")
+        try NativeRenderEvidence.record("Rendered focus \(identifier): acceptsFirstResponder=\(control.acceptsFirstResponder)")
         XCTAssertTrue(window.makeFirstResponder(control))
         XCTAssertTrue(window.firstResponder === control, "The actual NSControl must own the responder focus.")
         guard window.firstResponder === control else { throw RenderedLookupError.focusFailed }
@@ -111,7 +137,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         }
         XCTAssertTrue(isEnabled)
         guard isEnabled else { throw RenderedLookupError.disabled }
-        print("Rendered press \(identifier): state=\(backing.state.rawValue), " +
+        try NativeRenderEvidence.record("Rendered press \(identifier): state=\(backing.state.rawValue), " +
               "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
         window.makeKeyAndOrderFront(nil)
         let point = NSPoint(x: frame.midX, y: frame.midY)
@@ -123,18 +149,30 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         let up = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseUp, location: point, modifierFlags: [], timestamp: down.timestamp + 0.1,
             windowNumber: window.windowNumber, context: nil, eventNumber: number + 1, clickCount: 1, pressure: 0))
-        // Tracking controls may consume mouse-up before sendEvent returns.
-        NSApp.postEvent(up, atStart: true)
-        NSApp.sendEvent(down)
+        var releasedDuringTracking = false
+        let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                releasedDuringTracking = true
+                NSApp.postEvent(up, atStart: true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        defer { timer.invalidate() }
+        control.mouseDown(with: down)
+        if !releasedDuringTracking {
+            timer.invalidate()
+            control.mouseUp(with: up)
+        }
         if let queued = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                         inMode: .default, dequeue: false),
            queued.windowNumber == up.windowNumber, queued.eventNumber == up.eventNumber {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertEqual(release.eventNumber, up.eventNumber)
-            NSApp.sendEvent(release)
+            control.mouseUp(with: release)
         }
-        print("Rendered pressed \(identifier): state=\(backing.state.rawValue), enabled=\(isEnabled)")
+        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
+            "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")
     }
 }
 
@@ -233,7 +271,7 @@ enum NativeSettingsTestControls {
         request.recognitionLanguages = caption.unicodeScalars.allSatisfy { $0.isASCII }
             ? ["en-US"] : ["zh-Hans", "en-US"]
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         var matches: [CaptionMatch] = []
         var fragments: [String] = []
         let words = Set(caption.split(whereSeparator: { $0.isWhitespace }).map(String.init))
@@ -341,7 +379,7 @@ enum NativeSettingsTestControls {
         case .button: type = "NSButton"
         case .toggle: type = "NSSwitch"
         }
-        print("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(route); " +
+        try NativeRenderEvidence.record("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(route); " +
               "frame=\(RenderedGeometry.frame(candidate.control)); fixture caption=\(label)")
         return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier)
     }
