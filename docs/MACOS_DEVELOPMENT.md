@@ -1092,6 +1092,15 @@ Mac营销版本由`macos/Resources/Info.plist`独立维护，不复用Windows版
 producer与两个消费者的真实About断言通过。8项新增离线契约及bundle/runtime80项、
 正常1933项hook、845原生方法和140PNG均已验证；[完整证据](MACOS_TODO.md#native-app-version-checkpoint)已保留。
 
+### Sparkle框架（后续源码，尚未进入当前推荐包）
+
+后续构包正在引入固定Sparkle2.10.0依赖，完整复制官方framework、内部helper和第三方许可，
+不修改厂商签名，不分发签名工具/私钥。主App仍为Apple Silicon候选；
+framework原有双架构不意味着整个App支持Intel。
+便携打包/运行时93项已通过，新的真实框架加载测试与完整App仍需Mac验证。
+当前没有更新feed、没有自动检查或安装入口，不需要用户改CLI、账号或购买开发者资格；
+版本146的当前下载不因此提前替换。后续继续原生检查更新、升级签名与N→N+1数据保护。
+
 ### Claude服务（当前开发包已提供）
 
 f9781b7 / run35358487419已实际watch exit0、3jobs/42steps全成功；

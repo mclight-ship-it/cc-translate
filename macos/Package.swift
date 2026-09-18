@@ -10,10 +10,17 @@ let package = Package(
         .library(name: "CCProcessSupport", type: .dynamic, targets: ["CCProcessSupport"]),
         .library(name: "CCTranslateSupport", targets: ["CCTranslateSupport"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
+    ],
     targets: [
         .target(name: "CCProcessSupport"),
         .target(name: "CCTranslateSupport", dependencies: ["CCProcessSupport"]),
-        .executableTarget(name: "CCTranslateMac", dependencies: ["CCTranslateSupport"]),
+        .executableTarget(
+            name: "CCTranslateMac",
+            dependencies: ["CCTranslateSupport", .product(name: "Sparkle", package: "Sparkle")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+        ),
         .executableTarget(name: "CCClipboardTestProducer",
                           path: "Tests/CCTranslateSupportTests/Fixtures/ClipboardProducer"),
         .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"],

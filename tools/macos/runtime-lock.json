@@ -8,6 +8,7 @@
   "python_target": "aarch64-apple-darwin",
   "pbs_release": "20260901",
   "pbs_commit": "4bb01f09aaf362c71e891be4a41cb6d6ddf830b3",
+  "sparkle_version": "2.10.0",
   "assets": {
     "runtime": {
       "filename": "runtime.tar.gz",
@@ -27,6 +28,12 @@
       "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
       "version": "2026.7.22",
       "size": 136983
+    },
+    "sparkle": {
+      "filename": "Sparkle-for-Swift-Package-Manager.zip",
+      "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip",
+      "sha256": "17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959",
+      "size": 10193895
     },
     "mpl": {
       "filename": "MPL-2.0.txt",

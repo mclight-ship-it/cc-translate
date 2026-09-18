@@ -298,6 +298,109 @@ class LicenseRulesTests(unittest.TestCase):
         self.assertEqual(self.lock["certificate_member"], "certifi/cacert.pem")
 
 
+class SparklePackagingTests(ProjectDirectory):
+    def archive(self, extra=(), omitted=()):
+        path = self.root / "sparkle.zip"
+        prefix = bundle.SPARKLE_ARCHIVE_ROOT + "/"
+        entries = [(name, b"synthetic Mach-O", stat.S_IFREG | 0o755)
+                   for name in (*bundle.SPARKLE_HELPERS, "Versions/B/Sparkle")]
+        entries += [
+            ("Versions/B/Resources/Info.plist", plistlib.dumps({
+                "CFBundleIdentifier": "org.sparkle-project.Sparkle",
+                "CFBundleShortVersionString": "2.10.0",
+            }), stat.S_IFREG | 0o644),
+            ("Versions/Current", b"B", stat.S_IFLNK | 0o755),
+            ("Resources", b"Versions/Current/Resources", stat.S_IFLNK | 0o755),
+        ]
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, data, mode in (*entries, *extra):
+                if name in omitted:
+                    continue
+                info = zipfile.ZipInfo(prefix + name)
+                info.create_system = 3
+                info.external_attr = mode << 16
+                archive.writestr(info, data)
+            archive.writestr("LICENSE", b"Complete synthetic license fixture.")
+        lock = deepcopy(bundle.load_lock())
+        lock["assets"]["sparkle"].update(size=path.stat().st_size, sha256=bundle.digest(path))
+        return path, lock
+
+    def test_archive_records_framework_helpers_links_modes_and_complete_license(self):
+        path, lock = self.archive()
+        metadata, license_text = bundle.sparkle_archive(path, lock)
+        self.assertEqual(metadata["archive_sha256"], bundle.digest(path))
+        self.assertEqual(metadata["version"], "2.10.0")
+        self.assertEqual(metadata["files"]["Versions/Current"], {"symlink": "B"})
+        self.assertTrue(metadata["files"]["Versions/B/Sparkle"]["executable"])
+        self.assertFalse(metadata["files"]["Versions/B/Resources/Info.plist"]["executable"])
+        self.assertEqual(metadata["license_sha256"], hashlib.sha256(license_text).hexdigest())
+
+    def test_archive_rejects_changed_pinned_bytes(self):
+        path, lock = self.archive()
+        path.write_bytes(path.read_bytes() + b"changed")
+        with self.assertRaisesRegex(bundle.BundleError, "asset size mismatch"):
+            bundle.sparkle_archive(path, lock)
+
+    def test_archive_rejects_missing_nested_helper(self):
+        path, lock = self.archive(omitted=(bundle.SPARKLE_HELPERS[-1],))
+        with self.assertRaisesRegex(bundle.BundleError, "executable inventory"):
+            bundle.sparkle_archive(path, lock)
+
+    def test_archive_rejects_links_outside_framework_and_traversing_entries(self):
+        for name, target, kind in (
+                ("Escape", b"../dSYMs", stat.S_IFLNK),
+                ("Versions/B/../Escape", b"fixture", stat.S_IFREG)):
+            with self.subTest(name=name):
+                path, lock = self.archive(extra=((name, target, kind | 0o644),))
+                with self.assertRaises(bundle.BundleError):
+                    bundle.sparkle_archive(path, lock)
+
+    def test_archive_rejects_version_drift(self):
+        path, lock = self.archive()
+        lock["sparkle_version"] = "2.9.0"
+        with self.assertRaisesRegex(bundle.BundleError, "version mismatch"):
+            bundle.sparkle_archive(path, lock)
+
+    def test_embedding_preserves_vendor_bytes_and_does_not_run_or_sign_anything(self):
+        artifacts = self.root / "macos/.build/artifacts/sparkle/Sparkle"
+        framework = artifacts / bundle.SPARKLE_ARCHIVE_ROOT
+        framework.mkdir(parents=True)
+        (framework / "Sparkle").write_bytes(b"synthetic library")
+        license_text = b"complete synthetic vendor license"
+        metadata = {"files": bundle.framework_inventory(framework)}
+        contents = self.root / "Output.app/Contents"
+        with patch.object(bundle, "ROOT", self.root), patch.object(bundle, "run") as run:
+            bundle.embed_sparkle(contents, metadata, license_text)
+        self.assertEqual(bundle.framework_inventory(contents / "Frameworks/Sparkle.framework"),
+                         metadata["files"])
+        self.assertEqual((contents / "Resources/Licenses/Sparkle/LICENSE").read_bytes(), license_text)
+        run.assert_not_called()
+
+    def test_embedding_rejects_missing_or_changed_swiftpm_artifact_before_output(self):
+        contents = self.root / "Output.app/Contents"
+        with patch.object(bundle, "ROOT", self.root):
+            with self.assertRaisesRegex(bundle.BundleError, "missing or ambiguous"):
+                bundle.embed_sparkle(contents, {"files": {}}, b"license")
+            framework = self.root / "macos/.build/artifacts/sparkle/Sparkle.framework"
+            framework.mkdir(parents=True)
+            (framework / "Sparkle").write_bytes(b"changed artifact")
+            with self.assertRaisesRegex(bundle.BundleError, "differs from"):
+                bundle.embed_sparkle(contents, {"files": {}}, b"license")
+        self.assertFalse(contents.exists())
+
+    def test_package_and_archive_pins_select_same_vendor_without_app_feed(self):
+        lock = bundle.load_lock()
+        package = (bundle.ROOT / "macos/Package.swift").read_text(encoding="utf-8")
+        pins = json.loads((bundle.ROOT / "macos/Package.resolved").read_bytes())["pins"]
+        self.assertIn('exact: "' + lock["sparkle_version"] + '"', package)
+        self.assertIn('@executable_path/../Frameworks', package)
+        self.assertEqual(pins[0]["state"]["version"], lock["sparkle_version"])
+        self.assertEqual(pins[0]["state"]["revision"], "eef1a539a373c1f1a320624b1130fc5de7b2e100")
+        info = plistlib.loads((bundle.ROOT / "macos/Resources/Info.plist").read_bytes())
+        self.assertNotIn("SUFeedURL", info)
+        self.assertNotIn("SUPublicEDKey", info)
+
+
 class MachORulesTests(ProjectDirectory):
     def setUp(self):
         super().setUp()
@@ -316,6 +419,8 @@ class MachORulesTests(ProjectDirectory):
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib",
                     "Helpers/python/lib/libCCProcessSupport.dylib"]
+        binaries += ["Frameworks/Sparkle.framework/" + path
+                     for path in (*bundle.SPARKLE_HELPERS, "Versions/B/Sparkle")]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cc_macos/dictionary.py",
@@ -333,7 +438,8 @@ class MachORulesTests(ProjectDirectory):
                      "Resources/Core/cc_macos/image.py",
                      "Resources/Core/cc_macos/image_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
-                     "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json"]
+                     "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/Licenses/Python/PYTHON.json",
+                     "Resources/Licenses/Sparkle/LICENSE"]
         resources += ["Resources/Licenses/Python/licenses/" + name
                       for name in lock["required_runtime_licenses"]]
         resources += ["Resources/Core/" + name for name in SHARED_CORE_FILES]
@@ -347,6 +453,12 @@ class MachORulesTests(ProjectDirectory):
         bundle.write_json(contents / "Resources/source-manifest.json", {
             "lock": lock, "certificate_sha256": bundle.digest(contents / "Resources/Core/cacert.pem"),
             "application": bundle.application_metadata(info, lock),
+            "sparkle": {
+                "version": lock["sparkle_version"],
+                "archive_sha256": lock["assets"]["sparkle"]["sha256"],
+                "files": bundle.framework_inventory(contents / "Frameworks/Sparkle.framework"),
+                "license_sha256": bundle.digest(contents / "Resources/Licenses/Sparkle/LICENSE"),
+            },
             "resource_hashes": {name: bundle.digest(contents / name) for name in resources},
         })
         return app
@@ -355,10 +467,12 @@ class MachORulesTests(ProjectDirectory):
     def fake_apple_tool(args, environment=None):
         tool = Path(args[0]).name
         binary = Path(args[-1])
+        if tool == "codesign":
+            return ""
         if tool == "file":
             return "Mach-O 64-bit arm64 (synthetic test fixture)"
         if tool == "lipo":
-            return "arm64"
+            return "x86_64 arm64" if "Sparkle.framework" in binary.parts else "arm64"
         if args[1] == "-l":
             minimum = "14.0" if binary.name in ("CCTranslateMac", "libCCProcessSupport.dylib") else "11.0"
             result = f"Load command 0\n cmd LC_BUILD_VERSION\n platform 1\n minos {minimum}\n"
@@ -373,8 +487,8 @@ class MachORulesTests(ProjectDirectory):
         app = self.synthetic_app()
         with patch.object(bundle, "run", side_effect=self.fake_apple_tool) as tools:
             report = bundle.audit_bundle(app, bundle.load_lock())
-        self.assertEqual(len(report["checks"]), 4)
-        self.assertEqual(tools.call_count, 16)
+        self.assertEqual(len(report["checks"]), 9)
+        self.assertEqual(tools.call_count, 37)
         self.assertEqual(report["release_gate"], "NOT PASSED")
 
     def test_audit_rejects_application_version_changed_after_manifest_creation(self):
@@ -387,6 +501,63 @@ class MachORulesTests(ProjectDirectory):
                 bundle.BundleError, "application version/identity"):
             bundle.audit_bundle(app, bundle.load_lock())
         tools.assert_not_called()
+
+    def test_sparkle_modification_is_rejected_before_platform_tools(self):
+        app = self.synthetic_app()
+        (app / "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle").write_bytes(b"changed")
+        with patch.object(bundle, "run") as tools, self.assertRaisesRegex(
+                bundle.BundleError, "framework content changed"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        tools.assert_not_called()
+
+    def test_sparkle_license_modification_is_rejected_before_platform_tools(self):
+        app = self.synthetic_app()
+        (app / "Contents/Resources/Licenses/Sparkle/LICENSE").write_bytes(b"shortened")
+        with patch.object(bundle, "run") as tools, self.assertRaisesRegex(
+                bundle.BundleError, "Sparkle license changed"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        tools.assert_not_called()
+
+    def test_sparkle_uses_arm_slice_and_readonly_signature_verification(self):
+        app = self.synthetic_app()
+        with patch.object(bundle, "run", side_effect=self.fake_apple_tool) as tools:
+            report = bundle.audit_bundle(app, bundle.load_lock())
+        for call in tools.call_args_list:
+            args = call.args[0]
+            if str(args[-1]).endswith("Sparkle.framework"):
+                self.assertEqual(args[1:-1], ["--verify", "--strict", "--deep"])
+            elif "Sparkle.framework" in str(args[-1]) and Path(args[0]).name == "otool":
+                self.assertEqual(args[2:4], ["-arch", "arm64"])
+        vendor = [item for item in report["checks"] if "Sparkle.framework" in item["path"]]
+        self.assertEqual(len(vendor), 5)
+        self.assertTrue(all(set(item["contained_architectures"]) == {"arm64", "x86_64"} for item in vendor))
+
+    def test_sparkle_helpers_resolve_executable_paths_from_their_own_location(self):
+        app = self.synthetic_app()
+        helper = app / "Contents/Frameworks/Sparkle.framework" / bundle.SPARKLE_HELPERS[1]
+
+        def tools(args, environment=None):
+            result = self.fake_apple_tool(args, environment)
+            if Path(args[-1]) == helper and args[1] == "-l":
+                result += "Load command 1\n cmd LC_RPATH\n path @executable_path (offset 12)\n"
+            if Path(args[-1]) == helper and args[1] == "-L":
+                result += "\t@rpath/Updater (compatibility version 1.0.0, current version 1.0.0)\n"
+            return result
+
+        with patch.object(bundle, "run", side_effect=tools):
+            bundle.audit_bundle(app, bundle.load_lock())
+
+    def test_vendor_exception_does_not_allow_universal_application_binary(self):
+        app = self.synthetic_app()
+
+        def tools(args, environment=None):
+            if Path(args[0]).name == "lipo" and Path(args[-1]).name == "CCTranslateMac":
+                return "x86_64 arm64"
+            return self.fake_apple_tool(args, environment)
+
+        with patch.object(bundle, "run", side_effect=tools), self.assertRaisesRegex(
+                bundle.BundleError, "unexpected binary architectures"):
+            bundle.audit_bundle(app, bundle.load_lock())
 
     def test_audit_checks_unreferenced_macho_and_rejects_newer_os(self):
         app = self.synthetic_app()

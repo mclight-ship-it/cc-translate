@@ -2754,8 +2754,21 @@ App只下载一次，最终再次核对bytes/SHA后只删除确切内层ZIP并�
 Mac营销版本由自身Info模板维护，不复用Windows版本；CI明确传workflow的run_number作为build，
 同run重试沿用构建号。本地不传build-number时使用模板开发值，不据此发布升级。
 版本基础不是Sparkle更新器、更新feed或Release。下一项已核对Sparkle稳定2.10.0的官方包及延迟启动API；
-尚未引入依赖或配置feed，仍需实际framework/嵌套helper打包、许可、更新签名及N→N+1验证，
+后续源码正在嵌入framework/嵌套helper及许可，仍需本源码Mac验证、更新签名及N→N+1验证，
 不通过改变用户CLI、账号或购买签名来代替工程实现。
+
+### 进行中：Sparkle框架打包，不冒充自动更新完成
+
+后续源码固定官方Sparkle2.10.0及SwiftPM提交/归档校验值。
+已实际核对10,193,895字节归档、94个framework文件/链接、9个内部链接、完整6,154字节许可；
+只嵌入原样framework及4个运行时helper，不把签名工具、私钥或dSYM放进用户App。
+构包比较SwiftPM产物与固定归档的完整文件/权限/链接，保留厂商签名，不裁切或重签框架；
+Mac审计只读验证厂商签名，原生App本身仍未Developer ID签名/公证。
+仅此原样厂商framework保留arm64/x86_64，实际审计arm64切片及各helper自身加载路径；
+主App和Python仍是arm64，不能据此承诺Intel支持，也不放宽其他包内容的检查。
+新增13项便携契约，bundle/runtime联合93项/16.796s通过；另加1项真实SwiftPM框架加载/
+不启动更新会话测试，尚待Mac编译运行与同包验证。当前推荐仍是上面的4dfb04a/build146。
+本步不启动更新检查、没有feed/密钥配置，不发布Release；检查更新界面、签名升级和重启保护继续实施。
 
 ### P4剩余验收
 

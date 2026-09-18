@@ -50,6 +50,13 @@ MACHO_MAGIC = {
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
     b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
 }
+SPARKLE_ARCHIVE_ROOT = "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_HELPERS = (
+    "Versions/B/Autoupdate",
+    "Versions/B/Updater.app/Contents/MacOS/Updater",
+    "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+    "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer",
+)
 
 
 class BundleError(ValueError):
@@ -520,6 +527,77 @@ def application_metadata(info, lock):
     }
 
 
+def sparkle_archive(archive, lock):
+    verified_asset(archive, lock["assets"]["sparkle"])
+    catalog = {}
+    prefix = SPARKLE_ARCHIVE_ROOT + "/"
+    with zipfile.ZipFile(archive) as source:
+        for item in source.infolist():
+            if not item.filename.startswith(prefix) or item.is_dir():
+                continue
+            relative = item.filename.removeprefix(prefix)
+            archive_path(relative)
+            need(relative not in catalog, "duplicate Sparkle framework entry")
+            mode = item.external_attr >> 16
+            need(not mode & 0o7000 and item.file_size <= MAX_MEMBER_BYTES,
+                 "invalid Sparkle framework member")
+            data = source.read(item)
+            if stat.S_ISLNK(mode):
+                target = data.decode("utf-8")
+                destination = link_destination(item.filename, target)
+                need(destination.is_relative_to(SPARKLE_ARCHIVE_ROOT), "Sparkle link escapes framework")
+                catalog[relative] = {"symlink": target}
+            else:
+                need(stat.S_IFMT(mode) in (0, stat.S_IFREG), "special Sparkle framework member")
+                catalog[relative] = {"sha256": hashlib.sha256(data).hexdigest(),
+                                     "executable": bool(mode & 0o111)}
+        license_text = source.read("LICENSE")
+        info = plistlib.loads(source.read(prefix + "Versions/B/Resources/Info.plist"))
+    need(info["CFBundleIdentifier"] == "org.sparkle-project.Sparkle" and
+         info["CFBundleShortVersionString"] == lock["sparkle_version"], "Sparkle version mismatch")
+    need(all(path in catalog for path in (*SPARKLE_HELPERS, "Versions/B/Sparkle")),
+         "Sparkle executable inventory incomplete")
+    need(license_text.strip(), "Sparkle license missing")
+    return {"version": lock["sparkle_version"],
+            "archive_sha256": lock["assets"]["sparkle"]["sha256"],
+            "files": catalog, "license_sha256": hashlib.sha256(license_text).hexdigest()}, license_text
+
+
+def framework_inventory(framework):
+    need(framework.is_dir() and not framework.is_symlink(), "Sparkle framework missing or linked")
+    inventory = {}
+    for path in sorted(framework.rglob("*")):
+        relative = path.relative_to(framework).as_posix()
+        archive_path(relative)
+        need(contained(path, framework), "Sparkle member escapes framework")
+        if path.is_symlink():
+            need(path.exists(), "dangling Sparkle link")
+            inventory[relative] = {"symlink": os.readlink(path)}
+        elif path.is_file():
+            mode = path.stat().st_mode
+            need(not mode & 0o7000, "privileged Sparkle member")
+            inventory[relative] = {"sha256": digest(path), "executable": bool(mode & 0o111)}
+        else:
+            need(path.is_dir(), "special Sparkle member")
+    return inventory
+
+
+def embed_sparkle(contents, metadata, license_text):
+    artifacts = ROOT / "macos/.build/artifacts"
+    candidates = list(artifacts.rglob("Sparkle.framework"))
+    need(len(candidates) == 1 and contained(candidates[0], artifacts),
+         "SwiftPM Sparkle framework missing or ambiguous")
+    need(framework_inventory(candidates[0]) == metadata["files"],
+         "SwiftPM framework differs from the pinned Sparkle archive")
+    destination = contents / "Frameworks/Sparkle.framework"
+    destination.parent.mkdir(parents=True)
+    shutil.copytree(candidates[0], destination, symlinks=True)
+    need(framework_inventory(destination) == metadata["files"], "Sparkle copy changed vendor bytes")
+    license_path = contents / "Resources/Licenses/Sparkle/LICENSE"
+    license_path.parent.mkdir(parents=True)
+    license_path.write_bytes(license_text)
+
+
 def audit_bundle(app, lock, environment=None):
     need(app.is_dir() and not app.is_symlink(), "bundle missing or symlinked")
     contents = app / "Contents"
@@ -546,7 +624,7 @@ def audit_bundle(app, lock, environment=None):
         "Resources/Core/cc_macos/image_fixture.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
         "Resources/Licenses/certifi/MPL-2.0.txt", "Resources/source-manifest.json",
-        "Resources/Licenses/Python/PYTHON.json",
+        "Resources/Licenses/Python/PYTHON.json", "Resources/Licenses/Sparkle/LICENSE",
     ]
     required += ["Resources/Core/" + name for name in SHARED_CORE_MODULES]
     required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CORE_FILES]
@@ -558,6 +636,17 @@ def audit_bundle(app, lock, environment=None):
     need(provenance["lock"] == lock, "bundle source lock mismatch")
     need(provenance.get("application") == application_metadata(info, lock),
          "application version/identity does not match the source manifest")
+    framework = contents / "Frameworks/Sparkle.framework"
+    sparkle = provenance.get("sparkle", {})
+    need(sparkle.get("version") == lock["sparkle_version"] and
+         sparkle.get("archive_sha256") == lock["assets"]["sparkle"]["sha256"],
+         "Sparkle source lock mismatch")
+    need(framework_inventory(framework) == sparkle.get("files"), "Sparkle framework content changed")
+    need(all((framework / path).is_file() for path in (*SPARKLE_HELPERS, "Versions/B/Sparkle")),
+         "Sparkle executable missing")
+    license_path = contents / "Resources/Licenses/Sparkle/LICENSE"
+    need(license_path.is_file() and not license_path.is_symlink() and
+         digest(license_path) == sparkle.get("license_sha256"), "Sparkle license changed")
     resource_hashes = provenance["resource_hashes"]
     need(all(path in resource_hashes for path in required if path.startswith("Resources/")
              and path != "Resources/source-manifest.json"), "incomplete resource source inventory")
@@ -575,7 +664,8 @@ def audit_bundle(app, lock, environment=None):
         relative = path.relative_to(app).as_posix()
         need(contained(path, app), "bundle symlink escapes root")
         if path.is_symlink():
-            need(path.is_file(), "dangling/directory bundle symlink")
+            need(path.is_file() or (path.is_relative_to(framework) and path.is_dir()),
+                 "dangling/directory bundle symlink")
             inventory.append({"path": relative, "symlink": os.readlink(path)})
         elif path.is_file():
             need(path.suffix not in (".pyc", ".pyo") and "__pycache__" not in path.parts,
@@ -593,21 +683,29 @@ def audit_bundle(app, lock, environment=None):
     libpython = contents / "Helpers/python/lib/libpython3.12.dylib"
     bridge = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
     need(all(path in files for path in (native, python, libpython, bridge)), "bundle runtime is not Mach-O")
+    run(["/usr/bin/codesign", "--verify", "--strict", "--deep", framework], environment)
     parsed, report = {}, []
     for binary in files:
         description = run(["/usr/bin/file", "-b", binary], environment)
         need("Mach-O" in description, "file did not confirm Mach-O")
         archs = run(["/usr/bin/lipo", "-archs", binary], environment).split()
-        need(archs == ["arm64"], "non-arm64 or universal binary: " + binary.name)
-        parsed[binary] = parse_load_commands(run(["/usr/bin/otool", "-l", binary], environment))
+        vendor = binary.is_relative_to(framework)
+        need(set(archs) == {"arm64", "x86_64"} if vendor else archs == ["arm64"],
+             "non-arm64 or unexpected binary architectures: " + binary.name)
+        slice_args = ["-arch", "arm64"] if vendor else []
+        parsed[binary] = parse_load_commands(run(["/usr/bin/otool", "-l", *slice_args, binary], environment))
+        parsed[binary]["architectures"] = archs
         need(all(version(v) <= version(lock["deployment_target"])
                  for v in parsed[binary]["minimums"]), "Mach-O requires newer macOS: " + binary.name)
         if binary in (native, bridge):
             need(all(version(v) == version(lock["deployment_target"])
                      for v in parsed[binary]["minimums"]), "native deployment target drift")
-        parsed[binary]["dependencies"] = parse_dependencies(run(["/usr/bin/otool", "-L", binary], environment))
+        parsed[binary]["dependencies"] = parse_dependencies(
+            run(["/usr/bin/otool", "-L", *slice_args, binary], environment))
     for binary, commands in parsed.items():
         executable = python if binary.is_relative_to(contents / "Helpers") else native
+        if binary in {framework / path for path in SPARKLE_HELPERS}:
+            executable = binary
         parents = [executable]
         if executable == python and binary not in (python, libpython):
             parents.append(libpython)
@@ -628,6 +726,7 @@ def audit_bundle(app, lock, environment=None):
             need(isinstance(target, str) or target in parsed, "dependency is not audited Mach-O")
         report.append({
             "path": binary.relative_to(app).as_posix(), "architecture": "arm64",
+            "contained_architectures": commands["architectures"],
             "minimum_os": commands["minimums"], "rpaths": commands["rpaths"],
             "install_id": commands["id"], "dependencies": dependencies,
         })
@@ -674,6 +773,7 @@ def build(lock, offline=False, build_number=None):
     need(not BUILD.is_symlink(), "build directory cannot be a symlink")
     assets = fetch_assets(lock, offline)
     metadata, licenses, coverage, ca, notice, mpl = inspect_assets(assets, lock)
+    sparkle, sparkle_license = sparkle_archive(assets["sparkle"], lock)
     args = ["/usr/bin/xcrun", "swift", "build", "--package-path", ROOT / "macos",
             "--configuration", "release", "--triple", "arm64-apple-macosx14.0",
             "--product", "CCTranslateMac"]
@@ -685,6 +785,7 @@ def build(lock, offline=False, build_number=None):
     (contents / "MacOS").mkdir(parents=True)
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    embed_sparkle(contents, sparkle, sparkle_license)
     excluded = extract_runtime(assets["runtime"], contents / "Helpers/python", lock)
     shutil.copy2(binary_directory / "libCCProcessSupport.dylib",
                  contents / "Helpers/python/lib/libCCProcessSupport.dylib")
@@ -712,6 +813,7 @@ def build(lock, offline=False, build_number=None):
         "release_gate": "NOT PASSED", "application_license": "requires separate confirmation",
         "lock": lock, "toolchain": toolchain, "runtime_license_coverage": coverage,
         "application": application_metadata(info, lock),
+        "sparkle": sparkle,
         "resource_hashes": resource_hashes,
         "excluded_runtime_members": excluded, "certificate_sha256": hashlib.sha256(ca).hexdigest(),
         "certificate_source": lock["assets"]["certifi"]["url"],
