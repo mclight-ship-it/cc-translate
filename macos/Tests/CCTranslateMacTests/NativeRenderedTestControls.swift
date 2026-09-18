@@ -27,6 +27,16 @@ enum NativeRenderEvidence {
         return try XCTUnwrap(context.makeImage())
     }
 
+    static func doubleResolutionBitmap(size: NSSize) throws -> NSBitmapImageRep {
+        // Rasterize native glyphs at two pixels per point before any recognition-only enlargement.
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.size = size
+        return bitmap
+    }
+
     static func settingsWords(_ png: Data, chinese: Bool = false) throws -> String {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         var pieces: [String] = []
@@ -312,12 +322,18 @@ enum NativeSettingsTestControls {
         root.displayIfNeeded()
     }
 
-    private static func readCaption(_ caption: String, in root: NSView) throws -> Readback {
+    private static func readCaption(_ caption: String, in root: NSView,
+                                    authoredCaption: Bool = false) throws -> Readback {
         let bounds = root.bounds
-        guard bounds.width > 0, bounds.height > 0,
-              let bitmap = root.bitmapImageRepForCachingDisplay(in: bounds) else {
+        guard bounds.width > 0, bounds.height > 0 else {
             XCTFail("The fixture cannot provide a native bitmap for its caption.")
             throw RenderedLookupError.unavailableBitmap
+        }
+        let bitmap: NSBitmapImageRep
+        if authoredCaption {
+            bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: bounds.size)
+        } else {
+            bitmap = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: bounds))
         }
         root.effectiveAppearance.performAsCurrentDrawingAppearance {
             root.cacheDisplay(in: bounds, to: bitmap)
@@ -331,31 +347,35 @@ enum NativeSettingsTestControls {
         request.minimumTextHeight = 0
         request.recognitionLanguages = caption.unicodeScalars.allSatisfy { $0.isASCII }
             ? ["en-US"] : ["zh-Hans", "en-US"]
-        request.usesLanguageCorrection = false
+        request.usesLanguageCorrection = authoredCaption
         try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         var matches: [CaptionMatch] = []
         var fragments: [String] = []
         let words = Set(caption.split(whereSeparator: { $0.isWhitespace }).map(String.init))
         for observation in request.results ?? [] {
-            guard let candidate = observation.topCandidates(1).first else { continue }
-            // Diagnostics may include only exact pieces of the requested fixture caption.
-            for word in words where word.count > 1 && normalize(word) != normalize(caption) {
-                for range in ranges(of: word, in: candidate.string) {
-                    if fragments.count < 8 { fragments.append(String(candidate.string[range])) }
+            // Authored UI labels can use ranked readings, but never expected-text recognition hints.
+            for candidate in observation.topCandidates(authoredCaption ? 3 : 1) {
+                // Diagnostics may include only exact pieces of the requested fixture caption.
+                for word in words where word.count > 1 && normalize(word) != normalize(caption) {
+                    for range in ranges(of: word, in: candidate.string) {
+                        if fragments.count < 8 { fragments.append(String(candidate.string[range])) }
+                    }
                 }
-            }
-            for range in ranges(of: caption, in: candidate.string) {
-                guard let box = try candidate.boundingBox(for: range) else { continue }
-                let normalized = box.boundingBox
-                guard !normalized.isEmpty else { continue }
-                // Vision uses the image's lower-left origin; NSHostingView can be flipped.
-                let rectangle = NSRect(
-                    x: bounds.minX + normalized.minX * bounds.width,
-                    y: root.isFlipped ? bounds.maxY - normalized.maxY * bounds.height :
-                        bounds.minY + normalized.minY * bounds.height,
-                    width: normalized.width * bounds.width, height: normalized.height * bounds.height)
-                matches.append(CaptionMatch(rectangle: root.convert(rectangle, to: nil),
-                                            excerpt: String(candidate.string[range])))
+                let before = matches.count
+                for range in ranges(of: caption, in: candidate.string) {
+                    guard let box = try candidate.boundingBox(for: range) else { continue }
+                    let normalized = box.boundingBox
+                    guard !normalized.isEmpty else { continue }
+                    // Vision uses the image's lower-left origin; NSHostingView can be flipped.
+                    let rectangle = NSRect(
+                        x: bounds.minX + normalized.minX * bounds.width,
+                        y: root.isFlipped ? bounds.maxY - normalized.maxY * bounds.height :
+                            bounds.minY + normalized.minY * bounds.height,
+                        width: normalized.width * bounds.width, height: normalized.height * bounds.height)
+                    matches.append(CaptionMatch(rectangle: root.convert(rectangle, to: nil),
+                                                excerpt: String(candidate.string[range])))
+                }
+                if matches.count > before { break }
             }
         }
         return Readback(matches: matches, fragments: fragments, observationCount: request.results?.count ?? 0,
@@ -407,7 +427,7 @@ enum NativeSettingsTestControls {
     }
 
     private static func lookup(in root: NSView, identifier: String, label: String,
-                               kind: NativeRenderedControlKind) throws -> Lookup {
+                               kind: NativeRenderedControlKind, authoredCaption: Bool = false) throws -> Lookup {
         guard !identifier.isEmpty, !normalize(label).isEmpty else {
             XCTFail("A rendered-control lookup needs a fixture identifier and visible caption.")
             throw RenderedLookupError.missingOrAmbiguousControl
@@ -427,7 +447,7 @@ enum NativeSettingsTestControls {
         if !named.isEmpty {
             return Lookup(candidates: named, readback: nil, route: "public identifier/title")
         }
-        let pixels = try readCaption(label, in: root)
+        let pixels = try readCaption(label, in: root, authoredCaption: authoredCaption)
         let candidates = controls.flatMap { backing in
             pixels.matches.compactMap { match in
                 matches(backing.control, caption: match.rectangle, kind: kind, tolerance: pixels.tolerance)
@@ -467,58 +487,17 @@ enum NativeSettingsTestControls {
     }
 
     static func resolveWhenReady(in root: NSView, identifier: String, label: String,
-                                 kind: NativeRenderedControlKind) async throws -> NativeSettingsTestControl {
+                                 kind: NativeRenderedControlKind,
+                                 authoredCaption: Bool = false) async throws -> NativeSettingsTestControl {
         let deadline = Date().addingTimeInterval(2)
         var result: Lookup
         repeat {
             // Yield the actor so conditional SwiftUI controls can finish updating their native tree.
             try await Task.sleep(nanoseconds: 10_000_000)
-            result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+            result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
+                                authoredCaption: authoredCaption)
         } while result.candidates.isEmpty && Date() < deadline
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
-    }
-
-    static func accessibleButtonWhenReady(in root: NSView, identifier: String,
-                                          label: String) async throws -> NativeSettingsTestControl {
-        let deadline = Date().addingTimeInterval(2)
-        var candidates: [NativeSettingsTestControl.Backing] = []
-        var semanticCount = 0
-        repeat {
-            try await Task.sleep(nanoseconds: 10_000_000)
-            try prepare(root)
-            let window = try XCTUnwrap(root.window)
-            var visited = Set<ObjectIdentifier>()
-            var elements: [any NSAccessibilityProtocol] = []
-            func visit(_ value: Any) {
-                guard let element = value as? any NSAccessibilityProtocol,
-                      visited.insert(ObjectIdentifier(element)).inserted else { return }
-                if element.accessibilityIdentifier() == identifier,
-                   element.accessibilityRole() == .button {
-                    elements.append(element)
-                }
-                for child in element.accessibilityChildren() ?? [] { visit(child) }
-            }
-            visit(root)
-            semanticCount = elements.count
-            candidates = []
-            if elements.count == 1, let element = elements.first {
-                let name = element.accessibilityLabel() ?? element.accessibilityTitle()
-                XCTAssertEqual(name.map(normalize), normalize(label), "The actual accessible button must name its action.")
-                guard name.map(normalize) == normalize(label) else {
-                    throw RenderedLookupError.missingOrAmbiguousControl
-                }
-                // SwiftUI owns AX semantics above its NSButton; use its public screen geometry, not OCR.
-                let rectangle = window.convertFromScreen(element.accessibilityFrame())
-                candidates = views(in: root).compactMap { backing($0, kind: .button) }.filter {
-                    !RenderedGeometry.visibleRect($0.control).isEmpty &&
-                        matches($0.control, caption: rectangle, kind: .button, tolerance: 1)
-                }
-            }
-        } while candidates.isEmpty && Date() < deadline
-        try NativeRenderEvidence.record("Accessible button \(identifier): semanticMatches=\(semanticCount), nativeMatches=\(candidates.count)")
-        return try resolved(Lookup(candidates: candidates, readback: nil,
-                                   route: "public AX identifier/name/frame and actual NSButton"),
-                            in: root, identifier: identifier, label: label, kind: .button)
     }
 
     static func remainingActionWhenReady(in root: NSView, excluding toggle: NativeSettingsTestControl? = nil,

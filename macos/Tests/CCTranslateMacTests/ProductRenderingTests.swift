@@ -706,12 +706,7 @@ final class ProductRenderingTests: XCTestCase {
         XCTAssertEqual(host.bounds.size, size)
         let bitmap: NSBitmapImageRep
         if highResolution {
-            // Draw at two pixels per point; enlarging an already rasterized tiny glyph cannot restore its strokes.
-            bitmap = try XCTUnwrap(NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-            bitmap.size = size
+            bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: size)
         } else {
             bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         }

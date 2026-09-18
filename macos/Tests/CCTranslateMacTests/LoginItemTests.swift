@@ -275,22 +275,24 @@ final class LoginItemTests: XCTestCase {
             try await toggle.press()
             try await surface.waitFor { login.status == .requiresApproval && !login.busy }
             XCTAssertEqual(toggle.state, .off, "Pending approval is not enabled.")
-            let remove = try await NativeSettingsTestControls.accessibleButtonWhenReady(
+            let remove = try await NativeSettingsTestControls.resolveWhenReady(
                 in: surface.host, identifier: "remove-pending-login-item",
-                label: f.model.text("Remove pending login item", "移除待批准的登录项"))
+                label: f.model.text("Remove pending login item", "移除待批准的登录项"),
+                kind: .button, authoredCaption: true)
             try await remove.press()
             try await surface.waitFor { login.status == .notRegistered && !login.busy }
             try await toggle.press()
             try await surface.waitFor { login.status == .requiresApproval && !login.busy }
-            let settings = try await NativeSettingsTestControls.accessibleButtonWhenReady(
+            let settings = try await NativeSettingsTestControls.resolveWhenReady(
                 in: surface.host, identifier: "open-login-items",
-                label: f.model.text("Open Login Items…", "打开登录项设置…"))
+                label: f.model.text("Open Login Items…", "打开登录项设置…"),
+                kind: .button, authoredCaption: true)
             try await settings.press()
             XCTAssertEqual(service.settingsOpens, 1)
             service.current = .enabled
-            let refresh = try await NativeSettingsTestControls.accessibleButtonWhenReady(
+            let refresh = try await NativeSettingsTestControls.resolveWhenReady(
                 in: surface.host, identifier: "refresh-login-item",
-                label: f.model.text("Refresh status", "刷新状态"))
+                label: f.model.text("Refresh status", "刷新状态"), kind: .button, authoredCaption: true)
             try await refresh.press()
             try await surface.waitFor { toggle.state == .on }
             try await toggle.press()
