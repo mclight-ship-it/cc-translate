@@ -112,7 +112,7 @@ extension ProductRenderingTests {
         XCTAssertTrue(busyWords.contains("cancel paste action"))
         fixture.model.setPlainPasteEnabled(false)
         let draining = try renderPasteSettings(fixture, name: "plain-paste-settings-draining-zh-dark",
-                                              scheme: .dark, chinese: true)
+                                              scheme: .dark, chinese: true, highResolution: true)
         let chinese = try pasteSettingsWords(draining, chinese: true).filter { !$0.isWhitespace }
         try NativeRenderEvidence.record("Synthetic paste draining OCR: \(chinese)")
         try NativeRenderEvidence.record("Synthetic paste draining matches: title=\(chinese.contains("纯文本粘贴")), " +
@@ -202,7 +202,8 @@ extension ProductRenderingTests {
 
     @MainActor
     private func renderPasteSettings(_ fixture: PasteAppFixture, name: String, scheme: ColorScheme,
-                                     chinese: Bool = false, inspect: ((NSView) -> Void)? = nil) throws -> Data {
+                                     chinese: Bool = false, highResolution: Bool = false,
+                                     inspect: ((NSView) -> Void)? = nil) throws -> Data {
         fixture.model.loadPresentation()
         fixture.model.interfaceLanguage = chinese ? "zh" : "en"
         fixture.model.appearance = scheme == .dark ? "dark" : "light"
@@ -214,7 +215,7 @@ extension ProductRenderingTests {
         // Tall native windows expose the complete production Form, including its lower sections.
         // Neither this window nor the application's menu/window actions are ordered or activated.
         return try render(settings, named: name, size: NSSize(width: 820, height: 3400),
-                          scheme: scheme, inspect: inspect, highResolution: chinese)
+                          scheme: scheme, inspect: inspect, highResolution: highResolution)
     }
 
     @MainActor
