@@ -76,6 +76,13 @@ private final class SummarySettingsHost {
         return try SummarySettingsControls.toggle(in: host, model: model)
     }
 
+    func reload() async throws -> NativeSettingsTestControl {
+        flush()
+        return try await NativeSettingsTestControls.resolveWhenReady(
+            in: host, identifier: "reload-summary-setting",
+            label: model.text("Reload saved summary setting", "重新读取已保存的摘要设置"), kind: .button)
+    }
+
     func close() {
         windowFocus.close(window)
     }
@@ -151,7 +158,7 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
             try await surface.waitFor { !button.isEnabled && f.model.summaryEnabled == nil }
-            let reload = try SummarySettingsControls.reload(in: surface.host, model: f.model)
+            let reload = try await surface.reload()
             XCTAssertTrue(reload.isEnabled)
             surface.window.makeKeyAndOrderFront(nil)
             try reload.focus(in: surface.window)

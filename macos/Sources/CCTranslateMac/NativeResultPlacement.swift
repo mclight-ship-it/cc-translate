@@ -14,8 +14,9 @@ enum NativeResultPlacement: String, CaseIterable {
     }
 
     private static func usable(_ frame: NSRect) -> Bool {
+        // CGRect's width/height accessors normalize negative stored dimensions.
         [frame.minX, frame.minY, frame.width, frame.height, frame.maxX, frame.maxY].allSatisfy(\.isFinite) &&
-            frame.width > 0 && frame.height > 0
+            frame.size.width > 0 && frame.size.height > 0
     }
 
     func frame(current: NSRect, remembered: NSRect?, pointer: NSPoint, visibleScreens: [NSRect]) -> NSRect? {

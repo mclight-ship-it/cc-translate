@@ -172,6 +172,8 @@ bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整�
 完整App及同包消费者验收尚未完成，不提前宣称这批功能完成验收。
 并行推进[结果窗口位置](MACOS_TODO.md#native-result-position-checkpoint)：记住位置/居中/鼠标附近已接设置与真实面板，
 保持流式更新不移动窗口；新增11项测试及3张预期PNG，尚待本源码实际Mac验证。
+018b9de已实际通过位置功能10/11方法及3张渲染；继续修复损坏负尺寸解析与旧摘要动态控件测试，
+保留该轮755项中的3个失败断言，不以部分通过代替新包验收。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

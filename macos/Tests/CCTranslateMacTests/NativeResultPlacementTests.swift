@@ -71,7 +71,14 @@ final class NativeResultPlacementGeometryTests: XCTestCase {
                                                          pointer: .zero, visibleScreens: [screen]))
         XCTAssertNil(NativeResultPlacement.pointer.frame(current: window, remembered: nil,
             pointer: NSPoint(x: CGFloat.infinity, y: 0), visibleScreens: [screen]))
-        for raw in [nil, "", "invalid", "{{0, 0}, {0, 200}}", "{{0, 0}, {-1, 200}}"] {
+        for invalid in [NSRect(x: 0, y: 0, width: -1, height: 200),
+                        NSRect(x: 0, y: 0, width: 200, height: -1)] {
+            XCTAssertNil(NativeResultPlacement.center.frame(current: invalid, remembered: nil,
+                                                             pointer: .zero, visibleScreens: [screen]))
+            XCTAssertNil(NativeResultPlacement.center.frame(current: window, remembered: nil,
+                                                             pointer: .zero, visibleScreens: [invalid]))
+        }
+        for raw in [nil, "", "invalid", "{{0, 0}, {0, 200}}", "{{0, 0}, {-1, 200}}", "{{0, 0}, {200, -1}}"] {
             XCTAssertNil(NativeResultPlacement.restoredFrame(raw))
         }
         XCTAssertEqual(NativeResultPlacement.restoredFrame(NSStringFromRect(window)), window)

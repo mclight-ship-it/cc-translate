@@ -354,6 +354,16 @@ Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合�
 这一实现候选尚未完成源码Mac验证，更不代表P3–P6完成。
 说明见[结果窗口位置](MACOS_DEVELOPMENT.md#native-result-position)。
 
+首轮源码`018b9de` / [run35321609282](https://github.com/mclight-ship-it/cc-translate/actions/runs/35321609282)
+正常hook1846项/96.220秒通过；真实Swift编译33.72秒，755项/23构包前skip/3失败断言（1 unexpected）/529.057秒。
+新11方法中10项通过，包括真实非激活面板、实际移动回调、流式不移动和原生Picker；
+失败揭示`CGRect.width/height`会标准化负尺寸，损坏的持久化尺寸必须检查原始`size.width/height`。
+已修此生产解析问题，并增加当前窗口/屏幕/负高度回归断言，不改变正常坐标行为。
+另一个失败为旧摘要恢复测试：模型已失败，但同步查找时动态重新读取按钮尚未插入原生树。
+交互测试改用已验证的异步控件就绪等待；静态截图查找及所有保存/恢复断言保留。
+125张PNG已逐一核验完整性，已实际查看中英位置Picker图；不能据图片齐全代替失败方法。
+本轮修正仍待新的Mac验证，前轮结果和原始日志均保留。
+
 <a id="native-text-scale-checkpoint"></a>
 
 ### P3 原生文字大小：接线已交付，待新源码原生验证
