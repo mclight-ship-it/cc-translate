@@ -261,6 +261,45 @@ class ConfigurationServiceTests(_ConfigurationDirectory):
         finally:
             reopened.close()
 
+    def test_history_limit_save_readback_and_reopen_preserve_history_without_eager_reads(self):
+        self.session.open()
+        self.assertEqual(self.session.perform({"operation": "config_load"})["config"]["history_limit"], 100)
+        history_path = self.directory / "history.json"
+        entries = [{"input": str(n), "output": "\u4e2d", "future": [n]} for n in range(5)]
+        before = json.dumps(entries, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+        history_path.write_bytes(before)
+        load = {"operation": "history_load", "page_size": 1, "cursor": None}
+        first = self.session.perform_history(load, "first", 2)
+        for limit in (1, "2", 10000):
+            with self.subTest(limit=limit):
+                with patch.object(history_service._BoundedHistoryRepository, "_read",
+                                  side_effect=AssertionError("configuration read history")), \
+                        patch.object(history_service._BoundedHistoryRepository, "add",
+                                     side_effect=AssertionError("configuration trimmed history")):
+                    self.assertEqual(self.session.perform({
+                        "operation": "config_save", "config": {"history_limit": limit}}), {"saved": True})
+                    value = self.session.perform({"operation": "config_load"})["config"]["history_limit"]
+                    self.assertIs(type(value), int)
+                    self.assertEqual(value, int(limit))
+                self.assertEqual(history_path.read_bytes(), before)
+                self.assertEqual(self.session.perform_history(load, "again", 2), first)
+                next_page = self.session.perform_history(
+                    load | {"cursor": first["next_cursor"]}, "next", 2)
+                self.assertEqual(next_page["entries"], entries[1:2])
+                self.assertEqual(next_page["revision"], first["revision"])
+        self.session.close()
+        reopened = configuration.ConfigurationSession(self.home, self.identity)
+        self.addCleanup(reopened.close)
+        with patch.object(history_service._BoundedHistoryRepository, "_read",
+                          side_effect=AssertionError("reopening configuration read history")):
+            reopened.open()
+            self.assertEqual(reopened.perform({"operation": "config_load"})["config"]["history_limit"], 10000)
+        self.assertEqual(history_path.read_bytes(), before)
+        refreshed = reopened.perform_history(load | {"page_size": 100}, "refresh", 2)
+        self.assertEqual(refreshed["entries"], entries)
+        self.assertEqual(refreshed["total"], 5)
+        self.assertNotEqual(refreshed["revision"], first["revision"])
+
     def test_read_wire_validation_happens_before_disk_migration(self):
         self.session.open()
         for before in (b'{"future":1e100}', b'{"future":NaN}',
@@ -354,6 +393,39 @@ class ConfigurationSchedulingTests(_ConfigurationDirectory):
 
     def events(self, output):
         return [decode_frame(line + b"\n") for line in output.getvalue().splitlines()]
+
+    def test_history_limit_save_replace_failure_reports_error_and_preserves_both_files(self):
+        server, output, errors = self.server()
+        self.session.perform({"operation": "config_save", "config": {"history_limit": 100}})
+        self.session.perform({"operation": "config_load"})
+        before_config = self.path.read_bytes()
+        history_path = self.directory / "history.json"
+        before_history = b'[{"input":"newest"},{"input":"older"},{"input":"oldest"}]\n'
+        history_path.write_bytes(before_history)
+        load = {"operation": "history_load", "page_size": 1, "cursor": None}
+        first = self.session.perform_history(load, "first", 2)
+        attempted, entered = [], threading.Event()
+        def fail_replace(source, destination):
+            attempted.append((Path(destination), json.loads(Path(source).read_bytes())))
+            entered.set()
+            raise PermissionError("SYNTHETIC_PRIVATE_REPLACE")
+        with patch("cc_storage.os.replace", side_effect=fail_replace):
+            server._handle(message("lower", "request", operation="config_save", config={"history_limit": 1}))
+            try:
+                self.assertTrue(entered.wait(3))
+            finally:
+                server._stop()
+                server._join_workers()
+        events = [event for event in self.events(output) if event["id"] == "lower"]
+        self.assertEqual([event["type"] for event in events], ["accepted", "started", "failed"])
+        self.assertEqual(events[-1]["payload"], {"code": "config_io_failed"})
+        self.assertEqual(attempted, [(self.path, {"history_limit": 1})])
+        self.assertEqual(self.path.read_bytes(), before_config)
+        self.assertEqual(history_path.read_bytes(), before_history)
+        self.assertEqual(self.session.perform({"operation": "config_load"})["config"]["history_limit"], 100)
+        self.assertEqual(self.session.perform_history(load, "again", 2), first)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+        self.assertNotIn("SYNTHETIC_PRIVATE_REPLACE", output.getvalue().decode() + errors.getvalue())
 
     def test_business_ready_and_operations_are_mode_specific(self):
         server, output, _ = self.server()

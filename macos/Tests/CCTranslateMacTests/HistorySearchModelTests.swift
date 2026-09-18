@@ -678,3 +678,175 @@ final class HistorySearchModelTests: XCTestCase {
         XCTAssertTrue(helper.translations.isEmpty)
     }
 }
+
+extension HistorySearchModelTests {
+    @MainActor
+    func testTextAndOCRRecordKeepSnapshotButInvalidateLatePagesUntilExplicitRefresh() async throws {
+        for origin in ["text", "ocr"] {
+            for lateTerminal in ["completed", "failed"] {
+                let f = try ProductTestHarness()
+                defer { f.cleanUp() }
+                let helper = try f.ready()
+                let model = try XCTUnwrap(f.model)
+                model.historySearch = "saved"
+                model.historyFilter = origin
+                model.loadHistory()
+                try complete(helper, entries: [entry], total: 6, nextOffset: 1)
+                let originalIDs = model.historyPage.map(\.id)
+                model.loadHistory(next: true)
+                let oldRead = try XCTUnwrap(helper.historyLoads.last?.id)
+                model.input = "A newly translated passage."
+                model.translate(origin: origin)
+                helper.event("completed", id: try XCTUnwrap(helper.translations.last?.id),
+                             payload: HistoryLimitFixture.completion(kind: origin))
+                XCTAssertEqual(model.historyPhase, .stale)
+                XCTAssertNil(model.historyTotal)
+                XCTAssertFalse(model.hasNextHistoryPage)
+                XCTAssertEqual(model.historyPage.map(\.id), originalIDs)
+                XCTAssertEqual(model.historyPage.first?.output, "Remote matching result")
+                XCTAssertTrue(model.historyBusy, "Keep the old read as a transport barrier until its terminal.")
+                helper.event(lateTerminal, id: oldRead, payload: lateTerminal == "completed"
+                             ? ProductTestHarness.historyPage(entries: [entry], total: 6, nextOffset: 2)
+                             : ["code": .string("history_cursor_expired")])
+                XCTAssertFalse(model.historyBusy)
+                XCTAssertEqual(model.historyPhase, .stale)
+                XCTAssertEqual(model.historyPage.map(\.id), originalIDs)
+                try await Task.sleep(nanoseconds: 350_000_000)
+                XCTAssertEqual(helper.historyLoads.count, 2, "A write or stale response never automatically refreshes.")
+                model.loadHistory(next: true)
+                XCTAssertEqual(helper.historyLoads.count, 2)
+                model.loadHistory()
+                XCTAssertEqual(helper.historyLoads.count, 3)
+                XCTAssertEqual(helper.historyLoads.last?.cursor, .null)
+                XCTAssertEqual(helper.historyLoads.last?.query, "saved")
+                XCTAssertEqual(helper.historyLoads.last?.kind, origin)
+                helper.event("completed", id: try XCTUnwrap(helper.historyLoads.last?.id),
+                             payload: ProductTestHarness.historyPage(entries: [
+                                ProductTestHarness.historyEntry(input: "Latest", output: "Retained")
+                             ], total: 1, revision: String(repeating: "b", count: 64)))
+                XCTAssertEqual(model.historyPhase, .loaded)
+                XCTAssertEqual(model.historyTotal, 1)
+                XCTAssertEqual(model.historyPage.first?.input, "Latest")
+                XCTAssertEqual(model.output, "Completed translation")
+            }
+        }
+    }
+
+    @MainActor
+    func testNonrecordingTerminalsKeepHistorySnapshotAndCursorWithoutExtraIO() throws {
+        for outcome in ["unchanged", "disabled", "failed", "cancelled", "provider_failure"] {
+            let f = try ProductTestHarness()
+            defer { f.cleanUp() }
+            let helper = try f.ready()
+            f.model.loadHistory()
+            try complete(helper, entries: [entry], total: 6, nextOffset: 1)
+            let ids = f.model.historyPage.map(\.id)
+            f.model.input = "Translation without a history commit."
+            f.model.translate()
+            let id = try XCTUnwrap(helper.translations.last?.id)
+            if outcome == "cancelled" {
+                f.model.cancel()
+                helper.event("cancelled", id: id, payload: ["submitted": .bool(true)])
+            } else if outcome == "provider_failure" {
+                helper.event("failed", id: id, payload: ["code": .string("provider_failed"), "submitted": .bool(true)])
+            } else {
+                helper.event("completed", id: id, payload: HistoryLimitFixture.completion(history: outcome))
+            }
+            XCTAssertEqual(f.model.historyPhase, .loaded)
+            XCTAssertEqual(f.model.historyPage.map(\.id), ids)
+            XCTAssertEqual(f.model.historyTotal, 6)
+            XCTAssertTrue(f.model.hasNextHistoryPage)
+            XCTAssertEqual(helper.historyLoads.count, 1)
+            XCTAssertTrue(helper.historyClears.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testDictionaryRecordInvalidatesSnapshotEvenWhenItsCompletedResultWasHiddenByCancellation() throws {
+        for cancelled in [false, true] {
+            for history in ["recorded", "unchanged", "failed", "disabled"] {
+                let f = try ProductTestHarness(savedCLI: false)
+                defer { f.cleanUp() }
+                let helper = try f.localReady()
+                f.model.loadHistory()
+                try complete(helper, entries: [entry], total: 6, nextOffset: 1)
+                let ids = f.model.historyPage.map(\.id)
+                f.model.input = "example"
+                f.model.translate()
+                let lookup = try XCTUnwrap(helper.dictionaryRequests.last?.id)
+                if cancelled { f.model.cancel() }
+                helper.event("completed", id: lookup, payload: DictionaryModelTests.hit(history: history))
+                XCTAssertEqual(f.model.historyPage.map(\.id), ids)
+                XCTAssertEqual(f.model.historyPhase, history == "recorded" ? .stale : .loaded)
+                XCTAssertEqual(f.model.historyTotal, history == "recorded" ? nil : 6)
+                XCTAssertEqual(f.model.hasNextHistoryPage, history != "recorded")
+                XCTAssertEqual(helper.historyLoads.count, 1)
+                XCTAssertTrue(helper.translations.isEmpty)
+                if cancelled { XCTAssertEqual(f.model.productPhase, .cancelled) }
+            }
+        }
+    }
+
+    @MainActor
+    func testImageRecordMarksExistingSnapshotStaleWithoutInventingOriginalOrRefreshing() async throws {
+        let f = try ImageAppFixture()
+        defer { f.cleanUp() }
+        let client = try f.ready()
+        f.model.historyFilter = "ocr"
+        f.model.loadHistory()
+        try complete(client.base, entries: [
+            .object(["input": .null, "output": .string("Prior image result"), "kind": .string("ocr")])
+        ], total: 3, nextOffset: 1)
+        let ids = f.model.historyPage.map(\.id)
+        let request = try await f.send(client)
+        var payload = ImageAppFixture.completion
+        payload["history"] = .string("recorded")
+        client.base.event("completed", id: request.id, payload: payload)
+        XCTAssertEqual(f.model.historyPhase, .stale)
+        XCTAssertNil(f.model.historyTotal)
+        XCTAssertFalse(f.model.hasNextHistoryPage)
+        XCTAssertEqual(f.model.historyPage.map(\.id), ids)
+        XCTAssertFalse(try XCTUnwrap(f.model.historyPage.first).hasOriginalInput)
+        XCTAssertFalse(f.model.resultHasOriginalInput)
+        XCTAssertEqual(f.model.output, "Translated image text")
+        XCTAssertEqual(client.base.historyLoads.count, 1)
+        XCTAssertTrue(client.base.historyClears.isEmpty)
+    }
+
+    @MainActor
+    func testRecordCancelsPendingSearchDebounceButKeepsQueryAndWaitsForExplicitRefresh() async throws {
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready()
+        f.model.loadHistory()
+        try complete(helper, entries: [entry], total: 1)
+        f.model.input = "Another translated passage."
+        f.model.translate()
+        f.model.historySearch = "new query"
+        helper.event("completed", id: try XCTUnwrap(helper.translations.last?.id),
+                     payload: HistoryLimitFixture.completion())
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(helper.historyLoads.count, 1)
+        XCTAssertEqual(f.model.historySearch, "new query")
+        XCTAssertEqual(f.model.historyPhase, .stale)
+        f.model.loadHistory()
+        XCTAssertEqual(helper.historyLoads.count, 2)
+        XCTAssertEqual(helper.historyLoads.last?.query, "new query")
+        XCTAssertEqual(helper.historyLoads.last?.cursor, .null)
+    }
+
+    @MainActor
+    func testRecordBeforeHistoryWasOpenedDoesNotStartOrSeedHistorySearch() throws {
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready()
+        f.model.input = "A passage without an open history window."
+        f.model.translate()
+        helper.event("completed", id: try XCTUnwrap(helper.translations.last?.id),
+                     payload: HistoryLimitFixture.completion())
+        XCTAssertEqual(f.model.historyPhase, .idle)
+        XCTAssertTrue(f.model.historyPage.isEmpty)
+        XCTAssertNil(f.model.historyTotal)
+        XCTAssertTrue(helper.historyLoads.isEmpty)
+    }
+}

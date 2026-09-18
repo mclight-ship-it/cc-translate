@@ -8,7 +8,7 @@ enum TranslationPhase: Equatable {
 }
 
 enum HistoryPhase: Equatable {
-    case idle, waiting, loading, loaded, clearing, failed
+    case idle, waiting, loading, loaded, clearing, failed, stale
 }
 
 enum SummaryPreferencePhase: Equatable {
@@ -29,6 +29,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var settingsReady = false
     @Published private(set) var settingsBusy = false
     @Published private(set) var historyEnabled = true
+    @Published private(set) var historyLimit = HistoryLimitPreference()
     @Published private(set) var summaryEnabled: Bool?
     @Published private(set) var summaryPreferencePhase: SummaryPreferencePhase = .idle
     private var summarySaveRequest: (id: String, value: Bool)?
@@ -864,12 +865,14 @@ final class ProbeModel: ObservableObject {
     }
 
     func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false,
-                      summaryExpected: Bool? = nil, summaryReconcile: Bool = false) {
+                      summaryExpected: Bool? = nil, summaryReconcile: Bool = false,
+                      historyLimitRead: Bool = false, afterHistoryLimitSave: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
+        if historyLimitRead { historyLimit.beginRead(id: id, afterSave: afterHistoryLimitSave) }
         if summaryExpected != nil || summaryReconcile {
             summaryReadRequest = (id, summaryExpected)
             summaryPreferencePhase = .readingBack
@@ -1058,6 +1061,47 @@ final class ProbeModel: ObservableObject {
             return
         }
         saveConfiguration(history: history ?? historyEnabled, direction: direction, model: modelProfile)
+    }
+
+    var canEditHistoryLimit: Bool {
+        ready && settingsReady && !settingsBusy && !stopping && !dictionary.committing &&
+            connectionMode != .diagnostic && savedConfiguration != nil && historyLimit.saved != nil
+    }
+
+    var canReloadHistoryLimit: Bool {
+        ready && !settingsBusy && !stopping && !dictionary.committing && connectionMode != .diagnostic
+    }
+
+    func editHistoryLimit(_ value: String) { historyLimit.edit(value) }
+
+    func applyHistoryLimit() {
+        guard canEditHistoryLimit else { historyLimit.rejectUnavailable(); return }
+        if let value = historyLimit.propose() { saveHistoryLimit(value) }
+    }
+
+    func confirmHistoryLimitReduction() {
+        guard canEditHistoryLimit else { historyLimit.rejectUnavailable(); return }
+        if let value = historyLimit.confirm() { saveHistoryLimit(value) }
+    }
+
+    func cancelHistoryLimitReduction() { historyLimit.cancelConfirmation() }
+
+    private func saveHistoryLimit(_ value: Int64) {
+        guard var config = savedConfiguration, let connection else {
+            historyLimit.rejectUnavailable()
+            return
+        }
+        config["history_limit"] = .integer(value)
+        let id = UUID().uuidString
+        historyLimit.beginSave(id: id, value: value)
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    func reloadHistoryLimit() {
+        guard canReloadHistoryLimit else { historyLimit.rejectUnavailable(); return }
+        loadSettings(historyLimitRead: true)
     }
 
     var canSaveSummaryPreference: Bool {
@@ -1269,6 +1313,17 @@ final class ProbeModel: ObservableObject {
         historyStatus = message
     }
 
+    private func markHistorySnapshotStale() {
+        guard historySearchActive || historyRead != nil || historyClearID != nil ||
+                !historyPage.isEmpty || historyTotal != nil else { return }
+        // Keep the selectable snapshot, but never append a late page from before the write.
+        invalidateHistory(retireActive: false)
+        historyTotal = nil
+        historyPhase = .stale
+        historyStatus = text("Saved history changed. These are previously loaded records. Refresh to read the current history.",
+                             "已保存的历史记录已更改。当前显示此前加载的记录，请刷新读取最新历史。")
+    }
+
     func clearHistory() {
         guard connectionMode != .diagnostic, ready, settingsReady, !settingsBusy, !stopping,
               !historyBusy, let connection else {
@@ -1462,6 +1517,10 @@ final class ProbeModel: ObservableObject {
             if handleModelCatalog(event) { return }
             if handleBusinessEvent(event) { return }
             if handleDictionaryLookup(event) { return }
+            if nativeTranslation, pending.contains(event.id), event.type == "completed",
+               event.payload["history"] == .string("recorded"), activeAction?.id != event.id {
+                markHistorySnapshotStale()
+            }
             if event.isTerminal { pending.remove(event.id) }
             // The transport validated seq/terminal rules even for events hidden here.
             guard latest.accepts(event) else { return }
@@ -1574,6 +1633,7 @@ final class ProbeModel: ObservableObject {
             catalogReconnectIntent = nil
             modelSettings.connectionLost()
             summaryPreferenceConnectionLost()
+            historyLimit.connectionLost()
             plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
@@ -1644,6 +1704,7 @@ final class ProbeModel: ObservableObject {
             savedConfiguration = nil
             modelSettings.connectionLost()
             summaryPreferenceConnectionLost()
+            historyLimit.connectionLost()
             plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
@@ -1715,6 +1776,9 @@ final class ProbeModel: ObservableObject {
         pending.remove(event.id)
         if latest.id == event.id { latest.select(nil) }
         active = false
+        if event.type == "completed", event.payload["result"]?.object?["history"] == .string("recorded") {
+            markHistorySnapshotStale()
+        }
         if lookup.cancelled || hideCurrentOutput {
             if draft == nil && !hideCurrentOutput {
                 productPhase = .cancelled
@@ -1775,6 +1839,7 @@ final class ProbeModel: ObservableObject {
             guard event.isTerminal else { return true }
             let pasteSave = plainPaste.preference.ownsSave(event.id)
             let summaryOperation = summarySaveRequest?.id == event.id || summaryReadRequest?.id == event.id
+            let historyLimitOperation = historyLimit.owns(event.id)
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
@@ -1784,7 +1849,8 @@ final class ProbeModel: ObservableObject {
                     configSaveID = nil
                     settingsBusy = false
                     status = "Settings saved. Reloading their normalized view; no write replay."
-                    loadSettings(modelRead: modelSave, afterModelSave: modelSave, summaryExpected: summaryExpected)
+                    loadSettings(modelRead: modelSave, afterModelSave: modelSave, summaryExpected: summaryExpected,
+                                 historyLimitRead: historyLimitOperation, afterHistoryLimitSave: historyLimitOperation)
                     return true
                 }
                 guard let config = event.payload["config"]?.object,
@@ -1795,6 +1861,7 @@ final class ProbeModel: ObservableObject {
                     summaryPreferencePhase = .failed("invalid_config")
                     summarySaveRequest = nil
                     summaryReadRequest = nil
+                    historyLimit.fail("invalid_config")
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
@@ -1804,6 +1871,7 @@ final class ProbeModel: ObservableObject {
                     return true
                 }
                 savedConfiguration = config
+                historyLimit.loaded(config["history_limit"]?.integer, id: event.id)
                 if case let .bool(value)? = config["summary_enabled"] {
                     summaryEnabled = value
                     if let read = summaryReadRequest, read.id == event.id {
@@ -1865,6 +1933,7 @@ final class ProbeModel: ObservableObject {
                 }
             } else {
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
+                if historyLimitOperation || event.id == configLoadID { historyLimit.fail(event.safeFailureCode) }
                 if summaryOperation || event.id == configLoadID {
                     summaryEnabled = nil
                     summaryPreferencePhase = .failed(event.safeFailureCode)
@@ -1876,7 +1945,7 @@ final class ProbeModel: ObservableObject {
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 if catalogPreparation { modelCatalog.fail(.connection) }
                 if (!pasteSave || !active) && !catalogPreparation &&
-                    (!summaryOperation || (!active && draft != nil)) { failPreparation(status) }
+                    (!(summaryOperation || historyLimitOperation) || (!active && draft != nil)) { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))

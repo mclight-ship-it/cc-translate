@@ -55,7 +55,7 @@ CORE_TEST_MODULES = (
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 232, "core": 648}
+MINIMUM_TEST_COUNTS = {"process": 232, "core": 655}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",

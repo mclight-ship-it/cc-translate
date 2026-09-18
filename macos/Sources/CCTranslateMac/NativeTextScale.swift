@@ -193,9 +193,10 @@ struct NativeTranslationEditor: NSViewRepresentable {
                 view.undoManager?.removeAllActions()
             }
         }
-        if coordinator.scale != textScale || replacedText {
+        let updatingFont = coordinator.scale != textScale || replacedText
+        let viewport = updatingFont ? NativeTextViewport(view: view, scroll: scroll) : nil
+        if updatingFont {
             let selected = view.selectedRanges
-            let viewport = NativeTextViewport(view: view, scroll: scroll)
             let font = NSFont.systemFont(ofSize: textScale.points(15))
             if let storage = view.textStorage, storage.length > 0 {
                 storage.addAttribute(.font, value: font, range: NSRange(location: 0, length: storage.length))
@@ -203,8 +204,10 @@ struct NativeTranslationEditor: NSViewRepresentable {
             view.typingAttributes[.font] = font
             coordinator.scale = textScale
             if view.selectedRanges != selected { view.selectedRanges = selected }
-            viewport.restore(view: view, scroll: scroll)
         }
+        // Resolve the document height before AppKit constrains a scroll or restores its anchor.
+        if let container = view.textContainer { view.layoutManager?.ensureLayout(for: container) }
+        viewport?.restore(view: view, scroll: scroll)
         view.placeholderFont = .systemFont(ofSize: textScale.points(15))
         coordinator.applyingModel = false
         coordinator.synchronizeFocus(view)

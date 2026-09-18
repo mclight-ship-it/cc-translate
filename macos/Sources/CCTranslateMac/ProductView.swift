@@ -537,6 +537,8 @@ struct TranslationHistoryView: View {
         case .waiting, .loading: return model.text("Searching all history…", "正在搜索全部历史记录…")
         case .clearing: return model.text("Clearing all history…", "正在清除所有历史记录…")
         case .failed: return model.text("History could not be loaded. Refresh to try again.", "无法加载历史记录，请刷新重试。")
+        case .stale: return model.text("Saved history changed. Refresh to read the current records.",
+                                      "已保存的历史记录已更改，请刷新读取最新记录。")
         case .idle, .loaded:
             if model.historyTotal == 0 {
                 return model.historySearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.historyFilter == "all"
@@ -622,6 +624,104 @@ struct HistoryTranslationDetail: View {
 }
 
 @MainActor
+struct HistoryLimitSettingsView: View {
+    @ObservedObject var model: ProbeModel
+    private enum Control: Hashable { case input, confirmation }
+    @FocusState private var focused: Control?
+
+    private var preference: HistoryLimitPreference { model.historyLimit }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(preference.saved.map {
+                model.text("Saved limit: \($0) records", "已保存条数：\($0) 条")
+            } ?? model.text("Saved limit: Not confirmed", "已保存条数：尚未确认"))
+                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline) {
+                TextField(model.text("Number of records", "保留条数"), text: Binding(
+                    get: { preference.draft }, set: { model.editHistoryLimit($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 220)
+                .disabled(!model.canEditHistoryLimit || preference.confirmation != nil)
+                .focused($focused, equals: .input)
+                .accessibilityIdentifier("history-limit-input")
+                .accessibilityLabel(model.text("Number of history records to keep", "要保留的历史记录条数"))
+                Button(model.text("Apply limit", "应用条数")) { model.applyHistoryLimit() }
+                    .disabled(!model.canEditHistoryLimit || preference.proposed == nil ||
+                              preference.proposed == preference.saved || preference.confirmation != nil)
+                    .accessibilityIdentifier("apply-history-limit")
+            }
+            Text(model.text("Enter a whole number from 1 to 10000.", "请输入 1 到 10000 之间的整数。"))
+                .font(.caption).foregroundStyle(.secondary)
+            if let saved = preference.saved, !HistoryLimitPreference.supported.contains(saved) {
+                Label(model.text("The saved value is not supported by Mac translation. It has not been changed. Enter a supported value to correct it.",
+                                 "已保存的值不受 Mac 翻译支持，尚未改动。可输入支持的条数并明确保存以纠正。"),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            Text(model.text("Saving does not delete records immediately. The next time a history record is added, only the newest N records are kept, including the new record; older records are deleted. A translation already in progress may use the new limit when it finishes. Increasing the limit does not restore deleted records.",
+                            "保存设置不会立即删除记录。下次实际新增历史记录时，仅保留最新 N 条（包含新记录），更早记录会被删除。正在进行的翻译完成后也可能按新条数修剪。提高条数不会恢复已删除记录。"))
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let reduction = preference.confirmation {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(model.text("Reduce saved limit from \(reduction.from) to \(reduction.to)?",
+                                        "将已保存条数从 \(reduction.from) 降为 \(reduction.to)？"))
+                            .font(.headline).accessibilityAddTraits(.isHeader)
+                        Text(model.text("Older records will be deleted on the next actual history addition, not when you confirm.",
+                                        "确认时不会删除记录；下次实际新增历史记录时将删除超出条数的旧记录。"))
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Button(model.text("Cancel", "取消")) { model.cancelHistoryLimitReduction() }
+                                .focused($focused, equals: .confirmation)
+                                .accessibilityIdentifier("cancel-history-limit-reduction")
+                            Button(model.text("Reduce and save", "降低并保存"), role: .destructive) {
+                                model.confirmHistoryLimitReduction()
+                            }
+                            .disabled(!model.canEditHistoryLimit)
+                            .accessibilityIdentifier("confirm-history-limit-reduction")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if !message.isEmpty {
+                Text(message).font(.callout).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .failed = preference.phase {
+                Button(model.text("Reload saved history limit", "重新读取已保存条数")) { model.reloadHistoryLimit() }
+                    .disabled(!model.canReloadHistoryLimit)
+                    .accessibilityIdentifier("reload-history-limit")
+            }
+        }
+        .onChange(of: preference.confirmation) { _, value in
+            if value != nil { focused = .confirmation }
+            else if model.canEditHistoryLimit { focused = .input }
+        }
+    }
+
+    private var message: String {
+        switch preference.phase {
+        case .idle: return ""
+        case .invalidInput: return model.text("Enter a whole number from 1 to 10000. Nothing was saved.",
+                                              "请输入 1 到 10000 之间的整数，尚未保存。")
+        case .saving: return model.text("Saving history limit… The saved limit above is the last confirmed value.",
+                                       "正在保存条数… 上方显示的是上次确认的已保存值。")
+        case .readingBack: return model.text("Reading back the saved history limit…", "正在回读已保存的条数…")
+        case .saved: return model.text("History limit saved and read back. No history was deleted by this setting change.",
+                                      "条数已保存并回读确认。此次设置更改未删除历史记录。")
+        case .differentReadback: return model.text("The saved limit differs from your entry. The actual saved value is shown above; your entry is retained. No write was retried.",
+                                                  "已保存条数与你的输入不同。上方显示实际回读值，并保留你的输入，未重试写入。")
+        case .failed(let code): return model.text("History limit could not be confirmed (\(code)). Reload the saved setting; no write was retried.",
+                                                  "无法确认条数（\(code)）。请重新读取已保存设置，未重试写入。")
+        }
+    }
+}
+
+@MainActor
 struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
     var showDiagnostics: () -> Void
@@ -642,6 +742,11 @@ struct TranslationSettingsView: View {
                 }
             }
             translationSection
+            Section {
+                HistoryLimitSettingsView(model: model)
+            } header: {
+                Text(model.text("History retention", "历史保留条数"))
+            }
             DictionarySettingsSection(model: model, dictionary: model.dictionary)
             codexSection
             PlainPasteSettingsSection(model: model, paste: model.plainPaste)

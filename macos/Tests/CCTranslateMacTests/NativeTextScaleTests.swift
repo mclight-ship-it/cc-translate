@@ -330,6 +330,9 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         defer { surface.close() }
         let editor = try surface.text(editable: true)
         XCTAssertEqual(try ScaleTestSupport.font(editor, at: "Line 0").pointSize, 15)
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        XCTAssertGreaterThan(editor.bounds.height, scroll.contentView.bounds.height,
+                             "Initial text must have a scrollable document before the first edit.")
         XCTAssertTrue(surface.window.makeFirstResponder(editor))
         let undo = try XCTUnwrap(editor.undoManager)
         undo.removeAllActions()
@@ -342,8 +345,11 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         try await surface.waitFor { f.model.input == edited }
         editor.scrollRangeToVisible(editor.selectedRange())
         let selection = editor.selectedRange()
-        let scroll = try XCTUnwrap(editor.enclosingScrollView)
         XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        let layout = try XCTUnwrap(editor.layoutManager)
+        let container = try XCTUnwrap(editor.textContainer)
+        let point = NSPoint(x: 0, y: max(0, scroll.contentView.bounds.minY - editor.textContainerOrigin.y))
+        let anchor = layout.characterIndexForGlyph(at: layout.glyphIndex(for: point, in: container))
         var inputWrites = 0
         let observation = f.model.$input.dropFirst().sink { _ in inputWrites += 1 }
         defer { observation.cancel() }
@@ -354,6 +360,9 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertEqual(editor.string, edited)
         XCTAssertEqual(editor.selectedRange(), selection)
         XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        let line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: anchor), effectiveRange: nil)
+            .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+        XCTAssertTrue(scroll.documentVisibleRect.intersects(line), "The same passage stays visible after reflow.")
         XCTAssertTrue(try surface.text(editable: true) === editor)
         XCTAssertTrue(surface.window.firstResponder === editor)
         XCTAssertTrue(undo.canUndo)
@@ -507,6 +516,9 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         defer { surface.close() }
         let editor = try surface.text(editable: true)
         XCTAssertEqual(try ScaleTestSupport.font(editor, at: "Line 0").pointSize, 15)
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        XCTAssertGreaterThan(editor.bounds.height, scroll.contentView.bounds.height,
+                             "Recognized text must have a scrollable document before review.")
         XCTAssertTrue(surface.window.makeFirstResponder(editor))
         editor.insertText("Reviewed ", replacementRange: NSRange(location: 0, length: 0))
         try await surface.waitFor { capture.text.hasPrefix("Reviewed ") }
@@ -514,6 +526,11 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let selected = (editor.string as NSString).range(of: "Line 30")
         editor.setSelectedRange(selected)
         editor.scrollRangeToVisible(selected)
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        let layout = try XCTUnwrap(editor.layoutManager)
+        let container = try XCTUnwrap(editor.textContainer)
+        let point = NSPoint(x: 0, y: max(0, scroll.contentView.bounds.minY - editor.textContainerOrigin.y))
+        let anchor = layout.characterIndexForGlyph(at: layout.glyphIndex(for: point, in: container))
         let cancellations = job.cancelCount
         var writes = 0
         let observation = capture.$text.dropFirst().sink { _ in writes += 1 }
@@ -525,7 +542,10 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertEqual(editor.string, reviewed)
         XCTAssertEqual(editor.selectedRange(), selected)
         XCTAssertTrue(try surface.text(editable: true) === editor)
-        XCTAssertGreaterThan(try XCTUnwrap(editor.enclosingScrollView).contentView.bounds.minY, 0)
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        let line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: anchor), effectiveRange: nil)
+            .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+        XCTAssertTrue(scroll.documentVisibleRect.intersects(line), "Reviewed text keeps its reading position.")
         XCTAssertEqual(capture.phase, .ready)
         XCTAssertEqual(source.requests.count, 1)
         XCTAssertEqual(source.permissionCalls, 1)

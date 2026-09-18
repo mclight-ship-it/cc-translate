@@ -210,6 +210,46 @@ class MacDictionaryTests(_ConfigurationDirectory):
         self.assertEqual(cached["source_details"][0]["version"], "live-2")
         self.assertEqual(self.history(), before)
 
+    def test_lookup_commits_latest_lower_limit_but_later_cached_hit_never_trims(self):
+        self.install()
+        path = self.directory / "history.json"
+        entries = [{"input": "older " + str(n), "output": "old", "kind": "text"} for n in range(5)]
+        path.write_text(json.dumps(entries), encoding="utf-8")
+        before = path.read_bytes()
+        entered, release = threading.Event(), threading.Event()
+        original = self.service._finish
+        def gated(cancel, begin_finish):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError("synthetic retention gate not released")
+            return original(cancel, begin_finish)
+        with patch.object(self.service, "_finish", side_effect=gated):
+            self.server._handle(message("retention-lookup", "request", **lookup_request(use_cache=False)))
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(self.call("config_save", config=self.config | {CFG.HISTORY_LIMIT: 2})["payload"],
+                                 {"saved": True})
+                self.assertEqual(path.read_bytes(), before)
+            finally:
+                release.set()
+            self.assertTrue(self.stdout.terminal("retention-lookup"))
+        result = self.stdout.result("retention-lookup")
+        self.assertEqual(result["type"], "completed")
+        self.assertEqual(result["payload"]["status"], "hit")
+        self.assertEqual(result["payload"]["result"]["history"], "recorded")
+        stored = self.history()
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored[1:], entries[:1])
+        self.assertEqual((stored[0]["input"], stored[0]["kind"]), ("synthetic", "dict"))
+        self.assertEqual(stored[0]["output"], result["payload"]["result"]["text"])
+        after_commit = path.read_bytes()
+        self.assertEqual(self.call("config_save", config=self.config | {CFG.HISTORY_LIMIT: 1})["payload"],
+                         {"saved": True})
+        cached = self.lookup()["payload"]["result"]
+        self.assertEqual((cached["cached"], cached["submitted"], cached["history"]), (True, False, "unchanged"))
+        self.assertEqual(path.read_bytes(), after_commit)
+        self.service.manager._opener.assert_not_called()
+
     def test_oversized_source_metadata_fails_before_history_commit_or_finish(self):
         self.install()
         local = LocalDictionary(str(self.source), self.pin.sha256)

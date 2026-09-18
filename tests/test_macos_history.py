@@ -320,6 +320,49 @@ class HistoryServiceTests(_ConfigurationDirectory):
         expected = json.dumps(page["entries"], ensure_ascii=False, indent=2).replace("\n", os.linesep).encode()
         self.assertEqual(self.history_path.read_bytes(), expected)
 
+    def test_retention_trim_expires_cursors_and_refresh_searches_all_survivors_without_restore_on_raise(self):
+        entries = [{"input": "row " + str(n), "output": "other", "kind": "text"} for n in range(125)]
+        entries[105]["output"] = "retained needle \u4e16\u754c"
+        entries[120]["output"] = "discarded needle \u4e16\u754c"
+        self.history_path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+        first = self.page(page_size=1)
+        searched = self.page(page_size=1, query="needle \u4e16\u754c")
+        self.assertEqual(searched["total"], 2)
+        self.session.perform({"operation": "config_save", "config": {"history_limit": 110}})
+        limit = self.session.perform({"operation": "config_load"})["config"]["history_limit"]
+        self.call(addition("new", output="fresh needle \u4e16\u754c", limit=limit))
+        for cursor, filters in ((first["next_cursor"], {}),
+                                (searched["next_cursor"], {"query": "needle \u4e16\u754c"})):
+            with self.assertRaisesRegex(configuration.ConfigurationError, "^history_cursor_expired$"):
+                self.page(cursor, **filters)
+        refreshed = self.page()
+        self.assertEqual(refreshed["total"], 110)
+        self.assertEqual(len(refreshed["entries"]), 100)
+        tail = self.page(refreshed["next_cursor"])
+        self.assertEqual(tail["total"], 110)
+        self.assertIsNone(tail["next_cursor"])
+        survivors = refreshed["entries"] + tail["entries"]
+        self.assertEqual(survivors[0]["input"], "new")
+        self.assertEqual(survivors[1:], entries[:109])
+        found = self.page(page_size=1, query=" NEEDLE\u3000\u4e16\u754c ", kind="text")
+        self.assertEqual(found["total"], 2)
+        self.assertEqual(found["entries"], survivors[:1])
+        remaining = self.page(found["next_cursor"], query="needle \u4e16\u754c", kind="text")
+        self.assertEqual(remaining["entries"], [entries[105]])
+        self.assertEqual(remaining["total"], 2)
+        self.assertIsNone(remaining["next_cursor"])
+        self.assertEqual(self.page(query="discarded")["total"], 0)
+        before_raise = self.history_path.read_bytes()
+        self.session.perform({"operation": "config_save", "config": {"history_limit": 1000}})
+        self.assertEqual(self.history_path.read_bytes(), before_raise)
+        self.assertEqual(self.page(), refreshed)
+        limit = self.session.perform({"operation": "config_load"})["config"]["history_limit"]
+        self.call(addition("later", limit=limit))
+        after_raise = self.page()
+        self.assertEqual(after_raise["total"], 111)
+        self.assertEqual(after_raise["entries"][0]["input"], "later")
+        self.assertEqual(self.page(query="discarded")["total"], 0)
+
     def test_revision_pagination_expires_after_add_clear_external_change_and_reopen(self):
         for text in ("a", "b", "c"):
             self.call(addition(text))

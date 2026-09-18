@@ -671,6 +671,150 @@ class _TranslationDirectory(_ConfigurationDirectory):
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
 
 
+class HistoryRetentionTranslationTests(_TranslationDirectory):
+    def seed_history(self, *, cached=False):
+        entries = [{"ts": "2026-09-01 12:00", "input": "older " + str(n), "output": "old output",
+                    "kind": "text", "is_dict": False, "is_code": False, "sig": "old signature",
+                    "future": [n]} for n in range(5)]
+        if cached:
+            snapshot = translation.snapshot_for_translation(Config(self.config), request())
+            entries[2].update(input=TEXT, output=OUTPUT, sig=snapshot.sig)
+        path = self.directory / "history.json"
+        path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        first = self.history_page()
+        return path, entries, first
+
+    def history_page(self, cursor=None):
+        return self.session.perform_history(
+            {"operation": "history_load", "page_size": 1, "cursor": cursor}, "retention", 2)
+
+    def test_running_text_ocr_and_image_commit_latest_limit_atomically_without_changing_provider_request(self):
+        import hashlib
+        from cc_macos.image_fixture import PNG_BYTES
+
+        source = self.home / "retention.png"
+        source.write_bytes(PNG_BYTES)
+        image_request = {
+            "operation": "translate_image", "image_path": str(source), "image_bytes": len(PNG_BYTES),
+            "image_sha256": hashlib.sha256(PNG_BYTES).hexdigest(), "app_language": "en_US", "record_history": True,
+        }
+        for origin, payload in (("text", request()), ("ocr", request(origin="ocr", text=OCR_TEXT)),
+                                ("image", image_request)):
+            for limit in (1, 2):
+                with self.subTest(origin=origin, limit=limit):
+                    self.session.perform({"operation": "config_save", "config": self.config})
+                    path, entries, first = self.seed_history()
+                    before = path.read_bytes()
+                    self.provider.entered.clear()
+                    self.provider.release.clear()
+                    id_ = origin + str(limit)
+                    calls_before = len(self.provider.requests)
+                    self.server._handle(message(id_, "request", **payload))
+                    attempts = []
+                    actual_replace = os.replace
+                    def replace(source_path, destination):
+                        attempts.append((Path(destination), path.read_bytes(),
+                                         json.loads(Path(source_path).read_bytes())))
+                        return actual_replace(source_path, destination)
+                    try:
+                        self.assertTrue(self.provider.entered.wait(1))
+                        captured = self.provider.requests[-1]
+                        expected = (translation.snapshot_for_image(
+                            Config(self.config), payload, captured.image_paths[0]).request if origin == "image"
+                            else translation.snapshot_for_translation(Config(self.config), payload).request)
+                        self.assertEqual(captured, expected)
+                        self.server._handle(message("save-" + id_, "request", operation="config_save",
+                                                    config=self.config | {CFG.HISTORY_LIMIT: limit}))
+                        self.assertTrue(self.stdout.terminal("save-" + id_))
+                        self.assertEqual(self.stdout.result("save-" + id_)["payload"], {"saved": True})
+                        self.assertEqual(path.read_bytes(), before)
+                        self.assertEqual(self.history_page(), first)
+                        with patch("cc_storage.os.replace", side_effect=replace):
+                            self.provider.release.set()
+                            self.assertTrue(self.stdout.terminal(id_))
+                    finally:
+                        self.provider.release.set()
+                    result = self.stdout.result(id_)
+                    self.assertEqual(result["type"], "completed")
+                    self.assertEqual((result["payload"]["history"], result["payload"]["history_error"]),
+                                     ("recorded", None))
+                    self.assertEqual(len(self.provider.requests), calls_before + 1)
+                    self.assertEqual(self.provider.requests[-1], expected)
+                    stored = json.loads(path.read_bytes())
+                    self.assertEqual(len(stored), limit)
+                    self.assertEqual(stored[1:], entries[:limit - 1])
+                    self.assertEqual(stored[0]["input"], None if origin == "image" else payload["text"])
+                    self.assertEqual(stored[0]["output"], OUTPUT)
+                    self.assertEqual(stored[0]["kind"], "text" if origin == "text" else "ocr")
+                    self.assertEqual(attempts, [(path, before, stored)])
+                    self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+
+    def test_lowered_limit_never_trims_cache_hit_cancel_or_history_optout(self):
+        for mode in ("cache", "cancel", "history_off", "request_optout"):
+            with self.subTest(mode=mode):
+                self.session.perform({"operation": "config_save", "config": self.config})
+                path, entries, first = self.seed_history(cached=True)
+                before = path.read_bytes()
+                self.session.perform({"operation": "config_save", "config": self.config | {
+                    CFG.HISTORY_LIMIT: 1, CFG.HISTORY_ENABLED: mode != "history_off"}})
+                self.provider.entered.clear()
+                self.provider.release.clear() if mode == "cancel" else self.provider.release.set()
+                calls_before = len(self.provider.requests)
+                with patch.object(self.session._history._owner, "add",
+                                  side_effect=AssertionError("non-recording request trimmed history")):
+                    self.translate(mode, use_cache=mode in ("cache", "history_off"),
+                                   record_history=mode != "request_optout")
+                    try:
+                        if mode == "cancel":
+                            self.assertTrue(self.provider.entered.wait(1))
+                            self.server._handle(message("cancel-active", "cancel", request_id=mode))
+                            self.assertEqual(self.stdout.result("cancel-active")["payload"],
+                                             {"cancel_requested": True})
+                    finally:
+                        self.provider.release.set()
+                    self.assertTrue(self.stdout.terminal(mode))
+                result = self.stdout.result(mode)
+                if mode == "cancel":
+                    self.assertEqual((result["type"], result["payload"]), ("cancelled", {"submitted": True}))
+                else:
+                    self.assertEqual(result["type"], "completed")
+                    self.assertEqual(result["payload"]["history"], "unchanged" if mode == "cache" else "disabled")
+                    self.assertEqual(result["payload"]["cached"], mode == "cache")
+                self.assertEqual(len(self.provider.requests), calls_before + (mode != "cache"))
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(self.history_page(), first)
+                self.assertEqual(self.history_page(first["next_cursor"])["entries"], entries[1:2])
+
+    def test_retention_replace_failure_preserves_full_history_cursor_and_reports_record_error(self):
+        path, entries, first = self.seed_history()
+        before = path.read_bytes()
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.HISTORY_LIMIT: 2}})
+        attempts = []
+        def fail_replace(source, destination):
+            attempts.append((Path(destination), path.read_bytes(), json.loads(Path(source).read_bytes())))
+            raise PermissionError("SYNTHETIC_PRIVATE_RETENTION")
+        with patch("cc_storage.os.replace", side_effect=fail_replace):
+            self.translate()
+            self.assertTrue(self.stdout.terminal("translate"))
+        result = self.stdout.result("translate")
+        self.assertEqual(result["type"], "completed")
+        self.assertEqual((result["payload"]["text"], result["payload"]["submitted"], result["payload"]["cached"]),
+                         (OUTPUT, True, False))
+        self.assertEqual((result["payload"]["history"], result["payload"]["history_error"]),
+                         ("failed", "history_io_failed"))
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0][:2], (path, before))
+        self.assertEqual(len(attempts[0][2]), 2)
+        self.assertEqual(attempts[0][2][0]["input"], TEXT)
+        self.assertEqual(attempts[0][2][1:], entries[:1])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.history_page(), first)
+        self.assertEqual(self.history_page(first["next_cursor"])["entries"], entries[1:2])
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+        self.assertNotIn("SYNTHETIC_PRIVATE_RETENTION", self.stdout.getvalue().decode() + self.stderr.getvalue())
+
+
 class ModelCatalogServiceTests(_TranslationDirectory):
     def catalog(self, id_="catalog"):
         self.server._handle(message(id_, "request", operation="model_catalog"))
