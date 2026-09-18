@@ -1037,6 +1037,7 @@ struct AppUpdatePanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(model.preferredColorScheme)
     }
 }

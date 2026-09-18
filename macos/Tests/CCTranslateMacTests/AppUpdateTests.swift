@@ -340,6 +340,12 @@ extension ProductRenderingTests {
             let png = try render(AppUpdatePanelView(model: f.model, updates: updates),
                                  named: name, size: NSSize(width: 760, height: 420), scheme: scheme,
                                  highResolution: true)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+            let backdrop = try XCTUnwrap(bitmap.colorAt(x: 2, y: 2)?.usingColorSpace(.deviceRGB))
+            XCTAssertGreaterThan(backdrop.alphaComponent, 0.99)
+            let brightness = (backdrop.redComponent + backdrop.greenComponent + backdrop.blueComponent) / 3
+            if scheme == .light { XCTAssertGreaterThan(brightness, 0.7) }
+            else { XCTAssertLessThan(brightness, 0.4) }
             let words = try NativeRenderEvidence.settingsWords(png, chinese: language == "zh")
             XCTAssertFalse(words.contains("private detail"), words)
             if fails {
