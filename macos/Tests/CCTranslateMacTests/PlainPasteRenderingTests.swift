@@ -124,7 +124,7 @@ extension ProductRenderingTests {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .windowBackgroundColor)),
             named: "plain-paste-draining-negative-control-zh-dark",
-            size: NSSize(width: 820, height: 90), scheme: .dark)
+            size: NSSize(width: 820, height: 90), scheme: .dark, highResolution: true)
         let negativeWords = try pasteSettingsWords(differentStatus, chinese: true).filter { !$0.isWhitespace }
         try NativeRenderEvidence.record("Synthetic paste negative-control OCR: \(negativeWords)")
         XCTAssertFalse(negativeWords.contains("等待剪贴板任务结束"))
@@ -214,7 +214,7 @@ extension ProductRenderingTests {
         // Tall native windows expose the complete production Form, including its lower sections.
         // Neither this window nor the application's menu/window actions are ordered or activated.
         return try render(settings, named: name, size: NSSize(width: 820, height: 3400),
-                          scheme: scheme, inspect: inspect)
+                          scheme: scheme, inspect: inspect, highResolution: chinese)
     }
 
     @MainActor

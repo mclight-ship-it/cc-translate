@@ -683,7 +683,8 @@ final class ProductRenderingTests: XCTestCase {
     // human GUI acceptance test, or evidence of Accessibility/Screen Recording permission.
     @MainActor
     func render<Content: View>(_ content: Content, named name: String, size: NSSize,
-                                      scheme: ColorScheme, inspect: ((NSView) throws -> Void)? = nil) throws -> Data {
+                                      scheme: ColorScheme, inspect: ((NSView) throws -> Void)? = nil,
+                                      highResolution: Bool = false) throws -> Data {
         _ = NSApplication.shared
         let host = NSHostingView(rootView: content.environment(\.colorScheme, scheme))
         let appearance = try XCTUnwrap(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
@@ -703,12 +704,28 @@ final class ProductRenderingTests: XCTestCase {
         host.displayIfNeeded()
         try inspect?(host)
         XCTAssertEqual(host.bounds.size, size)
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        let bitmap: NSBitmapImageRep
+        if highResolution {
+            // Draw at two pixels per point; enlarging an already rasterized tiny glyph cannot restore its strokes.
+            bitmap = try XCTUnwrap(NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            bitmap.size = size
+        } else {
+            bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        }
         appearance.performAsCurrentDrawingAppearance {
             host.cacheDisplay(in: host.bounds, to: bitmap)
         }
         XCTAssertGreaterThanOrEqual(bitmap.pixelsWide, Int(size.width))
         XCTAssertGreaterThanOrEqual(bitmap.pixelsHigh, Int(size.height))
+        if highResolution {
+            XCTAssertEqual(bitmap.pixelsWide, Int(size.width * 2))
+            XCTAssertEqual(bitmap.pixelsHigh, Int(size.height * 2))
+            try NativeRenderEvidence.record("Native double-resolution render \(name): " +
+                "points=\(size), pixels=\(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+        }
 
         var colors = Set<UInt32>()
         for y in stride(from: 0, to: bitmap.pixelsHigh, by: max(1, bitmap.pixelsHigh / 100)) {
