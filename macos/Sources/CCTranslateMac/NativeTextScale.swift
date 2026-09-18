@@ -70,6 +70,209 @@ struct NativeTextScalePicker: View {
     }
 }
 
+@MainActor
+struct NativeTranslationEditor: NSViewRepresentable {
+    @Binding var text: String
+    var textScale: NativeTextScale
+    @Binding var focused: Bool
+    var label: String
+    var hint: String = ""
+    var placeholder: String = ""
+    var drawsBackground = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NativeTranslationEditor
+        var modelText: String
+        var scale: NativeTextScale
+        var applyingModel = false
+        private var requestedFocus = false
+
+        init(_ parent: NativeTranslationEditor) {
+            self.parent = parent
+            modelText = parent.text
+            scale = parent.textScale
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? NativeTranslationTextView else { return }
+            publishCommittedText(from: view)
+        }
+
+        func publishCommittedText(from view: NativeTranslationTextView) {
+            view.needsDisplay = true
+            guard !applyingModel, !view.settingMarkedText, !view.hasMarkedText() else { return }
+            modelText = view.string
+            if parent.text != view.string { parent.text = view.string }
+        }
+
+        func focusChanged(_ focused: Bool) {
+            requestedFocus = focused
+            if parent.focused != focused { parent.focused = focused }
+        }
+
+        func synchronizeFocus(_ view: NativeTranslationTextView, attached: Bool = false) {
+            guard attached || requestedFocus != parent.focused else { return }
+            requestedFocus = parent.focused
+            guard let window = view.window else { return }
+            if requestedFocus && view.isEditable && window.firstResponder !== view {
+                window.makeFirstResponder(view)
+            } else if !requestedFocus && window.firstResponder === view {
+                window.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.hasHorizontalScroller = false
+        scroll.borderType = .noBorder
+        let view = NativeTranslationTextView(frame: .zero)
+        view.isRichText = false
+        view.isSelectable = true
+        view.allowsUndo = true
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.textContainerInset = NSSize(width: 0, height: 8)
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        view.minSize = .zero
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.font = .systemFont(ofSize: textScale.points(15))
+        view.textColor = .textColor
+        view.string = text
+        view.delegate = context.coordinator
+        let coordinator = context.coordinator
+        view.onCommittedTextChange = { [weak coordinator, weak view] in
+            guard let view else { return }
+            coordinator?.publishCommittedText(from: view)
+        }
+        view.onFocusChange = { [weak coordinator] in coordinator?.focusChanged($0) }
+        view.onWindowAttachment = { [weak coordinator, weak view] in
+            guard let view else { return }
+            coordinator?.synchronizeFocus(view, attached: true)
+        }
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? NativeTranslationTextView else { return }
+        let coordinator = context.coordinator
+        coordinator.parent = self
+        coordinator.applyingModel = true
+        if view.isEditable != isEnabled { view.isEditable = isEnabled }
+        view.drawsBackground = drawsBackground
+        scroll.drawsBackground = drawsBackground
+        view.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = .textBackgroundColor
+        view.setAccessibilityLabel(label)
+        view.setAccessibilityHelp(hint)
+        view.placeholder = placeholder
+
+        // Marked text belongs to AppKit, not the last committed SwiftUI binding.
+        // Only a genuine external edit (Clear, history reuse, new OCR) replaces it.
+        var replacedText = false
+        if coordinator.modelText != text {
+            coordinator.modelText = text
+            if view.string != text {
+                let selected = view.selectedRange()
+                if view.hasMarkedText() {
+                    view.inputContext?.discardMarkedText()
+                    view.unmarkText()
+                }
+                view.string = text
+                replacedText = true
+                view.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
+                view.undoManager?.removeAllActions()
+            }
+        }
+        if coordinator.scale != textScale || replacedText {
+            let selected = view.selectedRanges
+            let viewport = NativeTextViewport(view: view, scroll: scroll)
+            let font = NSFont.systemFont(ofSize: textScale.points(15))
+            if let storage = view.textStorage, storage.length > 0 {
+                storage.addAttribute(.font, value: font, range: NSRange(location: 0, length: storage.length))
+            }
+            view.typingAttributes[.font] = font
+            coordinator.scale = textScale
+            if view.selectedRanges != selected { view.selectedRanges = selected }
+            viewport.restore(view: view, scroll: scroll)
+        }
+        view.placeholderFont = .systemFont(ofSize: textScale.points(15))
+        coordinator.applyingModel = false
+        coordinator.synchronizeFocus(view)
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        guard let view = scroll.documentView as? NativeTranslationTextView else { return }
+        view.delegate = nil
+        view.onCommittedTextChange = nil
+        view.onFocusChange = nil
+        view.onWindowAttachment = nil
+    }
+}
+
+@MainActor
+final class NativeTranslationTextView: NSTextView {
+    var onCommittedTextChange: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+    var onWindowAttachment: (() -> Void)?
+    private(set) var settingMarkedText = false
+    var placeholder = "" { didSet { if placeholder != oldValue { needsDisplay = true } } }
+    var placeholderFont = NSFont.systemFont(ofSize: 15) { didSet { needsDisplay = true } }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        settingMarkedText = true
+        defer { settingMarkedText = false; needsDisplay = true }
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        onCommittedTextChange?()
+    }
+
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        super.insertText(insertString, replacementRange: replacementRange)
+        onCommittedTextChange?()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { onFocusChange?(true) }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChange?(false) }
+        return resigned
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { onWindowAttachment?() }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        let inset = textContainerOrigin
+        let padding = textContainer?.lineFragmentPadding ?? 5
+        (placeholder as NSString).draw(in: NSRect(
+            x: inset.x + padding, y: inset.y,
+            width: max(0, bounds.width - 2 * (inset.x + padding)), height: max(0, bounds.height - inset.y)
+        ), withAttributes: [.font: placeholderFont, .foregroundColor: NSColor.secondaryLabelColor])
+    }
+}
+
 // Reflow should keep the same passage in view, not the old document's pixel offset.
 @MainActor
 struct NativeTextViewport {

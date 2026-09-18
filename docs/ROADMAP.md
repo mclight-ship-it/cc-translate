@@ -115,6 +115,8 @@ P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，
 修正0812d47/run35293312910已实际编译/执行680Swift，producer11worker/46粘贴/7fresh通过且无旧线程警告；
 但2项新字体交互方法失败（组合输入丢失、字号菜单项定位/动作），完整run仍退出1。
 115PNG含新增3张字号图均已核验，14/26未执行、App未发布；继续修真实交互，不拿图或局部通过代替完整包。
+随后交付主输入/OCR共享AppKit编辑器修复、真实菜单交互，以及长文自动摘要设置。
+原失败断言保留；新增2字体方法和15摘要方法，现有联合120测试已过，原生697方法/118PNG仍待新源码验证。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

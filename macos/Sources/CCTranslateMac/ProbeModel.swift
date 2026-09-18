@@ -11,6 +11,11 @@ enum HistoryPhase: Equatable {
     case idle, waiting, loading, loaded, clearing, failed
 }
 
+enum SummaryPreferencePhase: Equatable {
+    case idle, saving, readingBack, saved, differentReadback
+    case failed(String)
+}
+
 @MainActor
 final class ProbeModel: ObservableObject {
     private enum ConnectionMode { case diagnostic, configuration, translation }
@@ -24,6 +29,10 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var settingsReady = false
     @Published private(set) var settingsBusy = false
     @Published private(set) var historyEnabled = true
+    @Published private(set) var summaryEnabled: Bool?
+    @Published private(set) var summaryPreferencePhase: SummaryPreferencePhase = .idle
+    private var summarySaveRequest: (id: String, value: Bool)?
+    private var summaryReadRequest: (id: String, expected: Bool?)?
     @Published var direction = "auto" {
         didSet { if !loadingConfiguration { directionEdited = true } }
     }
@@ -854,12 +863,17 @@ final class ProbeModel: ObservableObject {
         onTranslationResult?(status + (output.isEmpty ? "" : "\n\n" + output))
     }
 
-    func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false) {
+    func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false,
+                      summaryExpected: Bool? = nil, summaryReconcile: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
+        if summaryExpected != nil || summaryReconcile {
+            summaryReadRequest = (id, summaryExpected)
+            summaryPreferencePhase = .readingBack
+        }
         if modelRead { modelSettings.beginRead(id: id, afterSave: afterModelSave) }
         plainPaste.beginRead(id: id, reconcile: plainReconcile || plainPasteReconcileOnLoad)
         plainPasteReconcileOnLoad = false
@@ -1044,6 +1058,69 @@ final class ProbeModel: ObservableObject {
             return
         }
         saveConfiguration(history: history ?? historyEnabled, direction: direction, model: modelProfile)
+    }
+
+    var canSaveSummaryPreference: Bool {
+        ready && settingsReady && !settingsBusy && !stopping && !dictionary.committing &&
+            connectionMode != .diagnostic && savedConfiguration != nil && summaryEnabled != nil
+    }
+
+    var canReloadSummaryPreference: Bool {
+        ready && !settingsBusy && !stopping && !dictionary.committing && connectionMode != .diagnostic
+    }
+
+    var summaryPreferenceMessage: String {
+        switch summaryPreferencePhase {
+        case .idle:
+            return summaryEnabled == nil
+                ? text("The saved summary preference is not loaded yet.", "尚未读取已保存的摘要偏好。") : ""
+        case .saving:
+            return text("Saving summary preference… The switch shows the last confirmed value.",
+                        "正在保存摘要偏好… 开关显示上次确认的值。")
+        case .readingBack:
+            return text("Reading back the saved summary preference…", "正在回读已保存的摘要偏好…")
+        case .saved:
+            return text("Summary preference saved and read back.", "摘要偏好已保存并回读确认。")
+        case .differentReadback:
+            return text("The saved value differs from your choice. The switch shows the value read back; no write was retried.",
+                        "已保存的值与你的选择不同。开关显示回读值，未重试写入。")
+        case .failed(let code):
+            return text("Summary preference could not be confirmed (\(code)). Reload the saved setting; no write was retried.",
+                        "无法确认摘要偏好（\(code)）。请重新读取已保存设置，未重试写入。")
+        }
+    }
+
+    func saveSummaryPreference(_ enabled: Bool) {
+        guard canSaveSummaryPreference, var config = savedConfiguration, let connection else {
+            summaryPreferencePhase = .failed("settings_unavailable")
+            return
+        }
+        guard enabled != summaryEnabled else { return }
+        // Preserve every other saved field, including history opt-out and unsaved editor drafts.
+        config["summary_enabled"] = .bool(enabled)
+        let id = UUID().uuidString
+        summarySaveRequest = (id, enabled)
+        summaryPreferencePhase = .saving
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    func reloadSummaryPreference() {
+        guard canReloadSummaryPreference else {
+            summaryPreferencePhase = .failed("settings_unavailable")
+            return
+        }
+        loadSettings(summaryReconcile: true)
+    }
+
+    private func summaryPreferenceConnectionLost() {
+        if summaryEnabled != nil || summarySaveRequest != nil || summaryReadRequest != nil {
+            summaryPreferencePhase = .failed("connection_closed")
+        }
+        summaryEnabled = nil
+        summarySaveRequest = nil
+        summaryReadRequest = nil
     }
 
     private func saveConfiguration(history enabled: Bool, direction: String, model: String,
@@ -1496,6 +1573,7 @@ final class ProbeModel: ObservableObject {
             modelCatalog.disconnect()
             catalogReconnectIntent = nil
             modelSettings.connectionLost()
+            summaryPreferenceConnectionLost()
             plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
@@ -1565,6 +1643,7 @@ final class ProbeModel: ObservableObject {
             pending.removeAll()
             savedConfiguration = nil
             modelSettings.connectionLost()
+            summaryPreferenceConnectionLost()
             plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
@@ -1695,20 +1774,27 @@ final class ProbeModel: ObservableObject {
         if event.id == configLoadID || event.id == configSaveID {
             guard event.isTerminal else { return true }
             let pasteSave = plainPaste.preference.ownsSave(event.id)
+            let summaryOperation = summarySaveRequest?.id == event.id || summaryReadRequest?.id == event.id
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
+                    let summaryExpected = summarySaveRequest?.id == event.id ? summarySaveRequest?.value : nil
+                    summarySaveRequest = nil
                     plainPaste.saved(id: event.id)
                     configSaveID = nil
                     settingsBusy = false
                     status = "Settings saved. Reloading their normalized view; no write replay."
-                    loadSettings(modelRead: modelSave, afterModelSave: modelSave)
+                    loadSettings(modelRead: modelSave, afterModelSave: modelSave, summaryExpected: summaryExpected)
                     return true
                 }
                 guard let config = event.payload["config"]?.object,
                       case let .bool(enabled)? = config["history_enabled"],
                       let savedDirection = config["direction"]?.string,
                       let profile = config["codex_model"]?.string else {
+                    summaryEnabled = nil
+                    summaryPreferencePhase = .failed("invalid_config")
+                    summarySaveRequest = nil
+                    summaryReadRequest = nil
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
@@ -1718,6 +1804,18 @@ final class ProbeModel: ObservableObject {
                     return true
                 }
                 savedConfiguration = config
+                if case let .bool(value)? = config["summary_enabled"] {
+                    summaryEnabled = value
+                    if let read = summaryReadRequest, read.id == event.id {
+                        summaryPreferencePhase = read.expected.map { $0 == value ? .saved : .differentReadback } ?? .idle
+                    } else {
+                        summaryPreferencePhase = .idle
+                    }
+                } else {
+                    summaryEnabled = nil
+                    summaryPreferencePhase = .failed("invalid_summary_preference")
+                }
+                summaryReadRequest = nil
                 let pasteEnabled: Bool?
                 if case .bool(let enabled)? = config["plain_text_paste_enabled"] { pasteEnabled = enabled }
                 else { pasteEnabled = nil }
@@ -1767,11 +1865,18 @@ final class ProbeModel: ObservableObject {
                 }
             } else {
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
+                if summaryOperation || event.id == configLoadID {
+                    summaryEnabled = nil
+                    summaryPreferencePhase = .failed(event.safeFailureCode)
+                    summarySaveRequest = nil
+                    summaryReadRequest = nil
+                }
                 modelSettings.fail(id: event.id, failure: .operation(event.safeFailureCode))
                 plainPaste.failed(id: event.id, code: event.safeFailureCode)
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 if catalogPreparation { modelCatalog.fail(.connection) }
-                if (!pasteSave || !active) && !catalogPreparation { failPreparation(status) }
+                if (!pasteSave || !active) && !catalogPreparation &&
+                    (!summaryOperation || (!active && draft != nil)) { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))

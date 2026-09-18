@@ -8,7 +8,7 @@ struct TranslatorView: View {
     var showHistory: () -> Void
     var showSettings: () -> Void
     var showCapture: () -> Void
-    @FocusState private var editorFocused: Bool
+    @State private var editorFocused = false
 
     private var busy: Bool { model.preparing || model.active }
     private var byteCount: Int { model.input.utf8.count }
@@ -108,24 +108,13 @@ struct TranslatorView: View {
                 .help(model.text("Clear the input and result; cancel any translation.",
                                  "清空原文和结果，并取消正在进行的翻译。"))
             }
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $model.input)
-                    .font(.system(size: model.nativeTextScale.points(15)))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .focused($editorFocused)
-                    .accessibilityLabel(model.text("Text to translate", "要翻译的文字"))
-                    .accessibilityHint(model.text("Type or paste. Command Return translates.",
-                                                 "输入或粘贴文字，按 Command Return 翻译。"))
-                if model.input.isEmpty {
-                    Text(model.text("Type or paste text here…", "在这里输入或粘贴文字…"))
-                        .font(.system(size: model.nativeTextScale.points(15)))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 13).padding(.vertical, 16)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            }
+            NativeTranslationEditor(
+                text: $model.input, textScale: model.nativeTextScale, focused: $editorFocused,
+                label: model.text("Text to translate", "要翻译的文字"),
+                hint: model.text("Type or paste. Command Return translates.", "输入或粘贴文字，按 Command Return 翻译。"),
+                placeholder: model.text("Type or paste text here…", "在这里输入或粘贴文字…")
+            )
+            .padding(8)
             .background(Color(nsColor: .textBackgroundColor),
                         in: RoundedRectangle(cornerRadius: 10))
             .overlay {
@@ -685,7 +674,7 @@ struct TranslationSettingsView: View {
         }
     }
 
-    private var translationSection: some View {
+    var translationSection: some View {
         Section {
             DirectionPicker(model: model, selection: Binding(
                 get: { model.direction },
@@ -693,6 +682,32 @@ struct TranslationSettingsView: View {
             ))
             .disabled(model.settingsBusy || busy || model.dictionary.committing)
             CodexModelSettingsView(model: model)
+            Toggle(model.text("Automatic long-text summary", "长文自动摘要"), isOn: Binding(
+                get: { model.summaryEnabled ?? false },
+                set: { model.saveSummaryPreference($0) }
+            ))
+            .toggleStyle(.checkbox)
+            .disabled(!model.canSaveSummaryPreference)
+            .accessibilityIdentifier("automatic-long-text-summary")
+            .accessibilityValue(model.summaryEnabled.map {
+                $0 ? model.text("On", "已开启") : model.text("Off", "已关闭")
+            } ?? model.text("Not confirmed", "尚未确认"))
+            Text(model.text("For eligible prose of 400 or more characters, include a brief summary before the full translation. Applies to future translations, not an in-progress request. Short text, pure code, and screenshots are unaffected. The result's Summarize action remains available.",
+                            "翻译符合条件的 400 字符及以上自然语言长文时，先给出简短摘要，再显示完整译文。仅影响后续翻译，不改变正在进行的请求；短文、纯代码和截图不受影响。结果中的“生成摘要”操作仍可使用。"))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !model.summaryPreferenceMessage.isEmpty {
+                Text(model.summaryPreferenceMessage)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if case .failed = model.summaryPreferencePhase {
+                Button(model.text("Reload saved summary setting", "重新读取已保存的摘要设置")) {
+                    model.reloadSummaryPreference()
+                }
+                .disabled(!model.canReloadSummaryPreference)
+                .accessibilityIdentifier("reload-summary-setting")
+            }
             if model.settingsReady {
                 Toggle(model.text("Save translation history", "保存翻译历史记录"), isOn: Binding(
                     get: { model.historyEnabled },
@@ -832,8 +847,8 @@ struct TranslationSettingsView: View {
                    action: showAbout)
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Text translation, screenshot text recognition and translation, local dictionary, result actions, history, and Codex settings are available here. Direct image requests, model management, login items, and app updates are not yet implemented.",
-                            "此界面已支持文字翻译、截图文字识别与翻译、本地词典、结果操作、历史记录和 Codex 设置。直接发送图片、模型管理、登录项和应用更新尚未实现。"))
+            Text(model.text("Available: text translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, and Codex model discovery and custom model settings. Login items and app updates are not yet implemented.",
+                            "已支持文字翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录，以及 Codex 模型发现和自定义模型设置。登录项和应用更新尚未实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)

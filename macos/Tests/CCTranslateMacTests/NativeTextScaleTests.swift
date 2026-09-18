@@ -381,6 +381,15 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let text = editor.string
         let marked = editor.markedRange()
         let selection = editor.selectedRange()
+        let committedBeforeScaling = f.model.input
+        let storage = try XCTUnwrap(editor.textStorage)
+        var characterEdits = 0
+        let updates = NotificationCenter.default.publisher(
+            for: NSTextStorage.didProcessEditingNotification, object: storage
+        ).sink { _ in
+            if storage.editedMask.contains(.editedCharacters) { characterEdits += 1 }
+        }
+        defer { updates.cancel() }
         f.model.nativeTextScale = .larger
         try await surface.waitFor { ScaleTestSupport.hasFont(editor, size: 18.75) }
         XCTAssertTrue(editor.hasMarkedText())
@@ -388,8 +397,96 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertEqual(editor.selectedRange(), selection)
         XCTAssertEqual(editor.string, text)
         XCTAssertTrue(surface.window.firstResponder === editor)
+        XCTAssertEqual(try ScaleTestSupport.font(editor, at: "\u{62fc}").pointSize, 18.75)
+        XCTAssertEqual(f.model.input, committedBeforeScaling)
+        XCTAssertEqual(characterEdits, 0, "Scaling composition must never replace text storage characters.")
+        updates.cancel()
         editor.unmarkText()
+        try await surface.waitFor { f.model.input == text }
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertTrue(try surface.text(editable: true) === editor)
         XCTAssertTrue(f.helpers.allSatisfy { $0.translations.isEmpty })
+    }
+
+    @MainActor
+    func testOCREditorKeepsMarkedTextThroughRepeatedScaleChangesAndCommitsTheSelectedCandidate() async throws {
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        f.model.loadPresentation()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        let original = "Reviewed "
+        let job = CaptureTestOCR(text: original)
+        var jobs = 0
+        let capture = CaptureModel(screen: ScreenProbe(
+            source: source, makeOCRJob: { jobs += 1; return job }, notificationCenter: NotificationCenter()))
+        defer { capture.cancel() }
+        try await CaptureProductFixture.recognize(capture, source: source)
+        let surface = ScaleTestHost(CaptureView(capture: capture, model: f.model,
+                                                captureAgain: {}, reselect: {}, close: {}),
+                                    size: NSSize(width: 760, height: 680))
+        defer { surface.close() }
+        let editor = try surface.text(editable: true)
+        XCTAssertTrue(surface.window.makeFirstResponder(editor))
+        let offset = (editor.string as NSString).length
+        editor.setMarkedText("\u{62fc}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: offset, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        let text = editor.string
+        let marked = editor.markedRange()
+        let selection = editor.selectedRange()
+        let boundBeforeScaling = capture.text
+        var writes = 0
+        let observation = capture.$text.dropFirst().sink { _ in writes += 1 }
+        defer { observation.cancel() }
+        for scale in [NativeTextScale.larger, .largest, .smaller, .standard] {
+            f.model.nativeTextScale = scale
+            try await surface.waitFor { ScaleTestSupport.hasFont(editor, size: scale.points(15)) }
+            XCTAssertTrue(editor.hasMarkedText())
+            XCTAssertEqual(editor.markedRange(), marked)
+            XCTAssertEqual(editor.selectedRange(), selection)
+            XCTAssertEqual(editor.string, text)
+            XCTAssertEqual(capture.text, boundBeforeScaling)
+            XCTAssertEqual(writes, 0)
+            XCTAssertTrue(surface.window.firstResponder === editor)
+            XCTAssertTrue(try surface.text(editable: true) === editor)
+        }
+        observation.cancel()
+        editor.insertText("\u{62fc}\u{97f3}", replacementRange: NSRange(location: NSNotFound, length: 0))
+        let committed = String(text.prefix(offset)) + "\u{62fc}\u{97f3}"
+        try await surface.waitFor { capture.text == committed }
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(editor.string, committed)
+        XCTAssertEqual(jobs, 1)
+        XCTAssertEqual(source.requests.count, 1)
+        XCTAssertTrue(f.helpers.isEmpty)
+        XCTAssertTrue(f.copiedText.isEmpty)
+    }
+
+    @MainActor
+    func testExplicitClearAndHistoryReuseReplaceCompositionWithoutResurrectingItOnScaleChange() async throws {
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready()
+        f.model.input = "Original "
+        let surface = ScaleTestHost(TranslatorView(model: f.model, showHistory: {}, showSettings: {}, showCapture: {}),
+                                    size: NSSize(width: 900, height: 620))
+        defer { surface.close() }
+        let editor = try surface.text(editable: true)
+        XCTAssertTrue(surface.window.makeFirstResponder(editor))
+        editor.setMarkedText("\u{62fc}", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: 9, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        f.model.clearTranslation()
+        try await surface.waitFor { editor.string.isEmpty && !editor.hasMarkedText() }
+        f.model.nativeTextScale = .largest
+        f.model.reuseHistory(.init(id: "replacement", input: "Saved original", output: "Saved result"))
+        try await surface.waitFor { editor.string == "Saved original" && ScaleTestSupport.hasFont(editor, size: 22.5) }
+        XCTAssertEqual(f.model.input, "Saved original")
+        XCTAssertEqual(f.model.output, "Saved result")
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertTrue(try surface.text(editable: true) === editor)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.configurationSaves.isEmpty)
     }
 
     @MainActor
@@ -507,16 +604,48 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertTrue(button.isEnabled)
         XCTAssertFalse(f.model.settingsReady)
         let fontSize = button.font?.pointSize
-        let index = button.indexOfItem(withTitle: "150%")
-        XCTAssertGreaterThanOrEqual(index, 0)
-        button.selectItem(at: index)
-        XCTAssertTrue(button.sendAction(button.action, to: button.target))
+        print("Native text-size menu before opening: \(button.itemTitles.map(\.debugDescription)); button action=\(String(describing: button.action))")
+        surface.window.orderFront(nil)
+        var inspectedMenu = false
+        var invokedItem = false
+        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                inspectedMenu = true
+                guard let menu = button.menu else {
+                    XCTFail("The opened native picker has no menu.")
+                    return
+                }
+                defer { menu.cancelTrackingWithoutAnimation() }
+                let inventory = menu.items.enumerated().map { index, item in
+                    "\(index): \(item.title.debugDescription) scalars=\(item.title.unicodeScalars.map(\.value)) action=\(String(describing: item.action))"
+                }.joined(separator: "\n")
+                print("Native text-size menu after opening:\n\(inventory)")
+                let matches = menu.items.indices.filter {
+                    menu.items[$0].title.filter { !$0.isWhitespace } == "150%"
+                }
+                XCTAssertEqual(matches.count, 1, inventory)
+                guard matches.count == 1, let index = matches.first else { return }
+                let item = menu.items[index]
+                XCTAssertTrue(item.isEnabled, inventory)
+                XCTAssertNotNil(item.action, inventory)
+                guard item.isEnabled, item.action != nil else { return }
+                menu.performActionForItem(at: index)
+                invokedItem = true
+            }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        defer { timer.invalidate() }
+        // SwiftUI owns item actions and may populate the menu only when it opens.
+        button.performClick(nil)
+        XCTAssertTrue(inspectedMenu, "Selection must inspect the opened native menu, not guessed titles before tracking.")
+        XCTAssertTrue(invokedItem, "Selection must dispatch the real NSMenuItem action.")
         try await surface.waitFor {
             f.model.nativeTextScale == .largest &&
-                f.preferences.string(forKey: NativeTextScale.preferenceKey) == "150"
+                f.preferences.string(forKey: NativeTextScale.preferenceKey) == "150" &&
+                button.title.filter { !$0.isWhitespace } == "150%"
         }
         XCTAssertEqual(button.font?.pointSize, fontSize)
-        XCTAssertEqual(button.title, "150%")
+        XCTAssertEqual(button.title.filter { !$0.isWhitespace }, "150%")
         XCTAssertTrue(f.helpers.isEmpty)
         XCTAssertEqual(f.runtimeRequests, 0)
         XCTAssertEqual(f.locatorRequests, 0)

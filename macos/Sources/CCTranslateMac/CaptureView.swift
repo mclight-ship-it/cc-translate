@@ -10,7 +10,7 @@ struct CaptureView: View {
     var reselect: () -> Void
     var close: () -> Void
     @Environment(\.controlActiveState) private var controlActiveState
-    @FocusState private var editorFocused: Bool
+    @State private var editorFocused = false
     private var statusText: String { capture.showsTranslationStatus ? model.productMessage : capture.message(using: model) }
 
     var body: some View {
@@ -148,11 +148,12 @@ struct CaptureView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(model.text("Recognized text · Editable", "识别文字 · 可编辑"))
                 .font(.subheadline.bold()).accessibilityAddTraits(.isHeader)
-            TextEditor(text: $capture.text)
-                .font(.system(size: model.nativeTextScale.points(15)))
-                .focused($editorFocused)
+            NativeTranslationEditor(
+                text: $capture.text, textScale: model.nativeTextScale, focused: $editorFocused,
+                label: model.text("Reviewed screenshot text to translate", "确认后用于翻译的截图文字"),
+                drawsBackground: true
+            )
                 .disabled(capture.busy)
-                .accessibilityLabel(model.text("Reviewed screenshot text to translate", "确认后用于翻译的截图文字"))
                 .frame(minHeight: 160, maxHeight: .infinity)
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(
                     editorFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1))
