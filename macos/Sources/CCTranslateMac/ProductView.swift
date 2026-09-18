@@ -958,6 +958,7 @@ struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
     var showDiagnostics: () -> Void
     var showAbout: () -> Void
+    var loginItems: LoginItemModel? = nil
 
     private var busy: Bool { model.active || model.preparing }
 
@@ -994,6 +995,13 @@ struct TranslationSettingsView: View {
                 SettingsDefaultsView(model: model)
             } header: {
                 Text(model.text("Restore settings", "恢复设置"))
+            }
+            if let loginItems {
+                Section {
+                    LoginItemSettingsView(model: model, loginItems: loginItems)
+                } header: {
+                    Text(model.text("Login item", "登录项"))
+                }
             }
         }
         .disabled(model.defaultsPhase.busy)
@@ -1214,8 +1222,8 @@ struct TranslationSettingsView: View {
                    action: showAbout)
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Available: Codex and Claude translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, custom model settings, and Codex model discovery. Login items and app updates are not yet implemented.",
-                            "已支持 Codex 和 Claude 翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录、自定义模型设置及 Codex 模型发现。登录项和应用更新尚未实现。"))
+            Text(model.text("Available: Codex and Claude translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, custom model settings, Codex model discovery, and macOS login-item settings. App updates are not yet implemented.",
+                            "已支持 Codex 和 Claude 翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录、自定义模型设置、Codex 模型发现及 macOS 登录项设置。应用更新尚未实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)

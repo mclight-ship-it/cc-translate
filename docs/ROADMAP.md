@@ -12,6 +12,8 @@
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
 [完整审计](MACOS_TODO.md#native-claude-provider-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 继续登录项、更新/分发/卸载及P5–P6；真实账号、TCC/IME/VoiceOver仍另验，**整个移植尚未完成**。
+P4首项已开始接入SMAppService实际登录状态与原生设置，不自动注册、不以本地开关假装系统批准；
+新增12项原生方法与3张图仍待自己的Mac验证，当前f9781b7推荐包尚不包含此后续源码。
 [双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
 已接入现有配置和实际监听，新增25项测试、2张渲染，现已完成验收并包含于推荐包。
 ab83b48首轮已编译并通过24项新增测试，仅剩禁用按钮的测试OCR定位失败；

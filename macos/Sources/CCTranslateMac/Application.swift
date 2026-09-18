@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var inputPanel: NSPanel?
     private(set) var resultPanel: NSPanel?
     private var historyPanel: NSPanel?
-    private var settingsPanel: NSPanel?
+    private(set) var settingsPanel: NSPanel?
     private var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
     private(set) var aboutPanel: NSPanel?
@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let capture: CaptureModel
     private let diagnostics: ProbeModel
     private let aboutModel: AboutModel
+    private let loginItems: LoginItemModel
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
@@ -57,11 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.init(model: ProbeModel(), capture: CaptureModel(), diagnostics: ProbeModel(persistsPreferences: false))
     }
 
-    init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil) {
+    init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil,
+         loginItems: LoginItemModel? = nil) {
         self.model = model
         self.capture = capture
         self.diagnostics = diagnostics
         self.aboutModel = about ?? AboutModel()
+        self.loginItems = loginItems ?? LoginItemModel()
         super.init()
         model.captureShortcut.canCapture = { [weak self] in
             guard let self, !self.terminating, self.selectionOverlay == nil else { return false }
@@ -373,13 +376,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 root: settingsContent())
         }
         model.openProduct()
+        loginItems.refresh()
         activate(settingsPanel)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if settingsPanel?.isVisible == true { loginItems.refresh() }
     }
 
     func settingsContent() -> TranslationSettingsView {
         TranslationSettingsView(model: model,
             showDiagnostics: { [weak self] in self?.openDiagnostics() },
-            showAbout: { [weak self] in self?.openAbout() })
+            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems)
     }
 
     @objc private func openDiagnostics() {
