@@ -101,12 +101,13 @@ enum CaptureProductFixture {
         return try XCTUnwrap(context.makeImage())
     }
 
-    static func waitFor(_ condition: @MainActor () -> Bool) async throws {
+    static func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                        _ condition: @MainActor () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTFail("The synthetic capture lifecycle did not reach the expected state.")
+        XCTFail("The synthetic capture lifecycle did not reach the expected state.", file: file, line: line)
         throw CaptureFixtureError.timeout
     }
 

@@ -178,8 +178,9 @@ private final class ScaleTestHost<Content: View> {
         host.displayIfNeeded()
     }
 
-    func waitFor(_ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor {
+    func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                 _ condition: @MainActor () -> Bool) async throws {
+        try await CaptureProductFixture.waitFor(file: file, line: line) {
             self.flush()
             return condition()
         }
@@ -514,7 +515,11 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertTrue(try surface.text(editable: true) === editor)
         f.model.reuseHistory(.init(id: "composed", input: "\u{00e9}", output: "Saved result"))
         try await surface.waitFor { editor.string.utf8.elementsEqual("\u{00e9}".utf8) }
-        for spelling in ["e\u{0301}", "\u{00e9}"] {
+        let spellings = ["e\u{0301}", "\u{00e9}", "e\u{0301}\u{0327}", "e\u{0327}\u{0301}"]
+        XCTAssertEqual(spellings[2], spellings[3])
+        XCTAssertEqual(spellings[2].utf8.count, spellings[3].utf8.count)
+        XCTAssertNotEqual(Array(spellings[2].utf8), Array(spellings[3].utf8))
+        for spelling in spellings {
             XCTAssertTrue(surface.window.makeFirstResponder(editor))
             XCTAssertTrue(surface.window.firstResponder === editor)
             editor.selectAll(nil)
@@ -523,7 +528,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
             XCTAssertEqual(Array(editor.string.utf8), Array(spelling.utf8))
             XCTAssertEqual(f.model.input.unicodeScalars.count, spelling.unicodeScalars.count)
         }
-        for spelling in ["e\u{0301}", "\u{00e9}"] {
+        for spelling in spellings {
             f.model.reuseHistory(.init(id: "exact-replacement", input: spelling, output: "Saved result"))
             try await surface.waitFor { editor.string.utf8.elementsEqual(spelling.utf8) }
             XCTAssertEqual(Array(f.model.input.utf8), Array(spelling.utf8))

@@ -80,6 +80,21 @@ struct NativeTranslationEditor: NSViewRepresentable {
     var placeholder: String = ""
     var drawsBackground = false
     @Environment(\.isEnabled) private var isEnabled
+    // SwiftUI must also invalidate for canonically equivalent spellings of a binding.
+    private let originalBytes: [UInt8]
+    private var renderedText: String { String(decoding: originalBytes, as: UTF8.self) }
+
+    init(text: Binding<String>, textScale: NativeTextScale, focused: Binding<Bool>,
+         label: String, hint: String = "", placeholder: String = "", drawsBackground: Bool = false) {
+        _text = text
+        self.textScale = textScale
+        _focused = focused
+        self.label = label
+        self.hint = hint
+        self.placeholder = placeholder
+        self.drawsBackground = drawsBackground
+        originalBytes = Array(text.wrappedValue.utf8)
+    }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -91,7 +106,7 @@ struct NativeTranslationEditor: NSViewRepresentable {
 
         init(_ parent: NativeTranslationEditor) {
             self.parent = parent
-            modelText = parent.text
+            modelText = parent.renderedText
             scale = parent.textScale
         }
 
@@ -147,7 +162,7 @@ struct NativeTranslationEditor: NSViewRepresentable {
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.font = .systemFont(ofSize: textScale.points(15))
         view.textColor = .textColor
-        view.string = text
+        view.string = renderedText
         view.delegate = context.coordinator
         let coordinator = context.coordinator
         view.onCommittedTextChange = { [weak coordinator, weak view] in
@@ -165,6 +180,7 @@ struct NativeTranslationEditor: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NativeTranslationTextView else { return }
+        let text = renderedText
         let coordinator = context.coordinator
         coordinator.parent = self
         coordinator.applyingModel = true

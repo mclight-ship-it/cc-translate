@@ -149,6 +149,9 @@ bb1f851已实际编译并执行744项，新增20模型/预检及18字体方法�
 903便携、232进程、665核心及21后置Foundation通过只代表这些阶段，不代表完整App或整个移植完成。
 后续7f54e7e因本次fixture编辑意外重复局部声明而未执行原生方法；已定位并删除重复声明，
 保留失败原日志和全部原断言，继续新的完整源码验证。
+a4ac252修复编译后真实执行744项，20输入模型/预检和94剪贴板通过一次，仍15方法失败。
+正继续处理等价Unicode拼写的SwiftUI更新、真实控件交互和中文截图诊断；未删断言或改系统权限，
+116/122图片完整性通过不等于原生产品验证通过。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
