@@ -35,8 +35,9 @@ private enum HistoryLimitControls {
         return try XCTUnwrap(fields.count == 1 ? fields.first : nil)
     }
 
-    static func button(_ id: String, title: String, in root: NSView) throws -> NativeSettingsTestControl {
-        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: title, kind: .button)
+    static func button(_ id: String, title: String, in root: NSView,
+                       kind: NativeRenderedControlKind = .button) throws -> NativeSettingsTestControl {
+        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: title, kind: kind)
     }
 }
 
@@ -90,10 +91,11 @@ private final class HistoryLimitSettingsHost {
         try await waitFor { self.model.historyLimit.draft == text }
     }
 
-    func button(_ id: String, _ english: String, _ chinese: String) async throws -> NativeSettingsTestControl {
+    func button(_ id: String, _ english: String, _ chinese: String,
+                kind: NativeRenderedControlKind = .button) async throws -> NativeSettingsTestControl {
         flush()
         return try await NativeSettingsTestControls.resolveWhenReady(
-            in: host, identifier: id, label: model.text(english, chinese), kind: .button)
+            in: host, identifier: id, label: model.text(english, chinese), kind: kind)
     }
 
     func close() {
@@ -126,6 +128,7 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             }
             XCTAssertEqual(helper.operations, initialOperations)
             let cancel = try await surface.button("cancel-history-limit-reduction", "Cancel", "取消")
+            XCTAssertFalse(cancel.hasDestructiveAction)
             try await cancel.press()
             try await surface.waitFor { f.model.historyLimit.confirmation == nil && apply.isEnabled }
             XCTAssertEqual(helper.operations, initialOperations)
@@ -133,8 +136,10 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             XCTAssertEqual(f.model.historyLimit.draft, "17")
             try await apply.press()
             try await surface.waitFor { f.model.historyLimit.confirmation != nil }
-            let confirm = try await surface.button("confirm-history-limit-reduction", "Reduce and save", "降低并保存")
+            let confirm = try await surface.button("confirm-history-limit-reduction", "Reduce and save", "降低并保存",
+                                                   kind: .destructiveButton)
             XCTAssertTrue(confirm.isEnabled)
+            XCTAssertTrue(confirm.hasDestructiveAction)
             try await confirm.press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
             XCTAssertEqual(helper.configurationSaves.last?.config["history_limit"], .integer(17))
@@ -213,10 +218,13 @@ extension ProductRenderingTests {
         let english = try render(HistoryLimitSettingsSurface(model: f.model),
                                  named: "history-limit-reduction-en-light",
                                  size: NSSize(width: 640, height: 680), scheme: .light, inspect: { host in
-            let confirm = try HistoryLimitControls.button("confirm-history-limit-reduction", title: "Reduce and save", in: host)
+            let confirm = try HistoryLimitControls.button("confirm-history-limit-reduction", title: "Reduce and save",
+                                                          in: host, kind: .destructiveButton)
             let cancel = try HistoryLimitControls.button("cancel-history-limit-reduction", title: "Cancel", in: host)
             XCTAssertTrue(confirm.isEnabled)
+            XCTAssertTrue(confirm.hasDestructiveAction)
             XCTAssertTrue(cancel.isEnabled)
+            XCTAssertFalse(cancel.hasDestructiveAction)
             XCTAssertGreaterThan(confirm.visibleRect.height, 0)
             XCTAssertGreaterThan(cancel.visibleRect.height, 0)
             XCTAssertEqual(confirm.visibleRect.height, confirm.frame.height, accuracy: 1)

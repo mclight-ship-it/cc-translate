@@ -551,6 +551,15 @@ Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与
 与静态截图查找共用同一定位/唯一性检查，不用同步嵌套RunLoop阻塞待验证的界面更新。
 原断言仍保留，中文完整方法结果必须由新源码实际证明。
 
+`5774386` / [run35319025508](https://github.com/mclight-ship-it/cc-translate/actions/runs/35319025508)
+实际Swift编译23.79秒；744项/23构包前skip/2失败断言（1 unexpected）/439.787秒。
+历史失败恢复方法已经通过；仅完整操作方法在中文“降低并保存”的OCR定位处失败。
+原生树中确认按钮实际存在，不能将OCR未识别说成产品未显示按钮或保存失败。
+测试改为明确要求唯一可见的原生`NSButton.hasDestructiveAction`，增加确认/取消角色断言，
+并继续通过同一真实控件的cell tracking执行原有双语保存/回读/重开流程。
+只读取公开属性，不设置按钮role/state或模型；一般按钮/checkbox和原业务断言不变。
+该候选仍需真实Mac证明SwiftUI实际暴露此公开角色，不把Apple API存在当作集成通过。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证

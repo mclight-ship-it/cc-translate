@@ -29,7 +29,7 @@ enum NativeRenderEvidence {
 }
 
 enum NativeRenderedControlKind: String {
-    case button, toggle
+    case button, destructiveButton, toggle
 }
 
 @MainActor
@@ -102,6 +102,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
     fileprivate let kind: NativeRenderedControlKind
 
     var isEnabled: Bool { backing.control.isEnabled }
+    var hasDestructiveAction: Bool {
+        guard case .button(let button) = backing else { return false }
+        return button.hasDestructiveAction
+    }
     var isFocused: Bool {
         guard let window = backing.control.window else { return false }
         return window.firstResponder === backing.control
@@ -185,7 +189,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         defer { timer.invalidate() }
         // Native buttons own cell tracking; SwiftUI checkboxes also need gesture dispatch.
         switch kind {
-        case .button: control.mouseDown(with: press)
+        case .button, .destructiveButton: control.mouseDown(with: press)
         case .toggle: NSApp.sendEvent(press)
         }
         if !releasedDuringTracking {
@@ -199,7 +203,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
                                                        inMode: .default, dequeue: true))
             XCTAssertTrue(Self.samePointerEvent(release, up))
             switch kind {
-            case .button: control.mouseUp(with: release)
+            case .button, .destructiveButton: control.mouseUp(with: release)
             case .toggle: NSApp.sendEvent(release)
             }
         }
@@ -234,7 +238,10 @@ enum NativeSettingsTestControls {
 
     private static func backing(_ view: NSView, kind: NativeRenderedControlKind) -> NativeSettingsTestControl.Backing? {
         if view is NSPopUpButton { return nil }
-        if let button = view as? NSButton { return .button(button) }
+        if let button = view as? NSButton {
+            guard kind != .destructiveButton || button.hasDestructiveAction else { return nil }
+            return .button(button)
+        }
         if kind == .toggle, let toggle = view as? NSSwitch { return .toggle(toggle) }
         return nil
     }
@@ -354,7 +361,9 @@ enum NativeSettingsTestControls {
         let controls = views(in: root).compactMap { $0 as? NSControl }.map { control in
             let name: String
             if control is NSPopUpButton { name = "NSPopUpButton" }
-            else if control is NSButton { name = "NSButton" }
+            else if let button = control as? NSButton {
+                name = "NSButton destructive=\(button.hasDestructiveAction)"
+            }
             else if control is NSSwitch { name = "NSSwitch" }
             else if control is NSTextField { name = "NSTextField" }
             else { name = "NSControl (unsupported public control type)" }
@@ -384,6 +393,10 @@ enum NativeSettingsTestControls {
         try prepare(root)
         let controls = views(in: root).compactMap { backing($0, kind: kind) }.filter {
             !RenderedGeometry.visibleRect($0.control).isEmpty
+        }
+        if kind == .destructiveButton {
+            // A unique visible native role identifies the confirmation without depending on OCR.
+            return Lookup(candidates: controls, readback: nil, route: "public NSButton.hasDestructiveAction")
         }
         let named = controls.filter {
             $0.control.identifier?.rawValue == identifier ||

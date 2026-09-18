@@ -166,6 +166,8 @@ e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操�
 243fd22实际通过摘要保存/回读/重开及全部输入操作，仅剩历史确认按钮原生操作未通过；
 继续修复并等待完整App/同包消费者验收，不提前推广候选包。
 27bc99f英文历史完整流程已执行，中文动态控件的渲染等待仍需修正，整体方法尚未通过。
+5774386已通过历史恢复方法，仅剩实际存在的中文确认按钮未被测试OCR识别；
+继续用公开原生角色定位与完整操作验证，不将测试识字问题当成产品不可用或移植完成。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
