@@ -112,6 +112,9 @@ P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，
 不依赖helper或重写业务配置。新增16项测试和3张预期截图尚待新源码Mac执行；不在c7745ec中。
 首次23cfd5e/run35292610415因字体测试编译错误退出1；已修正测试类型/throws声明，
 保留全部方法和断言，继续新源码验证，尚不提供替代推荐包。
+修正0812d47/run35293312910已实际编译/执行680Swift，producer11worker/46粘贴/7fresh通过且无旧线程警告；
+但2项新字体交互方法失败（组合输入丢失、字号菜单项定位/动作），完整run仍退出1。
+115PNG含新增3张字号图均已核验，14/26未执行、App未发布；继续修真实交互，不拿图或局部通过代替完整包。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
