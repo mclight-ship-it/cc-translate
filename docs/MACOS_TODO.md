@@ -51,9 +51,9 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
   不因本界面切片结束而把整个移植标完成。
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
-完整P0权限矩阵、Claude独立后端及旧Windows稳定性追踪仍分别保留，但不冻结独立可做的Codex产品界面。
-最新推荐包现为[8f898aa：恢复默认设置及此前全部界面功能](#native-restore-defaults-checkpoint)，
-已完成完整App同包三系统验收；接下来继续完整Claude服务与后续移植项。
+完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
+最新推荐包现为[f9781b7：完整Claude服务、原生选择及此前全部界面功能](#native-claude-provider-checkpoint)，
+已完成完整App同包三系统验收；接下来进入P4登录项等分发生命周期，不把移植整体标为完成。
 
 <a id="native-product-preferences-checkpoint"></a>
 
@@ -627,7 +627,27 @@ macOS14小报告artifact10546254025及26小报告10546253874已分别下载，�
 
 <a id="native-claude-provider-checkpoint"></a>
 
-### P3 Claude服务：开始一条独立的原生执行链，尚未接入产品
+### P3 Claude服务：原生产品及完整同包三系统验收通过
+
+**当前完成源码：`f9781b7aa92414ca1fb37877976b887876ce6a35` /
+[run35358487419](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419)。**
+实际watch exit0，attempt1全部3jobs/42steps success；正常privacy/full hook1925/100.064秒通过。
+真实Swift构建26.16秒，832原生测试/460.209秒（23个既定构包前可选skip，0失败），
+16项新产品方法及原4个失败方法均逐项通过，摘要原文/独立负例保持。
+137张PNG库存/CRC/尺寸/IDAT完整核验，中英Claude设置图已查看。
+producer982portable/13.953秒、253process/517.122秒、744core/5.590秒；
+同一App在15.7.9、14.8.9、26.6.2各253process/744core/21后置Foundation零失败、零skip。
+新16portable/4真实Darwin helper/5Swift连接/16原生产品方法均有该源码实际执行证据；
+HTTPS证书、SQLite、取消/EOF、不可变及临时清理继续通过，无真实账号或模型调用。
+
+[完整App artifact10554138991](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419/artifacts/10554138991)
+只下载一次并独立审计：内层19,624,403 bytes，
+SHA256 `fa63ffa3770e3cc7a25cb0b9ed51d3b64347a390958fe87ec8cc7ede15398b16`，
+tree `97ab51fb66f20f9d6c4bb74041d704ed7f0e0e5bd17b5fd358766535626ea901`。
+693库存/83资源/55source路径（54唯一）/6实际arm64 Mach-O/19运行时许可核验；
+14/26小报告10555355814/10554576157与同一归档、同一tree相符，没有重建或重签产品。
+当前推荐包包含Claude服务/独立路径与模型/草稿/切换/图片/默认恢复；仍是开发包，
+不是Release、公证包或真实Claude账号验收。以下保留开发过程中的失败与修正，不将旧失败当作当前状态。
 
 恢复默认的完整验收已结束，继续完整Claude后端、设置选择和实际请求接线，不新增空下拉框。
 先增加一次性CLI传输：复用原Darwin进程组owner，显式stdin写完后关闭，持续排空stdout和stderr，
@@ -2646,7 +2666,7 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
 - [x] 手动自定义模型设置、精确保存/重开/请求及中英混合OCR改进；b33515d同包验证见模型设置检查点。
 - [x] 明确刷新Codex模型目录、设置/主窗口/Capture共享选择、空/失败不阻断手填ID；d637bea同包三系统验证见模型目录检查点。
-- [ ] 完整设置/模型管理，以下分别记录完成与剩余范围：
+- [x] 完整设置/模型管理的功能接线及自动化验收，真人系统交互另列：
   - [x] 原生文字大小；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 长文自动摘要开关；[当前批次验证](#native-product-preferences-checkpoint)，不等同于手动“生成摘要”动作。
   - [x] 历史保留条数与修剪时机；[当前批次验证](#native-product-preferences-checkpoint)。
@@ -2655,12 +2675,12 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 双击复制间隔：[c758原生及完整同包三系统验收通过](#native-copy-interval-checkpoint)；真实外部应用另验。
   - [x] 截图全局热键开关：[3ffb141原生798项零失败及完整同包三系统验收通过](#native-capture-shortcut-checkpoint)；真实物理按键/TCC另验。
   - [x] 恢复默认设置：[原生13新方法及完整同包三系统验收通过](#native-restore-defaults-checkpoint)。
-  - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。
+  - [x] Claude服务完整后端与原生选择；[f9781b7同包三系统验收](#native-claude-provider-checkpoint)，真实账号由用户明确操作，不冒充已验。
   - 原生Vision与明确图片发送、菜单栏菜单、语言/主题/字号保持Mac实现，不机械照搬Windows历史键或Tk行为。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。
 - [ ] 真实外部编辑器、多格式/跨设备Universal Clipboard、访问ask/allow/deny及更新后权限保持验收；不以合成数据代替。
 
-## P4 — 等待 P3（可行性已在 P0 提前检查）
+## P4 — 下一阶段：分发生命周期（可行性已在 P0 提前检查）
 - [ ] 免费分发完整性/资源/归档检查、最小权限和干净用户 Gatekeeper 首开；不全局关闭保护。
 - [ ] 可选付费增强（未选择、未通过）：Developer ID、公证/stapling；不得作为购买要求。
 - [ ] SMAppService 实际状态、独立 Mac 资产/版本与 Sparkle 更新签名。
