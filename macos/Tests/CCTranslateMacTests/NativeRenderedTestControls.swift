@@ -26,6 +26,28 @@ enum NativeRenderEvidence {
         context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(image.width * 2), height: CGFloat(image.height * 2)))
         return try XCTUnwrap(context.makeImage())
     }
+
+    static func settingsWords(_ png: Data, chinese: Bool = false) throws -> String {
+        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+        var pieces: [String] = []
+        // Tile native snapshots so Vision does not downsample small captions away.
+        for y in stride(from: 0, to: image.height, by: 900) {
+            let tile = try XCTUnwrap(image.cropping(to: CGRect(
+                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1000, image.height - y)))))
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.minimumTextHeight = 0
+            // These are authored UI sentences, not user text whose spelling must be preserved.
+            request.usesLanguageCorrection = true
+            request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
+            try VNImageRequestHandler(cgImage: recognitionImage(tile)).perform([request])
+            // Keep actual ranked readings; never supply expected captions as recognition hints.
+            pieces += try XCTUnwrap(request.results).map {
+                $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
+            }
+        }
+        return pieces.joined(separator: " ").lowercased()
+    }
 }
 
 enum NativeRenderedControlKind: String {

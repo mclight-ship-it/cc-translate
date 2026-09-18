@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Vision
 import XCTest
 @testable import CCTranslateMac
 @testable import CCTranslateSupport
@@ -210,6 +209,15 @@ extension ProductRenderingTests {
         XCTAssertTrue(helper.configurationSaves.isEmpty)
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertEqual(helper.configurationLoads.count, 1)
+        let negative = try render(
+            Text("结果中的“生成译文”操作仍可使用。").font(.caption).padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            named: "summary-setting-negative-control-zh-dark",
+            size: NSSize(width: 640, height: 90), scheme: .dark, highResolution: true)
+        let negativeWords = try summarySettingsWords(negative, chinese: true)
+        XCTAssertTrue(negativeWords.contains("生成译文"), negativeWords)
+        XCTAssertFalse(negativeWords.contains("生成摘要"), negativeWords)
     }
 
     @MainActor
@@ -237,13 +245,6 @@ extension ProductRenderingTests {
 
     @MainActor
     private func summarySettingsWords(_ png: Data, chinese: Bool = false) throws -> String {
-        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        return try XCTUnwrap(request.results).compactMap { $0.topCandidates(1).first?.string }
-            .joined().lowercased().filter { !$0.isWhitespace }
+        try NativeRenderEvidence.settingsWords(png, chinese: chinese).filter { !$0.isWhitespace }
     }
 }

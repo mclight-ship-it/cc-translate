@@ -1,7 +1,6 @@
 import XCTest
 import AppKit
 import SwiftUI
-import Vision
 @testable import CCTranslateMac
 @testable import CCTranslateSupport
 
@@ -237,24 +236,6 @@ extension ProductRenderingTests {
 
     @MainActor
     private func pasteSettingsWords(_ png: Data, chinese: Bool = false) throws -> String {
-        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
-        var pieces: [String] = []
-        // Tile the full-height snapshot so Vision does not downsample caption text into illegibility.
-        for y in stride(from: 0, to: image.height, by: 900) {
-            let tile = try XCTUnwrap(image.cropping(to: CGRect(
-                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1000, image.height - y)))))
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.minimumTextHeight = 0
-            // These are authored UI sentences, not arbitrary user text whose spelling must be preserved.
-            request.usesLanguageCorrection = true
-            request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-            try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(tile)).perform([request])
-            // Small CJK UI glyphs can have several ranked readings; none are supplied or replaced by an expected caption.
-            pieces += (request.results ?? []).map {
-                $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
-            }
-        }
-        return pieces.joined(separator: " ").lowercased()
+        try NativeRenderEvidence.settingsWords(png, chinese: chinese)
     }
 }
