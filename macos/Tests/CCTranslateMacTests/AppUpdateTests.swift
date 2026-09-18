@@ -33,12 +33,11 @@ final class AppUpdateTestService: AppUpdateServing {
 
 final class AppUpdateTests: XCTestCase {
     @MainActor
-    func testChannelRequiresAnHTTPSFeedAndPublicKeyWithoutRestrictingTranslation() {
+    func testChannelRequiresAnHTTPSFeedAndPublicKeyWithoutRestrictingTranslation() throws {
         XCTAssertEqual(AppUpdateChannel(info: [:]), .unconfigured)
         XCTAssertEqual(AppUpdateChannel(info: AppUpdateTestService.info), .configured)
         for (key, value) in [
             ("SUFeedURL", "http://updates.example.invalid/appcast.xml"),
-            ("SUFeedURL", "https://user:password@example.invalid/appcast.xml"),
             ("SUFeedURL", ""),
             ("SUPublicEDKey", "invalid"),
             ("SUPublicEDKey", Data(repeating: 65, count: 31).base64EncodedString())
@@ -50,6 +49,14 @@ final class AppUpdateTests: XCTestCase {
         for key in ["SUFeedURL", "SUPublicEDKey"] {
             var info = AppUpdateTestService.info
             info.removeValue(forKey: key)
+            XCTAssertEqual(AppUpdateChannel(info: info), .invalid)
+        }
+        for userOnly in [true, false] {
+            var url = try XCTUnwrap(URLComponents(string: "https://updates.example.invalid/appcast.xml"))
+            url.user = "fixture-user"
+            if !userOnly { url.password = "fixture-password" }
+            var info = AppUpdateTestService.info
+            info["SUFeedURL"] = try XCTUnwrap(url.string)
             XCTAssertEqual(AppUpdateChannel(info: info), .invalid)
         }
     }
