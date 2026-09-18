@@ -641,6 +641,76 @@ struct HistoryTranslationDetail: View {
 }
 
 @MainActor
+struct CopyIntervalSettingsView: View {
+    @ObservedObject var model: ProbeModel
+    private var preference: NumericPreference<Double> { model.copyInterval }
+
+    var applyTitle: String { model.text("Apply interval", "应用间隔") }
+    var reloadTitle: String { model.text("Reload saved interval", "重新读取已保存间隔") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(model.text("Active double ⌘C interval: \(model.activeCopyInterval.seconds) seconds",
+                            "当前双击 ⌘C 间隔：\(model.activeCopyInterval.seconds) 秒"))
+                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline) {
+                TextField(model.text("Interval in seconds", "间隔（秒）"), text: Binding(
+                    get: { preference.draft }, set: { model.editCopyInterval($0) }
+                ))
+                .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                .disabled(!model.canEditCopyInterval)
+                .accessibilityIdentifier("copy-interval-input")
+                .accessibilityLabel(model.text("Double Command C interval in seconds", "双击 Command C 间隔（秒）"))
+                Button(applyTitle) { model.saveCopyInterval() }
+                    .disabled(!model.canEditCopyInterval || preference.proposed == nil ||
+                              preference.proposed == preference.saved)
+                    .accessibilityIdentifier("apply-copy-interval")
+            }
+            Text(model.text("Default: 0.5 seconds. Try 0.75 for a slower double press. Use a positive number with a decimal point.",
+                            "默认 0.5 秒。双击较慢时可尝试 0.75 秒。请输入正数，小数使用英文句点。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let saved = preference.saved, !preference.supported.contains(saved) {
+                Label(model.text("Saved interval \(saved) is invalid. The active interval above is unchanged; enter a positive value to correct the saved setting.",
+                                 "已保存间隔 \(saved) 无效。仍使用上方显示的当前间隔，请输入正数并保存以纠正。"),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            Text(model.text("Applies after saving and reading back. Changing the interval clears a partial double press or pending copy, but does not turn on the shortcut or interrupt a submitted translation. A fresh copy still has only 0.5 seconds to arrive after the second press.",
+                            "保存并回读确认后生效。更改间隔会清除尚未成对的按键和等待中的复制，但不会开启快捷键，也不打断已提交的翻译。第二次按键后，新复制内容的等待时间仍为 0.5 秒。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !message.isEmpty {
+                Text(message).font(.callout).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .failed = preference.phase {
+                Button(reloadTitle) { model.reloadCopyInterval() }
+                    .disabled(!model.canReloadCopyInterval)
+                    .accessibilityIdentifier("reload-copy-interval")
+            }
+        }
+    }
+
+    private var message: String {
+        switch preference.phase {
+        case .idle:
+            return preference.saved == nil ? model.text("Saved interval: Not confirmed", "已保存间隔：尚未确认") : ""
+        case .invalidInput:
+            return model.text("Enter a positive number no greater than \(ConfigurationDocument.maxNumber). Nothing was saved.",
+                              "请输入不超过 \(ConfigurationDocument.maxNumber) 的正数，尚未保存。")
+        case .saving: return model.text("Saving interval…", "正在保存间隔…")
+        case .readingBack: return model.text("Reading back the saved interval…", "正在回读已保存间隔…")
+        case .saved: return model.text("Interval saved and applied.", "间隔已保存并应用。")
+        case .differentReadback:
+            return model.text("The saved interval differs from your entry. The current active interval is shown above; your entry is retained. No write was retried.",
+                              "已保存间隔与你的输入不同。上方显示当前实际使用的间隔，并保留你的输入，未重试写入。")
+        case .failed(let code):
+            return model.text("Could not confirm the saved interval (\(code)). The active interval is unchanged. Reload to check; no write was retried.",
+                              "无法确认已保存间隔（\(code)）。当前间隔未变，请重新读取以核对，未重试写入。")
+        }
+    }
+}
+
+@MainActor
 struct InputLimitSettingsView: View {
     @ObservedObject var model: ProbeModel
     private var preference: IntegerPreference { model.inputLimit }
@@ -1017,6 +1087,7 @@ struct TranslationSettingsView: View {
                             "主动开启后才会生效。优先通过辅助功能读取选区。明确双击 ⌘C 后，无法读取的选区仅可回退至与同一前台来源及焦点关联的新纯文本复制。不使用旧或无法关联的剪贴板内容，不模拟或阻止复制。安全输入模式会停止监听。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            CopyIntervalSettingsView(model: model)
             ViewThatFits(in: .horizontal) {
                 HStack {
                     permissionButtons

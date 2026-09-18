@@ -11,6 +11,9 @@
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
 [完整审计](MACOS_TODO.md#native-product-preferences-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 结果位置偏好及其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
+结果位置候选`9b55942`已实际通过755原生方法（23构包前可选skip）及125张PNG核验，
+完整App/同包消费者仍在验证。后续[双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
+已接入现有配置和实际监听，新增25项测试、2张渲染，尚待新源码Mac验证；不先声称新包可用。
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。

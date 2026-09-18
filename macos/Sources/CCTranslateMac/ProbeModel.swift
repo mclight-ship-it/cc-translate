@@ -32,6 +32,11 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var historyLimit = HistoryLimitPreference()
     @Published private(set) var inputLimit = IntegerPreference(
         supported: TextInputPreflight.characterRange, invalidReadbackCode: "invalid_max_chars")
+    @Published private(set) var copyInterval = NumericPreference<Double>(
+        supported: Double.leastNonzeroMagnitude...Double(ConfigurationDocument.maxNumber),
+        invalidReadbackCode: "invalid_copy_interval")
+    @Published private(set) var activeCopyInterval = DoubleCopyInterval.standard
+    static let copyIntervalHintKey = "lastConfirmedCopyIntervalSeconds"
     @Published private(set) var summaryEnabled: Bool?
     @Published private(set) var summaryPreferencePhase: SummaryPreferencePhase = .idle
     private var summarySaveRequest: (id: String, value: Bool)?
@@ -405,6 +410,13 @@ final class ProbeModel: ObservableObject {
                 ) ?? .remembered
                 rememberedResultFrame = NativeResultPlacement.restoredFrame(
                     defaults.string(forKey: NativeResultPlacement.frameKey))
+                // The confirmed local hint restores native timing without starting a helper.
+                // The next configuration read remains authoritative.
+                if let raw = defaults.object(forKey: Self.copyIntervalHintKey) as? String,
+                   let seconds = Double(raw), copyInterval.supported.contains(seconds),
+                   let interval = DoubleCopyInterval(seconds: seconds) {
+                    applyCopyInterval(interval, persistHint: false)
+                }
                 if let custom = defaults.string(forKey: "lastCustomCodexModel") {
                     modelSettings.restoreCustom(custom)
                 }
@@ -889,7 +901,8 @@ final class ProbeModel: ObservableObject {
     func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false,
                       summaryExpected: Bool? = nil, summaryReconcile: Bool = false,
                       historyLimitRead: Bool = false, afterHistoryLimitSave: Bool = false,
-                      inputLimitRead: Bool = false, afterInputLimitSave: Bool = false) {
+                      inputLimitRead: Bool = false, afterInputLimitSave: Bool = false,
+                      copyIntervalRead: Bool = false, afterCopyIntervalSave: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
@@ -897,6 +910,7 @@ final class ProbeModel: ObservableObject {
         configLoadID = id
         if historyLimitRead { historyLimit.beginRead(id: id, afterSave: afterHistoryLimitSave) }
         if inputLimitRead { inputLimit.beginRead(id: id, afterSave: afterInputLimitSave) }
+        if copyIntervalRead { copyInterval.beginRead(id: id, afterSave: afterCopyIntervalSave) }
         if summaryExpected != nil || summaryReconcile {
             summaryReadRequest = (id, summaryExpected)
             summaryPreferencePhase = .readingBack
@@ -1160,6 +1174,44 @@ final class ProbeModel: ObservableObject {
     func reloadInputLimit() {
         guard canReloadInputLimit else { inputLimit.reject("settings_unavailable"); return }
         loadSettings(inputLimitRead: true)
+    }
+
+    var canEditCopyInterval: Bool {
+        ready && settingsReady && !settingsBusy && !stopping && !dictionary.committing &&
+            connectionMode != .diagnostic && savedConfiguration != nil && copyInterval.saved != nil
+    }
+
+    var canReloadCopyInterval: Bool {
+        ready && !settingsBusy && !stopping && !dictionary.committing && connectionMode != .diagnostic
+    }
+
+    func editCopyInterval(_ value: String) { copyInterval.edit(value) }
+
+    func saveCopyInterval() {
+        guard canEditCopyInterval, var config = savedConfiguration, let connection else {
+            copyInterval.reject("settings_unavailable")
+            return
+        }
+        guard let value = copyInterval.propose() else { return }
+        config["double_press_window"] = .number(value)
+        let id = UUID().uuidString
+        copyInterval.beginSave(id: id, value: value)
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    func reloadCopyInterval() {
+        guard canReloadCopyInterval else { copyInterval.reject("settings_unavailable"); return }
+        loadSettings(copyIntervalRead: true)
+    }
+
+    private func applyCopyInterval(_ interval: DoubleCopyInterval, persistHint: Bool = true) {
+        activeCopyInterval = interval
+        monitor.setCopyInterval(interval)
+        if persistHint && persistsPreferences {
+            (preferences ?? .standard).set(String(interval.seconds), forKey: Self.copyIntervalHintKey)
+        }
     }
 
     var canSaveSummaryPreference: Bool {
@@ -1693,6 +1745,7 @@ final class ProbeModel: ObservableObject {
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
             inputLimit.connectionLost()
+            copyInterval.connectionLost()
             plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
@@ -1765,6 +1818,7 @@ final class ProbeModel: ObservableObject {
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
             inputLimit.connectionLost()
+            copyInterval.connectionLost()
             plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
@@ -1901,6 +1955,7 @@ final class ProbeModel: ObservableObject {
             let summaryOperation = summarySaveRequest?.id == event.id || summaryReadRequest?.id == event.id
             let historyLimitOperation = historyLimit.owns(event.id)
             let inputLimitOperation = inputLimit.owns(event.id)
+            let copyIntervalOperation = copyInterval.owns(event.id)
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
@@ -1912,7 +1967,8 @@ final class ProbeModel: ObservableObject {
                     status = "Settings saved. Reloading their normalized view; no write replay."
                     loadSettings(modelRead: modelSave, afterModelSave: modelSave, summaryExpected: summaryExpected,
                                  historyLimitRead: historyLimitOperation, afterHistoryLimitSave: historyLimitOperation,
-                                 inputLimitRead: inputLimitOperation, afterInputLimitSave: inputLimitOperation)
+                                 inputLimitRead: inputLimitOperation, afterInputLimitSave: inputLimitOperation,
+                                 copyIntervalRead: copyIntervalOperation, afterCopyIntervalSave: copyIntervalOperation)
                     return true
                 }
                 guard let config = event.payload["config"]?.object,
@@ -1925,6 +1981,7 @@ final class ProbeModel: ObservableObject {
                     summaryReadRequest = nil
                     historyLimit.fail("invalid_config")
                     inputLimit.fail("invalid_config")
+                    copyInterval.fail("invalid_config")
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
@@ -1936,6 +1993,11 @@ final class ProbeModel: ObservableObject {
                 savedConfiguration = config
                 historyLimit.loaded(config["history_limit"]?.integer, id: event.id)
                 inputLimit.loaded(config["max_chars"]?.integer, id: event.id)
+                copyInterval.loaded(config["double_press_window"]?.number, id: event.id)
+                if let seconds = copyInterval.saved, copyInterval.supported.contains(seconds),
+                   let interval = DoubleCopyInterval(seconds: seconds) {
+                    applyCopyInterval(interval)
+                }
                 if case let .bool(value)? = config["summary_enabled"] {
                     summaryEnabled = value
                     if let read = summaryReadRequest, read.id == event.id {
@@ -1999,6 +2061,7 @@ final class ProbeModel: ObservableObject {
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
                 if historyLimitOperation || event.id == configLoadID { historyLimit.fail(event.safeFailureCode) }
                 if inputLimitOperation || event.id == configLoadID { inputLimit.fail(event.safeFailureCode) }
+                if copyIntervalOperation || event.id == configLoadID { copyInterval.fail(event.safeFailureCode) }
                 if summaryOperation || event.id == configLoadID {
                     summaryEnabled = nil
                     summaryPreferencePhase = .failed(event.safeFailureCode)
@@ -2010,7 +2073,7 @@ final class ProbeModel: ObservableObject {
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 if catalogPreparation { modelCatalog.fail(.connection) }
                 if (!pasteSave || !active) && !catalogPreparation &&
-                    (!(summaryOperation || historyLimitOperation || inputLimitOperation) ||
+                    (!(summaryOperation || historyLimitOperation || inputLimitOperation || copyIntervalOperation) ||
                      (!active && draft != nil)) { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
@@ -2128,7 +2191,9 @@ final class ProbeModel: ObservableObject {
     }
 
     func startMonitor(accessibilityOnly: Bool = false) {
+        loadPresentation()
         do {
+            monitor.setCopyInterval(activeCopyInterval)
             monitorAXOnly = accessibilityOnly
             monitor.setClipboardFallbackEnabled(translatePassiveSelections && !monitorAXOnly)
             try monitor.start()

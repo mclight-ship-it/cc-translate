@@ -48,7 +48,7 @@ private enum InputLimitNativeViews {
 }
 
 @MainActor
-private final class InputLimitNativeHost<Content: View> {
+final class NativeSettingsTestHost<Content: View> {
     private let windowFocus = NativeTestWindowFocus()
     let host: NSHostingView<Content>
     let window: NSWindow
@@ -78,6 +78,20 @@ private final class InputLimitNativeHost<Content: View> {
     }
 
     func enterLimit(_ text: String, model: ProbeModel) async throws {
+        try await enterValue(text, draft: { model.inputLimit.draft })
+    }
+
+    func field() throws -> NSTextField { try InputLimitNativeViews.field(in: host) }
+
+    func waitForFieldValue(_ text: String) async throws {
+        try await waitFor {
+            let fields = InputLimitNativeViews.views(NSTextField.self, in: self.host)
+                .filter { $0.isEditable && $0.isEnabled }
+            return fields.count == 1 && fields.first?.stringValue == text
+        }
+    }
+
+    func enterValue(_ text: String, draft: @MainActor () -> String) async throws {
         flush()
         let field = try InputLimitNativeViews.field(in: host)
         XCTAssertTrue(window.makeFirstResponder(field))
@@ -86,7 +100,7 @@ private final class InputLimitNativeHost<Content: View> {
         editor.selectAll(nil)
         editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(window.makeFirstResponder(nil))
-        try await waitFor { model.inputLimit.draft == text }
+        try await waitFor { draft() == text }
     }
 
     func editor() throws -> NSTextView {
@@ -110,6 +124,12 @@ private final class InputLimitNativeHost<Content: View> {
         return try InputLimitNativeViews.button(in: host, id: id, label: label)
     }
 
+    func buttonWhenReady(_ id: String, _ label: String) async throws -> NativeSettingsTestControl {
+        flush()
+        return try await NativeSettingsTestControls.resolveWhenReady(
+            in: host, identifier: id, label: label, kind: .button)
+    }
+
     func close() {
         windowFocus.close(window)
     }
@@ -123,7 +143,7 @@ final class InputLimitInteractionTests: XCTestCase {
             defer { f.cleanUp() }
             let helper = try f.ready(configuration: ProductTestHarness.configuration(maxChars: 20_001))
             f.model.interfaceLanguage = language
-            let surface = InputLimitNativeHost(InputLimitSettingsSurface(model: f.model))
+            let surface = NativeSettingsTestHost(InputLimitSettingsSurface(model: f.model))
             defer { surface.close() }
             XCTAssertEqual(try InputLimitNativeViews.field(in: surface.host).stringValue, "20001")
             let operations = helper.operations
@@ -164,7 +184,7 @@ final class InputLimitInteractionTests: XCTestCase {
             defer { f.cleanUp() }
             let helper = try f.ready(configuration: ProductTestHarness.configuration(maxChars: -7))
             f.model.interfaceLanguage = language
-            let surface = InputLimitNativeHost(InputLimitSettingsSurface(model: f.model))
+            let surface = NativeSettingsTestHost(InputLimitSettingsSurface(model: f.model))
             defer { surface.close() }
             XCTAssertEqual(try InputLimitNativeViews.field(in: surface.host).stringValue, "-7")
             try await surface.enterLimit("20001", model: f.model)
@@ -201,7 +221,7 @@ final class InputLimitInteractionTests: XCTestCase {
         defer { f.cleanUp() }
         let helper = try f.ready(configuration: ProductTestHarness.configuration(maxChars: 1))
         f.model.interfaceLanguage = "en"
-        let surface = InputLimitNativeHost(
+        let surface = NativeSettingsTestHost(
             TranslatorView(model: f.model, showHistory: {}, showSettings: {}, showCapture: {}),
             size: NSSize(width: 960, height: 720))
         defer { surface.close() }
@@ -211,7 +231,7 @@ final class InputLimitInteractionTests: XCTestCase {
         XCTAssertEqual(Array(editor.string.utf8), Array("e\u{301}".utf8))
         let selection = editor.selectedRange()
         let viewport = editor.enclosingScrollView?.contentView.bounds.origin
-        let settings = InputLimitNativeHost(InputLimitSettingsSurface(model: f.model))
+        let settings = NativeSettingsTestHost(InputLimitSettingsSurface(model: f.model))
         defer { settings.close() }
         try await settings.enterLimit("2", model: f.model)
         try await settings.button("apply-input-limit", "Apply input limit").press()
@@ -243,7 +263,7 @@ final class InputLimitInteractionTests: XCTestCase {
         let capture = CaptureModel(screen: screen)
         defer { capture.cancel() }
         try await CaptureProductFixture.recognize(capture, source: source)
-        let surface = InputLimitNativeHost(CaptureView(capture: capture, model: f.model,
+        let surface = NativeSettingsTestHost(CaptureView(capture: capture, model: f.model,
                                                        captureAgain: {}, reselect: {}, close: {}),
                                            size: NSSize(width: 980, height: 900))
         defer { surface.close() }

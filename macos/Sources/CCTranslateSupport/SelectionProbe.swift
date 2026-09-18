@@ -105,10 +105,22 @@ public enum SelectionProbe {
     }
 }
 
+public struct DoubleCopyInterval: Equatable, Sendable {
+    public static let standard = DoubleCopyInterval(validatedSeconds: 0.5)
+    public let seconds: TimeInterval
+
+    public init?(seconds: TimeInterval) {
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        self.seconds = seconds
+    }
+
+    private init(validatedSeconds: TimeInterval) { seconds = validatedSeconds }
+}
+
 public struct DoubleCopyState {
-    public static let maximumInterval: TimeInterval = 0.5
+    public let interval: DoubleCopyInterval
     private var previous: (time: TimeInterval, pid: pid_t)?
-    public init() {}
+    public init(interval: DoubleCopyInterval = .standard) { self.interval = interval }
     public mutating func reset() { previous = nil }
 
     public mutating func observe(
@@ -123,7 +135,7 @@ public struct DoubleCopyState {
             return false
         }
         let interval = time - previous.time
-        if interval > 0, interval <= Self.maximumInterval {
+        if interval > 0, interval <= self.interval.seconds {
             // Consume the pair; a third key press alone must not retrigger.
             self.previous = nil
             return true
@@ -136,9 +148,11 @@ public struct DoubleCopyState {
 @MainActor
 public protocol PassiveSelectionMonitoring: AnyObject {
     var running: Bool { get }
+    var copyInterval: DoubleCopyInterval { get }
     var onSelection: ((SelectionResult) -> Void)? { get set }
     var onStop: ((String) -> Void)? { get set }
     func setClipboardFallbackEnabled(_ enabled: Bool)
+    func setCopyInterval(_ interval: DoubleCopyInterval)
     func start() throws
     func stop()
     func cancelPendingSelection()
@@ -187,6 +201,14 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
 
     public func setClipboardFallbackEnabled(_ enabled: Bool) {
         selection.setFallbackEnabled(enabled)
+    }
+
+    public var copyInterval: DoubleCopyInterval { selection.interval }
+
+    public func setCopyInterval(_ interval: DoubleCopyInterval) {
+        guard selection.interval != interval else { return }
+        selection.setInterval(interval)
+        resetSource()
     }
 
     public func cancelPendingSelection() {

@@ -3,7 +3,7 @@ import XCTest
 @testable import CCTranslateSupport
 
 @MainActor
-private final class SelectionMonitorFixture: PassiveSelectionMonitoring {
+final class SelectionMonitorFixture: PassiveSelectionMonitoring {
     var running = false
     var onSelection: ((SelectionResult) -> Void)?
     var onStop: ((String) -> Void)?
@@ -13,6 +13,12 @@ private final class SelectionMonitorFixture: PassiveSelectionMonitoring {
     var fallback = false
     var pending = false
     var failure: ProbeError?
+    var copyInterval = DoubleCopyInterval.standard
+    func setCopyInterval(_ interval: DoubleCopyInterval) {
+        guard copyInterval != interval else { return }
+        cancelPendingSelection()
+        copyInterval = interval
+    }
     func setClipboardFallbackEnabled(_ enabled: Bool) {
         if fallback != enabled { cancelPendingSelection() }
         fallback = enabled

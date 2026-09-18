@@ -90,6 +90,101 @@ private final class CopyFixture {
 
 final class FreshCopySelectionTests: XCTestCase {
     @MainActor
+    func testLongerCopyPairCapturesSecondBaselineBeforeAXWithoutReadingFirstCopy() throws {
+        let f = CopyFixture()
+        f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.75)))
+        f.press(10)
+        f.clipboard.count = 6
+        f.context.duringAX = { f.clipboard.count = 7 }
+        f.press(10.7)
+        XCTAssertEqual(f.clipboard.reads, [7])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+        f.press(10.8)
+        XCTAssertEqual(f.context.axCalls, 1)
+    }
+
+    @MainActor
+    func testShorterCopyPairDoesNotCaptureBaselineUntilWithinConfiguredInterval() throws {
+        let f = CopyFixture()
+        f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.1)))
+        f.press(10)
+        f.press(10.2)
+        XCTAssertEqual(f.context.axCalls, 0)
+        XCTAssertEqual(f.clipboard.revisionCalls, 0)
+        f.context.duringAX = { f.clipboard.count += 1 }
+        f.press(10.25)
+        XCTAssertEqual(f.clipboard.reads, [6])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+    }
+
+    @MainActor
+    func testLongerPairDoesNotExtendCopyDeadlineOrAcceptStaleKeyEvents() throws {
+        let f = CopyFixture()
+        f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 1.5)))
+        f.press(10)
+        f.press(11.2)
+        f.clipboard.count += 1
+        f.context.time = 11.71
+        f.selection.poll()
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        XCTAssertEqual(FreshCopySelection.freshnessWindow, 0.5)
+        XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
+
+        let stale = CopyFixture()
+        stale.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 1.5)))
+        stale.press(10)
+        stale.context.time = 11.6
+        stale.selection.observe(time: 11, isCopy: true, isRepeat: false)
+        XCTAssertEqual(stale.context.axCalls, 0)
+        XCTAssertEqual(stale.clipboard.revisionCalls, 0)
+        XCTAssertTrue(stale.context.results.isEmpty)
+    }
+
+    @MainActor
+    func testChangedIntervalInvalidatesPartialPairAndPendingFallback() throws {
+        for pending in [false, true] {
+            let f = CopyFixture()
+            f.press(10)
+            if pending { f.press(10.2) }
+            let calls = f.context.axCalls
+            f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.75)))
+            f.clipboard.count += 1
+            f.context.time = 10.3
+            f.selection.poll()
+            f.press(10.4)
+            XCTAssertEqual(f.context.axCalls, calls)
+            XCTAssertTrue(f.clipboard.reads.isEmpty)
+            XCTAssertTrue(f.context.results.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testUnchangedIntervalDoesNotDiscardPendingCopy() {
+        let f = CopyFixture()
+        f.pair()
+        f.selection.setInterval(.standard)
+        f.clipboard.count += 1
+        f.context.time = 10.3
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [6])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+    }
+
+    @MainActor
+    func testChangedIntervalDuringReadCannotDeliverRetiredSelection() throws {
+        let f = CopyFixture()
+        let interval = try XCTUnwrap(DoubleCopyInterval(seconds: 0.75))
+        f.pair()
+        f.clipboard.count += 1
+        f.context.time = 10.3
+        f.clipboard.duringRead = { f.selection.setInterval(interval) }
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [6])
+        XCTAssertTrue(f.context.results.isEmpty)
+        XCTAssertEqual(f.selection.interval, interval)
+    }
+
+    @MainActor
     func testConstructionAXOnlyAndSingleCopyDoNotReadClipboard() {
         let f = CopyFixture(fallback: false)
         XCTAssertEqual(f.context.sourceCalls, 0)

@@ -32,6 +32,7 @@ final class FreshCopySelection {
     private var generation = UUID()
     private var acceptEventsAfter: TimeInterval?
     private(set) var fallbackEnabled = false
+    var interval: DoubleCopyInterval { pair.interval }
     var onSelection: ((SelectionResult) -> Void)?
 
     private struct Request {
@@ -52,6 +53,12 @@ final class FreshCopySelection {
         guard fallbackEnabled != enabled else { return }
         cancel()
         fallbackEnabled = enabled
+    }
+
+    func setInterval(_ interval: DoubleCopyInterval) {
+        guard pair.interval != interval else { return }
+        cancel()
+        pair = DoubleCopyState(interval: interval)
     }
 
     func cancel() {
@@ -83,7 +90,7 @@ final class FreshCopySelection {
         // can let a fast copy complete. Contents still require the confirmed pair/focus.
         var baseline: Int?
         if fallbackEnabled, pairSource?.focusIdentity != nil, let pairTime,
-           time > pairTime, time - pairTime <= DoubleCopyState.maximumInterval {
+           time > pairTime, time - pairTime <= pair.interval.seconds {
             let revision = clipboard.revision()
             guard self.generation == generation else { return }
             if revision >= 0 { baseline = revision }

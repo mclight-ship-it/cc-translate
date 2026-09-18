@@ -60,6 +60,13 @@ public enum JSONValue: Equatable {
         if case let .integer(value) = self { return value }
         return nil
     }
+    public var number: Double? {
+        switch self {
+        case .number(let value): return value
+        case .integer(let value): return Double(value)
+        default: return nil
+        }
+    }
     public var bool: Bool? {
         if case let .bool(value) = self { return value }
         return nil

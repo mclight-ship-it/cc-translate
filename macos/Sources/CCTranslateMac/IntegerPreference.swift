@@ -1,27 +1,29 @@
 import Foundation
 
-struct IntegerPreference {
+typealias IntegerPreference = NumericPreference<Int64>
+
+struct NumericPreference<Value: Comparable & LosslessStringConvertible> {
     enum Phase: Equatable {
         case idle, saving, readingBack, saved, differentReadback, invalidInput
         case failed(String)
     }
 
-    let supported: ClosedRange<Int64>
+    let supported: ClosedRange<Value>
     let invalidReadbackCode: String
-    private(set) var saved: Int64?
+    private(set) var saved: Value?
     private(set) var draft = ""
     private(set) var phase: Phase = .idle
     private var edited = false
     private var requestID: String?
-    private var expected: Int64?
+    private var expected: Value?
 
-    init(supported: ClosedRange<Int64>, invalidReadbackCode: String) {
+    init(supported: ClosedRange<Value>, invalidReadbackCode: String) {
         self.supported = supported
         self.invalidReadbackCode = invalidReadbackCode
     }
 
-    var proposed: Int64? {
-        guard let value = Int64(draft.trimmingCharacters(in: .whitespacesAndNewlines)),
+    var proposed: Value? {
+        guard let value = Value(draft.trimmingCharacters(in: .whitespacesAndNewlines)),
               supported.contains(value) else { return nil }
         return value
     }
@@ -34,13 +36,13 @@ struct IntegerPreference {
         if phase == .invalidInput { phase = .idle }
     }
 
-    mutating func propose() -> Int64? {
+    mutating func propose() -> Value? {
         guard let value = proposed else { phase = .invalidInput; return nil }
         guard let saved, value != saved else { return nil }
         return value
     }
 
-    mutating func beginSave(id: String, value: Int64) {
+    mutating func beginSave(id: String, value: Value) {
         requestID = id
         expected = value
         phase = .saving
@@ -52,7 +54,7 @@ struct IntegerPreference {
         phase = .readingBack
     }
 
-    mutating func loaded(_ value: Int64?, id: String) {
+    mutating func loaded(_ value: Value?, id: String) {
         guard let value else { fail(invalidReadbackCode); return }
         let confirmedSave = owns(id) && expected == value
         phase = owns(id) && expected != nil ? (confirmedSave ? .saved : .differentReadback) : .idle
