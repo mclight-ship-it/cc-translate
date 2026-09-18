@@ -99,6 +99,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
     fileprivate let backing: Backing
     fileprivate let root: NSView
     fileprivate let identifier: String
+    fileprivate let kind: NativeRenderedControlKind
 
     var isEnabled: Bool { backing.control.isEnabled }
     var isFocused: Bool {
@@ -182,7 +183,11 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         }
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
-        NSApp.sendEvent(press)
+        // Native buttons own cell tracking; SwiftUI checkboxes also need gesture dispatch.
+        switch kind {
+        case .button: control.mouseDown(with: press)
+        case .toggle: NSApp.sendEvent(press)
+        }
         if !releasedDuringTracking {
             timer.invalidate()
             NSApp.postEvent(up, atStart: true)
@@ -193,7 +198,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertTrue(Self.samePointerEvent(release, up))
-            NSApp.sendEvent(release)
+            switch kind {
+            case .button: control.mouseUp(with: release)
+            case .toggle: NSApp.sendEvent(release)
+            }
         }
         try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
             "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")
@@ -405,7 +413,7 @@ enum NativeSettingsTestControls {
         }
         try NativeRenderEvidence.record("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(route); " +
               "frame=\(RenderedGeometry.frame(candidate.control)); fixture caption=\(label)")
-        return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier)
+        return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier, kind: kind)
     }
 
     static func caption(in root: NSView, identifier: String, label: String) throws -> NativeRenderedTestCaption {

@@ -163,6 +163,8 @@ e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操�
 67f280c已通过两处OCR，仍有4个原生方法待修；继续历史确认态、摘要点击和按钮刷新时序，
 不因图片齐全或部分用例通过而宣称可交付新包。
 87b4be6确认了历史模型修复，完整原生交互仍需修正测试事件匹配并实际重验。
+243fd22实际通过摘要保存/回读/重开及全部输入操作，仅剩历史确认按钮原生操作未通过；
+继续修复并等待完整App/同包消费者验收，不提前推广候选包。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
