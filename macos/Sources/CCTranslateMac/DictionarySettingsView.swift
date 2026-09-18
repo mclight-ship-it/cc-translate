@@ -15,8 +15,8 @@ struct DictionarySettingsSection: View {
                 Spacer()
                 Text(stateLabel).font(.callout).foregroundStyle(.secondary)
             }
-            Text(model.text("Installed, enabled dictionary entries appear before any Codex requirement, with full senses, pronunciation, and source attribution. Local hits never request AI automatically. Retranslate and result actions use Codex only when you choose them.",
-                            "已安装并启用的词典会先于 Codex 查询，显示完整释义、发音和来源标注。本地命中后不会自动请求 AI；只有主动选择重译或结果操作时才会使用 Codex。"))
+            Text(model.text("Installed, enabled dictionary entries appear before any CLI requirement, with full senses, pronunciation, and source attribution. Local hits never request AI automatically. Retranslate and result actions use your selected service only when you choose them.",
+                            "已安装并启用的词典会先于 CLI 查询，显示完整释义、发音和来源标注。本地命中后不会自动请求 AI；只有主动选择重译或结果操作时才会使用所选服务。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let status = dictionary.status {

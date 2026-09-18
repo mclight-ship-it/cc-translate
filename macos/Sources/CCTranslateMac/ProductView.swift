@@ -50,8 +50,8 @@ struct TranslatorView: View {
             if model.needsCLI {
                 HStack(spacing: 10) {
                     Image(systemName: "terminal").accessibilityHidden(true)
-                    Text(model.text("The local dictionary works offline. Choose Codex for model translation.",
-                                    "本地词典可离线使用。模型翻译需要选择 Codex。"))
+                    Text(model.text("The local dictionary works offline. Choose \(model.translationProvider.displayName) for model translation.",
+                                    "本地词典可离线使用。模型翻译需要选择 \(model.translationProvider.displayName)。"))
                     Spacer(minLength: 8)
                     Button(model.text("Open Settings", "打开设置"), action: showSettings)
                 }
@@ -109,7 +109,7 @@ struct TranslatorView: View {
             DirectionPicker(model: model, selection: $model.direction)
                 .frame(maxWidth: 340)
             Spacer(minLength: 8)
-            Label(model.text("Codex", "Codex"), systemImage: "sparkle")
+            Label(model.translationProvider.displayName, systemImage: "sparkle")
                 .foregroundStyle(.secondary)
             ModelPicker(model: model, selection: $model.modelProfile)
                 .labelsHidden().frame(minWidth: 180, idealWidth: 280, maxWidth: 340)
@@ -156,7 +156,8 @@ struct TranslatorView: View {
                     .accessibilityHidden(true)
             }
             HStack {
-                Text(model.text("Uses your Codex CLI and account.", "使用你的 Codex CLI 和账号。"))
+                Text(model.text("Uses your \(model.translationProvider.displayName) CLI and account.",
+                                "使用你的 \(model.translationProvider.displayName) CLI 和账号。"))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
@@ -984,7 +985,7 @@ struct TranslationSettingsView: View {
                 Text(model.text("History retention", "历史保留条数"))
             }
             DictionarySettingsSection(model: model, dictionary: model.dictionary)
-            codexSection
+            providerSection
             PlainPasteSettingsSection(model: model, paste: model.plainPaste)
             CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
             shortcutSection
@@ -1025,6 +1026,20 @@ struct TranslationSettingsView: View {
 
     var translationSection: some View {
         Section {
+            Picker(model.text("Translation service", "翻译服务"), selection: Binding(
+                get: { model.pendingProvider ?? model.translationProvider },
+                set: { model.selectTranslationProvider($0) }
+            )) {
+                ForEach(TranslationProvider.allCases, id: \.self) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+            .disabled(!model.canChangeProvider)
+            .accessibilityIdentifier("translation-service")
+            if !model.providerMessage.isEmpty {
+                Text(model.providerMessage).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             DirectionPicker(model: model, selection: Binding(
                 get: { model.direction },
                 set: { model.direction = $0; model.saveSettings() }
@@ -1091,12 +1106,12 @@ struct TranslationSettingsView: View {
         }
     }
 
-    private var codexSection: some View {
+    private var providerSection: some View {
         Section {
-            LabeledContent(model.text("Provider", "服务")) { Text("Codex CLI") }
+            LabeledContent(model.text("Provider", "服务")) { Text("\(model.translationProvider.displayName) CLI") }
             if model.cliChangeDeferred {
-                Label(model.text("The selected Codex will apply after the dictionary operation finishes.",
-                                 "词典操作完成后会应用所选 Codex。"),
+                Label(model.text("The selected service will apply after the dictionary operation finishes.",
+                                 "词典操作完成后会应用所选服务。"),
                       systemImage: "clock")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1104,7 +1119,8 @@ struct TranslationSettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(model.text("Current executable", "当前可执行文件")).font(.subheadline)
                 Text(model.selectedCLI.isEmpty ?
-                     model.text("Not found — choose your Codex executable.", "未找到，请选择 Codex 可执行文件。") :
+                     model.text("Not found — choose your \(model.translationProvider.displayName) executable.",
+                                "未找到，请选择 \(model.translationProvider.displayName) 可执行文件。") :
                      model.selectedCLI)
                     .font(.caption.monospaced()).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1123,8 +1139,8 @@ struct TranslationSettingsView: View {
                 .disabled(model.cliBusy || busy)
                 .onChange(of: model.selectedCLI) { _, _ in model.persistPresentation() }
             }
-            Text(model.text("The selected path is remembered on this Mac. Detection only checks paths; it does not install Codex, sign in, or run a model. Use your existing Codex installation and account.",
-                            "所选路径会保存在此 Mac 上。查找只检查路径，不会安装 Codex、登录或运行模型。请使用已有的 Codex 安装和账号。"))
+            Text(model.text("Each service's path is remembered on this Mac. Detection only checks paths; it does not install a CLI, sign in, or run a model. Use your existing installation and account.",
+                            "各服务的路径会分别保存在此 Mac 上。查找只检查路径，不会安装 CLI、登录或运行模型。请使用已有的安装和账号。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup(model.text("Optional version check", "可选的版本检查")) {
@@ -1145,7 +1161,8 @@ struct TranslationSettingsView: View {
                 }
             }
         } header: {
-            Text(model.text("Codex connection", "Codex 连接"))
+            Text(model.text("\(model.translationProvider.displayName) connection",
+                            "\(model.translationProvider.displayName) 连接"))
         }
     }
 
@@ -1197,8 +1214,8 @@ struct TranslationSettingsView: View {
                    action: showAbout)
             Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
                 .font(.callout)
-            Text(model.text("Available: text translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, and Codex model discovery and custom model settings. Login items and app updates are not yet implemented.",
-                            "已支持文字翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录，以及 Codex 模型发现和自定义模型设置。登录项和应用更新尚未实现。"))
+            Text(model.text("Available: Codex and Claude translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, custom model settings, and Codex model discovery. Login items and app updates are not yet implemented.",
+                            "已支持 Codex 和 Claude 翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录、自定义模型设置及 Codex 模型发现。登录项和应用更新尚未实现。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)
@@ -1250,17 +1267,26 @@ struct ModelPicker: View {
                 CodexModelSettings.ChoiceID(value: $0)
             }, id: \.self) { profile in
                 Text(verbatim: label(profile.value)).tag(profile)
-                    .disabled(!CodexModelSettings.isPreset(profile.value) &&
-                              CodexModelSettings.validateCustom(profile.value) != nil)
+                    .disabled(!model.modelSettings.isPreset(profile.value) &&
+                              model.modelSettings.validateCustom(profile.value) != nil)
             }
         }
-        .accessibilityLabel(model.text("Codex model profile", "Codex 模型配置"))
+        .accessibilityLabel(model.text("\(model.translationProvider.displayName) model profile",
+                                       "\(model.translationProvider.displayName) 模型配置"))
         .accessibilityValue(label(selection))
-        .help(label(selection) + model.text(" · Refresh models or enter an ID in Settings.", " · 在设置中刷新模型或输入 ID。"))
+        .help(label(selection) + model.text(" · Choose a model or enter an ID in Settings.", " · 在设置中选择模型或输入 ID。"))
         .disabled(model.active || model.preparing || model.settingsBusy || model.dictionary.committing)
     }
 
     private func label(_ value: String) -> String {
+        if model.translationProvider == .claude {
+            switch value {
+            case "haiku": return "Haiku"
+            case "sonnet": return "Sonnet"
+            case "opus": return "Opus"
+            default: return value.isEmpty ? model.text("Empty model ID", "模型 ID 为空") : value
+            }
+        }
         switch value {
         case "auto-fast": return model.text("Fast profile", "快速模式")
         case "auto": return model.text("Codex default", "Codex 默认")
@@ -1280,7 +1306,7 @@ struct CodexModelSettingsView: View {
     @ObservedObject var model: ProbeModel
 
     private var validation: CodexModelSettings.Validation? {
-        CodexModelSettings.validateCustom(model.modelSettings.draft)
+        model.modelSettings.validateCustom(model.modelSettings.draft)
     }
 
     var body: some View {
@@ -1295,7 +1321,7 @@ struct CodexModelSettingsView: View {
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .accessibilityLabel(model.text("Custom model ID", "自定义模型 ID"))
-                .accessibilityIdentifier("custom-codex-model-id")
+                .accessibilityIdentifier("custom-\(model.translationProvider.cliName)-model-id")
             HStack {
                 Button(model.text("Apply model", "应用模型")) { model.applyCustomModelID() }
                     .disabled(!model.canApplyModelSetting || validation != nil)
@@ -1328,7 +1354,13 @@ struct CodexModelSettingsView: View {
             }
             Button(model.text("Reload saved setting", "重新读取已保存设置")) { model.reloadModelSetting() }
                 .disabled(!model.ready || model.settingsBusy || model.active || model.preparing || model.dictionary.committing)
-            ModelCatalogSettingsView(model: model)
+            if model.translationProvider == .codex {
+                ModelCatalogSettingsView(model: model)
+            } else {
+                Text(model.text("Choose a Claude alias or enter a model ID. Claude does not provide a model list here. Available models depend on your account.",
+                                "请选择 Claude 模型别名，或输入模型 ID。此处不提供 Claude 模型列表，可用模型取决于你的账号。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if !model.ready && !model.modelCatalog.busy {
                 Text(model.text("Open Settings again to reconnect before applying. Your draft stays editable.",
                                 "请再次打开设置以连接后应用。你仍可编辑草稿。"))
@@ -1368,8 +1400,8 @@ struct CodexModelSettingsView: View {
                                            "请移除 ID 中的空白和控制字符，不会自动去除这些字符。")
         case .tooLong: return model.text("The ID exceeds 256 UTF-8 bytes. Shorten it before applying.",
                                         "ID 超过 256 UTF-8 字节，请缩短后再应用。")
-        case .preset: return model.text("Use the Model picker for Fast profile or Codex default.",
-                                       "请通过“模型”选择快速模式或 Codex 默认。")
+        case .preset: return model.text("Choose this preset in the Model picker.",
+                                       "请在模型选择器中选择此预设。")
         }
     }
 

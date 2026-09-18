@@ -16,8 +16,9 @@ final class CatalogTestClient: AppHelperClient {
         base.startConfiguration(runtime: runtime, home: home)
         MainActor.assumeIsolated { onStart?() }
     }
-    func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL, environment: [String: String]) {
-        base.startTranslation(runtime: runtime, home: home, codexCommand: codexCommand, environment: environment)
+    func startTranslation(runtime: BundleRuntime, home: URL, provider: TranslationProvider,
+                          command: URL, environment: [String: String]) {
+        base.startTranslation(runtime: runtime, home: home, provider: provider, command: command, environment: environment)
         MainActor.assumeIsolated { onStart?() }
     }
     func modelCatalog(id: String, timeout: TimeInterval) -> String {

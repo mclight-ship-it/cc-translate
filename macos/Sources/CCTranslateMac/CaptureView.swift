@@ -21,8 +21,8 @@ struct CaptureView: View {
                 Spacer()
                 Button(model.text("Close", "关闭"), action: close)
             }
-            Text(model.text("Capture and OCR are local. Translate text sends reviewed text. Send image sends only this region using the selected Codex model and account.",
-                            "截图和识别在本地进行。“翻译文字”发送确认后的文字。“发送图片翻译”仅通过所选 Codex 模型和账号发送此区域。"))
+            Text(model.text("Capture and OCR are local. Translate text sends reviewed text. Send image sends only this region using the selected \(model.translationProvider.displayName) model and account.",
+                            "截图和识别在本地进行。“翻译文字”发送确认后的文字。“发送图片翻译”仅通过所选 \(model.translationProvider.displayName) 模型和账号发送此区域。"))
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()

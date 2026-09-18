@@ -32,6 +32,7 @@ final class ProbeModel: ObservableObject {
     private var settingsDefaults: SettingsDefaults?
     private var defaultsRequestID: String?
     private var defaultsDrafts: [String: String] = [:]
+    private var defaultsProviderDrafts: [TranslationProvider: ProviderDraft] = [:]
     @Published private(set) var historyEnabled = true
     @Published private(set) var historyLimit = HistoryLimitPreference()
     @Published private(set) var inputLimit = IntegerPreference(
@@ -76,6 +77,16 @@ final class ProbeModel: ObservableObject {
     }
     @Published private(set) var modelSettings = CodexModelSettings()
     @Published private(set) var modelCatalog = ModelCatalogState()
+    @Published private(set) var translationProvider: TranslationProvider = .codex
+    @Published private(set) var pendingProvider: TranslationProvider?
+    @Published private(set) var providerMessage = ""
+    private var providerChangeID: String?
+    private struct ProviderDraft {
+        var settings: CodexModelSettings
+        var profile: String
+        var edited: Bool
+    }
+    private var providerDrafts: [TranslationProvider: ProviderDraft] = [:]
     @Published var translatePassiveSelections = false {
         didSet {
             monitor.setClipboardFallbackEnabled(translatePassiveSelections && !monitorAXOnly)
@@ -201,6 +212,8 @@ final class ProbeModel: ObservableObject {
         let language: String
         var useSavedDirection: Bool
         var useSavedModel: Bool
+        var provider: TranslationProvider = .codex
+        var useSavedProvider = false
         var configurationSaved = false
         var lookupFinished = false
         var action: ActionDraft?
@@ -255,6 +268,7 @@ final class ProbeModel: ObservableObject {
     private var catalogPreservesPreparation = false
     private(set) var catalogShutDown = false
     private var connectedCLI = ""
+    private var connectedProvider: TranslationProvider?
     private let preferences: UserDefaults?
     private let persistsPreferences: Bool
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
@@ -400,8 +414,9 @@ final class ProbeModel: ObservableObject {
         defaults.set(appearance, forKey: "appearance")
         defaults.set(nativeTextScale.rawValue, forKey: NativeTextScale.preferenceKey)
         defaults.set(resultPlacement.rawValue, forKey: NativeResultPlacement.preferenceKey)
-        if cliName == "codex", !selectedCLI.isEmpty {
-            defaults.set(selectedCLI, forKey: "selectedCodexPath")
+        if let provider = TranslationProvider.allCases.first(where: { $0.cliName == cliName }),
+           !selectedCLI.isEmpty {
+            defaults.set(selectedCLI, forKey: provider.pathPreferenceKey)
         }
         onPresentationChanged?()
     }
@@ -427,11 +442,23 @@ final class ProbeModel: ObservableObject {
                    let interval = DoubleCopyInterval(seconds: seconds) {
                     applyCopyInterval(interval, persistHint: false)
                 }
-                if let custom = defaults.string(forKey: "lastCustomCodexModel") {
-                    modelSettings.restoreCustom(custom)
+                for provider in TranslationProvider.allCases {
+                    if let custom = defaults.string(forKey: provider.customModelPreferenceKey) {
+                        if provider == translationProvider { modelSettings.restoreCustom(custom) }
+                        else {
+                            var settings = CodexModelSettings(provider: provider)
+                            settings.restoreCustom(custom)
+                            providerDrafts[provider] = ProviderDraft(
+                                settings: settings, profile: provider.defaultModel, edited: false)
+                        }
+                    }
+                    if let saved = defaults.string(forKey: provider.pathPreferenceKey), !saved.isEmpty {
+                        userCLI[provider.cliName] = URL(fileURLWithPath: saved)
+                    }
                 }
-                if let saved = defaults.string(forKey: "selectedCodexPath"), !saved.isEmpty {
-                    userCLI["codex"] = URL(fileURLWithPath: saved)
+                if let raw = defaults.string(forKey: "lastConfirmedTranslationProvider"),
+                   let provider = TranslationProvider(rawValue: raw), provider != translationProvider {
+                    adoptProvider(provider, profile: provider.defaultModel, locate: false)
                 }
             }
             presentationLoaded = true
@@ -450,7 +477,11 @@ final class ProbeModel: ObservableObject {
             }
             return
         }
-        cliName = "codex"
+        if cliName != translationProvider.cliName {
+            candidates = []
+            selectedCLI = ""
+        }
+        cliName = translationProvider.cliName
         if !candidates.contains(where: { $0.url.path == selectedCLI && $0.executable }) {
             locateCLI()
         }
@@ -458,6 +489,69 @@ final class ProbeModel: ObservableObject {
         persistPresentation()
         if needsCLI { startConnection(mode: .configuration) }
         else { startNativeTranslation() }
+    }
+
+    var canChangeProvider: Bool { canApplyModelSetting && !modelCatalog.busy && !cliBusy }
+
+    func selectTranslationProvider(_ provider: TranslationProvider) {
+        guard provider != translationProvider else { return }
+        guard canChangeProvider, var config = savedConfiguration, let connection else {
+            providerMessage = text("Finish the current operation before changing services.",
+                                   "请先完成当前操作，再切换服务。")
+            return
+        }
+        config["model_provider"] = .string(provider.rawValue)
+        let id = UUID().uuidString
+        pendingProvider = provider
+        providerChangeID = id
+        providerMessage = text("Saving service selection…", "正在保存服务选择…")
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    private func adoptProvider(_ provider: TranslationProvider, profile: String, locate: Bool = true) {
+        guard provider != translationProvider else { return }
+        providerDrafts[translationProvider] = ProviderDraft(
+            settings: modelSettings, profile: modelProfile, edited: modelEdited)
+        if !selectedCLI.isEmpty { userCLI[cliName] = URL(fileURLWithPath: selectedCLI) }
+        let restored = providerDrafts[provider] ?? ProviderDraft(
+            settings: CodexModelSettings(provider: provider), profile: profile, edited: false)
+        let wasLoading = loadingConfiguration
+        let wasLocating = locatingForUpgrade
+        loadingConfiguration = true
+        locatingForUpgrade = true
+        defer {
+            loadingConfiguration = wasLoading
+            locatingForUpgrade = wasLocating
+        }
+        translationProvider = provider
+        modelSettings = restored.settings
+        modelProfile = restored.edited ? restored.profile : profile
+        modelEdited = restored.edited
+        cliName = provider.cliName
+        modelCatalog = ModelCatalogState()
+        catalogWasLastRequest = false
+        catalogReconnectIntent = nil
+        if locate {
+            candidates = locateCandidates(cliName, userCLI[cliName])
+            selectedCLI = candidates.first(where: \.executable)?.url.path ?? ""
+        } else {
+            candidates = []
+            selectedCLI = ""
+        }
+        needsCLI = selectedCLI.isEmpty
+        if connected, connectionMode == .translation, dictionary.ownsInstallation {
+            cliChangeDeferred = true
+        }
+    }
+
+    private func failProviderChange(_ code: String) {
+        guard pendingProvider != nil else { return }
+        pendingProvider = nil
+        providerChangeID = nil
+        providerMessage = text("Service change was not confirmed (\(code)). Reload settings to check.",
+                               "服务切换尚未确认（\(code)）。请重新读取设置进行确认。")
     }
 
     func rememberResultFrame(_ frame: NSRect) {
@@ -524,10 +618,11 @@ final class ProbeModel: ObservableObject {
     }
 
     func startNativeTranslation() {
-        guard cliName == "codex", candidates.contains(where: {
+        guard cliName == translationProvider.cliName, candidates.contains(where: {
             $0.url.path == selectedCLI && $0.executable
         }) else {
-            status = "Locate or choose a Codex executable in CLI locator first. No installation or login is automatic."
+            status = text("Choose a \(translationProvider.displayName) executable in Settings.",
+                          "请在设置中选择 \(translationProvider.displayName) 可执行文件。")
             return
         }
         startConnection(mode: .translation)
@@ -564,6 +659,7 @@ final class ProbeModel: ObservableObject {
             connectionMode = mode
             nativeTranslation = mode == .translation
             connectedCLI = mode == .translation ? command : ""
+            connectedProvider = mode == .translation ? translationProvider : nil
             catalogSupported = false
             imageTranslationSupported = false
             catalogNeedsReconnect = false
@@ -581,7 +677,7 @@ final class ProbeModel: ObservableObject {
                 environment["PATH"] = CLILocator.searchPath + inheritedPath
                 connection.startTranslation(
                     runtime: runtime, home: home,
-                    codexCommand: URL(fileURLWithPath: command), environment: environment)
+                    provider: translationProvider, command: URL(fileURLWithPath: command), environment: environment)
             } else if mode == .configuration {
                 connection.startConfiguration(runtime: runtime,
                                               home: homeDirectory ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
@@ -637,7 +733,8 @@ final class ProbeModel: ObservableObject {
         draft = Draft(text: input, origin: origin, useCache: origin == "ocr" ? false : useCache,
                       direction: direction, model: modelProfile, language: usesChinese ? "zh_CN" : "en_US",
                       useSavedDirection: origin != "ocr" && !settingsReady && !directionEdited,
-                      useSavedModel: origin != "ocr" && !settingsReady && !modelEdited)
+                      useSavedModel: origin != "ocr" && !settingsReady && !modelEdited,
+                      provider: translationProvider, useSavedProvider: !settingsReady)
         translationOrigin = origin
         productPhase = .preparing
         productMessage = text("Preparing translation…", "正在准备翻译…")
@@ -659,7 +756,8 @@ final class ProbeModel: ObservableObject {
         translationIntentID = intent
         draft = Draft(text: "", origin: "ocr", useCache: false, direction: direction, model: modelProfile,
                       language: usesChinese ? "zh_CN" : "en_US", useSavedDirection: false,
-                      useSavedModel: false, imageIntent: intent)
+                      useSavedModel: false, provider: translationProvider, useSavedProvider: !settingsReady,
+                      imageIntent: intent)
         translationOrigin = "ocr"
         productPhase = .preparing
         productMessage = text("Preparing the selected image…", "正在准备所选图片…")
@@ -701,6 +799,7 @@ final class ProbeModel: ObservableObject {
                       direction: direction, model: modelProfile, language: language,
                       useSavedDirection: !settingsReady && !directionEdited,
                       useSavedModel: !settingsReady && !modelEdited,
+                      provider: translationProvider, useSavedProvider: !settingsReady,
                       action: ActionDraft(action: action, targetLanguage: targetLanguage,
                                           generation: resultGeneration,
                                           prefix: output + "\n\n---\n\n### " + title + "\n\n",
@@ -716,6 +815,11 @@ final class ProbeModel: ObservableObject {
               !active, !stopping, !publishingImageRequest, !dictionary.committing,
               let connection = connection else { return }
         if let intent = requested.imageIntent, imageTranslation.attachment(for: intent) == nil { return }
+        guard requested.provider == translationProvider else {
+            failPreparation(text("The translation service changed. Translate again to use the current service.",
+                                 "翻译服务已更改，请再次翻译以使用当前服务。"))
+            return
+        }
         if requested.action == nil && requested.imageIntent == nil,
            let issue = TextInputPreflight.check(requested.text, limit: inputLimit.saved, requireLimit: true) {
             failPreparation(issue.message(using: self))
@@ -738,10 +842,11 @@ final class ProbeModel: ObservableObject {
                                       id: id, timeout: 25)
             return
         }
-        if cliChangeDeferred || catalogNeedsReconnect {
+        if cliChangeDeferred || catalogNeedsReconnect ||
+            (nativeTranslation && connectedProvider != requested.provider) {
             if dictionary.ownsInstallation {
-                productMessage = text("Waiting for the dictionary operation before using the selected Codex. You can cancel the download.",
-                                      "等待词典操作完成后使用所选 Codex。你可以取消下载。")
+                productMessage = text("Waiting for the dictionary operation before using \(translationProvider.displayName). You can cancel the download.",
+                                      "等待词典操作完成后使用 \(translationProvider.displayName)。你可以取消下载。")
             } else {
                 cliChangeDeferred = false
                 openAfterStop = true
@@ -758,10 +863,10 @@ final class ProbeModel: ObservableObject {
             guard candidates.contains(where: { $0.executable && $0.url.path == selectedCLI }) else {
                 needsCLI = true
                 failPreparation(requested.lookupFinished
-                    ? text("No local dictionary result. Choose Codex in Settings to use model translation.",
-                           "本地词典没有结果。请在设置中选择 Codex 以使用模型翻译。")
-                    : text("This model request needs Codex. Choose an installation in Settings.",
-                           "此模型请求需要 Codex，请在设置中选择安装路径。"))
+                    ? text("No local dictionary result. Choose \(translationProvider.displayName) in Settings to use model translation.",
+                           "本地词典没有结果。请在设置中选择 \(translationProvider.displayName) 以使用模型翻译。")
+                    : text("This request needs \(translationProvider.displayName). Choose an installation in Settings.",
+                           "此请求需要 \(translationProvider.displayName)，请在设置中选择安装路径。"))
                 onConfigurationRequired?()
                 return
             }
@@ -783,7 +888,8 @@ final class ProbeModel: ObservableObject {
         }
         let savedLanguage = savedConfiguration?["language"]?.string
         if savedConfiguration?["direction"] != .string(requested.direction) ||
-            !CodexModelSettings.sameID(savedConfiguration?["codex_model"]?.string, requested.model) ||
+            savedConfiguration?["model_provider"] != .string(requested.provider.rawValue) ||
+            !CodexModelSettings.sameID(savedConfiguration?[requested.provider.modelKey]?.string, requested.model) ||
             (savedLanguage != nil && savedLanguage != "" && savedLanguage != requested.language) {
             guard !requested.configurationSaved else {
                 failPreparation(text("Settings could not be applied. Check Settings before translating again.",
@@ -919,6 +1025,10 @@ final class ProbeModel: ObservableObject {
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
+        if pendingProvider != nil {
+            providerChangeID = id
+            providerMessage = text("Checking the saved service…", "正在确认已保存的服务…")
+        }
         if defaultsPhase == .readingBack { defaultsRequestID = id }
         if historyLimitRead { historyLimit.beginRead(id: id, afterSave: afterHistoryLimitSave) }
         if inputLimitRead { inputLimit.beginRead(id: id, afterSave: afterInputLimitSave) }
@@ -970,8 +1080,11 @@ final class ProbeModel: ObservableObject {
             failDefaultsRestore("settings_unavailable")
             return
         }
-        defaultsDrafts = ["direction": direction, "profile": modelProfile, "model": modelSettings.draft,
-                          "history": historyLimit.draft, "input": inputLimit.draft, "interval": copyInterval.draft]
+        defaultsDrafts = ["direction": direction, "history": historyLimit.draft,
+                          "input": inputLimit.draft, "interval": copyInterval.draft]
+        defaultsProviderDrafts = providerDrafts
+        defaultsProviderDrafts[translationProvider] = ProviderDraft(
+            settings: modelSettings, profile: modelProfile, edited: modelEdited)
         let id = UUID().uuidString
         defaultsRequestID = id
         defaultsPhase = .saving
@@ -1019,8 +1132,8 @@ final class ProbeModel: ObservableObject {
         return history + text(
             "The next new history record will keep only the newest \(limit) records. No records are deleted now. ",
             "下次新增历史记录时将仅保留最新 \(limit) 条；现在不删除记录。") + dictionary + paste + text(
-            "Translation settings, appearance, language, text size and window placement return to defaults. Selection and screenshot shortcuts are turned off. Your Codex path, account and system permissions are kept.",
-            "翻译设置、外观、语言、字号和窗口位置策略恢复默认。划词和截图快捷键关闭。保留 Codex 路径、账号及系统权限。")
+            "Translation settings, appearance, language, text size and window placement return to defaults. Selection and screenshot shortcuts are turned off. Your CLI paths, accounts and system permissions are kept.",
+            "翻译设置、外观、语言、字号和窗口位置策略恢复默认。划词和截图快捷键关闭。保留 CLI 路径、账号及系统权限。")
     }
 
     var defaultsMessage: String {
@@ -1055,6 +1168,7 @@ final class ProbeModel: ObservableObject {
         defaultsRequestID = nil
         settingsDefaults = nil
         defaultsDrafts.removeAll()
+        defaultsProviderDrafts.removeAll()
     }
 
     private func finishDefaultsRestore(config: [String: JSONValue], id: String) {
@@ -1064,26 +1178,42 @@ final class ProbeModel: ObservableObject {
             defaultsPhase = .differentReadback
             settingsDefaults = nil
             defaultsDrafts.removeAll()
+            defaultsProviderDrafts.removeAll()
             return
         }
         if defaultsDrafts["history"] == historyLimit.draft { historyLimit.resetDraft() }
         if defaultsDrafts["input"] == inputLimit.draft { inputLimit.resetDraft() }
         if defaultsDrafts["interval"] == copyInterval.draft { copyInterval.resetDraft() }
-        if CodexModelSettings.sameID(defaultsDrafts["model"], modelSettings.draft),
-           let profile = config["codex_model"]?.string {
-            modelSettings = CodexModelSettings()
-            modelSettings.loaded(profile: profile, id: id)
-            if persistsPreferences { (preferences ?? .standard).removeObject(forKey: "lastCustomCodexModel") }
-        }
         loadingConfiguration = true
+        for provider in TranslationProvider.allCases {
+            guard let profile = config[provider.modelKey]?.string else { continue }
+            var current = provider == translationProvider
+                ? ProviderDraft(settings: modelSettings, profile: modelProfile, edited: modelEdited)
+                : providerDrafts[provider] ?? ProviderDraft(
+                    settings: CodexModelSettings(provider: provider), profile: profile, edited: false)
+            let previous = defaultsProviderDrafts[provider]
+            if previous == nil || CodexModelSettings.sameID(previous?.settings.draft, current.settings.draft) {
+                current.settings = CodexModelSettings(provider: provider)
+                current.settings.loaded(profile: profile, id: id)
+                if persistsPreferences {
+                    (preferences ?? .standard).removeObject(forKey: provider.customModelPreferenceKey)
+                }
+            }
+            if previous == nil || CodexModelSettings.sameID(previous?.profile, current.profile) {
+                current.profile = profile
+                current.edited = false
+            }
+            providerDrafts[provider] = current
+            if provider == translationProvider {
+                modelSettings = current.settings
+                modelProfile = current.profile
+                modelEdited = current.edited
+            }
+        }
+        defaultsProviderDrafts.removeAll()
         if defaultsDrafts["direction"] == direction, let value = config["direction"]?.string {
             direction = value
             directionEdited = false
-        }
-        if CodexModelSettings.sameID(defaultsDrafts["profile"], modelProfile),
-           let value = config["codex_model"]?.string {
-            modelProfile = value
-            modelEdited = false
         }
         loadingConfiguration = false
         interfaceLanguage = "system"
@@ -1113,11 +1243,12 @@ final class ProbeModel: ObservableObject {
     func resetCustomModelDraft() { modelSettings.resetDraft(selection: modelProfile) }
 
     func modelChoices(selection: String) -> [String] {
-        modelCatalog.choices(addingTo: modelSettings.choices(selection: selection), scope: selectedCLI)
+        guard translationProvider == .codex else { return modelSettings.choices(selection: selection) }
+        return modelCatalog.choices(addingTo: modelSettings.choices(selection: selection), scope: selectedCLI)
     }
 
     func discoveredModel(_ id: String) -> DiscoveredCodexModel? {
-        guard modelCatalog.matches(scope: selectedCLI) else { return nil }
+        guard translationProvider == .codex, modelCatalog.matches(scope: selectedCLI) else { return nil }
         return modelCatalog.models.first { CodexModelSettings.sameID($0.id.value, id) }
     }
 
@@ -1125,6 +1256,7 @@ final class ProbeModel: ObservableObject {
         guard !modelCatalog.busy, !catalogShutDown else { return }
         loadPresentation()
         modelCatalog.begin(scope: selectedCLI)
+        guard translationProvider == .codex else { modelCatalog.fail(.unavailable); return }
         resumeModelCatalog()
     }
 
@@ -1158,7 +1290,10 @@ final class ProbeModel: ObservableObject {
         advancingCatalog = true
         defer { advancingCatalog = false }
         let intent = modelCatalog.intent
-        guard cliName == "codex" else { modelCatalog.fail(.missingCLI); return }
+        guard translationProvider == .codex, cliName == "codex" else {
+            modelCatalog.fail(translationProvider == .claude ? .unavailable : .missingCLI)
+            return
+        }
         if stopping {
             catalogReconnectIntent = intent
             modelCatalog.connecting()
@@ -1229,6 +1364,7 @@ final class ProbeModel: ObservableObject {
         default:
             let failure: ModelCatalogState.Failure
             switch event.safeFailureCode {
+            case "model_catalog_unavailable": failure = .unavailable
             case "model_catalog_too_large": failure = .tooLarge
             case "provider_cleanup_failed":
                 catalogNeedsReconnect = true
@@ -1243,7 +1379,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func applyCustomModelID() {
-        if let validation = CodexModelSettings.validateCustom(modelSettings.draft) {
+        if let validation = modelSettings.validateCustom(modelSettings.draft) {
             modelSettings.reject(.invalidID(validation))
             return
         }
@@ -1251,7 +1387,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func applyModelProfile(_ profile: String) {
-        if !CodexModelSettings.isPreset(profile), let validation = CodexModelSettings.validateCustom(profile) {
+        if !modelSettings.isPreset(profile), let validation = modelSettings.validateCustom(profile) {
             modelSettings.reject(.invalidID(validation))
             return
         }
@@ -1467,8 +1603,8 @@ final class ProbeModel: ObservableObject {
         if !enabled, active { cancel() }
         config["history_enabled"] = .bool(enabled)
         config["direction"] = .string(direction)
-        config["codex_model"] = .string(model)
-        config["model_provider"] = .string("codex_cli")
+        config[translationProvider.modelKey] = .string(model)
+        config["model_provider"] = .string(translationProvider.rawValue)
         config["language"] = .string(language ?? (usesChinese ? "zh_CN" : "en_US"))
         settingsBusy = true
         let id = UUID().uuidString
@@ -1922,6 +2058,7 @@ final class ProbeModel: ObservableObject {
             modelCatalog.disconnect()
             catalogReconnectIntent = nil
             modelSettings.connectionLost()
+            failProviderChange("connection_closed")
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
             inputLimit.connectionLost()
@@ -2025,6 +2162,7 @@ final class ProbeModel: ObservableObject {
             hasNextHistoryPage = false
             connection = nil
             connectedCLI = ""
+            connectedProvider = nil
             catalogSupported = false
             imageTranslationSupported = false
             catalogPreservesPreparation = false
@@ -2171,7 +2309,9 @@ final class ProbeModel: ObservableObject {
                 guard let config = event.payload["config"]?.object,
                       case let .bool(enabled)? = config["history_enabled"],
                       let savedDirection = config["direction"]?.string,
-                      let profile = config["codex_model"]?.string else {
+                      let providerID = config["model_provider"]?.string,
+                      let savedProvider = TranslationProvider(rawValue: providerID),
+                      let profile = config[savedProvider.modelKey]?.string else {
                     summaryEnabled = nil
                     summaryPreferencePhase = .failed("invalid_config")
                     summarySaveRequest = nil
@@ -2180,6 +2320,7 @@ final class ProbeModel: ObservableObject {
                     inputLimit.fail("invalid_config")
                     copyInterval.fail("invalid_config")
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
+                    failProviderChange("invalid_config")
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
                     settingsReady = false
@@ -2189,6 +2330,18 @@ final class ProbeModel: ObservableObject {
                     return true
                 }
                 savedConfiguration = config
+                adoptProvider(savedProvider, profile: profile)
+                if persistsPreferences {
+                    (preferences ?? .standard).set(savedProvider.rawValue, forKey: "lastConfirmedTranslationProvider")
+                }
+                if providerChangeID == event.id, let expected = pendingProvider {
+                    providerMessage = expected == savedProvider
+                        ? text("Using \(savedProvider.displayName).", "正在使用 \(savedProvider.displayName)。")
+                        : text("The saved service differs from your selection. The saved service is shown.",
+                               "保存的服务与所选项不同，当前显示已保存的服务。")
+                    pendingProvider = nil
+                    providerChangeID = nil
+                }
                 historyLimit.loaded(config["history_limit"]?.integer, id: event.id)
                 inputLimit.loaded(config["max_chars"]?.integer, id: event.id)
                 copyInterval.loaded(config["double_press_window"]?.number, id: event.id)
@@ -2216,15 +2369,25 @@ final class ProbeModel: ObservableObject {
                 else if pasteEnabled == false { persistPlainPasteHint(false) }
                 let modelReadbackFailure = modelSettings.loaded(profile: profile, id: event.id)
                 if persistsPreferences, let custom = modelSettings.rememberedCustom,
-                   CodexModelSettings.validateCustom(custom) == nil {
-                    (preferences ?? .standard).set(custom, forKey: "lastCustomCodexModel")
+                   modelSettings.validateCustom(custom) == nil {
+                    (preferences ?? .standard).set(custom, forKey: translationProvider.customModelPreferenceKey)
                 }
                 historyEnabled = enabled
                 if draft?.useSavedDirection == true {
                     draft?.direction = savedDirection
                     draft?.useSavedDirection = false
                 }
-                if draft?.useSavedModel == true {
+                if draft?.useSavedProvider == true {
+                    let changedProvider = draft?.provider != savedProvider
+                    draft?.provider = savedProvider
+                    draft?.useSavedProvider = false
+                    if draft?.useSavedModel == true {
+                        draft?.model = profile
+                    } else if changedProvider {
+                        draft?.model = modelEdited ? modelProfile : profile
+                    }
+                    draft?.useSavedModel = false
+                } else if draft?.useSavedModel == true {
                     draft?.model = profile
                     draft?.useSavedModel = false
                 }
@@ -2257,6 +2420,7 @@ final class ProbeModel: ObservableObject {
                                          "保存的模型与请求的 ID 不同。请检查模型设置，未发送模型请求。"))
                 }
             } else {
+                if providerChangeID == event.id { failProviderChange(event.safeFailureCode) }
                 if defaultsRequestID == event.id { failDefaultsRestore(event.safeFailureCode) }
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
                 if historyLimitOperation || event.id == configLoadID { historyLimit.fail(event.safeFailureCode) }
@@ -2284,6 +2448,13 @@ final class ProbeModel: ObservableObject {
             configSaveID = nil
             catalogPreservesPreparation = false
             settingsBusy = false
+            if settingsReady, nativeTranslation, connectedProvider != translationProvider,
+               !dictionary.ownsInstallation {
+                openAfterStop = true
+                upgradingForDraft = draft != nil && !needsCLI
+                stopHelper(preservePendingHistory: true)
+                return true
+            }
             resumeAfterSettingsOperation()
             return true
         }
@@ -2423,7 +2594,7 @@ final class ProbeModel: ObservableObject {
         candidates = locateCandidates(cliName, userCLI[cliName])
         selectedCLI = candidates.first(where: \.executable)?.url.path ?? ""
         cliStatus = "Paths checked only; not executed. Authentication: unknown."
-        needsCLI = cliName == "codex" && selectedCLI.isEmpty
+        needsCLI = cliName == translationProvider.cliName && selectedCLI.isEmpty
         if !selectedCLI.isEmpty { persistPresentation() }
     }
 

@@ -14,8 +14,8 @@ struct SettingsDefaultsView: View {
             .disabled(!model.canRestoreDefaults)
             .focused($focused, equals: .restore)
             .accessibilityIdentifier("restore-default-settings")
-            Text(model.text("Review before restoring. Your Codex installation, account, system permissions and saved data are kept.",
-                            "确认后才恢复。保留 Codex 安装、账号、系统权限和已保存的数据。"))
+            Text(model.text("Review before restoring. Your CLI installations, accounts, system permissions and saved data are kept.",
+                            "确认后才恢复。保留 CLI 安装、账号、系统权限和已保存的数据。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if model.defaultsPhase == .confirming {
                 Divider()

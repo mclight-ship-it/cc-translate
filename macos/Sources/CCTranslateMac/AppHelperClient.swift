@@ -4,7 +4,8 @@ import CCTranslateSupport
 protocol AppHelperClient: AnyObject {
     func start(runtime: BundleRuntime)
     func startConfiguration(runtime: BundleRuntime, home: URL)
-    func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL, environment: [String: String])
+    func startTranslation(runtime: BundleRuntime, home: URL, provider: TranslationProvider,
+                          command: URL, environment: [String: String])
     func send(_ message: ClientMessage, timeout: TimeInterval)
     func translate(text: String, appLanguage: String, origin: String, useCache: Bool,
                    recordHistory: Bool, id: String, timeout: TimeInterval) -> String

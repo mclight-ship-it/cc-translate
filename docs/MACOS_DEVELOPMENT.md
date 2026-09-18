@@ -1068,13 +1068,16 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 并复用已有进程组owner；不做版本锁定或预先账号诊断，也不使用会跳过OAuth的bare模式。
 provider源码ceae3fb的455目标与1909正常hook通过；
 run35348803751 producer已实际通过新9项Darwin provider用例与966portable/249process/728core，
-完整同包消费者仍待验收。
+完整同包消费者与App独立审计现已完成，实际watch exit0、全部3jobs/42steps成功。
 传输前置6fc首run的811原生回归与134PNG通过，但后续词典真实下载返回invalidResponse；
 失败原日志保留，原源码重跑35347450089已实际watch exit0，
 完整App与同包三系统审计通过，没有把首轮跳过的process/core当通过。
 后续已接通provider绑定的Python/Swift helper会话与业务快照、缓存、历史、图片，
-402目标契约通过，新增5Swift/4Darwin业务链仍待本源码CI。
-Claude设置入口、两套路径/模型草稿与实际原生切换仍在开发；不影响当前8f898aa推荐包。
+402目标契约与1925正常hook通过；3e53aec的新5Swift连接用例已实际通过，
+4Darwin业务链仍待该源码完整结果。
+下一源码继续接入Claude设置入口、两套路径/模型草稿、保存读回后切换helper及两套模型恢复默认，
+新增15项原生产品/菜单/渲染测试。UI仍待新源码Mac验证，不影响当前8f898aa推荐包，
+也不代表已使用真实Claude账号或模型验收。
 进度与验证边界见[Claude服务检查点](MACOS_TODO.md#native-claude-provider-checkpoint)。
 
 <a id="native-text-scale"></a>

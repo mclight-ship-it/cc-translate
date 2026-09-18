@@ -1,6 +1,11 @@
 import Foundation
+import CCTranslateSupport
 
 struct CodexModelSettings {
+    let provider: TranslationProvider
+
+    init(provider: TranslationProvider = .codex) { self.provider = provider }
+
     // SwiftUI tags must preserve byte-distinct IDs that String treats as equivalent.
     struct ChoiceID: Hashable {
         let value: String
@@ -34,7 +39,13 @@ struct CodexModelSettings {
     private(set) var requestID: String?
     private var requestedProfile: String?
 
-    static func isPreset(_ value: String) -> Bool { value == "auto" || value == "auto-fast" }
+    static func isPreset(_ value: String, provider: TranslationProvider = .codex) -> Bool {
+        provider.modelPresets.contains(value)
+    }
+
+    func isPreset(_ value: String) -> Bool { Self.isPreset(value, provider: provider) }
+
+    func validateCustom(_ value: String) -> Validation? { Self.validateCustom(value, provider: provider) }
 
     static func sameID(_ lhs: String?, _ rhs: String?) -> Bool {
         switch (lhs, rhs) {
@@ -44,22 +55,22 @@ struct CodexModelSettings {
         }
     }
 
-    static func validateCustom(_ value: String) -> Validation? {
+    static func validateCustom(_ value: String, provider: TranslationProvider = .codex) -> Validation? {
         if value.isEmpty { return .empty }
         if value.utf8.count > 256 { return .tooLong }
         if value.unicodeScalars.contains(where: {
             CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
         }) { return .whitespace }
-        if isPreset(value) { return .preset }
+        if isPreset(value, provider: provider) { return .preset }
         return nil
     }
 
     func choices(selection: String) -> [String] {
-        var values = ["auto-fast", "auto"]
-        if let rememberedCustom, !Self.isPreset(rememberedCustom), !Self.sameID(rememberedCustom, selection) {
+        var values = provider.modelPresets
+        if let rememberedCustom, !isPreset(rememberedCustom), !Self.sameID(rememberedCustom, selection) {
             values.append(rememberedCustom)
         }
-        if !Self.isPreset(selection) { values.append(selection) }
+        if !isPreset(selection) { values.append(selection) }
         return values
     }
 
@@ -75,13 +86,13 @@ struct CodexModelSettings {
     }
 
     mutating func resetDraft(selection: String) {
-        draft = Self.isPreset(selection) ? (rememberedCustom ?? "") : selection
+        draft = isPreset(selection) ? (rememberedCustom ?? "") : selection
         draftEdited = false
         if case .failed(.invalidID(_)) = phase { phase = .idle }
     }
 
     mutating func restoreCustom(_ value: String) {
-        guard Self.validateCustom(value) == nil else { return }
+        guard validateCustom(value) == nil else { return }
         rememberedCustom = value
         if !draftEdited && !editing { draft = value }
     }
@@ -104,7 +115,7 @@ struct CodexModelSettings {
     mutating func loaded(profile: String, id: String) -> Failure? {
         if let requestID, requestID != id { return nil }
         savedProfile = profile
-        if !Self.isPreset(profile) {
+        if !isPreset(profile) {
             rememberedCustom = profile
             if !draftEdited && !editing { draft = profile }
         }

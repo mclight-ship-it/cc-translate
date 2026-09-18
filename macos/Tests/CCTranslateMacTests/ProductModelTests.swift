@@ -46,6 +46,7 @@ final class ProductTestHelper: AppHelperClient {
     private(set) var historyLoads: [History] = []
     private(set) var historyClears: [String] = []
     private(set) var selectedExecutable: URL?
+    private(set) var selectedProvider: TranslationProvider?
     private(set) var stopCount = 0
 
     init(notice: @escaping (HelperNotice) -> Void) { self.notice = notice }
@@ -54,9 +55,10 @@ final class ProductTestHelper: AppHelperClient {
     func startConfiguration(runtime: BundleRuntime, home: URL) {
         operations.append("start.configuration")
     }
-    func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL,
-                          environment: [String: String]) {
-        selectedExecutable = codexCommand
+    func startTranslation(runtime: BundleRuntime, home: URL, provider: TranslationProvider,
+                          command: URL, environment: [String: String]) {
+        selectedExecutable = command
+        selectedProvider = provider
         operations.append("start.translation")
     }
     func send(_ message: ClientMessage, timeout: TimeInterval) {
@@ -245,7 +247,7 @@ final class ProductTestHarness {
                                          language: String = "en_US", history: Bool = true,
                                          summary: Bool = true, historyLimit: Int64 = 100,
                                          maxChars: Int64 = 5000, copyInterval: Double = 0.5) -> [String: JSONValue] {
-        ["direction": .string(direction), "codex_model": .string(model),
+        ["direction": .string(direction), "codex_model": .string(model), "claude_model": .string("haiku"),
          "language": .string(language), "history_enabled": .bool(history),
          "model_provider": .string("codex_cli"), "summary_enabled": .bool(summary),
          "labs_defaults_migrated": .bool(true), "history_limit": .integer(historyLimit),

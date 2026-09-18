@@ -19,7 +19,7 @@ struct SettingsDefaults {
     init?(_ config: [String: JSONValue]) {
         let booleans = ["history_enabled", "summary_enabled", "local_dictionary_enabled",
                         "plain_text_paste_enabled", "codex_model_default_migrated"]
-        let strings = ["model_provider", "codex_model", "direction"]
+        let strings = ["model_provider", "codex_model", "claude_model", "direction"]
         guard booleans.allSatisfy({ config[$0]?.bool != nil }),
               strings.allSatisfy({ config[$0]?.string?.isEmpty == false }),
               let limit = config["history_limit"]?.integer, HistoryLimitPreference.supported.contains(limit),

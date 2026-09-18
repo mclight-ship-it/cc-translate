@@ -77,8 +77,9 @@ final class ImageTestClient: AppHelperClient {
     init(notice: @escaping (HelperNotice) -> Void) { base = ProductTestHelper(notice: notice) }
     func start(runtime: BundleRuntime) { base.start(runtime: runtime) }
     func startConfiguration(runtime: BundleRuntime, home: URL) { base.startConfiguration(runtime: runtime, home: home) }
-    func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL, environment: [String: String]) {
-        base.startTranslation(runtime: runtime, home: home, codexCommand: codexCommand, environment: environment)
+    func startTranslation(runtime: BundleRuntime, home: URL, provider: TranslationProvider,
+                          command: URL, environment: [String: String]) {
+        base.startTranslation(runtime: runtime, home: home, provider: provider, command: command, environment: environment)
     }
     func send(_ message: ClientMessage, timeout: TimeInterval) {
         base.send(message, timeout: timeout)
