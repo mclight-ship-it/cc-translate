@@ -312,7 +312,7 @@ class TestMacResultActionProtocol(unittest.TestCase):
     def server(self, *, translation_enabled=True):
         from cc_macos.translation import validate_result_action_request, validate_translation_request
 
-        config = Mock(translation_enabled=translation_enabled)
+        config = Mock(translation_enabled=translation_enabled, translation_backend="native_appserver")
         config.validate_result_action_request = validate_result_action_request
         config.validate_translation_request = validate_translation_request
         output = io.BytesIO()

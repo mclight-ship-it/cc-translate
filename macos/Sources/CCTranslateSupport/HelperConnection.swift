@@ -93,15 +93,26 @@ public final class HelperConnection {
 
     public func startTranslation(runtime: BundleRuntime, home: URL, codexCommand: URL,
                                  environment: [String: String]) {
-        start(runtime: runtime, configurationHome: home, codexCommand: codexCommand,
-              codexEnvironment: environment)
+        startTranslation(runtime: runtime, home: home, provider: .codex, command: codexCommand,
+                         environment: environment)
+    }
+
+    public func startTranslation(runtime: BundleRuntime, home: URL, provider: TranslationProvider,
+                                 command: URL, environment: [String: String]) {
+        start(runtime: runtime, configurationHome: home, cliCommand: command,
+              provider: provider, cliEnvironment: environment)
     }
 
     static func translationEnvironment(home: URL, codexCommand: URL,
                                        environment: [String: String]) throws -> [String: String] {
+        try translationEnvironment(home: home, provider: .codex, command: codexCommand, environment: environment)
+    }
+
+    static func translationEnvironment(home: URL, provider: TranslationProvider, command: URL,
+                                       environment: [String: String]) throws -> [String: String] {
         guard home.isFileURL, home.path.hasPrefix("/"), !home.path.contains("\0"),
-              codexCommand.isFileURL, codexCommand.path.hasPrefix("/"),
-              !codexCommand.path.contains("\0"),
+              command.isFileURL, command.path.hasPrefix("/"),
+              !command.path.contains("\0"),
               environment["HOME"] == home.path, environment["PATH"] != nil,
               environment.allSatisfy({
                   !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.contains("\0") && !$0.value.contains("\0")
@@ -110,17 +121,17 @@ public final class HelperConnection {
         guard encoded.count <= 32_768 else { throw ProbeError.translationUnavailable }
         return [
             "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "HOME": home.path,
-            "CC_TRANSLATE_CODEX_ENV": String(decoding: encoded, as: UTF8.self)
+            provider.environmentKey: String(decoding: encoded, as: UTF8.self)
         ]
     }
 
-    private func start(runtime: BundleRuntime, configurationHome: URL?, codexCommand: URL? = nil,
-                       codexEnvironment: [String: String] = [:]) {
+    private func start(runtime: BundleRuntime, configurationHome: URL?, cliCommand: URL? = nil,
+                       provider: TranslationProvider = .codex, cliEnvironment: [String: String] = [:]) {
         queue.async {
             guard !self.started, !self.stopping else { return }
             self.started = true
-            self.state = ProtocolState(mode: codexCommand != nil ? .translation :
-                                        (configurationHome == nil ? .diagnostic : .configuration))
+            self.state = ProtocolState(mode: cliCommand != nil ? .translation :
+                                        (configurationHome == nil ? .diagnostic : .configuration), provider: provider)
             self.process.executableURL = runtime.executable
             self.process.arguments = ["-I", "-B", runtime.launcher.path]
             do {
@@ -137,11 +148,11 @@ public final class HelperConnection {
                     let identifier = try runtime.configurationApplicationIdentifier()
                     self.process.arguments = ["-I", "-B", runtime.launcher.path,
                                               "--config-home", home.path, "--application-id", identifier]
-                    if let command = codexCommand {
+                    if let command = cliCommand {
                         self.process.environment = try Self.translationEnvironment(
-                            home: home, codexCommand: command, environment: codexEnvironment
+                            home: home, provider: provider, command: command, environment: cliEnvironment
                         )
-                        self.process.arguments?.append(contentsOf: ["--codex-command", command.path])
+                        self.process.arguments?.append(contentsOf: [provider.commandArgument, command.path])
                     }
                 }
             } catch {

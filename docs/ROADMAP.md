@@ -41,9 +41,11 @@ f8a014b现已通过全部18项新增方法；仅余旧设置截图OCR把“结�
 下一项[完整Claude服务](MACOS_TODO.md#native-claude-provider-checkpoint)已开始：
 已实现有界一次性CLI传输，并继续独立Claude provider/JSONL与base64图片契约；
 新增17输出/19provider/4预算便携契约及9真实Darwin provider方法，目标联合455项通过。
-前置6fc首run原生通过，后续URLSession词典下载失败使process/core跳过，原源码正显式重跑。
-新provider源码仍需自己的Mac验证。这不是Claude服务已可用；
-bootstrap、保存/请求/缓存与原生选择仍需完整接线，不要求用户重新设置或登录。
+前置6fc首run后续URLSession下载失败证据保留；同源码重跑35347450089已完成同包三系统验收。
+新provider源码ceae3fb的producer966portable/249process/728core与新9项Darwin均通过，
+同包消费者仍待验。后续Python/Swift绑定会话与请求/缓存/历史/图片已接线，
+402目标契约通过，新Swift及Darwin业务链仍需新源码验证。
+这不是Claude服务已可用；路径/模型草稿、保存回读与原生选择仍需完成，不要求用户重新设置或登录。
 
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。

@@ -52,9 +52,11 @@ public struct CodexModelEntry: Hashable, Sendable {
 enum ModelCatalogDocument {
     static let operation = "model_catalog"
     static let failureCodes: Set<String> = [
-        "model_catalog_failed", "model_catalog_too_large", "provider_cleanup_failed"
+        "model_catalog_failed", "model_catalog_too_large", "model_catalog_unavailable", "provider_cleanup_failed"
     ]
-    static let discoveryFailureCodes: Set<String> = ["model_catalog_failed", "model_catalog_too_large"]
+    static let discoveryFailureCodes: Set<String> = [
+        "model_catalog_failed", "model_catalog_too_large", "model_catalog_unavailable"
+    ]
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
         guard Set(payload.keys) == ["operation"], payload["operation"] == .string(operation) else {

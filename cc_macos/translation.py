@@ -11,7 +11,8 @@ from cc_prompts import (
     PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX, with_ocr_structure_hint,
     image_translation_prompt,
 )
-from cc_providers.base import CODEX_PROVIDER, ProviderRequest, ProviderSelection
+from cc_providers.base import CLAUDE_PROVIDER, CODEX_PROVIDER, PROVIDER_IDS, ProviderRequest, ProviderSelection
+from cc_providers.claude_darwin import DarwinClaudeProvider
 from cc_providers.codex_darwin import DarwinCodexProvider
 from cc_providers.codex_catalog import CatalogProbeError
 from cc_providers.darwin_process import ProcessError
@@ -29,6 +30,7 @@ from .protocol import (
 
 
 CLI_ENVIRONMENT_KEY = "CC_TRANSLATE_CODEX_ENV"
+CLI_ENVIRONMENT_KEYS = {CODEX_PROVIDER: CLI_ENVIRONMENT_KEY, CLAUDE_PROVIDER: "CC_TRANSLATE_CLAUDE_ENV"}
 MAX_CLI_ENVIRONMENT_BYTES = 32_768
 MAX_OUTPUT_BYTES = 24_000
 MAX_DELTA_BYTES = 4_096
@@ -49,8 +51,10 @@ class TranslationError(ConfigurationError):
         self.code, self.submitted = code, submitted
 
 
-def parse_cli_environment(environment, home):
-    raw = None if environment is None else environment.get(CLI_ENVIRONMENT_KEY)
+def parse_cli_environment(environment, home, provider_id=CODEX_PROVIDER):
+    if provider_id not in CLI_ENVIRONMENT_KEYS:
+        raise ProtocolError("invalid_startup")
+    raw = None if environment is None else environment.get(CLI_ENVIRONMENT_KEYS[provider_id])
     try:
         if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_CLI_ENVIRONMENT_BYTES:
             raise ProtocolError("invalid_startup")
@@ -106,9 +110,11 @@ def validate_result_action_request(payload):
 
 
 def _snapshot_settings(config, payload, *, result_action=False, image=False):
-    if config[CFG.MODEL_PROVIDER] != CODEX_PROVIDER:
+    provider = config[CFG.MODEL_PROVIDER]
+    if provider not in PROVIDER_IDS:
         raise TranslationError("unsupported_provider")
-    model, direction = config[CFG.CODEX_MODEL], config[CFG.DIRECTION]
+    model = config[CFG.CODEX_MODEL if provider == CODEX_PROVIDER else CFG.CLAUDE_MODEL]
+    direction = config[CFG.DIRECTION]
     language = config.get(CFG.LANGUAGE) or payload["app_language"]
     if (type(model) is not str or not model or len(model.encode("utf-8")) > 256
             or direction not in DIRECTION_MODES or language not in ("zh_CN", "en_US")
@@ -119,26 +125,32 @@ def _snapshot_settings(config, payload, *, result_action=False, image=False):
     return model, direction, language
 
 
+def _stream_enabled(config):
+    return config[CFG.MODEL_PROVIDER] == CLAUDE_PROVIDER or bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL])
+
+
 def snapshot_for_image(config, payload, owned_path):
     validate_image_request(payload)
     model, direction, language = _snapshot_settings(config, payload, image=True)
+    provider = config[CFG.MODEL_PROVIDER]
     return RequestSnapshot(
         request=ProviderRequest(
             "image", model, image_translation_prompt(direction, language),
             "Translate the attached image while preserving its structure.",
             image_paths=(owned_path,), timeout_seconds=90),
-        selection=ProviderSelection(CODEX_PROVIDER, model), config=config, input=None,
+        selection=ProviderSelection(provider, model), config=config, input=None,
         origin="ocr", content_class="ocr", kind="ocr",
-        sig=provider_cache_signature(CODEX_PROVIDER, model, direction, False, language,
-                                     PROVIDER_PROMPT_REVISIONS[CODEX_PROVIDER]),
+        sig=provider_cache_signature(provider, model, direction, False, language,
+                                     PROVIDER_PROMPT_REVISIONS[provider]),
         direction=direction, app_language=language,
         target_lang=None if direction == "auto" else direction[3:],
-        summarize=False, dictionary=False, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]))
+        summarize=False, dictionary=False, stream_enabled=_stream_enabled(config))
 
 
 def snapshot_for_translation(config, payload):
     validate_translation_request(payload)
     model, direction, language = _snapshot_settings(config, payload)
+    provider = config[CFG.MODEL_PROVIDER]
     text = payload["text"]
     content_class, dictionary = classify_selection(text), is_single_word(text)
     summarize = bool(payload["origin"] != "ocr" and config[CFG.SUMMARY_ENABLED] and content_class in ("text", "mixed")
@@ -154,14 +166,14 @@ def snapshot_for_translation(config, payload):
         prompt = with_ocr_structure_hint(direction_prompt(direction, language), payload["origin"]) + SYSTEM_SUFFIX
     return RequestSnapshot(
         request=ProviderRequest("translation_summary" if summarize else "text", model, prompt, text,
-                                timeout_seconds=90 if config[CFG.CODEX_STREAMING_EXPERIMENTAL] else 60),
-        selection=ProviderSelection(CODEX_PROVIDER, model), config=config, input=text,
+                                timeout_seconds=90 if _stream_enabled(config) else 60),
+        selection=ProviderSelection(provider, model), config=config, input=text,
         origin=payload["origin"], content_class=content_class,
         kind=history_kind(payload["origin"], content_class, text),
-        sig=provider_cache_signature(CODEX_PROVIDER, model, direction, bool(config[CFG.SUMMARY_ENABLED]),
-                                     language, PROVIDER_PROMPT_REVISIONS[CODEX_PROVIDER]),
+        sig=provider_cache_signature(provider, model, direction, bool(config[CFG.SUMMARY_ENABLED]),
+                                     language, PROVIDER_PROMPT_REVISIONS[provider]),
         direction=direction, app_language=language, target_lang=target, summarize=summarize,
-        dictionary=dictionary, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]))
+        dictionary=dictionary, stream_enabled=_stream_enabled(config))
 
 
 def snapshot_for_result_action(config, payload):
@@ -182,11 +194,11 @@ def snapshot_for_result_action(config, payload):
         prompt = direction_prompt(direction, language) + SYSTEM_SUFFIX
     return RequestSnapshot(
         request=ProviderRequest("text", model, prompt, text,
-                                timeout_seconds=90 if config[CFG.CODEX_STREAMING_EXPERIMENTAL] else 60),
-        selection=ProviderSelection(CODEX_PROVIDER, model), config=config, input=text,
+                                timeout_seconds=90 if _stream_enabled(config) else 60),
+        selection=ProviderSelection(config[CFG.MODEL_PROVIDER], model), config=config, input=text,
         origin="text", content_class=content_class, kind="text", sig="",
         direction=direction, app_language=language, target_lang=target, summarize=False,
-        dictionary=False, stream_enabled=bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL]),
+        dictionary=False, stream_enabled=_stream_enabled(config),
         action="rewrite:" + action if action in RESULT_ACTION_PROMPTS else action)
 
 
@@ -199,8 +211,13 @@ def provider_failure(code):
         return code.replace("appserver_", "provider_", 1)
     if code in ("timeout", "rpc_timeout", "probe_timeout"):
         return "translation_timeout"
-    if code == "translation_output_limit":
+    if code in ("translation_output_limit", "provider_protocol_error",
+                "image_unavailable", "image_too_large", "image_changed"):
         return code
+    if code in ("probe_output_limit", "probe_input_limit"):
+        return "translation_output_limit"
+    if code == "probe_invalid_utf8":
+        return "provider_protocol_error"
     if code.startswith(("invalid_appserver", "unknown_appserver")) or code == "unsafe_tool_event":
         return "provider_protocol_error"
     return "provider_failed"
@@ -212,8 +229,15 @@ class TranslationSession(ConfigurationSession):
     validate_result_action_request = staticmethod(validate_result_action_request)
     validate_image_request = staticmethod(validate_image_request)
 
-    def __init__(self, home, application_id, command, environment):
+    @property
+    def translation_backend(self):
+        return "native_print" if self.provider_id == CLAUDE_PROVIDER else "native_appserver"
+
+    def __init__(self, home, application_id, command, environment, *, provider_id=CODEX_PROVIDER):
+        if provider_id not in PROVIDER_IDS:
+            raise ValueError("unsupported_provider")
         super().__init__(home, application_id)
+        self.provider_id = provider_id
         self.command, self.environment = command, dict(environment)
         self._provider = None
         self._images = set()
@@ -224,10 +248,15 @@ class TranslationSession(ConfigurationSession):
         try:
             super().open()
             paths = macos_user_paths(self.home, self.application_id)
-            self._provider = DarwinCodexProvider(
-                self.command, paths.application_support / "NativeWorkspace",
-                environment=self.environment, catalog_cache_dir=paths.caches / "CodexModels",
-                log_error=self._log_provider_failure)
+            if self.provider_id == CLAUDE_PROVIDER:
+                self._provider = DarwinClaudeProvider(
+                    self.command, paths.application_support / "NativeWorkspace",
+                    environment=self.environment, log_error=self._log_provider_failure)
+            else:
+                self._provider = DarwinCodexProvider(
+                    self.command, paths.application_support / "NativeWorkspace",
+                    environment=self.environment, catalog_cache_dir=paths.caches / "CodexModels",
+                    log_error=self._log_provider_failure)
             opened = True
         except (ValueError, TypeError, OSError):
             raise ConfigurationError("translation_unavailable") from None
@@ -240,9 +269,15 @@ class TranslationSession(ConfigurationSession):
         sys.stderr.write("cc_macos:provider_notice\n")
         sys.stderr.flush()
 
+    def _translation_config(self):
+        config = self.perform({"operation": "config_load"})["config"]
+        if config[CFG.MODEL_PROVIDER] != self.provider_id:
+            raise TranslationError("unsupported_provider")
+        return config
+
     def _capture(self, payload):
         with self._operations_lock:
-            config = self.perform({"operation": "config_load"})["config"]
+            config = self._translation_config()
             snapshot = snapshot_for_translation(config, payload)
             cached = None
             if snapshot.origin != "ocr" and payload["use_cache"] and config[CFG.HISTORY_ENABLED]:
@@ -287,7 +322,7 @@ class TranslationSession(ConfigurationSession):
         if cancel.is_set():
             return "cancelled", {"submitted": False}
         with self._operations_lock:
-            config = self.perform({"operation": "config_load"})["config"]
+            config = self._translation_config()
             _snapshot_settings(config, payload, image=True)
             image = OwnedPNG(macos_user_paths(self.home, self.application_id).application_support / "NativeWorkspace")
             self._images.add(image)
@@ -322,7 +357,7 @@ class TranslationSession(ConfigurationSession):
 
     def result_action(self, payload, cancel, on_delta, begin_finish):
         with self._operations_lock:
-            config = self.perform({"operation": "config_load"})["config"]
+            config = self._translation_config()
             snapshot = snapshot_for_result_action(config, payload)
         return self._execute(snapshot, None, False, cancel, on_delta, begin_finish)
 
@@ -335,9 +370,8 @@ class TranslationSession(ConfigurationSession):
                 raise ConfigurationError(code) from None
             if cancel.is_set() or code in ("cancelled", "appserver_shutdown"):
                 return "cancelled", {}
-            raise ConfigurationError(
-                "model_catalog_too_large" if code == "model_catalog_too_large"
-                else "model_catalog_failed") from None
+            raise ConfigurationError(code if code in ("model_catalog_too_large", "model_catalog_unavailable")
+                                     else "model_catalog_failed") from None
         if not begin_finish():
             return "cancelled", {}
         return "completed", {"models": models}
@@ -345,6 +379,8 @@ class TranslationSession(ConfigurationSession):
     def _execute(self, snapshot, cached, record_history, cancel, on_delta, begin_finish, *, defer_history=False):
         if cancel.is_set():
             return "cancelled", {"submitted": False}
+        if snapshot.selection.provider_id != self.provider_id:
+            raise TranslationError("unsupported_provider")
         submitted, output, used_cache = False, cached, cached is not None
         if cached is None:
             output_size = 2

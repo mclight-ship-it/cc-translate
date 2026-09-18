@@ -129,7 +129,7 @@ class InventoryTests(unittest.TestCase):
             "test_codex_config_process", "test_codex_catalog_process", "test_history_owner_process",
             "test_config_owner_process", "test_configuration_ipc_process", "test_history_ipc_process",
             "test_darwin_rpc_process", "test_darwin_print_process",
-            "test_claude_provider_process",
+            "test_claude_provider_process", "test_claude_translation_ipc_process",
             "test_native_provider_process", "test_translation_ipc_process",
             "test_image_translation_ipc_process", "test_dictionary_ipc_process"))
         self.assertEqual(bundled_tests.CORE_TEST_MODULES, (
@@ -139,7 +139,7 @@ class InventoryTests(unittest.TestCase):
             "test_config_rules", "test_config_store", "test_macos_configuration", "test_macos_history",
             "test_request_snapshot", "test_darwin_rpc_contract", "test_darwin_print_contract", "test_codex_darwin",
             "test_claude_jsonl", "test_claude_darwin",
-            "test_summary_rules", "test_macos_translation", "test_macos_image",
+            "test_summary_rules", "test_macos_translation", "test_macos_claude_translation", "test_macos_image",
             "test_codex_version", "test_macos_dictionary"))
         self.assertNotIn("test_dictionary_portable", bundled_tests.CORE_TEST_MODULES,
                          "The Windows formatter test must not pull desktop facades into the bundle.")
@@ -147,7 +147,7 @@ class InventoryTests(unittest.TestCase):
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
         self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
             "process": ("owner_process_support", "state_ipc_process_support"), "core": ()})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 249, "core": 728})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 253, "core": 744})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
             count = 0
             for name in names:

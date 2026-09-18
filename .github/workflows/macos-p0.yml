@@ -50,7 +50,7 @@ jobs:
           tests.test_macos_configuration
           tests.test_macos_history
           tests.test_request_snapshot
-          tests.test_summary_rules tests.test_macos_translation
+          tests.test_summary_rules tests.test_macos_translation tests.test_macos_claude_translation
           tests.test_macos_image
           tests.test_darwin_rpc_contract tests.test_darwin_print_contract tests.test_codex_darwin tests.test_codex_version
           tests.test_claude_jsonl tests.test_claude_darwin

@@ -645,6 +645,7 @@ private enum HelperFailureCode: String {
     case providerProtocolError = "provider_protocol_error"
     case providerFailed = "provider_failed"
     case modelCatalogFailed = "model_catalog_failed"
+    case modelCatalogUnavailable = "model_catalog_unavailable"
     case modelCatalogTooLarge = "model_catalog_too_large"
     case invalidImageTranslation = "invalid_image_translation"
     case imageUnavailable = "image_unavailable"
@@ -730,7 +731,12 @@ public struct ProtocolState {
                 .union([ModelCatalogDocument.operation])
         }
     }
-    public init(mode: Mode = .diagnostic) { self.mode = mode }
+    private let provider: TranslationProvider
+
+    public init(mode: Mode = .diagnostic, provider: TranslationProvider = .codex) {
+        self.mode = mode
+        self.provider = provider
+    }
 
     public static func validID(_ id: String) -> Bool {
         let bytes = Array(id.utf8)
@@ -851,7 +857,7 @@ public struct ProtocolState {
                   payload["protocol"] == .integer(1),
                   payload["max_frame_bytes"] == .integer(65_536),
                   payload["fixture"] == .bool(mode == .diagnostic),
-                  mode != .translation || payload["backend"] == .string("native_appserver"),
+                  mode != .translation || payload["backend"] == .string(provider.backend),
                   case let .array(capabilities)? = payload["capabilities"],
                   capabilities.count == operations.count,
                   Set(capabilities.compactMap(\.string)) == operations else {

@@ -639,7 +639,12 @@ UTF-8跨块、末行无换行、短写、双向背压、输出总预算、取消
 811原生/23既定构包前skip/零失败、134PNG及App构建通过，
 随后既有原生URLSession词典下载返回invalidResponse，未记录HTTP状态，不猜具体原因。
 后置process/core/Foundation及App发布均跳过，不能写成8项Darwin已通过。
-保留失败日志，未改测试或生产下载行为，显式重跑同源码run35347450089；结果另行记录。
+保留失败日志，未改测试或生产下载行为，显式重跑同源码run35347450089。
+重跑已实际watch exit0、3jobs/42steps成功；producer926portable/240process/688core及
+后置21Foundation零skip通过，新19portable/8Darwin方法逐项各一次passed。
+完整App10548792055与同包14/26消费者已独立审计：archive19,591,004 bytes，
+SHA256 `2f6e6bdd1330680932ac2507cac225ea32480e80be868f936c324a2a85125040`，
+库存691/资源81/source53（52唯一）；本地大ZIP复核后已确切清理。
 
 官方资料明确`--bare`不读取OAuth或系统钥匙串，不能为了隔离启动环境而迫使现有订阅用户改用API key。
 本轮已继续实现独立`DarwinClaudeProvider`与Claude JSONL解释器：
@@ -656,9 +661,20 @@ UTF-8跨块、末行无换行、短写、双向背压、输出总预算、取消
 新增17项输出契约、19项provider契约、4项输入预算契约和9项真实Darwin合成provider进程用例，
 接入打包白名单与bundle来源校验。Windows目标联合455项/21.309秒通过；
 首次目标214项中的1项Windows文本模式读PNG失败已改为二进制读，未删断言。
-新源码预计portable966/process249/core728，真实Mac尚待执行，不用旧源码结果替代。
-这仍不是Claude产品可用：bootstrap、模型草稿/设置、请求快照/缓存、
-文字/OCR/结果动作/图片的业务接线及原生选择仍在后续；
+provider源码ceae3fb/run35348803751的producer已真实通过966portable/249process/728core、
+811原生/23既定构包前skip/零失败、后置21Foundation零skip及134PNG。
+新17输出/19provider/9Darwin方法各一次passed，完整App10548873788已独立producer审计；
+同包14/26消费者仍待完成，不用前置6fc绿灯替代。
+
+下一源码已接通显式Claude helper启动、独立环境、绑定会话与Swift `native_print`握手，
+文字/选区/OCR/摘要/六种结果动作/图片均捕获选定provider/model，缓存签名保持隔离。
+配置切换不能把旧会话或旧缓存用于另一服务；正在执行的快照保持不变，历史退出仍读最新设置。
+Claude模型目录明确不可用，但不使连接断开；Codex旧入口及参数保持兼容。
+新增16便携业务契约、5Swift连接用例及4真正helper到合成Claude的Darwin用例，
+目标联合402项/29.135秒通过，首225目标中的9个旧Mock未声明backend错误已补齐fixture后通过，
+没有给生产代码加入默认伪装。此新源码预计982portable/253process/744core/816原生，
+Swift与真正Darwin业务链仍需新源码CI，不能拿standalone provider证据替代。
+这仍不是Claude产品可用：模型草稿/设置、原生选择及切换/保存回读尚在后续；
 Claude目录无已验契约时明确不可用，不能误用Codex目录。
 不增加精确版本锁定，不要求用户现在重新登录或运行诊断。
 

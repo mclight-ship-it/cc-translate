@@ -169,7 +169,7 @@ class ResultActionContracts(unittest.TestCase):
                     snapshot.config[CFG.CODEX_MODEL] = "changed"
 
     def test_actions_keep_provider_and_config_safety_checks(self):
-        for values, code in (({CFG.MODEL_PROVIDER: "claude_cli"}, "unsupported_provider"),
+        for values, code in (({CFG.MODEL_PROVIDER: "unknown_provider"}, "unsupported_provider"),
                              ({CFG.DIRECTION: "unknown"}, "invalid_translation_settings"),
                              ({CFG.CODEX_MODEL: "x" * 257}, "invalid_translation_settings"),
                              ({CFG.MAX_CHARS: 0}, "invalid_translation_settings"),
@@ -343,7 +343,7 @@ class TranslationContracts(unittest.TestCase):
         self.assertEqual(snap.config["future"]["x"], (1,))
 
     def test_unsupported_provider_and_invalid_settings_are_explicit(self):
-        for values, code in (({CFG.MODEL_PROVIDER: "claude_cli"}, "unsupported_provider"),
+        for values, code in (({CFG.MODEL_PROVIDER: "unknown_provider"}, "unsupported_provider"),
                              ({CFG.DIRECTION: "unknown"}, "invalid_translation_settings"),
                              ({CFG.CODEX_MODEL: "x" * 257}, "invalid_translation_settings"),
                              ({CFG.MAX_CHARS: 1}, "invalid_translation_settings")):
@@ -644,15 +644,18 @@ class EventOutput(io.BytesIO):
 
 
 class _TranslationDirectory(_ConfigurationDirectory):
+    bound_provider = "codex_cli"
+
     def setUp(self):
         super().setUp()
         self.provider = ScriptedProvider()
-        provider_patch = patch.object(translation, "DarwinCodexProvider", return_value=self.provider)
+        provider_class = "DarwinClaudeProvider" if self.bound_provider == "claude_cli" else "DarwinCodexProvider"
+        provider_patch = patch.object(translation, provider_class, return_value=self.provider)
         provider_patch.start()
         self.addCleanup(provider_patch.stop)
         self.session = translation.TranslationSession(
             str(self.home), self.identity, str(self.home / "synthetic-cli"),
-            {"HOME": str(self.home), "PATH": ""})
+            {"HOME": str(self.home), "PATH": ""}, provider_id=self.bound_provider)
         self.addCleanup(self.session.close)
         self.stdout, self.stderr = EventOutput(), io.StringIO()
         self.server = Server(io.BytesIO(), self.stdout, self.stderr, configuration=self.session)
@@ -661,6 +664,8 @@ class _TranslationDirectory(_ConfigurationDirectory):
         self.addCleanup(self.provider.release.set)
         self.addCleanup(self.server._stop)
         self.config = dict(DEFAULT_CONFIG) | {CFG.CODEX_MODEL: "synthetic", CFG.SUMMARY_ENABLED: False}
+        if self.bound_provider == "claude_cli":
+            self.config.update({CFG.MODEL_PROVIDER: self.bound_provider, CFG.CLAUDE_MODEL: "synthetic"})
         self.session.perform({"operation": "config_save", "config": self.config})
 
     def translate(self, id_="translate", **changes):

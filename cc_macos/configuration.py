@@ -209,14 +209,16 @@ def startup_configuration(arguments, *, environment=None):
     except (ValueError, TypeError) as error:
         raise ProtocolError("invalid_startup") from error
     if len(arguments) == 6:
-        if arguments[4] != "--codex-command":
+        providers = {"--codex-command": "codex_cli", "--claude-command": "claude_cli"}
+        if arguments[4] not in providers:
             raise ProtocolError("invalid_startup")
         from .translation import TranslationSession, parse_cli_environment
 
-        cli_environment = parse_cli_environment(environment, arguments[1])
+        provider_id = providers[arguments[4]]
+        cli_environment = parse_cli_environment(environment, arguments[1], provider_id)
         command = arguments[5]
         if (not isinstance(command, str) or not os.path.isabs(command) or "\0" in command
                 or ".." in Path(command).parts):
             raise ProtocolError("invalid_startup")
-        return TranslationSession(arguments[1], arguments[3], command, cli_environment)
+        return TranslationSession(arguments[1], arguments[3], command, cli_environment, provider_id=provider_id)
     return ConfigurationSession(arguments[1], arguments[3])

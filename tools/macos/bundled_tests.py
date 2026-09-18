@@ -25,6 +25,7 @@ PROCESS_TEST_MODULES = (
     "test_darwin_rpc_process",
     "test_darwin_print_process",
     "test_claude_provider_process",
+    "test_claude_translation_ipc_process",
     "test_native_provider_process",
     "test_translation_ipc_process",
     "test_image_translation_ipc_process",
@@ -54,13 +55,14 @@ CORE_TEST_MODULES = (
     "test_claude_darwin",
     "test_summary_rules",
     "test_macos_translation",
+    "test_macos_claude_translation",
     "test_macos_image",
     "test_codex_version",
     "test_macos_dictionary",
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 249, "core": 728}
+MINIMUM_TEST_COUNTS = {"process": 253, "core": 744}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",

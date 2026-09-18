@@ -37,6 +37,8 @@ signal.alarm(20)
 mode = os.environ["SYNTHETIC_MODE"]
 args = sys.argv[1:]
 (work / "args.json").write_text(json.dumps(args))
+with (work / "calls.jsonl").open("a") as calls:
+    calls.write(json.dumps(args) + "\n")
 assert args[args.index("--input-format") + 1] == "stream-json"
 assert args[args.index("--tools") + 1] == ""
 assert "--strict-mcp-config" in args and "--setting-sources=" in args
@@ -46,7 +48,7 @@ assert raw.endswith(b"\n")
 message = json.loads(raw)
 assert message["type"] == "user" and message["message"]["role"] == "user"
 content = message["message"]["content"]
-assert content[0] == {"type": "text", "text": "translate this"}
+assert content[0] == {"type": "text", "text": os.environ.get("SYNTHETIC_EXPECTED_TEXT", "translate this")}
 record = {"input_bytes": len(raw), "model": [arg for arg in args if arg.startswith("--model=")]}
 if mode == "image":
     source = content[1]["source"]

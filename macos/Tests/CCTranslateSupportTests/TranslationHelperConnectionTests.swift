@@ -301,7 +301,8 @@ final class TranslationHelperConnectionTests: XCTestCase {
         ]
     }
 
-    private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation) throws -> String {
+    private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation,
+                                 provider: TranslationProvider = .codex) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
                 DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "translate_image", "model_catalog"] : [])
@@ -309,8 +310,130 @@ final class TranslationHelperConnectionTests: XCTestCase {
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)
         ]
-        if mode == .translation { ready["backend"] = .string("native_appserver") }
+        if mode == .translation { ready["backend"] = .string(provider.backend) }
         return "#!/bin/sh\nset -eu\n\(readLine)\n\(try emit("hello", 0, "ready", ready))\n\(body)\n"
+    }
+
+    func testClaudeEnvironmentUsesSeparateKeyAndKeepsTheCodexOverloadUnchanged() throws {
+        let home = URL(fileURLWithPath: "/synthetic/home")
+        let command = URL(fileURLWithPath: "/synthetic/selected-cli")
+        let environment = ["HOME": home.path, "PATH": "/synthetic/bin", "AUTH_MARKER": "synthetic-only"]
+        let claude = try HelperConnection.translationEnvironment(
+            home: home, provider: .claude, command: command, environment: environment)
+        XCTAssertEqual(Set(claude.keys), ["HOME", "PATH", "LANG", "CC_TRANSLATE_CLAUDE_ENV"])
+        let raw = try XCTUnwrap(claude["CC_TRANSLATE_CLAUDE_ENV"])
+        XCTAssertEqual(try JSONValue.parse(Data(raw.utf8)), .object(environment.mapValues(JSONValue.string)))
+        XCTAssertEqual(try HelperConnection.translationEnvironment(
+            home: home, provider: .codex, command: command, environment: environment),
+                       try HelperConnection.translationEnvironment(
+                        home: home, codexCommand: command, environment: environment))
+        XCTAssertEqual(TranslationProvider.claude.rawValue, "claude_cli")
+        XCTAssertEqual(TranslationProvider.claude.modelKey, "claude_model")
+        XCTAssertEqual(TranslationProvider.claude.commandArgument, "--claude-command")
+        XCTAssertEqual(TranslationProvider.claude.backend, "native_print")
+        XCTAssertEqual(TranslationProvider.codex.backend, "native_appserver")
+    }
+
+    @MainActor
+    func testClaudeStartBindsActualHelperArgumentsEnvironmentAndNativePrintHandshake() async throws {
+        let script = try connectedScript("""
+        printf '%s\\n' "$@" > "$HOME/arguments"
+        printf '%s' "$CC_TRANSLATE_CLAUDE_ENV" > "$HOME/cli-environment"
+        printf '%s' "${CC_TRANSLATE_CODEX_ENV-unset}:${AUTH_MARKER-unset}" > "$HOME/isolated"
+        \(readLine)
+        \(try emit("text", 0, "accepted", operation))
+        \(try emit("text", 1, "started", operation))
+        \(try emit("text", 2, "completed", completion))
+        \(shutdown)
+        """, provider: .claude)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        let command = context.home.appendingPathComponent("selected-provider-never-executed")
+        var environment = context.environment
+        environment["AUTH_MARKER"] = "synthetic-only"
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, provider: .claude,
+                                           command: command, environment: environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        XCTAssertEqual(notices.events.first?.payload["backend"], .string("native_print"))
+        let terminal = notices.terminal("text")
+        notices.connection.translate(text: "synthetic", appLanguage: "en_US", id: "text")
+        await fulfillment(of: [terminal], timeout: 10)
+        let arguments = try String(contentsOf: context.home.appendingPathComponent("arguments"), encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+        XCTAssertEqual(arguments, ["-I", "-B", context.runtime.launcher.path,
+                                   "--config-home", context.home.path, "--application-id", "dev.cc-translate.synthetic",
+                                   "--claude-command", command.path])
+        let encoded = try Data(contentsOf: context.home.appendingPathComponent("cli-environment"))
+        XCTAssertEqual(try JSONValue.parse(encoded), .object(environment.mapValues(JSONValue.string)))
+        XCTAssertEqual(try String(contentsOf: context.home.appendingPathComponent("isolated"), encoding: .utf8),
+                       "unset:unset")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: command.path))
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testClaudeBindingRejectsWrongBackendHandshakeWithoutSendingARequest() async throws {
+        let script = try connectedScript(shutdown, provider: .codex)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, provider: .claude,
+                                           command: context.codex, environment: context.environment)
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.contains(.invalidPayload))
+        XCTAssertFalse(notices.events.contains { $0.type == "ready" })
+    }
+
+    @MainActor
+    func testClaudeCatalogUnavailableDoesNotStopSubsequentExplicitTranslation() async throws {
+        let catalog: [String: JSONValue] = ["operation": .string("model_catalog")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("catalog", 0, "accepted", catalog))
+        \(try emit("catalog", 1, "started", catalog))
+        \(try emit("catalog", 2, "failed", ["code": .string("model_catalog_unavailable")]))
+        \(readLine)
+        \(try emit("text", 0, "accepted", operation))
+        \(try emit("text", 1, "started", operation))
+        \(try emit("text", 2, "completed", completion))
+        \(shutdown)
+        """, provider: .claude)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, provider: .claude,
+                                           command: context.codex, environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let catalogTerminal = notices.terminal("catalog")
+        notices.connection.modelCatalog(id: "catalog")
+        await fulfillment(of: [catalogTerminal], timeout: 10)
+        XCTAssertEqual(notices.events.last?.safeFailureCode, "model_catalog_unavailable")
+        let textTerminal = notices.terminal("text")
+        notices.connection.translate(text: "synthetic", appLanguage: "en_US", id: "text")
+        await fulfillment(of: [textTerminal], timeout: 10)
+        XCTAssertEqual(notices.events.last?.payload, completion)
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testInvalidClaudeEnvironmentFailsBeforeHelperLaunch() async throws {
+        let context = try fixture(script: "#!/bin/sh\nprintf started > \"$HOME/started\"\n")
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, provider: .claude,
+                                           command: context.codex, environment: ["HOME": context.home.path])
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.translationUnavailable])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.home.appendingPathComponent("started").path))
     }
 
     func testTranslationEnvironmentIsolatedTypedAndCompactByteBounded() throws {

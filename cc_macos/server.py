@@ -416,7 +416,7 @@ class Server:
             self._send(control, "ready", {
                 "protocol": VERSION, "capabilities": capabilities,
                 "max_frame_bytes": MAX_FRAME_BYTES, "fixture": self._configuration is None,
-                **({"backend": "native_appserver"} if self._translation_enabled else {}),
+                **({"backend": self._configuration.translation_backend} if self._translation_enabled else {}),
             })
         elif type_ == "hello":
             raise ProtocolError("duplicate_handshake")
