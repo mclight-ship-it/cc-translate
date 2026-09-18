@@ -525,6 +525,15 @@ Carbon用例注册独立测试键，只向本进程event target发送合成事�
 原完整界面断言不删，并加入不同等待语句不能冒充目标语句的原生图片负对照（新增1PNG，预期131）。
 这两个测试修正仍待新源码Mac验证，未改变产品代码或CI门禁，不将首轮失败当完整App通过。
 使用说明见[截图全局快捷键](MACOS_DEVELOPMENT.md#native-capture-shortcut)。
+第二轮`1507454` / [run35334445353](https://github.com/mclight-ship-it/cc-translate/actions/runs/35334445353)
+正常hook1846项/98.791秒通过，实际编译44.90秒；798项/23skip/3失败断言（1 unexpected）/
+574.360秒，131PNG完整。原来的两个方法仍失败，不能说首轮测试修正已成功。
+新增控件诊断明确显示两个底层NSButton都是`AXUnknown`；SwiftUI在别处提供AX语义，
+因此不能按底层AXButton角色定位，也不能据此宣称VoiceOver损坏。
+此独立fixture已通过正常原生定位识别唯一checkbox，现在按该实际控件identity排除它，
+要求余下可见NSButton恰好一个后继续原有单次点击；不看预期enabled/state、尺寸或OCR。
+第二项失败的原生log没有保留具体断言文字，暂不继续猜测OCR处理；
+追加合成fixture各阶段的实际识别文字与命中布尔值到已有诊断txt，原断言保持，用于下一轮定位。
 
 <a id="native-text-scale-checkpoint"></a>
 

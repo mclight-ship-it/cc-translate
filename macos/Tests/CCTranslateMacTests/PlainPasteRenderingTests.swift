@@ -107,12 +107,16 @@ extension ProductRenderingTests {
         fixture.service.progress(.waitingForKeys)
         let busy = try renderPasteSettings(fixture, name: "plain-paste-settings-busy-light", scheme: .light)
         let busyWords = try pasteSettingsWords(busy)
+        try NativeRenderEvidence.record("Synthetic paste busy OCR: \(busyWords)")
         XCTAssertTrue(busyWords.contains("release the shortcut keys"), busyWords)
         XCTAssertTrue(busyWords.contains("cancel paste action"))
         fixture.model.setPlainPasteEnabled(false)
         let draining = try renderPasteSettings(fixture, name: "plain-paste-settings-draining-zh-dark",
                                               scheme: .dark, chinese: true)
         let chinese = try pasteSettingsWords(draining, chinese: true).filter { !$0.isWhitespace }
+        try NativeRenderEvidence.record("Synthetic paste draining OCR: \(chinese)")
+        try NativeRenderEvidence.record("Synthetic paste draining matches: title=\(chinese.contains("纯文本粘贴")), " +
+                                       "message=\(chinese.contains("等待剪贴板任务结束")), stopping=\(fixture.paste.stoppingAction)")
         XCTAssertTrue(chinese.contains("纯文本粘贴"), chinese)
         XCTAssertTrue(chinese.contains("等待剪贴板任务结束"), chinese)
         let differentStatus = try render(
@@ -121,13 +125,15 @@ extension ProductRenderingTests {
                 .background(Color(nsColor: .windowBackgroundColor)),
             named: "plain-paste-draining-negative-control-zh-dark",
             size: NSSize(width: 820, height: 90), scheme: .dark)
-        XCTAssertFalse(try pasteSettingsWords(differentStatus, chinese: true)
-            .filter { !$0.isWhitespace }.contains("等待剪贴板任务结束"))
+        let negativeWords = try pasteSettingsWords(differentStatus, chinese: true).filter { !$0.isWhitespace }
+        try NativeRenderEvidence.record("Synthetic paste negative-control OCR: \(negativeWords)")
+        XCTAssertFalse(negativeWords.contains("等待剪贴板任务结束"))
         XCTAssertTrue(fixture.paste.stoppingAction)
         fixture.service.finish(.cancelled, clipboard: .plainTextWritten)
         _ = try fixture.finishSave()
         let partial = try renderPasteSettings(fixture, name: "plain-paste-settings-partial-light", scheme: .light)
         let words = try pasteSettingsWords(partial)
+        try NativeRenderEvidence.record("Synthetic paste partial OCR: \(words)")
         XCTAssertTrue(words.contains("plain text was written to the clipboard"))
         XCTAssertTrue(words.contains("no paste key events"))
         XCTAssertFalse(words.contains("pasted successfully"))

@@ -81,8 +81,9 @@ final class CaptureShortcutInteractionTests: XCTestCase {
             try await surface.waitFor { toggle.state == .on && shortcut.registration == .failed(.conflict) }
             XCTAssertEqual(registrar.registrations, 1)
             registrar.failure = nil
-            try await NativeSettingsTestControls.uniqueActionWhenReady(
-                in: surface.host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle).press()
+            try await NativeSettingsTestControls.remainingActionWhenReady(
+                in: surface.host, excluding: toggle,
+                identifier: "retry-screenshot-shortcut", label: labels.retryTitle).press()
             try await surface.waitFor { shortcut.registration == .registered && toggle.state == .on }
             XCTAssertEqual(registrar.registrations, 2)
             let lease = try XCTUnwrap(registrar.leases.last)
@@ -91,8 +92,9 @@ final class CaptureShortcutInteractionTests: XCTestCase {
             try await surface.waitFor { toggle.state == .off && shortcut.registration == .failed(.releaseFailed(-50)) }
             XCTAssertFalse(f.preferences.bool(forKey: CaptureShortcutModel.preferenceKey))
             lease.releaseError = nil
-            try await NativeSettingsTestControls.uniqueActionWhenReady(
-                in: surface.host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle).press()
+            try await NativeSettingsTestControls.remainingActionWhenReady(
+                in: surface.host, excluding: toggle,
+                identifier: "retry-screenshot-shortcut", label: labels.retryTitle).press()
             try await surface.waitFor { shortcut.registration == .off }
             XCTAssertEqual(registrar.registrations, 2)
             XCTAssertEqual(lease.releases, 2)
