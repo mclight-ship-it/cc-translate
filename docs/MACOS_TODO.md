@@ -1,7 +1,7 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-17。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-18。
 **当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
 Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
@@ -53,9 +53,41 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵、Claude独立后端及旧Windows稳定性追踪仍分别保留，但不冻结独立可做的Codex产品界面。
 
+<a id="native-product-preferences-checkpoint"></a>
+
+### 当前已核验批次：图片、词典来源、复制隔离及四项设置
+
+源码`bf89495cc991bc75b9cc39b263d824120a36246e` /
+[run35320398227](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227)
+实际watch exit0，attempt1的3jobs/42steps全部success；正常privacy/full hook1846项/107.218秒通过。
+Mac15原生744项（721通过、23构包前可选skip、零失败）/492.556秒，
+122张原生PNG库存、CRC、尺寸、IDAT及SHA逐一核验。英中历史确认/保存/回读/重开完整通过。
+字号18、摘要15、历史条数21、输入26及剪贴板94方法已按冻结源码逐项核对；
+构包后的21项Foundation在三系统各执行一次、零skip，不以构包前skip代替。
+
+同一个App在15.7.9、14.8.9、26.6.2各通过232process/665core/21Foundation；
+还包括同源生产Vision4、About1、主动粘贴46、关联复制读取7及真实App只读worker11。
+producer另有903portable/13.287秒，process507.488秒、core5.857秒、后置Foundation184.323秒。
+三系统HTTPS证书/SQLite/取消/EOF/不可变及临时清理证据均通过；未调用真实账号或模型。
+
+[完整App](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227/artifacts/10537527468)、
+[122张界面图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227/artifacts/10537112096)、
+[macOS14报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227/artifacts/10538095236)、
+[macOS26报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227/artifacts/10537739465)均已实际下载并独立核验。
+内层App zip为19,522,149 bytes，SHA-256为
+`6e56b0c974273d7b9a366f63d56c9a30c8a100b806a5fffa696ab70aff0fa0c5`；
+tree为`f714a5fbde432b2007f605eeb2c685ed0ff57283c0bdf854a98e69b38997160f`。
+690库存、80资源、52源码路径（51唯一）、6实际Mach-O、27许可已逐项核验。
+当前推荐下载已切到此包；以下保留此前失败和修复过程，不再将其当作当前批次仍被阻断。
+
+**不包含后续结果位置偏好**：018b9de首轮755项有3失败断言，修正源码6e2a341 /
+[run35323007731](https://github.com/mclight-ship-it/cc-translate/actions/runs/35323007731)仍在验证。
+双击间隔、截图全局热键开关、恢复默认、完整Claude及P4–P6继续开发；完整移植未完成。
+真人TCC、外部应用、IME/VoiceOver、多屏/Spaces及Windows旧AccessDenied仍单列，不以本批合成自动化抹去。
+
 <a id="native-image-translation-checkpoint"></a>
 
-### 当前图片翻译进展：功能已接线，尚未完成同包三系统验收
+### 图片翻译：已通过当前批次同包三系统验收
 
 源码90228cb已接通原生选区PNG、Swift附件所有权、helper私有副本和真实`localImage`请求；
 后续修复取消准备期间的设置回读覆盖，并修正新历史截图测试遗漏语义背景的问题。
@@ -240,7 +272,7 @@ tree `4a4615a9b15d2cc2f0bf22615c5610fe2454c17aebe814f65d3aa28c7b1692d5`；
 
 <a id="native-dictionary-sources-checkpoint"></a>
 
-### 词典来源与许可按钮：18项新增原生测试通过，完整新包仍待验收
+### 词典来源与许可按钮：已通过当前批次完整App验收
 
 源码`420928b0865bab9207991f7069670fc2944aac26` /
 [run35271286020](https://github.com/mclight-ship-it/cc-translate/actions/runs/35271286020)
@@ -278,7 +310,7 @@ UI artifact10520356031保留，不能将它说成安装包。
 
 <a id="native-associated-copy-checkpoint"></a>
 
-### 双Cmd+C关联复制回退：共享解码已接通，待原生验收
+### 双Cmd+C关联复制回退：已通过当前批次自动化，真人外部应用另验
 
 现有明确开关和被动监听接通关联状态机；AX仍优先，仅unsupported时尝试同一前台
 进程生命周期/焦点、双键时间与新changeCount关联的文字。不吞原Cmd+C、不模拟copy、
@@ -300,7 +332,7 @@ Windows编辑器没有发现可执行native测试，不称为Mac编译通过。
 
 <a id="native-clipboard-worker-checkpoint"></a>
 
-### 剪贴板主线程隔离读取：实现已合并，待本源码 Mac 验证
+### 剪贴板主线程隔离读取：已通过当前批次同包三系统验收
 
 保留c7745ec的失败证据及后台promise警告检查，不再用宿主后台队列调用AppKit同步数据读取。
 现复用同一App可执行文件的早期只读worker入口，在创建NSApplication/模型/helper前分流；
@@ -364,9 +396,16 @@ Windows无AppKit执行能力；新增worker、字体16项与3PNG仍待这份合�
 125张PNG已逐一核验完整性，已实际查看中英位置Picker图；不能据图片齐全代替失败方法。
 本轮修正仍待新的Mac验证，前轮结果和原始日志均保留。
 
+修正源码`6e2a341`真实编译26.13秒；755项/23构包前skip/2失败断言（0 unexpected）/511.792秒。
+结果位置11项和摘要15项全部通过；仅旧关联复制UTF测试在发布fixture检查处失败：
+Carbon已有1项，但AppKit的私有板revision为0且无条目，尚未调用生产reader。
+fixture改用与既有主动粘贴测试相同的`NSPasteboard.withUniqueName()`实际创建资源，
+并核对Carbon复制出的名称与AppKit一致；不修改生产剪贴板读取、原始字节/顺序/版本/取消断言。
+125张图仍完整。此为待Mac证明的fixture创建修正，不宣称一轮成功能证明永久消除系统时序问题。
+
 <a id="native-text-scale-checkpoint"></a>
 
-### P3 原生文字大小：接线已交付，待新源码原生验证
+### P3 原生文字大小：已通过当前批次原生及完整App验收
 
 通用设置新增90%/100%/125%/150%文字大小，默认100%保留各处原有字号，
 不改变最小窗口尺寸，也不放大菜单、按钮、状态和说明文字。
@@ -406,7 +445,7 @@ UI artifact10527484670实际116PNG而非预期118；现有图片尺寸/CRC/SHA�
 
 <a id="native-summary-preference-checkpoint"></a>
 
-### P3 长文自动摘要设置：已接线，待新源码原生验证
+### P3 长文自动摘要设置：已通过当前批次原生及完整App验收
 
 翻译设置新增中英开关，保存既有`summary_enabled`并回读实际值，不另建UserDefaults副本。
 无CLI也可走已有config-only helper；只改这一保存字段，保留历史opt-out、其他配置和未保存的模型/方向草稿。
@@ -422,7 +461,7 @@ UI artifact10527484670实际116PNG而非预期118；现有图片尺寸/CRC/SHA�
 
 <a id="native-input-limit-checkpoint"></a>
 
-### P3 输入长度：设置与统一预检已接线，待新源码原生验证
+### P3 输入长度：已通过当前批次原生及完整App验收
 
 设置明确保存既有`max_chars`，默认5000仍来自规范化配置；保存值和编辑草稿分离，仅应用时写入，
 回读后才确认。复用配置协议的安全整数范围，保留20000/20001等合法旧值，不另加业务上限；
@@ -588,13 +627,13 @@ Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与
 正常完整hook1846项/107.218秒通过；真实Swift编译31.81秒，744项/23构包前skip/0失败/492.556秒。
 持久诊断确认英中确认按钮均实际暴露`hasDestructiveAction`；两个历史完整操作方法逐项通过，
 摘要15、输入26、字号18、剪贴板94均通过。122张PNG库存/CRC/尺寸/IDAT/SHA检查完成。
-这是原生测试成功，不是完整App与同包14/26验收；完整run仍在执行。
+当时只是原生测试成功；后续完整App与同包14/26也已实际通过，详见本页当前批次。
 前轮`5774386`实际watch exit1，903portable/20.550秒、232process/498.102秒、
 665core/5.604秒及21后置Foundation逐方法通过，不能因后端通过抹去该轮原生失败。
 
 <a id="native-history-limit-checkpoint"></a>
 
-### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证
+### P3 历史保留条数：已通过当前批次原生及完整App验收
 
 设置使用既有Mac业务范围1–10000，默认100由配置服务提供，不把Windows控件20–500误作核心限制。
 已保存值与输入草稿分开；输入不写配置，明确应用后仅修改`history_limit`并回读确认。
@@ -2269,25 +2308,26 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   当时用户 Mac/签名资格未确认，普通下载首开/真实 TCC/账号仍未验，不因该轮绿色改为通过。
 
 ## P2 — 正在实施正式原生主流程
-- [ ] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史；[已交付待原生验收](#native-associated-copy-checkpoint)。
+- [x] 双击 Cmd+C 关联状态机及保守复制回退；不吞复制、不哨兵、不读历史；[当前同包验证](#native-product-preferences-checkpoint)，真人外部应用另验。
 - [x] 原生结果/输入、流式合并刷新、选择滚动、取消、迟到事件隔离；同包自动化见上。
 - [x] 普通翻译/代码解释/摘要/重译/复制及六种追加动作闭环。
 - [x] 本地词典优先首屏及无Codex查词/安装管理闭环；b86507f同包三系统及原生下载/绘制证据见上。
 - [ ] 真人IME、键盘、VoiceOver与多屏交互矩阵，不将合成渲染当完整交互签收。
-- [ ] 来源按钮稳定 identity，按下时异步更新不吞 click；[原生接线与验收进度](#native-dictionary-sources-checkpoint)。
+- [x] 来源按钮稳定 identity，按下时异步更新不吞 click；[原生及完整App验收](#native-product-preferences-checkpoint)。
 
 ## P3 — 基础设置/历史随P2接线，其余功能继续待办
 - [x] 同帧区域截图、多显示器坐标转换、本地Vision及明确OCR文字翻译；082aad6同包验证见截图检查点，真人多屏/TCC仍另列待验。
-- [ ] 真正图片provider及图片明确发送已实现；[同包三系统验收进行中](#native-image-translation-checkpoint)，不以OCR文字翻译或构包前skip冒充完成。
+- [x] 真正图片provider及图片明确发送；[同包三系统验收](#native-product-preferences-checkpoint)，真实账号/模型调用仍由用户明确操作。
 - [x] 本地词典URLSession下载；核心校验安装/删除互斥；离线/损坏/取消合成与实际下载验证。
 - [x] 分页历史/全库搜索筛选、基础设置/主题/语言与独立诊断。
 - [x] 原生关于与完整第三方许可界面；d699185同包三系统及真实包读取验证见关于检查点。
 - [x] 手动自定义模型设置、精确保存/重开/请求及中英混合OCR改进；b33515d同包验证见模型设置检查点。
 - [x] 明确刷新Codex模型目录、设置/主窗口/Capture共享选择、空/失败不阻断手填ID；d637bea同包三系统验证见模型目录检查点。
-- [ ] 完整设置/模型管理；[原生文字大小已接线，待原生验收](#native-text-scale-checkpoint)。
-  - [ ] 长文自动摘要开关：[原生设置已接线，待验收](#native-summary-preference-checkpoint)；不等同于手动“生成摘要”动作。
-  - [ ] 历史保留条数：[原生设置与修剪时机测试已交付，待验收](#native-history-limit-checkpoint)。
-  - [ ] 最大字符数及与UTF-8字节预算的准确呈现：[设置与统一预检已接线，待原生验收](#native-input-limit-checkpoint)。
+- [ ] 完整设置/模型管理，以下分别记录完成与剩余范围：
+  - [x] 原生文字大小；[当前批次验证](#native-product-preferences-checkpoint)。
+  - [x] 长文自动摘要开关；[当前批次验证](#native-product-preferences-checkpoint)，不等同于手动“生成摘要”动作。
+  - [x] 历史保留条数与修剪时机；[当前批次验证](#native-product-preferences-checkpoint)。
+  - [x] 最大字符数及UTF-8独立字节预算的准确呈现；[当前批次验证](#native-product-preferences-checkpoint)。
   - [ ] 结果位置偏好：[设置与窗口接线已实现，待原生验收](#native-result-position-checkpoint)。
   - [ ] 双击复制间隔、截图全局热键开关，以及恢复默认设置。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。

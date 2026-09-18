@@ -4,6 +4,14 @@
 
 ## 正在开发：P2 原生产品界面及后续功能对齐
 
+**最新已核验包：bf89495 / [run35320398227](https://github.com/mclight-ship-it/cc-translate/actions/runs/35320398227)。**
+图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限已进入同一完整App，
+真实watch0、3jobs/42steps全通过；原生744项（23构包前可选skip）、122PNG已核验，
+同App15/14/26各232process/665core/21Foundation及实际worker/剪贴板测试通过。
+[当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
+[完整审计](MACOS_TODO.md#native-product-preferences-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
+结果位置偏好及其余设置/Claude/P4–P6仍在后续源码中继续，**整个移植尚未完成**。
+
 普通翻译链路已获用户实测通过；现已实现独立翻译窗口/结果浮窗、菜单栏、设置/历史、
 中英与系统主题，输入后可直接翻译，诊断不作为使用前置步骤。**移植尚未完成**。
 当前界面与六种结果动作源码`4807f62` /
@@ -174,10 +182,13 @@ bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整�
 保持流式更新不移动窗口；新增11项测试及3张预期PNG，尚待本源码实际Mac验证。
 018b9de已实际通过位置功能10/11方法及3张渲染；继续修复损坏负尺寸解析与旧摘要动态控件测试，
 保留该轮755项中的3个失败断言，不以部分通过代替新包验收。
+6e2a341已通过位置11项和摘要15项；旧复制UTF测试在fixture发布阶段报AppKit私有板为空，
+尚未进入生产reader。继续修正私有资源创建，保留原始字节及全部业务断言，不修改生产读取来迎合测试。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
-推荐下载暂不替换，完整模型/设置余项及其余P3–P6仍未完成。
+上述早期候选当时不替换推荐下载；当前已改为本节开头的bf89495核验包。
+结果位置偏好、完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

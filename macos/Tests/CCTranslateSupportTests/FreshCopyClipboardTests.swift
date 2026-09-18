@@ -24,7 +24,7 @@ final class FreshCopyClipboardTests: XCTestCase {
 
     @MainActor
     private func newPrivateBoard() -> NSPasteboard {
-        let board = NSPasteboard(name: .init("cc-fresh-copy-\(UUID().uuidString)"))
+        let board = NSPasteboard.withUniqueName()
         privateBoards.append(board)
         return board
     }
@@ -42,6 +42,9 @@ final class FreshCopyClipboardTests: XCTestCase {
         try check(PasteboardCreate(board.name.rawValue as CFString, &raw))
         let reference = try XCTUnwrap(raw)
         publishedReferences.append(reference)
+        var copiedName: CFString?
+        try check(PasteboardCopyName(reference, &copiedName))
+        XCTAssertEqual(copiedName.map { $0 as String }, board.name.rawValue)
         try check(PasteboardClear(reference))
         _ = PasteboardSynchronize(reference)
         guard Self.nextItemID <= UInt(Int32.max) else { throw PublicationError.identifierExhausted }
