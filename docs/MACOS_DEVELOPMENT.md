@@ -1077,10 +1077,10 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 不需要为了此功能改动CLI/账号或恢复默认。实际注销/重登录测试属于可选实机验收，
 先保存其他应用中的工作；不能用普通退出再打开冒充系统登录启动。
 
-### Mac版本基础（后续源码，尚未进入当前推荐包）
+### Mac版本基础（当前开发包已提供）
 
 Mac营销版本由`macos/Resources/Info.plist`独立维护，不复用Windows版本。
-新源码显示名为CC Translate、版本0.1.0；bundle identifier和现有数据位置保持不变。
+当前包显示名为CC Translate、版本0.1.0、构建146；bundle identifier和现有数据位置保持不变。
 新构包命令`python3 tools/macos/bundle.py build --development --build-number 146`
 可明确指定构建号；GitHub CI自动传当前workflow的`github.run_number`，不要求用户提供。
 同一run重试沿用构建号；本地不传参数时使用Info模板的开发构建号，不据此发布更新。
@@ -1088,7 +1088,9 @@ Mac营销版本由`macos/Resources/Info.plist`独立维护，不复用Windows版
 新包的关于界面直接显示这些实际值，不额外启动CLI、连接网络或读取账号。
 保留当前开发App/zip文件名与非Release标记；尚未接入Sparkle、发布feed或签名更新，
 未来正式更新渠道必须维护独立递增序列，不能将本地模板构建或重置的workflow序列当成升级包。
-8项新增离线契约及bundle/runtime80项已通过，仍需该源码完整Mac验证；当前推荐下载不变。
+源码4dfb04a / run35374096842已完成独立完整App及同包三系统验证，实际版本/构建与清单一致；
+producer与两个消费者的真实About断言通过。8项新增离线契约及bundle/runtime80项、
+正常1933项hook、845原生方法和140PNG均已验证；[完整证据](MACOS_TODO.md#native-app-version-checkpoint)已保留。
 
 ### Claude服务（当前开发包已提供）
 
@@ -1272,7 +1274,7 @@ fc089e6的早期原生日志已证实来源清空通过，但其余9方法仍失
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
 当前补齐Claude完整后端与原生服务选择、两套CLI路径/模型草稿、切换与恢复默认；
-新加入系统管理的“登录时启动”及批准/关闭/刷新入口；
+已加入系统管理的“登录时启动”及批准/关闭/刷新入口，本包另有独立Mac版本0.1.0/构建146；
 保留明确图片发送、稳定词典来源按钮、关联复制回退、剪贴板主线程隔离，
 以及字号、长文摘要、历史保留条数、输入上限、结果窗口位置、双击复制间隔、截图全局快捷键和恢复默认设置；保留明确刷新模型目录、设置/主窗口/截图共享选择、
 主动纯文本粘贴、
@@ -1286,13 +1288,13 @@ producer执行845个原生测试（822通过、23构包前可选skip、零失败
 完整App已独立字节核验；不将这些测试冒充全局快捷键或真实目标编辑器的人工验收。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`77388c0e478c39789f437cf2879858982e621d8c`；
-  [run35368988704](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704/artifacts/10558373793)；
-  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704/artifacts/10557811455)。
-- 内层`CCTranslateMac-P0.zip`：19,639,311 bytes；
-  SHA-256 `56fce3f79592854b3b0764f9cbcd8972403dd055c1848fa430208d544d29a974`。
-  artifact保留到2026-09-25T16:58:47Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`4dfb04a8ac07cbeea6610aed4d8e294223506f2c`；版本0.1.0、构建146；
+  [run35374096842](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842/artifacts/10559994076)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842/artifacts/10559389712)。
+- 内层`CCTranslateMac-P0.zip`：19,639,328 bytes；
+  SHA-256 `f8ebaefb9633889c6213a682e352f4a57bc4654242088c4b076e466cd6cd67be`。
+  artifact保留到2026-09-25T17:48:27Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。

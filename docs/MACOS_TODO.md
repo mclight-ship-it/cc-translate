@@ -52,7 +52,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[77388c0：原生登录项及此前完整Claude与界面功能](#native-login-item-checkpoint)，
+最新推荐包现为[4dfb04a：Mac 0.1.0/build146，包含登录项及此前完整Claude与界面功能](#native-app-version-checkpoint)，
 已完成完整App同包三系统验收；继续P4更新/分发/卸载，不把移植整体标为完成。
 
 <a id="native-product-preferences-checkpoint"></a>
@@ -2700,7 +2700,7 @@ About/Vision/主动粘贴/关联复制/实际只读worker及证书HTTPS/SQLite/�
 tree`cdd052cbb99a7ba934def2603f47f4b12de3c59ac903e85e3c1e9af94102100a`；
 693库存/83资源/55源码路径（54唯一）/6实际arm64 Mach-O/19运行时许可。
 完整App只下载一次，最终核对bytes/SHA后只清理该内层ZIP并确认不存在；消费者仅取小报告。
-当前推荐已升级到此包；实际系统批准、下一次登录启动和升级后的登录项保持另待真人验证，
+此包曾为推荐，后续4dfb04a版本基础包继续包含本功能；实际系统批准、下一次登录启动和升级后的登录项保持另待真人验证，
 本轮没有在CI注册真实登录项，没有真实账号/模型调用，也不是Release或签名公证。
 
 - 原生登录项使用`SMAppService.mainApp`的实际状态，不用本地偏好伪装已开启。
@@ -2724,18 +2724,46 @@ tree`cdd052cbb99a7ba934def2603f47f4b12de3c59ac903e85e3c1e9af94102100a`；
   `596d0a8` / run`35367314004`实际编译31.79s，844项/23前置skip/2失败/683.358s；
   仍仅英文Open Login Items按钮的精确标题定位失败，140PNG完整。下一修正补上省略号与三点的
   等价文字规范化，保留原字串的几何范围，不替换不同单词；另增1项英中正反例，
-  明确拒绝错误单词、单词前缀和不同标点，新增合计13方法/全套845；仍需本源码真实执行。
+  明确拒绝错误单词、单词前缀和不同标点，新增合计13方法/全套845；该修正已由上述77388c0实际验证。
+
+<a id="native-app-version-checkpoint"></a>
+
+### 已验证：Mac独立版本与构建号
+
+源码`4dfb04a8ac07cbeea6610aed4d8e294223506f2c` /
+[run35374096842](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842)
+已实际watch exit0，attempt1的3jobs/42steps全部success，完整App独立审计exit0。
+真实归档的显示名为CC Translate、版本0.1.0、build146；Info与source-manifest.application完全一致，
+保留`dev.cc-translate.macos.probe`、原App/zip路径、最低macOS14和数据位置。
+producer及两个同包消费者的真实About方法均通过，包括实际构建号等于当前run_number的断言。
+
+新增8项离线契约，目标bundle/runtime80项/13.114s；正常privacy、2文件编译及完整hook1933项/98.168s通过。
+本源码Swift编译38.86s，845原生方法（822通过、23构包前可选skip、零失败）/575.772s，
+含13项登录方法，140PNG库存/CRC/尺寸/IDAT完整；不是借用77388c0的绿灯。
+producer990portable/14.288s、253process/518.034s、744core/6.423s；
+同App在15.7.9/14.8.9/26.6.2各253process/744core/21后置Foundation零失败/skip，
+About/Vision/主动粘贴/关联复制/实际只读worker及证书HTTPS/SQLite/取消/EOF/不可变/临时清理继续通过。
+
+[完整App10559994076](https://github.com/mclight-ship-it/cc-translate/actions/runs/35374096842/artifacts/10559994076)，
+内层19,639,328 bytes，SHA-256`f8ebaefb9633889c6213a682e352f4a57bc4654242088c4b076e466cd6cd67be`，
+tree`954a4ca93017684646e04602bfbc32f15999684717facb07c1667ebef0910e41`；
+693库存/83资源/55源码路径（54唯一）/6实际arm64 Mach-O/19运行时许可。
+App只下载一次，最终再次核对bytes/SHA后只删除确切内层ZIP并确认不存在，保留报告；
+两消费者仅取小报告。当前推荐升级到此包，未进行真实系统登录批准或真实账号/模型调用。
+
+Mac营销版本由自身Info模板维护，不复用Windows版本；CI明确传workflow的run_number作为build，
+同run重试沿用构建号。本地不传build-number时使用模板开发值，不据此发布升级。
+版本基础不是Sparkle更新器、更新feed或Release。下一项已核对Sparkle稳定2.10.0的官方包及延迟启动API；
+尚未引入依赖或配置feed，仍需实际framework/嵌套helper打包、许可、更新签名及N→N+1验证，
+不通过改变用户CLI、账号或购买签名来代替工程实现。
+
+### P4剩余验收
+
 - [ ] 免费分发完整性/资源/归档检查、最小权限和干净用户 Gatekeeper 首开；不全局关闭保护。
 - [ ] 可选付费增强（未选择、未通过）：Developer ID、公证/stapling；不得作为购买要求。
 - [x] SMAppService 实际状态与原生设置、明确开关/批准入口及自动化；真实登录启动另验。
-- [ ] 独立 Mac 资产/版本与 Sparkle 更新签名。
-  版本基础实施中：Mac自身Info.plist提供0.1.0版本，显示名称统一为CC Translate；
-  保留既有bundle identifier、App/zip路径与数据位置，避免为了改名重置登录项或偏好。
-  CI新构包明确使用该workflow的递增run_number作为build；重跑同run不增加版本。
-  本地构包可明确传入build-number，否则仍使用模板开发值，不从Windows版本或账号推断。
-  源码清单记录版本/构建/架构/系统下限，并校验其与Info一致；完整App About测试验证producer构建号。
-  新8项离线契约及既有bundle/runtime联合80项/13.114s通过，Mac新包验证尚未执行。
-  这不是Sparkle更新器、更新feed或Release；自动更新/签名资产与N→N+1实测仍未完成。
+- [x] 独立Mac版本/开发构建号、清单绑定及真实同包About验证。
+- [ ] 独立Mac更新资产、Sparkle接入与更新签名；无已发布feed或私钥。
 - [ ] N→N+1 更新保护数据/权限；失败/取消/重启；不在 bundle git pull。
 - [ ] 卸载可选清理自身数据，不删除共享 CLI/账号/Node。
 - [ ] 应用自身许可确认；Python/依赖/词典/更新框架完整许可齐全。
