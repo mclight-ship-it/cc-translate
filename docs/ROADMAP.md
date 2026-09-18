@@ -162,6 +162,7 @@ e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操�
 继续修复测试交互和读回证据，后续P3设置与Claude接线并未完成。
 67f280c已通过两处OCR，仍有4个原生方法待修；继续历史确认态、摘要点击和按钮刷新时序，
 不因图片齐全或部分用例通过而宣称可交付新包。
+87b4be6确认了历史模型修复，完整原生交互仍需修正测试事件匹配并实际重验。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

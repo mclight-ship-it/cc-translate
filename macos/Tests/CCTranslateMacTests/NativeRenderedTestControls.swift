@@ -69,6 +69,13 @@ private enum RenderedGeometry {
 @MainActor
 struct NativeSettingsTestControl: NativeRenderedTestRegion {
     private static var nextMouseEventNumber = 200_000
+
+    private static func samePointerEvent(_ actual: NSEvent, _ expected: NSEvent) -> Bool {
+        actual.type == expected.type && actual.windowNumber == expected.windowNumber &&
+            actual.locationInWindow == expected.locationInWindow &&
+            abs(actual.timestamp - expected.timestamp) < 0.000_001
+    }
+
     @MainActor
     fileprivate enum Backing {
         case button(NSButton)
@@ -153,7 +160,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         NSApp.postEvent(down, atStart: true)
         let pending = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseDown, until: .distantPast,
                                                    inMode: .default, dequeue: false))
-        guard pending.eventNumber == down.eventNumber, pending.windowNumber == window.windowNumber else {
+        try NativeRenderEvidence.record("Queued event \(identifier): " +
+            "actual=(number:\(pending.eventNumber), window:\(pending.windowNumber), point:\(pending.locationInWindow), time:\(pending.timestamp)); " +
+            "created=(number:\(down.eventNumber), window:\(down.windowNumber), point:\(down.locationInWindow), time:\(down.timestamp))")
+        guard Self.samePointerEvent(pending, down) else {
             XCTFail("Only this fixture's queued pointer event may be dispatched.", file: file, line: line)
             throw RenderedLookupError.unexpectedEvent
         }
@@ -179,10 +189,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         }
         if let queued = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                         inMode: .default, dequeue: false),
-           queued.windowNumber == up.windowNumber, queued.eventNumber == up.eventNumber {
+           Self.samePointerEvent(queued, up) {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
-            XCTAssertEqual(release.eventNumber, up.eventNumber)
+            XCTAssertTrue(Self.samePointerEvent(release, up))
             NSApp.sendEvent(release)
         }
         try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
