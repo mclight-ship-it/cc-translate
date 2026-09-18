@@ -170,7 +170,8 @@ final class ProductTestHarness {
 
     init(savedCLI: Bool = true, autodetectFixture: Bool = false,
          dictionaryDownloader: DictionaryDownloading? = nil,
-         selectionMonitor: (any PassiveSelectionMonitoring)? = nil) throws {
+         selectionMonitor: (any PassiveSelectionMonitoring)? = nil,
+         captureRegistrar: (any NativeShortcutRegistering)? = nil) throws {
         let identifier = UUID().uuidString
         root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".fixtures-\(identifier)", isDirectory: true)
@@ -229,7 +230,8 @@ final class ProductTestHarness {
                 return candidates + alternate
             }, dictionaryDownloader: dictionaryDownloader,
             writeClipboard: { calls.copiedText.append($0); return true },
-            selectionMonitor: selectionMonitor)
+            selectionMonitor: selectionMonitor,
+            captureShortcut: captureRegistrar.map { CaptureShortcutModel(preferences: preferences, registrar: $0) })
     }
 
     func cleanUp() {

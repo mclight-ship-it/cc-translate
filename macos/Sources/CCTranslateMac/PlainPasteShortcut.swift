@@ -1,71 +1,94 @@
 import AppKit
 import Carbon
 
-enum PlainPasteKeyEvent { case pressed, released }
+enum NativeShortcutKeyEvent: Equatable, Sendable { case pressed, released }
 
-enum PlainPasteRegistrationError: Error, Equatable {
+enum NativeShortcutRegistrationError: Error, Equatable {
     case conflict
     case unavailable(Int32)
     case releaseFailed(Int32)
 }
 
 @MainActor
-protocol PlainPasteShortcutLease: AnyObject {
-    func release() -> Result<Void, PlainPasteRegistrationError>
+protocol NativeShortcutLease: AnyObject {
+    func release() -> Result<Void, NativeShortcutRegistrationError>
 }
 
 @MainActor
-protocol PlainPasteShortcutRegistering {
-    func register(_ handler: @escaping @MainActor (PlainPasteKeyEvent) -> Void)
-        -> Result<any PlainPasteShortcutLease, PlainPasteRegistrationError>
+protocol NativeShortcutRegistering {
+    func register(_ handler: @escaping @MainActor (NativeShortcutKeyEvent) -> Void)
+        -> Result<any NativeShortcutLease, NativeShortcutRegistrationError>
 }
 
-private final class PlainPasteHotKeyContext {
-    let handler: @MainActor (PlainPasteKeyEvent) -> Void
+typealias PlainPasteKeyEvent = NativeShortcutKeyEvent
+typealias PlainPasteRegistrationError = NativeShortcutRegistrationError
+typealias PlainPasteShortcutLease = NativeShortcutLease
+typealias PlainPasteShortcutRegistering = NativeShortcutRegistering
+
+struct NativeShortcutBinding: Equatable, Sendable {
+    let signature: UInt32
+    let keyCode: UInt32
+    let modifiers: UInt32
+
+    static let plainPaste = NativeShortcutBinding(
+        signature: 0x43435054, keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey | optionKey | shiftKey))
+    static let screenshot = NativeShortcutBinding(
+        signature: 0x43435343, keyCode: UInt32(kVK_ANSI_X), modifiers: UInt32(cmdKey | optionKey | shiftKey))
+
+    var identity: EventHotKeyID { EventHotKeyID(signature: signature, id: 1) }
+    func matches(_ identity: EventHotKeyID) -> Bool { identity.signature == signature && identity.id == 1 }
+}
+
+private final class NativeHotKeyContext {
+    let binding: NativeShortcutBinding
+    let handler: @MainActor (NativeShortcutKeyEvent) -> Void
     private let lock = NSLock()
     private var live = true
-    init(_ handler: @escaping @MainActor (PlainPasteKeyEvent) -> Void) { self.handler = handler }
+    init(binding: NativeShortcutBinding, handler: @escaping @MainActor (NativeShortcutKeyEvent) -> Void) {
+        self.binding = binding
+        self.handler = handler
+    }
     var isLive: Bool { lock.lock(); defer { lock.unlock() }; return live }
     func deactivate() { lock.lock(); live = false; lock.unlock() }
 }
 
 // Deinit transfers sole cleanup ownership of these opaque Carbon handles to the main actor.
-private struct PlainPasteHotKeyCleanup: @unchecked Sendable {
+private struct NativeHotKeyCleanup: @unchecked Sendable {
     let key: EventHotKeyRef?
     let eventHandler: EventHandlerRef?
-    let retainedContext: Unmanaged<PlainPasteHotKeyContext>
+    let retainedContext: Unmanaged<NativeHotKeyContext>
 
     @MainActor
     func run() {
         if let key {
             let status = UnregisterEventHotKey(key)
-            if status != noErr { NSLog("CCTranslate plain-paste hotkey cleanup: %d", status) }
+            if status != noErr { NSLog("CCTranslate native hotkey cleanup: %d", status) }
         }
         if let eventHandler {
             let status = RemoveEventHandler(eventHandler)
             // Failed removal leaves Carbon holding this inert context; never free its callback pointer.
             if status == noErr { retainedContext.release() }
-            else { NSLog("CCTranslate plain-paste handler cleanup: %d", status) }
+            else { NSLog("CCTranslate native hotkey handler cleanup: %d", status) }
         }
     }
 }
 
 @MainActor
-private final class CarbonPlainPasteLease: PlainPasteShortcutLease {
+private final class CarbonNativeShortcutLease: NativeShortcutLease {
     private var key: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
-    private let context: PlainPasteHotKeyContext
-    private let retainedContext: Unmanaged<PlainPasteHotKeyContext>
+    private let context: NativeHotKeyContext
+    private let retainedContext: Unmanaged<NativeHotKeyContext>
 
     init(key: EventHotKeyRef?, eventHandler: EventHandlerRef,
-         context: PlainPasteHotKeyContext, retainedContext: Unmanaged<PlainPasteHotKeyContext>) {
+         context: NativeHotKeyContext, retainedContext: Unmanaged<NativeHotKeyContext>) {
         self.key = key
         self.eventHandler = eventHandler
         self.context = context
         self.retainedContext = retainedContext
     }
 
-    func release() -> Result<Void, PlainPasteRegistrationError> {
+    func release() -> Result<Void, NativeShortcutRegistrationError> {
         context.deactivate()
         var failure: OSStatus?
         if let key {
@@ -85,7 +108,7 @@ private final class CarbonPlainPasteLease: PlainPasteShortcutLease {
 
     deinit {
         context.deactivate()
-        let cleanup = PlainPasteHotKeyCleanup(key: key, eventHandler: eventHandler, retainedContext: retainedContext)
+        let cleanup = NativeHotKeyCleanup(key: key, eventHandler: eventHandler, retainedContext: retainedContext)
         if Thread.isMainThread { MainActor.assumeIsolated { cleanup.run() } }
         else { DispatchQueue.main.async { cleanup.run() } }
     }
@@ -93,10 +116,10 @@ private final class CarbonPlainPasteLease: PlainPasteShortcutLease {
 
 @MainActor
 struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
-    static let signature: OSType = 0x43435054
-    static let keyCode = UInt32(kVK_ANSI_V)
-    static let modifiers = UInt32(cmdKey | optionKey | shiftKey)
-    static let options = UInt32(kEventHotKeyExclusive)
+    static let signature: OSType = NativeShortcutBinding.plainPaste.signature
+    static let keyCode = NativeShortcutBinding.plainPaste.keyCode
+    static let modifiers = NativeShortcutBinding.plainPaste.modifiers
+    static let options = CarbonNativeShortcut.options
     static let releasingKeys: [CGKeyCode] = [
         CGKeyCode(kVK_ANSI_V), CGKeyCode(kVK_Command), CGKeyCode(kVK_RightCommand),
         CGKeyCode(kVK_Shift), CGKeyCode(kVK_RightShift),
@@ -106,7 +129,18 @@ struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
 
     func register(_ callback: @escaping @MainActor (PlainPasteKeyEvent) -> Void)
         -> Result<any PlainPasteShortcutLease, PlainPasteRegistrationError> {
-        let context = PlainPasteHotKeyContext(callback)
+        CarbonNativeShortcut(binding: .plainPaste).register(callback)
+    }
+}
+
+@MainActor
+struct CarbonNativeShortcut: NativeShortcutRegistering {
+    static let options = UInt32(kEventHotKeyExclusive)
+    let binding: NativeShortcutBinding
+
+    func register(_ callback: @escaping @MainActor (NativeShortcutKeyEvent) -> Void)
+        -> Result<any NativeShortcutLease, NativeShortcutRegistrationError> {
+        let context = NativeHotKeyContext(binding: binding, handler: callback)
         let retained = Unmanaged.passRetained(context)
         var types = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
@@ -117,11 +151,11 @@ struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
             guard let event, let pointer, Thread.isMainThread else { return OSStatus(eventNotHandledErr) }
             var identity = EventHotKeyID()
             guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
-                                    nil, MemoryLayout<EventHotKeyID>.size, nil, &identity) == noErr,
-                  identity.signature == 0x43435054, identity.id == 1 else {
+                                    nil, MemoryLayout<EventHotKeyID>.size, nil, &identity) == noErr else {
                 return OSStatus(eventNotHandledErr)
             }
-            let box = Unmanaged<PlainPasteHotKeyContext>.fromOpaque(pointer).takeUnretainedValue()
+            let box = Unmanaged<NativeHotKeyContext>.fromOpaque(pointer).takeUnretainedValue()
+            guard box.binding.matches(identity) else { return OSStatus(eventNotHandledErr) }
             guard box.isLive else { return noErr }
             let kind = GetEventKind(event)
             guard kind == UInt32(kEventHotKeyPressed) || kind == UInt32(kEventHotKeyReleased) else {
@@ -137,10 +171,9 @@ struct CarbonPlainPasteShortcut: PlainPasteShortcutRegistering {
             return .failure(.unavailable(installed == noErr ? OSStatus(paramErr) : installed))
         }
         var key: EventHotKeyRef?
-        let result = RegisterEventHotKey(Self.keyCode, Self.modifiers,
-                                         EventHotKeyID(signature: Self.signature, id: 1),
+        let result = RegisterEventHotKey(binding.keyCode, binding.modifiers, binding.identity,
                                          GetApplicationEventTarget(), Self.options, &key)
-        let lease = CarbonPlainPasteLease(key: key, eventHandler: eventHandler,
+        let lease = CarbonNativeShortcutLease(key: key, eventHandler: eventHandler,
                                          context: context, retainedContext: retained)
         guard result == noErr, key != nil else {
             if case .failure(let cleanup) = lease.release() { return .failure(cleanup) }

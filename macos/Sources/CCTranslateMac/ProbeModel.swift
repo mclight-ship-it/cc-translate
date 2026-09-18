@@ -139,6 +139,8 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var cliBusy = false
     let dictionary: DictionaryModel
     let plainPaste: PlainPasteModel
+    let captureShortcut: CaptureShortcutModel
+    private var captureShortcutObservation: AnyCancellable?
     let imageTranslation: ImageTranslationState
     private var imageObservation: AnyCancellable?
     private var imageTranslationSupported = false
@@ -321,9 +323,12 @@ final class ProbeModel: ObservableObject {
          }, dictionaryDownloader: DictionaryDownloading? = nil,
          writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil,
          plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil,
-         selectionMonitor: (any PassiveSelectionMonitoring)? = nil) {
+         selectionMonitor: (any PassiveSelectionMonitoring)? = nil,
+         captureShortcut: CaptureShortcutModel? = nil) {
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
         self.plainPaste = plainPaste ?? PlainPasteModel()
+        self.captureShortcut = captureShortcut ?? CaptureShortcutModel(
+            preferences: preferences, persistsPreferences: persistsPreferences)
         self.imageTranslation = imageTranslation ?? ImageTranslationState(factory: NativeImageAttachment.make)
         monitor = selectionMonitor ?? PassiveCopyMonitor()
         self.homeDirectory = homeDirectory
@@ -357,6 +362,7 @@ final class ProbeModel: ObservableObject {
         }
         dictionaryObservation = dictionary.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         plainPasteObservation = self.plainPaste.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        captureShortcutObservation = self.captureShortcut.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         imageObservation = self.imageTranslation.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         self.imageTranslation.onPrepared = { [weak self] intent in
             guard let self, self.draft?.imageIntent == intent, self.translationIntentID == intent else { return }
@@ -425,6 +431,7 @@ final class ProbeModel: ObservableObject {
                 }
             }
             presentationLoaded = true
+            captureShortcut.restore()
             onPresentationChanged?()
         }
     }

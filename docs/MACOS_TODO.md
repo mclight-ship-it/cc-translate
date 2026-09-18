@@ -424,7 +424,7 @@ tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
 
 <a id="native-copy-interval-checkpoint"></a>
 
-### P3 双击复制间隔：实现与测试已接线，待本源码Mac验证
+### P3 双击复制间隔：c758原生通过，完整同包验收进行中
 
 设置的“划词快捷键与权限”区域新增秒数输入及“应用间隔”，沿用业务配置`double_press_window`，
 默认0.5秒；支持正小数和整数，不局限于速度选项白名单或0.2–1.5的建议范围。
@@ -443,7 +443,7 @@ tree`282738a08e93a0cb98e0a77c1722ba3a7e5427cfda9c021cebf2ca651b63d98a`；
 新增25项测试（Support11/模型11/真实原生交互2/渲染1），预期原生总数780，
 保留23项构包前可选skip；预期增加2张中英深浅色PNG，总数127。
 交互复用实际原生文本编辑和单次按钮事件路线，不通过模型setter冒充点击。
-Windows编辑器无Swift测试提供器；当前实现尚待真实Mac编译/运行和完整同包验证，
+Windows编辑器无Swift测试提供器；c758现已完成真实Mac编译/运行，仍待完整同包验证，
 不包含在推荐的9b55942包中，更不代表P3–P6完成。
 操作见[双击复制间隔](MACOS_DEVELOPMENT.md#native-copy-interval)。
 
@@ -469,7 +469,39 @@ OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚
 只看新revision与非空item元数据，并让出MainActor。之后原始字节/类型/顺序/revision断言仍一次严格执行，
 生产reader仍一次调用，没有重写数据、重试reader或扩大0.5秒新鲜度窗口。
 原7方法内另验证未发布空板和没有新revision的既有内容会明确超时，不增加skip或改变方法计数。
-新修正尚待Mac验证。正在开发的截图热键两文件已单独保存，先完成这一源码验证，不混入修复提交。
+修正源码`c7581a87f2b386df887492e31113e5e7bd92f7ee` /
+[run35330446905](https://github.com/mclight-ship-it/cc-translate/actions/runs/35330446905)
+正常privacy/full hook1846项/104.103秒通过；Mac实际编译46.94秒，
+780项/23既定构包前skip/0失败/635.846秒，原私有剪贴板7、输入上限26及新间隔25方法均通过。
+127PNG的库存、CRC、尺寸和IDAT已独立核验，完整App和14/26消费者仍在继续，尚未替换推荐包。
+原ab/2d完整失败日志均已归档，实际watch分别exit1；portable/process/core分别为
+903/14.672秒、232/528.247秒、665/6.466秒，以及903/17.209秒、232/502.867秒、665/5.656秒；
+两轮后置Foundation均21方法各一次通过且零skip。没有把失败轮次当作完整App通过。
+截图热键WIP已恢复并继续独立功能接线；不混入c758的测试准备修复源码或借用其测试绿灯。
+
+<a id="native-capture-shortcut-checkpoint"></a>
+
+### P3 截图全局快捷键：生产接线与18项新测试已实现，待Mac验证
+
+本机独立开关`nativeScreenshotShortcutEnabled`默认关闭，显式开启才注册全局`⌘⌥⇧X`。
+注册仅保留键位，不启动helper/CLI、不请求屏幕录制或辅助功能权限；
+实际按下并松开后才进入已有AppDelegate截图入口、区域选择和本地OCR预览，不自动发送翻译。
+捕获/选择/识别期间的全局重复动作被忽略；已完成或取消后可以开始下一次截图。
+关闭快捷键不关闭当前截图；普通helper停止、窗口关闭、配置重连不移除独立的全局热键。
+退出开始时清理半对按键，最终退出才释放注册；保存的opt-in供下次启动恢复。
+
+与纯文本粘贴复用Carbon注册/释放生命周期，保留原`⌘⌥⇧V`及exclusive语义；
+每个handler只接受自己的signature/id，截图与粘贴不能互相消费事件。
+按键autorepeat、退役handler、释放失败、注册过程中关闭或退出均明确处理。
+冲突不会换键或自动重试；中英原生设置提供状态、显式重试，以及释放失败的退出提示。
+这不是Windows旧`ocr_hotkey_enabled`默认true的隐式迁移，不给升级用户自动占用新键。
+
+新增18项测试：模型11、Carbon绑定/实际lease与进程内事件路由2、
+应用控制器2、双语原生点击2、渲染1；预期798原生、23既定构包前skip和130PNG。
+Carbon用例注册独立测试键，只向本进程event target发送合成事件，不注入全局物理键盘；
+控制器使用合成screen/OCR，不触发真实TCC。保留原纯文本粘贴回归测试。
+当前未声称Swift已编译或该功能完整打包通过，仍需本源码CI及同包审计。
+使用说明见[截图全局快捷键](MACOS_DEVELOPMENT.md#native-capture-shortcut)。
 
 <a id="native-text-scale-checkpoint"></a>
 
@@ -2397,8 +2429,9 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   - [x] 历史保留条数与修剪时机；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 最大字符数及UTF-8独立字节预算的准确呈现；[当前批次验证](#native-product-preferences-checkpoint)。
   - [x] 结果位置偏好：[原生11方法及完整同包三系统验收通过](#native-result-position-checkpoint)；真人多屏/Spaces另验。
-  - [ ] 双击复制间隔：[实现已接线，待本源码Mac验证](#native-copy-interval-checkpoint)。
-  - [ ] 截图全局热键开关，以及恢复默认设置。
+  - [ ] 双击复制间隔：[c758原生通过，完整同包验收继续](#native-copy-interval-checkpoint)。
+  - [ ] 截图全局热键开关：[完整接线与18新测试待Mac验证](#native-capture-shortcut-checkpoint)。
+  - [ ] 恢复默认设置。
   - [ ] Claude服务完整后端与原生选择；不能只加下拉框，也不冒充现有Codex模型目录未实现。
   - 原生Vision与明确图片发送、菜单栏菜单、语言/主题/字号保持Mac实现，不机械照搬Windows历史键或Tk行为。
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。

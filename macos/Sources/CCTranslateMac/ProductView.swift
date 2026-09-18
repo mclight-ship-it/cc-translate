@@ -641,6 +641,74 @@ struct HistoryTranslationDetail: View {
 }
 
 @MainActor
+struct CaptureShortcutSettingsSection: View {
+    @ObservedObject var model: ProbeModel
+    @ObservedObject var shortcut: CaptureShortcutModel
+
+    var toggleTitle: String { model.text("Global screenshot shortcut", "全局截图快捷键") }
+    var retryTitle: String {
+        shortcut.enabled ? model.text("Retry shortcut registration", "重试快捷键注册")
+            : model.text("Retry releasing shortcut", "重试释放快捷键")
+    }
+
+    var body: some View {
+        Section {
+            Toggle(toggleTitle, isOn: Binding(get: { shortcut.enabled }, set: { shortcut.choose($0) }))
+                .toggleStyle(.checkbox)
+                .disabled(shortcut.isShutDown || shortcut.registration == .registering)
+                .accessibilityIdentifier("screenshot-shortcut")
+                .accessibilityHint(status)
+            Text(model.text("Off by default. When enabled, press and release ⌘⌥⇧X to open region selection from another app. Enabling only reserves the shortcut; screen recording permission is requested when you actually start a capture.",
+                            "默认关闭。开启后，在其他应用中按下并松开 ⌘⌥⇧X 可开始区域截图。开启开关只注册快捷键，实际开始截图时才会请求屏幕录制权限。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Label(status, systemImage: statusIcon)
+                .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if shortcut.canRetry {
+                Button(retryTitle) { shortcut.retry() }
+                    .accessibilityIdentifier("retry-screenshot-shortcut")
+            }
+            Text(model.text("This Mac remembers your choice. The shortcut uses the existing local capture and OCR preview; it never sends text or an image for translation automatically. Turning it off does not close an existing capture. The screenshot menu and button remain available.",
+                            "此 Mac 会记住你的选择。快捷键进入现有的本地截图与 OCR 预览，不会自动发送文字或图片翻译。关闭开关不关闭已有截图；截图菜单和按钮仍可使用。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text(model.text("Screenshot shortcut", "截图快捷键"))
+        }
+    }
+
+    private var statusIcon: String {
+        switch shortcut.registration {
+        case .registered: return "checkmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        case .off, .registering: return "keyboard"
+        }
+    }
+
+    private var status: String {
+        switch shortcut.registration {
+        case .off:
+            return shortcut.enabled
+                ? model.text("The shortcut is requested but not registered. Retry to enable it.",
+                             "已选择开启，但快捷键尚未注册。请重试以启用。")
+                : model.text("Global screenshot shortcut is off.", "全局截图快捷键已关闭。")
+        case .registering:
+            return model.text("Reserving the screenshot shortcut…", "正在注册截图快捷键…")
+        case .registered:
+            return model.text("Ready: ⌘⌥⇧X. Finish the current region selection or recognition before starting another capture.",
+                              "已就绪：⌘⌥⇧X。请先完成当前区域选择或识别，再开始下一次截图。")
+        case .failed(.conflict):
+            return model.text("The shortcut is already reserved by another app. Release it there, then retry. No alternate shortcut was selected.",
+                              "快捷键已被其他应用占用。请先在该应用中释放，再重试。未自动选择其他快捷键。")
+        case .failed(.unavailable(let code)):
+            return model.text("Could not register the shortcut (system code \(code)). Capture has not started.",
+                              "无法注册快捷键（系统代码 \(code)），未开始截图。")
+        case .failed(.releaseFailed(let code)):
+            return model.text("Could not release the shortcut (system code \(code)). Its capture action is disabled. Retry release if available, or quit the app to release its resources.",
+                              "无法释放快捷键（系统代码 \(code)）。该快捷键已不能触发截图。可用时请重试释放，或退出应用以释放资源。")
+        }
+    }
+}
+
+@MainActor
 struct CopyIntervalSettingsView: View {
     @ObservedObject var model: ProbeModel
     private var preference: NumericPreference<Double> { model.copyInterval }
@@ -918,6 +986,7 @@ struct TranslationSettingsView: View {
             DictionarySettingsSection(model: model, dictionary: model.dictionary)
             codexSection
             PlainPasteSettingsSection(model: model, paste: model.plainPaste)
+            CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
             shortcutSection
             aboutSection
         }

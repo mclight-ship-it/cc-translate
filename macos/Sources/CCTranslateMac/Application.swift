@@ -63,6 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.diagnostics = diagnostics
         self.aboutModel = about ?? AboutModel()
         super.init()
+        model.captureShortcut.canCapture = { [weak self] in
+            guard let self, !self.terminating, self.selectionOverlay == nil else { return false }
+            switch self.capture.phase {
+            case .capturing, .selecting, .recognizing: return false
+            case .idle, .ready, .empty, .failed, .cancelled: return true
+            }
+        }
+        model.captureShortcut.onCapture = { [weak self] in self?.startCapture() }
         model.onStopped = { [weak self] in self?.finishTermination() }
         diagnostics.onStopped = { [weak self] in self?.finishTermination() }
     }
@@ -492,6 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        model.captureShortcut.cancelPendingTrigger()
         terminationResolved = false
         aboutModel.close()
         selectionOverlay?.dismiss()
@@ -508,6 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.captureShortcut.shutdown()
         aboutModel.close()
         selectionOverlay?.dismiss()
         capture.cancel()
