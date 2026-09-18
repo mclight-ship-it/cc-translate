@@ -5,7 +5,7 @@ import CCTranslateSupport
 @MainActor
 final class CaptureModel: ObservableObject {
     enum Phase: Equatable { case idle, capturing, selecting, recognizing, ready, empty, failed, cancelled }
-    private enum Notice { case none, textRequired, translationBusy, input(TextInputPreflight.Issue) }
+    private enum Notice { case none, textRequired, translationBusy, input }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var frames: [CapturedDisplayFrame] = []
@@ -42,7 +42,7 @@ final class CaptureModel: ObservableObject {
         if submittedImage && busy && !submitting { return false }
         return submitted && translationIntent == translationModel.translationIntentID &&
             !translationModel.productMessage.isEmpty &&
-            (submitting || submittedImage || text == submittedText)
+            (submitting || submittedImage || submittedText.map { text.utf8.elementsEqual($0.utf8) } == true)
     }
     var canTranslate: Bool {
         preview != nil && !busy && phase != .selecting && !submitting &&
@@ -147,8 +147,8 @@ final class CaptureModel: ObservableObject {
             objectWillChange.send()
             return
         }
-        if let issue = model.inputIssue(for: text) {
-            notice = .input(issue)
+        if model.inputIssue(for: text) != nil {
+            notice = .input
             objectWillChange.send()
             return
         }
@@ -260,7 +260,8 @@ final class CaptureModel: ObservableObject {
     func message(using model: ProbeModel) -> String {
         switch notice {
         case .textRequired: return model.text("Review or enter some text before translating.", "请确认或输入文字后再翻译。")
-        case .input(let issue): return issue.message(using: model)
+        case .input:
+            if let issue = model.inputIssue(for: text) { return issue.message(using: model) }
         case .translationBusy: return model.text("Finish or cancel the current translation first.", "请先完成或取消当前翻译。")
         case .none: break
         }

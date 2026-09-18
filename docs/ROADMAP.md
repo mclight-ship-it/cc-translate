@@ -142,6 +142,11 @@ fc089e6的提前日志实际718项、24失败断言/9方法；来源清空此次
 首轮76ae1f3/run35304718654通过正常1846项hook与Mac903项便携测试，但预算常量的模块可见性
 导致App编译失败，没有原生执行或新包。正公开既有只读预算并补齐所属窗口的测试语义树入口，
 不改变预算、控件或断言；继续新源码验证。
+bb1f851已实际编译并执行744项，新增20模型/预检及18字体方法通过，但15方法有37失败断言，
+116/122PNG，整run仍退出1。正在修真实编辑器对规范等价Unicode拼写的错误去重，
+并以实际渲染控件/公开动作验证设置接线；不把provider getter当成完整AX客户端，也不将截图冒充VoiceOver验收。
+一项私有剪贴板fixture与一项中文说明OCR也保持未通过并继续处理，全部原断言保留。
+903便携、232进程、665核心及21后置Foundation通过只代表这些阶段，不代表完整App或整个移植完成。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

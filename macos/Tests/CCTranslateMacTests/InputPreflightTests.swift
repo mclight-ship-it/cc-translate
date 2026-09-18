@@ -232,11 +232,28 @@ final class InputPreflightTests: XCTestCase {
         XCTAssertTrue(helper.dictionaryRequests.isEmpty)
         XCTAssertEqual(capture.message(using: f.model),
                        TextInputPreflight.Issue.characters(count: 2, limit: 1).message(using: f.model))
+        let rejectedMessage = capture.message(using: f.model)
+        InputLimitFixture.save(f, "2")
+        try InputLimitFixture.finish(f, helper)
+        XCTAssertTrue(capture.canTranslate(using: f.model))
+        XCTAssertNotEqual(capture.message(using: f.model), rejectedMessage,
+                          "A confirmed setting change must not leave the previous limit in the capture notice.")
+        XCTAssertTrue(helper.translations.isEmpty, "Updating validation is not an automatic retry.")
+        InputLimitFixture.save(f, "1")
+        try InputLimitFixture.finish(f, helper)
+        XCTAssertFalse(capture.canTranslate(using: f.model))
         capture.text = "é"
         capture.translate(using: f.model)
         XCTAssertEqual(helper.translations.last?.text, "é")
         XCTAssertEqual(helper.translations.last?.origin, "ocr")
         XCTAssertEqual(helper.translations.last?.useCache, false)
+        helper.event("completed", id: try XCTUnwrap(helper.translations.last?.id),
+                     payload: SummaryPreferenceFixture.completed("Original response"))
+        XCTAssertTrue(capture.showsTranslationStatus)
+        capture.text = "e\u{301}"
+        XCTAssertFalse(capture.showsTranslationStatus, "A different raw spelling is not the submitted text.")
+        XCTAssertFalse(capture.canTranslate(using: f.model))
+        XCTAssertEqual(helper.translations.count, 1)
     }
 
     @MainActor

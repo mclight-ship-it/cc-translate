@@ -104,7 +104,8 @@ struct NativeTranslationEditor: NSViewRepresentable {
             view.needsDisplay = true
             guard !applyingModel, !view.settingMarkedText, !view.hasMarkedText() else { return }
             modelText = view.string
-            if parent.text != view.string { parent.text = view.string }
+            // Equivalent Unicode spellings can have different scalar and byte budgets.
+            if !parent.text.utf8.elementsEqual(view.string.utf8) { parent.text = view.string }
         }
 
         func focusChanged(_ focused: Bool) {
@@ -179,9 +180,9 @@ struct NativeTranslationEditor: NSViewRepresentable {
         // Marked text belongs to AppKit, not the last committed SwiftUI binding.
         // Only a genuine external edit (Clear, history reuse, new OCR) replaces it.
         var replacedText = false
-        if coordinator.modelText != text {
+        if !coordinator.modelText.utf8.elementsEqual(text.utf8) {
             coordinator.modelText = text
-            if view.string != text {
+            if !view.string.utf8.elementsEqual(text.utf8) {
                 let selected = view.selectedRange()
                 if view.hasMarkedText() {
                     view.inputContext?.discardMarkedText()

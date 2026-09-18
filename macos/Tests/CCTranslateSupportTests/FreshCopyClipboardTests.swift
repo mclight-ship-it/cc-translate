@@ -5,13 +5,28 @@ import XCTest
 
 final class FreshCopyClipboardTests: XCTestCase {
     @MainActor private static var nextItemID: UInt = 0x460000
+    @MainActor private var privateBoards: [NSPasteboard] = []
+    @MainActor private var publishedReferences: [Pasteboard] = []
     private enum PublicationError: Error {
         case systemPasteboard, identifierExhausted, status(OSStatus)
     }
 
+    override func tearDown() async throws {
+        await MainActor.run {
+            // Retire C publishers before deleting the resources their cleanup may still use.
+            autoreleasepool { self.publishedReferences.removeAll() }
+            XCTAssertTrue(self.publishedReferences.isEmpty)
+            for board in self.privateBoards { board.releaseGlobally() }
+            self.privateBoards.removeAll()
+        }
+        try await super.tearDown()
+    }
+
     @MainActor
     private func newPrivateBoard() -> NSPasteboard {
-        NSPasteboard(name: .init("cc-fresh-copy-\(UUID().uuidString)"))
+        let board = NSPasteboard(name: .init("cc-fresh-copy-\(UUID().uuidString)"))
+        privateBoards.append(board)
+        return board
     }
 
     @MainActor
@@ -26,13 +41,14 @@ final class FreshCopyClipboardTests: XCTestCase {
         var raw: Pasteboard?
         try check(PasteboardCreate(board.name.rawValue as CFString, &raw))
         let reference = try XCTUnwrap(raw)
+        publishedReferences.append(reference)
         try check(PasteboardClear(reference))
         _ = PasteboardSynchronize(reference)
         guard Self.nextItemID <= UInt(Int32.max) else { throw PublicationError.identifierExhausted }
         let identifier = try XCTUnwrap(PasteboardItemID(bitPattern: Self.nextItemID))
         Self.nextItemID += 1
         // Use eager external bytes, not NSPasteboardItem's potentially converted aliases.
-        // The caller retains this reference until its private-board read has finished.
+        // The fixture retains publishers until teardown, before releasing its private boards.
         for (type, bytes) in representations {
             try check(PasteboardPutItemFlavor(reference, identifier, type as CFString,
                                               bytes as CFData, PasteboardFlavorFlags(rawValue: 0)))
@@ -43,6 +59,10 @@ final class FreshCopyClipboardTests: XCTestCase {
             try check(PasteboardCopyItemFlavorData(reference, identifier, type as CFString, &actual))
             XCTAssertEqual(actual.map { $0 as Data }, bytes, "Published raw bytes: \(type)")
         }
+        var itemCount = 0
+        try check(PasteboardGetItemCount(reference, &itemCount))
+        XCTAssertEqual(itemCount, 1, "The external publisher must contain its one eager item.")
+        print("Fresh-copy fixture publication: \(representations.map { "\($0.0):\($0.1.count)" }), C items=\(itemCount)")
         _ = try assertPublished(representations, on: board)
         return reference
     }
@@ -55,20 +75,22 @@ final class FreshCopyClipboardTests: XCTestCase {
     @discardableResult
     private func assertPublished(_ representations: [(String, Data)], on board: NSPasteboard) throws
         -> NSPasteboardItem {
+        // Refresh AppKit's revision after the external Carbon publication before enumerating items.
+        let revision = board.changeCount
         let items = try XCTUnwrap(board.pasteboardItems)
-        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.count, 1, "AppKit revision \(revision), representations \(representations.map { "\($0.0):\($0.1.count)" })")
         let item = try XCTUnwrap(items.first)
         for (type, bytes) in representations {
             XCTAssertTrue(item.types.contains(.init(type)), "Missing published type: \(type)")
             XCTAssertEqual(item.data(forType: .init(type)), bytes, "AppKit source bytes: \(type)")
         }
+        XCTAssertEqual(board.changeCount, revision)
         return item
     }
 
     @MainActor
     private func assertRead(_ representations: [(String, Data)], expected: String) throws {
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
         let reference = try publish(representations, to: board)
         defer { withExtendedLifetime(reference) {} }
         let revision = board.changeCount
@@ -89,7 +111,6 @@ final class FreshCopyClipboardTests: XCTestCase {
     func testReaderConstructionAndInvalidAuthorizationDoNotAccessAnyPasteboard() {
         var accesses = 0
         let privateBoard = newPrivateBoard()
-        defer { privateBoard.releaseGlobally() }
         let reader = SystemFreshCopyClipboard { accesses += 1; return privateBoard }
         XCTAssertEqual(accesses, 0)
         XCTAssertEqual(reader.read(revision: 1, whileValid: { false }), .unknown(.clipboardChanged))
@@ -99,7 +120,6 @@ final class FreshCopyClipboardTests: XCTestCase {
     @MainActor
     func testExactFreshUnicodeTextIsReadWithoutChangingAnyRepresentations() throws {
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
         let original = "Copied \u{4e2d}\u{6587}\nline two \u{1f600}"
         let reference = try publish(Data(original.utf8), to: board, types: [.string, .html])
         defer { withExtendedLifetime(reference) {} }
@@ -154,7 +174,6 @@ final class FreshCopyClipboardTests: XCTestCase {
     @MainActor
     func testOldRevisionAndChangeImmediatelyBeforeDataReadAreRejected() throws {
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
         let reference = try publish(Data("fresh".utf8), to: board)
         defer { withExtendedLifetime(reference) {} }
         let reader = SystemFreshCopyClipboard(pasteboard: { board })
@@ -173,7 +192,6 @@ final class FreshCopyClipboardTests: XCTestCase {
     @MainActor
     func testCancellationAfterReadDiscardsTextWithoutClearingUserCopy() throws {
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
         let reference = try publish(Data("fresh".utf8), to: board)
         defer { withExtendedLifetime(reference) {} }
         let reader = SystemFreshCopyClipboard(pasteboard: { board })
@@ -197,7 +215,6 @@ final class FreshCopyClipboardTests: XCTestCase {
         ]
         for types in representations {
             let board = newPrivateBoard()
-            defer { board.releaseGlobally() }
             let reference = try publish(Data("not an authorized plain selection".utf8), to: board, types: types)
             defer { withExtendedLifetime(reference) {} }
             let advertised = try XCTUnwrap(board.pasteboardItems?.first).types.map(\.rawValue)
@@ -218,7 +235,6 @@ final class FreshCopyClipboardTests: XCTestCase {
     @MainActor
     func testMultipleItemsAndEmptyBoardAreNotCollapsedIntoOldOrFirstText() {
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
         board.clearContents()
         let reader = SystemFreshCopyClipboard(pasteboard: { board })
         XCTAssertEqual(reader.read(revision: board.changeCount, whileValid: { true }),
@@ -275,7 +291,6 @@ final class FreshCopyClipboardTests: XCTestCase {
         ]
         for (type, bytes, expected) in cases {
             let board = newPrivateBoard()
-            defer { board.releaseGlobally() }
             let reference = try publish([(type, bytes)], to: board)
             defer { withExtendedLifetime(reference) {} }
             let reader = SystemFreshCopyClipboard(pasteboard: { board })
@@ -285,9 +300,8 @@ final class FreshCopyClipboardTests: XCTestCase {
             XCTAssertEqual(board.changeCount, revision)
             try assertPublished([(type, bytes)], on: board)
         }
-
         let board = newPrivateBoard()
-        defer { board.releaseGlobally() }
+        let board = newPrivateBoard()
         let malformed: [(String, Data)] = [
             ("public.utf8-plain-text", Data([0xc0, 0xaf])),
             ("public.utf16-external-plain-text", try XCTUnwrap("do not use a later alias".data(using: .utf16)))

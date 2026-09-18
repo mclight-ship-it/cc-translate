@@ -512,6 +512,24 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         XCTAssertEqual(f.model.output, "Saved result")
         XCTAssertFalse(editor.hasMarkedText())
         XCTAssertTrue(try surface.text(editable: true) === editor)
+        f.model.reuseHistory(.init(id: "composed", input: "\u{00e9}", output: "Saved result"))
+        try await surface.waitFor { editor.string.utf8.elementsEqual("\u{00e9}".utf8) }
+        for spelling in ["e\u{0301}", "\u{00e9}"] {
+            XCTAssertTrue(surface.window.makeFirstResponder(editor))
+            XCTAssertTrue(surface.window.firstResponder === editor)
+            editor.selectAll(nil)
+            editor.insertText(spelling, replacementRange: NSRange(location: NSNotFound, length: 0))
+            try await surface.waitFor { f.model.input.utf8.elementsEqual(spelling.utf8) }
+            XCTAssertEqual(Array(editor.string.utf8), Array(spelling.utf8))
+            XCTAssertEqual(f.model.input.unicodeScalars.count, spelling.unicodeScalars.count)
+        }
+        for spelling in ["e\u{0301}", "\u{00e9}"] {
+            f.model.reuseHistory(.init(id: "exact-replacement", input: spelling, output: "Saved result"))
+            try await surface.waitFor { editor.string.utf8.elementsEqual(spelling.utf8) }
+            XCTAssertEqual(Array(f.model.input.utf8), Array(spelling.utf8))
+            XCTAssertFalse(editor.hasMarkedText())
+            XCTAssertTrue(try surface.text(editable: true) === editor)
+        }
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertTrue(helper.configurationSaves.isEmpty)
     }

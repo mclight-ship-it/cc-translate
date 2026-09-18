@@ -426,6 +426,32 @@ UI分别显示两种计数；提高字符上限不扩大字节预算。准备期
 不重复定义8192、不改变任何协议限制。设置测试同时补上所属窗口的语义树入口，
 仍要求实际控件唯一匹配及原动作/状态断言，不访问其他应用、不改产品控件；均待新源码验证。
 
+`bb1f851`/[run35305180272](https://github.com/mclight-ship-it/cc-translate/actions/runs/35305180272)
+已实际修复编译（30.56秒），正常完整hook1846项/89.623秒；整run仍watch退出1。
+744项原生/410.754秒、23前置skip，15方法有37失败断言（17 unexpected）。
+新增8偏好和12预检方法全部逐冻结源码验证通过，字体18方法仍全部通过；
+输入长度6项UI方法未通过，其中OCR真实编辑暴露了生产问题：Swift字符串比较把
+`é`与`e`加组合标记视作相等，导致编辑器没有把不同码点/字节的输入写回模型。
+修复改为原始UTF-8比较，并增强既有方法覆盖双向输入和外部历史替换；不改字号、IME或请求预算。
+OCR提交状态也区分原始拼写，已确认的新上限不再留下旧限额提示，不自动重试翻译。
+
+窗口入口未解决其余控件定位。公开API调研确认：本地`NSAccessibility` provider getter
+不是完整SwiftUI AX客户端树的等价物，不能凭承载视图的AXUnknown判定产品控件不可用。
+下一步使用实际渲染控件、公开AppKit动作/状态/真实responder及唯一可见文字几何来验证UI接线，
+保持全部业务交互断言；完整AX语义与VoiceOver仍须独立已授权客户端/真人验收，不能混称已通过。
+不改TCC、不用私有API，不修改产品控件来迎合测试。
+接口与验收层次依据：[Apple accessibility模型](https://developer.apple.com/library/archive/documentation/Accessibility/Conceptual/AccessibilityMacOSX/OSXAXmodel.html)、
+[原生控件performClick](https://developer.apple.com/documentation/appkit/nscontrol/performclick(_:))、
+[独立UI testing进程](https://developer.apple.com/library/archive/documentation/DeveloperTools/Conceptual/testing_with_xcode/chapters/09-ui_testing.html)。
+
+本run另外两项既有检查失败：fresh-copy fixture在读取器调用前枚举到0个条目，
+以及完整中文设置截图的一句说明未被OCR读出。前者正在复用既有私有剪贴板fixture的
+C发布者先退役、随后释放资源顺序，并先刷新AppKit revision再枚举，保留原始字节/条目断言与诊断；
+没有修改生产读取器，也不声称偶发问题已修复。后者的原像素中说明存在，保留原断言并增加实际OCR文本诊断。
+903便携/14.692秒、232进程/511.665秒、665核心/7.217秒、21后置Foundation/190.391秒通过，
+新增10 Python方法实际各执行通过一次；剪贴板94方法中93通过、1失败，无旧线程警告。
+116/122PNG完整性已核验，缺6张设置/输入限额图；没有新App或14/26验收，以上修正均需再验。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证
