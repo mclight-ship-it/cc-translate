@@ -89,7 +89,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Build and audit development-only bundle with pinned runtime
-        run: python3 tools/macos/bundle.py build --development
+        run: python3 tools/macos/bundle.py build --development --build-number '${{ github.run_number }}'
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
         shell: bash
         run: |

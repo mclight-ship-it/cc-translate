@@ -20,6 +20,10 @@ final class BundledAboutTests: XCTestCase {
             format: nil) as? [String: Any])
         XCTAssertEqual(result.info?.version, try XCTUnwrap(info["CFBundleShortVersionString"] as? String))
         XCTAssertEqual(result.info?.build, try XCTUnwrap(info["CFBundleVersion"] as? String))
+        XCTAssertEqual(result.info?.name, "CC Translate")
+        if let build = ProcessInfo.processInfo.environment["GITHUB_RUN_NUMBER"] {
+            XCTAssertEqual(result.info?.build, build, "The same App must retain its producer workflow build number.")
+        }
         XCTAssertNotNil(result.source?.source_commit)
         XCTAssertTrue(result.documents.contains { $0.path == "THIRD_PARTY_NOTICES" })
         for group in ["Python/", "certifi/", "dictionary/"] {

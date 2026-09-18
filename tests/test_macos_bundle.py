@@ -1,6 +1,7 @@
 """Offline stdlib tests for the macOS archive, license, dyld and smoke rules."""
 
 from copy import deepcopy
+from contextlib import redirect_stderr
 import hashlib
 import io
 import json
@@ -48,6 +49,66 @@ class ProjectDirectory(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="bundle-test-", dir=bundle.STAGING)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+
+
+class ApplicationVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.lock = bundle.load_lock()
+        self.template = plistlib.loads((bundle.ROOT / "macos/Resources/Info.plist").read_bytes())
+
+    def test_build_override_preserves_source_identity_and_template(self):
+        original = deepcopy(self.template)
+        info = bundle.package_info(self.template, self.lock, "146")
+        self.assertEqual(self.template, original)
+        self.assertEqual(info, {**original, "CFBundleVersion": "146"})
+        self.assertEqual(info["CFBundleIdentifier"], self.lock["bundle_identifier"])
+        self.assertEqual(info["CFBundleDisplayName"], "CC Translate")
+        self.assertEqual(bundle.application_metadata(info, self.lock), {
+            "bundle_identifier": self.lock["bundle_identifier"],
+            "version": original["CFBundleShortVersionString"], "build": "146",
+            "architecture": "arm64", "minimum_system_version": "14.0",
+        })
+
+    def test_local_build_uses_explicit_template_version_without_environment_inference(self):
+        with patch.dict(bundle.os.environ, {"GITHUB_RUN_NUMBER": "999", "GITHUB_RUN_ATTEMPT": "3"}):
+            info = bundle.package_info(self.template, self.lock)
+        self.assertEqual(info, self.template)
+        self.assertIsNot(info, self.template)
+
+    def test_build_numbers_are_decimal_and_successive_workflow_numbers_increase(self):
+        first = bundle.package_info(self.template, self.lock, "146")
+        second = bundle.package_info(self.template, self.lock, "147")
+        self.assertLess(int(first["CFBundleVersion"]), int(second["CFBundleVersion"]))
+        for invalid in ["", "0", "01", "-1", "1.2", "1beta", " 146", "146\n", True, 146]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(bundle.BundleError, "build number"):
+                bundle.package_info(self.template, self.lock, invalid)
+
+    def test_missing_or_malformed_marketing_and_build_versions_are_rejected(self):
+        for invalid in [None, 1, True, "", "0.1", "0.1.0-beta", "01.2.3", "1.2.3\n"]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(bundle.BundleError, "marketing version"):
+                bundle.package_info({**self.template, "CFBundleShortVersionString": invalid}, self.lock)
+        for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+            missing = dict(self.template)
+            del missing[key]
+            with self.subTest(missing=key), self.assertRaises(bundle.BundleError):
+                bundle.package_info(missing, self.lock)
+
+    def test_invalid_build_number_fails_before_asset_download_or_output_mutation(self):
+        with patch.object(bundle, "require_macos", return_value=({}, {})), patch.object(
+                bundle, "fetch_assets") as fetch, self.assertRaisesRegex(bundle.BundleError, "build number"):
+            bundle.build(self.lock, build_number="not-a-build")
+        fetch.assert_not_called()
+
+    def test_cli_only_accepts_build_override_for_new_build(self):
+        for command in ("inspect", "verify"):
+            with self.subTest(command=command), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as failure:
+                bundle.main([command, "--build-number", "146"])
+            self.assertEqual(failure.exception.code, 2)
+
+    def test_workflow_passes_its_run_number_not_an_account_or_attempt(self):
+        workflow = (bundle.ROOT / ".github/workflows/macos-p0.yml").read_text(encoding="utf-8")
+        self.assertIn("bundle.py build --development --build-number '${{ github.run_number }}'", workflow)
+        self.assertNotIn("--build-number '${{ github.run_attempt }}'", workflow)
 
 
 class ArchiveRulesTests(ProjectDirectory):
@@ -250,7 +311,8 @@ class MachORulesTests(ProjectDirectory):
         lock = bundle.load_lock()
         info = {"CFBundleIdentifier": lock["bundle_identifier"],
                 "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
-                "LSUIElement": True, "LSMinimumSystemVersion": "14.0"}
+                "LSUIElement": True, "LSMinimumSystemVersion": "14.0",
+                "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "42"}
         binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
                     "Helpers/python/lib/libpython3.12.dylib",
                     "Helpers/python/lib/libCCProcessSupport.dylib"]
@@ -284,6 +346,7 @@ class MachORulesTests(ProjectDirectory):
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         bundle.write_json(contents / "Resources/source-manifest.json", {
             "lock": lock, "certificate_sha256": bundle.digest(contents / "Resources/Core/cacert.pem"),
+            "application": bundle.application_metadata(info, lock),
             "resource_hashes": {name: bundle.digest(contents / name) for name in resources},
         })
         return app
@@ -313,6 +376,17 @@ class MachORulesTests(ProjectDirectory):
         self.assertEqual(len(report["checks"]), 4)
         self.assertEqual(tools.call_count, 16)
         self.assertEqual(report["release_gate"], "NOT PASSED")
+
+    def test_audit_rejects_application_version_changed_after_manifest_creation(self):
+        app = self.synthetic_app()
+        path = app / "Contents/Info.plist"
+        info = plistlib.loads(path.read_bytes())
+        info["CFBundleVersion"] = "43"
+        path.write_bytes(plistlib.dumps(info))
+        with patch.object(bundle, "run") as tools, self.assertRaisesRegex(
+                bundle.BundleError, "application version/identity"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        tools.assert_not_called()
 
     def test_audit_checks_unreferenced_macho_and_rejects_newer_os(self):
         app = self.synthetic_app()
@@ -469,7 +543,8 @@ Load command 2
             (bundle.ROOT / "macos/Resources/Info.plist").read_bytes()), lock)
         valid = {"CFBundleIdentifier": "dev.cc-translate.macos.probe",
                  "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
-                 "LSUIElement": True, "LSMinimumSystemVersion": "14.0"}
+                 "LSUIElement": True, "LSMinimumSystemVersion": "14.0",
+                 "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "42"}
         bundle.validate_plist(plistlib.loads(plistlib.dumps(valid)), lock)
         for key, value in (("CFBundleIdentifier", "production"), ("LSUIElement", 1),
                            ("CFBundleExecutable", "python"), ("LSMinimumSystemVersion", "15.0")):

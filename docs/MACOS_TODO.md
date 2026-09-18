@@ -2729,6 +2729,13 @@ tree`cdd052cbb99a7ba934def2603f47f4b12de3c59ac903e85e3c1e9af94102100a`；
 - [ ] 可选付费增强（未选择、未通过）：Developer ID、公证/stapling；不得作为购买要求。
 - [x] SMAppService 实际状态与原生设置、明确开关/批准入口及自动化；真实登录启动另验。
 - [ ] 独立 Mac 资产/版本与 Sparkle 更新签名。
+  版本基础实施中：Mac自身Info.plist提供0.1.0版本，显示名称统一为CC Translate；
+  保留既有bundle identifier、App/zip路径与数据位置，避免为了改名重置登录项或偏好。
+  CI新构包明确使用该workflow的递增run_number作为build；重跑同run不增加版本。
+  本地构包可明确传入build-number，否则仍使用模板开发值，不从Windows版本或账号推断。
+  源码清单记录版本/构建/架构/系统下限，并校验其与Info一致；完整App About测试验证producer构建号。
+  新8项离线契约及既有bundle/runtime联合80项/13.114s通过，Mac新包验证尚未执行。
+  这不是Sparkle更新器、更新feed或Release；自动更新/签名资产与N→N+1实测仍未完成。
 - [ ] N→N+1 更新保护数据/权限；失败/取消/重启；不在 bundle git pull。
 - [ ] 卸载可选清理自身数据，不删除共享 CLI/账号/Node。
 - [ ] 应用自身许可确认；Python/依赖/词典/更新框架完整许可齐全。

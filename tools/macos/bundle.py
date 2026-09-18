@@ -494,12 +494,37 @@ def validate_plist(info, lock):
     need(info.get("CFBundlePackageType") == "APPL", "invalid app package type")
     need(info.get("LSUIElement") is True, "P0 must be an LSUIElement app")
     need(info.get("LSMinimumSystemVersion") == lock["deployment_target"], "wrong bundle minimum OS")
+    marketing = info.get("CFBundleShortVersionString")
+    build_number = info.get("CFBundleVersion")
+    need(isinstance(marketing, str) and re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", marketing),
+         "Mac marketing version must contain three decimal components")
+    need(isinstance(build_number, str) and re.fullmatch(r"[1-9][0-9]*", build_number),
+         "Mac build number must be a positive decimal integer")
+
+
+def package_info(template, lock, build_number=None):
+    info = dict(template)
+    if build_number is not None:
+        info["CFBundleVersion"] = build_number
+    validate_plist(info, lock)
+    return info
+
+
+def application_metadata(info, lock):
+    return {
+        "bundle_identifier": info["CFBundleIdentifier"],
+        "version": info["CFBundleShortVersionString"],
+        "build": info["CFBundleVersion"],
+        "architecture": lock["architecture"],
+        "minimum_system_version": info["LSMinimumSystemVersion"],
+    }
 
 
 def audit_bundle(app, lock, environment=None):
     need(app.is_dir() and not app.is_symlink(), "bundle missing or symlinked")
     contents = app / "Contents"
-    validate_plist(plistlib.loads((contents / "Info.plist").read_bytes()), lock)
+    info = plistlib.loads((contents / "Info.plist").read_bytes())
+    validate_plist(info, lock)
     required = [
         "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
         "Helpers/python/lib/libCCProcessSupport.dylib",
@@ -531,6 +556,8 @@ def audit_bundle(app, lock, environment=None):
          os.access(contents / "Helpers/python/bin/python3", os.X_OK), "non-executable bundle entry")
     provenance = json.loads((contents / "Resources/source-manifest.json").read_bytes())
     need(provenance["lock"] == lock, "bundle source lock mismatch")
+    need(provenance.get("application") == application_metadata(info, lock),
+         "application version/identity does not match the source manifest")
     resource_hashes = provenance["resource_hashes"]
     need(all(path in resource_hashes for path in required if path.startswith("Resources/")
              and path != "Resources/source-manifest.json"), "incomplete resource source inventory")
@@ -639,8 +666,9 @@ def copy_core_sources(core):
         shutil.copy2(path, core / "cc_providers" / path.name)
 
 
-def build(lock, offline=False):
+def build(lock, offline=False, build_number=None):
     environment, toolchain = require_macos()
+    info = package_info(plistlib.loads((ROOT / "macos/Resources/Info.plist").read_bytes()), lock, build_number)
     # Never update an existing (possibly signed) bundle, even on a second build.
     need(not APP.exists() and not APP.is_symlink(), "output exists; choose a clean development build")
     need(not BUILD.is_symlink(), "build directory cannot be a symlink")
@@ -653,12 +681,10 @@ def build(lock, offline=False):
     binary_directory = Path(run([*args, "--show-bin-path"], environment))
     binary = binary_directory / "CCTranslateMac"
     subprocess.run([str(a) for a in [*args[:-1], "CCProcessSupport"]], env=environment, check=True)
-    info = (ROOT / "macos/Resources/Info.plist").read_bytes()
-    validate_plist(plistlib.loads(info), lock)
     contents = APP / "Contents"
     (contents / "MacOS").mkdir(parents=True)
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
-    (contents / "Info.plist").write_bytes(info)
+    (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     excluded = extract_runtime(assets["runtime"], contents / "Helpers/python", lock)
     shutil.copy2(binary_directory / "libCCProcessSupport.dylib",
                  contents / "Helpers/python/lib/libCCProcessSupport.dylib")
@@ -685,6 +711,7 @@ def build(lock, offline=False):
         "schema": 1, "development_only": True, "signing": "NOT performed by these scripts",
         "release_gate": "NOT PASSED", "application_license": "requires separate confirmation",
         "lock": lock, "toolchain": toolchain, "runtime_license_coverage": coverage,
+        "application": application_metadata(info, lock),
         "resource_hashes": resource_hashes,
         "excluded_runtime_members": excluded, "certificate_sha256": hashlib.sha256(ca).hexdigest(),
         "certificate_source": lock["assets"]["certifi"]["url"],
@@ -702,7 +729,10 @@ def main(argv=None):
     parser.add_argument("command", choices=("inspect", "build", "verify"))
     parser.add_argument("--offline", action="store_true", help="require verified pre-downloaded assets")
     parser.add_argument("--development", action="store_true", help="acknowledge non-release build")
+    parser.add_argument("--build-number", help="positive Mac build number; CI uses this workflow's run number")
     args = parser.parse_args(argv)
+    if args.build_number is not None and args.command != "build":
+        parser.error("--build-number is only valid for a new build")
     try:
         lock = load_lock()
         if args.command == "inspect":
@@ -716,7 +746,7 @@ def main(argv=None):
             print("No runtime installed/executed. Report: tools/macos/.staging/inspection.json")
         elif args.command == "build":
             need(args.development, "build requires --development; this is not a release tool")
-            build(lock, args.offline)
+            build(lock, args.offline, args.build_number)
         else:
             environment, _ = require_macos()
             need(not BUILD.is_symlink(), "build directory cannot be a symlink")

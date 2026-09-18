@@ -1077,6 +1077,19 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 不需要为了此功能改动CLI/账号或恢复默认。实际注销/重登录测试属于可选实机验收，
 先保存其他应用中的工作；不能用普通退出再打开冒充系统登录启动。
 
+### Mac版本基础（后续源码，尚未进入当前推荐包）
+
+Mac营销版本由`macos/Resources/Info.plist`独立维护，不复用Windows版本。
+新源码显示名为CC Translate、版本0.1.0；bundle identifier和现有数据位置保持不变。
+新构包命令`python3 tools/macos/bundle.py build --development --build-number 146`
+可明确指定构建号；GitHub CI自动传当前workflow的`github.run_number`，不要求用户提供。
+同一run重试沿用构建号；本地不传参数时使用Info模板的开发构建号，不据此发布更新。
+构建后的Info与source-manifest的application字段保持一致；验证命令不能修改构建号。
+新包的关于界面直接显示这些实际值，不额外启动CLI、连接网络或读取账号。
+保留当前开发App/zip文件名与非Release标记；尚未接入Sparkle、发布feed或签名更新，
+未来正式更新渠道必须维护独立递增序列，不能将本地模板构建或重置的workflow序列当成升级包。
+8项新增离线契约及bundle/runtime80项已通过，仍需该源码完整Mac验证；当前推荐下载不变。
+
 ### Claude服务（当前开发包已提供）
 
 f9781b7 / run35358487419已实际watch exit0、3jobs/42steps全成功；
