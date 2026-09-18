@@ -37,7 +37,8 @@ PROVIDER_CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 PROVIDER_CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 PROVIDER_CATALOG_FILES = ("codex_catalog.py",)
 PROVIDER_NATIVE_FILES = ("codex_cli.py", "codex_jsonl.py", "codex_appserver.py",
-                         "codex_darwin.py", "darwin_rpc.py", "darwin_print.py")
+                         "codex_darwin.py", "darwin_rpc.py", "darwin_print.py",
+                         "claude_jsonl.py", "claude_darwin.py")
 PROVIDER_CORE_FILES = (PROVIDER_CONTRACT_FILES + PROVIDER_CONFIG_FILES
                        + PROVIDER_CATALOG_FILES + PROVIDER_NATIVE_FILES)
 XCODE = Path("/Applications/Xcode_16.4.app/Contents/Developer")

@@ -112,6 +112,31 @@ class TestDarwinPrintContract(unittest.TestCase):
         self.owner.terminate.assert_called_once_with()
         self.assert_closed()
 
+    def test_explicit_input_budget_does_not_expand_the_stdout_stderr_budget(self):
+        data = b"x" * 100
+        self.run_io(data=data, max_bytes=16, max_input_bytes=100)
+        self.assertEqual(self.written, data)
+        self.assertEqual(self.lines, ["answer"])
+        self.assert_closed()
+
+    def test_explicit_input_budget_rejects_oversize_before_allocating(self):
+        self.assert_code("probe_input_limit", data=b"request", max_input_bytes=6)
+        self.factory.assert_not_called()
+        self.selector_factory.assert_not_called()
+
+    def test_invalid_explicit_input_budget_does_not_allocate(self):
+        for value in (False, 0, -1, 1.5, "100"):
+            self.assert_code("probe_invalid_input", max_input_bytes=value)
+        self.factory.assert_not_called()
+
+    def test_small_output_budget_is_still_enforced_with_large_input_allowance(self):
+        self.chunks[12] = deque([b"PRIVATE" * 100, b""])
+        self.assert_code("probe_output_limit", data=b"x" * 100,
+                         max_bytes=16, max_input_bytes=100)
+        self.assertEqual(self.lines, ["answer"])
+        self.os_write.assert_not_called()
+        self.assert_closed()
+
     def test_utf8_split_across_reads_blank_lines_and_final_line_without_lf(self):
         self.chunks[11] = deque([b"\xe4", b"\xb8", b"\xad\n\nlast", b""])
         self.run_io()

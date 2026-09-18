@@ -9,13 +9,17 @@ from .darwin_process import OwnedProcess, ProcessError, check_cancel, close_sele
 
 
 def stream_output(args, env, work_dir, data, on_line, *, cancel_event, timeout,
-                  max_bytes=8 * 1024 * 1024, on_write=None):
+                  max_bytes=8 * 1024 * 1024, on_write=None, max_input_bytes=None):
     """Drain both outputs while writing; success requires EOF and a zero exit."""
     if (type(data) is not bytes or type(max_bytes) is not int or max_bytes < 1
             or type(timeout) not in (int, float) or not math.isfinite(timeout)
             or not callable(on_line) or on_write is not None and not callable(on_write)):
         raise ProcessError("probe_invalid_input")
-    if len(data) > max_bytes:
+    if max_input_bytes is None:
+        max_input_bytes = max_bytes
+    if type(max_input_bytes) is not int or max_input_bytes < 1:
+        raise ProcessError("probe_invalid_input")
+    if len(data) > max_input_bytes:
         raise ProcessError("probe_input_limit")
     check_cancel(cancel_event)
     if timeout <= 0:

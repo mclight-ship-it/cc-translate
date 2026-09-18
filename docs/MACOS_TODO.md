@@ -635,13 +635,31 @@ macOS14小报告artifact10546254025及26小报告10546253874已分别下载，�
 UTF-8跨块、末行无换行、短写、双向背压、输出总预算、取消、超时、父进程早退及后代持有管道分别处理。
 原探针与Codex RPC默认管道选择不变，不改变现有翻译路径、不启动Claude或读账号。
 新增19项便携契约与8项真正随包Darwin进程测试，已纳入portable/process/core与打包来源校验。
-Windows目标联合279项/15.711秒通过；8项Darwin用例仍待此新源码Mac实际执行，
-不能把8f旧包绿灯或合成进程传输当成Claude产品可用。
+传输源码6fc365a正常hook1869项/107.674秒通过。首run35346315628实际watch exit1：
+811原生/23既定构包前skip/零失败、134PNG及App构建通过，
+随后既有原生URLSession词典下载返回invalidResponse，未记录HTTP状态，不猜具体原因。
+后置process/core/Foundation及App发布均跳过，不能写成8项Darwin已通过。
+保留失败日志，未改测试或生产下载行为，显式重跑同源码run35347450089；结果另行记录。
 
 官方资料明确`--bare`不读取OAuth或系统钥匙串，不能为了隔离启动环境而迫使现有订阅用户改用API key。
-`--tools ""`只关闭内建工具，不覆盖MCP；完整接入还需按官方契约处理工具、设置与图片输入。
-现有Windows facade、warm实现及图片`@path`注释不能替代原生协议验证。
-Claude provider、bootstrap、模型草稿/设置、请求快照/缓存、文字/OCR/结果动作/图片及原生选择仍待接线；
+本轮已继续实现独立`DarwinClaudeProvider`与Claude JSONL解释器：
+显式绑定CLI与环境，不启动版本/账号探针，不fallback或自动重放；文本及图片均通过stdin JSON发送。
+按官方streaming-input契约使用`image/png` base64块，不用Windows图片`@path`假设；
+大图输入预算独立于stdout/stderr合计8MiB预算，复用本应用80MiB源图上限。
+流式文本和完成块不重复追加，忽略未知通知/扩展元数据，不要求某个版本或固定session/usage字段；
+最终仍要求成功result和实际退出码0，错误、半段文字和工具记录不变成成功译文。
+`--tools ""`配合MCP拒绝/显式空MCP配置，关闭非托管设置来源及普通hooks/skills，
+不使用bare或权限绕过，保留显式HOME下既有认证；不声称绕过或压制组织托管策略。
+取消、shutdown、超时包含排队/图片准备时间，首写记录submitted，cleanup失败使该实例不能继续提交。
+原Codex路径复用提取后的同一operation/path helper，原行为和错误码保持。
+
+新增17项输出契约、19项provider契约、4项输入预算契约和9项真实Darwin合成provider进程用例，
+接入打包白名单与bundle来源校验。Windows目标联合455项/21.309秒通过；
+首次目标214项中的1项Windows文本模式读PNG失败已改为二进制读，未删断言。
+新源码预计portable966/process249/core728，真实Mac尚待执行，不用旧源码结果替代。
+这仍不是Claude产品可用：bootstrap、模型草稿/设置、请求快照/缓存、
+文字/OCR/结果动作/图片的业务接线及原生选择仍在后续；
+Claude目录无已验契约时明确不可用，不能误用Codex目录。
 不增加精确版本锁定，不要求用户现在重新登录或运行诊断。
 
 <a id="native-text-scale-checkpoint"></a>

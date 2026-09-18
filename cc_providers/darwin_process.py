@@ -14,6 +14,41 @@ class ProcessError(RuntimeError):
     pass
 
 
+def absolute_path(value):
+    value = os.fspath(value)
+    if type(value) is not str or not value or "\0" in value or not os.path.isabs(value):
+        raise ValueError("absolute_provider_path_required")
+    return value
+
+
+class ProviderOperation:
+    def __init__(self, timeout, closing, cancel_event, preempt=None, *, closing_code="appserver_shutdown"):
+        self.deadline = time.monotonic() + timeout
+        self.closing = closing
+        self.cancel = cancel_event
+        self.preempt = preempt
+        self.closing_code = closing_code
+        self.submitted = False
+        self.interrupt_deadline = None
+
+    def code(self):
+        if self.closing.is_set():
+            return self.closing_code
+        if (self.cancel is not None and self.cancel.is_set()) or (
+                self.preempt is not None and self.preempt.is_set()):
+            return "cancelled"
+        if time.monotonic() >= self.deadline:
+            return "timeout"
+        return None
+
+    def is_set(self):
+        return self.code() is not None
+
+    def wrote_turn(self):
+        # A partial write cannot prove the remote turn did not start.
+        self.submitted = True
+
+
 def close_selector(selector):
     try:
         selector.close()

@@ -1064,8 +1064,12 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 
 ### Claude服务（后续开发，当前包未提供）
 
-后续Claude接入正在增加独立的一次性Darwin stdin/EOF/stdout/stderr传输，并复用已有进程组owner。
-这是开发中的底层能力，尚未提供Claude设置入口或真实请求；不影响当前8f898aa推荐包。
+后续Claude已实现独立的一次性Darwin传输、provider及JSONL解释器，支持文本与base64图片，
+并复用已有进程组owner；不做版本锁定或预先账号诊断，也不使用会跳过OAuth的bare模式。
+本轮455项目标回归通过，新增真实Darwin合成用例尚待新源码Mac验证。
+传输前置6fc首run的811原生回归与134PNG通过，但后续词典真实下载返回invalidResponse；
+失败原日志保留，正按原源码重跑，没有把跳过的process/core当通过。
+这是开发中的后端，尚未提供Claude设置入口或业务请求接线；不影响当前8f898aa推荐包。
 进度与验证边界见[Claude服务检查点](MACOS_TODO.md#native-claude-provider-checkpoint)。
 
 <a id="native-text-scale"></a>

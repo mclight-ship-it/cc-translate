@@ -16,42 +16,10 @@ from .codex_appserver import (
 )
 from .codex_catalog import CodexModelCatalog, CatalogError, CatalogProbeError, parse_codex_version
 from .codex_config import child_environment, CodexConfigError
-from .darwin_process import capture_output, ProcessError
+from .darwin_process import (
+    capture_output, ProcessError, ProviderOperation as _Operation, absolute_path as _absolute,
+)
 from .darwin_rpc import RpcProcess, RpcError
-
-
-def _absolute(value):
-    value = os.fspath(value)
-    if type(value) is not str or not value or "\0" in value or not os.path.isabs(value):
-        raise ValueError("absolute_provider_path_required")
-    return value
-
-
-class _Operation:
-    def __init__(self, timeout, closing, cancel_event, preempt=None):
-        self.deadline = time.monotonic() + timeout
-        self.closing = closing
-        self.cancel = cancel_event
-        self.preempt = preempt
-        self.submitted = False
-        self.interrupt_deadline = None
-
-    def code(self):
-        if self.closing.is_set():
-            return "appserver_shutdown"
-        if (self.cancel is not None and self.cancel.is_set()) or (
-                self.preempt is not None and self.preempt.is_set()):
-            return "cancelled"
-        if time.monotonic() >= self.deadline:
-            return "timeout"
-        return None
-
-    def is_set(self):
-        return self.code() is not None
-
-    def wrote_turn(self):
-        # A partial write cannot prove the remote turn did not start.
-        self.submitted = True
 
 
 def _json_pairs(pairs):
