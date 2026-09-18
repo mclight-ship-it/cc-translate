@@ -52,8 +52,8 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[f9781b7：完整Claude服务、原生选择及此前全部界面功能](#native-claude-provider-checkpoint)，
-已完成完整App同包三系统验收；接下来进入P4登录项等分发生命周期，不把移植整体标为完成。
+最新推荐包现为[77388c0：原生登录项及此前完整Claude与界面功能](#native-login-item-checkpoint)，
+已完成完整App同包三系统验收；继续P4更新/分发/卸载，不把移植整体标为完成。
 
 <a id="native-product-preferences-checkpoint"></a>
 
@@ -2680,12 +2680,34 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
 - [x] 主动纯文本粘贴、原生设置/独占快捷键/本应用编辑命令；2f371fa同包三系统及46项私有剪贴板/生命周期验证见上。
 - [ ] 真实外部编辑器、多格式/跨设备Universal Clipboard、访问ask/allow/deny及更新后权限保持验收；不以合成数据代替。
 
-## P4 — 下一阶段：分发生命周期（可行性已在 P0 提前检查）
-- 当前首项源码：原生登录项使用`SMAppService.mainApp`的实际状态，不用本地偏好伪装已开启。
+<a id="native-login-item-checkpoint"></a>
+
+## P4 — 进行中：分发生命周期（可行性已在 P0 提前检查）
+
+### 已验证：原生登录项
+
+源码`77388c0e478c39789f437cf2879858982e621d8c` /
+[run35368988704](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704)
+已实际watch exit0，attempt1的3jobs/42steps全部success，完整App独立审计exit0。
+正常privacy/full hook1925项/91.312s通过；Swift编译33.99s；
+845原生方法（822通过、23构包前可选skip、零失败）/672.889s，13项新增方法逐项通过，140PNG完整。
+原3轮失败的中英控件流程已完整通过，原失败日志保留在下方，不再是当前阻断。
+producer982portable/17.175s、253process/535.952s、744core/5.973s；
+同一个App在15.7.9/14.8.9/26.6.2各253process/744core/21后置Foundation零失败/skip，
+About/Vision/主动粘贴/关联复制/实际只读worker及证书HTTPS/SQLite/取消/EOF/不可变/临时清理继续通过。
+[完整App10558373793](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704/artifacts/10558373793)，
+内层19,639,311 bytes，SHA-256`56fce3f79592854b3b0764f9cbcd8972403dd055c1848fa430208d544d29a974`，
+tree`cdd052cbb99a7ba934def2603f47f4b12de3c59ac903e85e3c1e9af94102100a`；
+693库存/83资源/55源码路径（54唯一）/6实际arm64 Mach-O/19运行时许可。
+完整App只下载一次，最终核对bytes/SHA后只清理该内层ZIP并确认不存在；消费者仅取小报告。
+当前推荐已升级到此包；实际系统批准、下一次登录启动和升级后的登录项保持另待真人验证，
+本轮没有在CI注册真实登录项，没有真实账号/模型调用，也不是Release或签名公证。
+
+- 原生登录项使用`SMAppService.mainApp`的实际状态，不用本地偏好伪装已开启。
   只在用户打开设置/返回可见设置时读取；构造、普通启动及后台激活不自动注册或读取。
   明确开启/关闭、系统批准入口、移除待批准项、异步关闭期间防重复及错误回读已接入真实设置。
   待批准不是已开启，不额外要求CLI、账号或付费签名；系统错误仍如实展示，不修改系统保护。
-  新13项状态/实际原生菜单与双语控件/默认恢复隔离/渲染用例和3张图待本源码Mac验证；
+  新13项状态/实际原生菜单与双语控件/默认恢复隔离/渲染用例和3张图已通过本源码Mac验证；
   未在CI执行真实注册或改变登录项。真实登录后启动、批准和更新后的状态保持仍待实机。
   首轮`07fc4da` / run`35363951794`实际Swift编译通过（41.45s），844方法/23构包前可选skip；
   仅登录项双语交互方法在英文“Open Login Items…”定位时失败（2断言含1unexpected，562.486s）。
@@ -2705,7 +2727,8 @@ probe_files_cleaned、显式/EOF 取消及真实 HTTPS 证书验证均通过；�
   明确拒绝错误单词、单词前缀和不同标点，新增合计13方法/全套845；仍需本源码真实执行。
 - [ ] 免费分发完整性/资源/归档检查、最小权限和干净用户 Gatekeeper 首开；不全局关闭保护。
 - [ ] 可选付费增强（未选择、未通过）：Developer ID、公证/stapling；不得作为购买要求。
-- [ ] SMAppService 实际状态、独立 Mac 资产/版本与 Sparkle 更新签名。
+- [x] SMAppService 实际状态与原生设置、明确开关/批准入口及自动化；真实登录启动另验。
+- [ ] 独立 Mac 资产/版本与 Sparkle 更新签名。
 - [ ] N→N+1 更新保护数据/权限；失败/取消/重启；不在 bundle git pull。
 - [ ] 卸载可选清理自身数据，不删除共享 CLI/账号/Node。
 - [ ] 应用自身许可确认；Python/依赖/词典/更新框架完整许可齐全。

@@ -4,16 +4,17 @@
 
 ## 正在开发：原生产品已接通，继续 P4 分发生命周期
 
-**最新已核验包：f9781b7 / [run35358487419](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419)。**
+**最新已核验包：77388c0 / [run35368988704](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704)。**
 图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
 另已补齐Claude完整后端、原生选择、独立路径/模型草稿、切换与恢复默认。
-真实watch0、3jobs/42steps全通过；原生832项（23构包前可选skip、零失败）、137PNG已核验，
+真实watch0、3jobs/42steps全通过；原生845项（23构包前可选skip、零失败）、140PNG已核验，
 同App15/14/26各253process/744core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-claude-provider-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
-继续登录项、更新/分发/卸载及P5–P6；真实账号、TCC/IME/VoiceOver仍另验，**整个移植尚未完成**。
-P4首项已开始接入SMAppService实际登录状态与原生设置，不自动注册、不以本地开关假装系统批准；
-新增13项原生方法与3张图仍待自己的Mac验证，当前f9781b7推荐包尚不包含此后续源码。
+[完整审计](MACOS_TODO.md#native-login-item-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
+继续更新/分发/卸载及P5–P6；真实账号、TCC/IME/VoiceOver仍另验，**整个移植尚未完成**。
+P4首项已接入SMAppService实际登录状态与原生设置，不自动注册、不以本地开关假装系统批准；
+新增13项原生方法与3张图已通过自己的Mac验证，现已包含在当前推荐包。
+系统批准、下一次登录启动和升级后保持仍待实机，不用合成服务冒充真实登录项更改。
 [双击复制间隔](MACOS_TODO.md#native-copy-interval-checkpoint)
 已接入现有配置和实际监听，新增25项测试、2张渲染，现已完成验收并包含于推荐包。
 ab83b48首轮已编译并通过24项新增测试，仅剩禁用按钮的测试OCR定位失败；

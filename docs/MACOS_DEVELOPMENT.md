@@ -1062,15 +1062,20 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 917已实际watch exit1，
 发布门禁阻止归档和App发布，未用其907portable/232process/669core/21Foundation通过替代原生失败。
 
-### 登录项（P4源码实施中，尚未进入推荐包）
+### 登录项（已进入当前推荐包）
 
 使用Apple的`SMAppService.mainApp`，不写LaunchAgent文件、不把Windows启动配置迁移为Mac许可。
 设置底部显示系统实际状态，提供明确的“登录时启动”、刷新、打开系统登录项及移除待批准项。
 仅enabled显示已开启；requiresApproval仍显示未开启，重复开启转到系统设置而非重复注册。
 关闭等待异步系统回调并回读，失败保留系统状态与安全错误码，不自动重试。
 普通启动不读取或注册登录项；打开设置和从系统设置返回可见窗口时才刷新。
-恢复翻译默认设置不改变系统登录项。13项新增原生测试及3张图仍待该源码Mac验证，
+恢复翻译默认设置不改变系统登录项。13项新增原生测试及3张图已通过77388c0自己的Mac验证，
 测试使用注入的系统服务，不在CI真实注册，不把合成交互当实际重登录或系统批准验收。
+同包三系统与完整App核验见[登录项检查点](MACOS_TODO.md#native-login-item-checkpoint)。
+在Settings底部开启“登录时启动”；如果系统要求批准，点“打开登录项设置…”由你允许，
+返回设置后会刷新实际状态。只有系统enabled才显示已开启；关闭可移除注册或待批准项。
+不需要为了此功能改动CLI/账号或恢复默认。实际注销/重登录测试属于可选实机验收，
+先保存其他应用中的工作；不能用普通退出再打开冒充系统登录启动。
 
 ### Claude服务（当前开发包已提供）
 
@@ -1254,6 +1259,7 @@ fc089e6的早期原生日志已证实来源清空通过，但其余9方法仍失
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
 当前补齐Claude完整后端与原生服务选择、两套CLI路径/模型草稿、切换与恢复默认；
+新加入系统管理的“登录时启动”及批准/关闭/刷新入口；
 保留明确图片发送、稳定词典来源按钮、关联复制回退、剪贴板主线程隔离，
 以及字号、长文摘要、历史保留条数、输入上限、结果窗口位置、双击复制间隔、截图全局快捷键和恢复默认设置；保留明确刷新模型目录、设置/主窗口/截图共享选择、
 主动纯文本粘贴、
@@ -1261,24 +1267,24 @@ fc089e6的早期原生日志已证实来源清空通过，但其余9方法仍失
 保留自定义模型设置、一次性模型迁移修复和中英混合OCR识别改进，
 保留原生关于/第三方许可、区域截图、可编辑预览和明确文字翻译、
 全库历史搜索、本地词典下载/开关/删除/来源许可与六种结果动作。
-producer执行832个原生测试（809通过、23构包前可选skip、零失败）并保留137张PNG，
+producer执行845个原生测试（822通过、23构包前可选skip、零失败）并保留140张PNG，
 同一个App在15.7.9/14.8.9/26.6.2各通过253进程/744核心/21后置Foundation及独立About1；
 三个系统的生产Vision4、主动粘贴46、关联复制读取7和实际App只读worker11也实际通过。
 完整App已独立字节核验；不将这些测试冒充全局快捷键或真实目标编辑器的人工验收。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`f9781b7aa92414ca1fb37877976b887876ce6a35`；
-  [run35358487419](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419/artifacts/10554138991)；
-  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35358487419/artifacts/10553691943)。
-- 内层`CCTranslateMac-P0.zip`：19,624,403 bytes；
-  SHA-256 `fa63ffa3770e3cc7a25cb0b9ed51d3b64347a390958fe87ec8cc7ede15398b16`。
-  artifact保留到2026-09-25T15:10:16Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`77388c0e478c39789f437cf2879858982e621d8c`；
+  [run35368988704](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704/artifacts/10558373793)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35368988704/artifacts/10557811455)。
+- 内层`CCTranslateMac-P0.zip`：19,639,311 bytes；
+  SHA-256 `56fce3f79592854b3b0764f9cbcd8972403dd055c1848fa430208d544d29a974`。
+  artifact保留到2026-09-25T16:58:47Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
   本包已有正式翻译、截图文字翻译、结果动作、设置、模型目录、历史、本地词典、纯文本粘贴及关于/许可界面；
-  结果位置、双击间隔、截图全局热键开关、恢复默认及完整Claude服务已包含；P4–P6仍在继续。
+  结果位置、双击间隔、截图全局热键开关、恢复默认、完整Claude服务及系统登录项已包含；P4–P6仍在继续。
   打包脚本没有Developer ID签名/公证/完整bundle seal；不要把Mach-O链接器签名视作发行签名。
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
