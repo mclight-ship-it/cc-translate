@@ -5,7 +5,7 @@ import CCTranslateSupport
 @MainActor
 final class CaptureModel: ObservableObject {
     enum Phase: Equatable { case idle, capturing, selecting, recognizing, ready, empty, failed, cancelled }
-    private enum Notice { case none, textRequired, overBudget, translationBusy }
+    private enum Notice { case none, textRequired, translationBusy, input(TextInputPreflight.Issue) }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var frames: [CapturedDisplayFrame] = []
@@ -46,8 +46,9 @@ final class CaptureModel: ObservableObject {
     }
     var canTranslate: Bool {
         preview != nil && !busy && phase != .selecting && !submitting &&
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 8192
+            TextInputPreflight.check(text, limit: nil, requireLimit: false) == nil
     }
+    func canTranslate(using model: ProbeModel) -> Bool { canTranslate && model.inputIssue(for: text) == nil }
     var canTranslateImage: Bool {
         preview != nil && screen.selectedRegion != nil && phase != .capturing &&
             phase != .selecting && phase != .cancelled && !submitting
@@ -146,13 +147,8 @@ final class CaptureModel: ObservableObject {
             objectWillChange.send()
             return
         }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            notice = .textRequired
-            objectWillChange.send()
-            return
-        }
-        guard text.utf8.count <= 8192 else {
-            notice = .overBudget
+        if let issue = model.inputIssue(for: text) {
+            notice = .input(issue)
             objectWillChange.send()
             return
         }
@@ -264,8 +260,7 @@ final class CaptureModel: ObservableObject {
     func message(using model: ProbeModel) -> String {
         switch notice {
         case .textRequired: return model.text("Review or enter some text before translating.", "请确认或输入文字后再翻译。")
-        case .overBudget: return model.text("Text exceeds 8,192 UTF-8 bytes. Edit it; nothing was truncated or sent.",
-                                            "文字超过 8,192 UTF-8 字节。请编辑文字；未截断或发送。")
+        case .input(let issue): return issue.message(using: model)
         case .translationBusy: return model.text("Finish or cancel the current translation first.", "请先完成或取消当前翻译。")
         case .none: break
         }

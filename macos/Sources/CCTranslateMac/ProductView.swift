@@ -3,6 +3,33 @@ import SwiftUI
 import CCTranslateSupport
 
 @MainActor
+struct TranslationInputBudgetView: View {
+    @ObservedObject var model: ProbeModel
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.inputLimit.saved.map {
+                model.text("\(text.unicodeScalars.count) / \($0) Unicode code points",
+                           "\(text.unicodeScalars.count) / \($0) Unicode 码点")
+            } ?? model.text("\(text.unicodeScalars.count) Unicode code points · Saved limit not loaded",
+                            "\(text.unicodeScalars.count) 个 Unicode 码点 · 尚未读取已保存上限"))
+                .accessibilityIdentifier("input-code-point-count")
+            Text(model.text("\(text.utf8.count) / 8,192 UTF-8 bytes",
+                            "\(text.utf8.count) / 8,192 UTF-8 字节"))
+                .accessibilityIdentifier("input-byte-count")
+            if let issue = model.inputIssue(for: text), issue != .empty {
+                Label(issue.message(using: model), systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("input-length-error")
+            }
+        }
+        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+@MainActor
 struct TranslatorView: View {
     @ObservedObject var model: ProbeModel
     var showHistory: () -> Void
@@ -11,10 +38,8 @@ struct TranslatorView: View {
     @State private var editorFocused = false
 
     private var busy: Bool { model.preparing || model.active }
-    private var byteCount: Int { model.input.utf8.count }
     private var canTranslate: Bool {
-        !busy && byteCount <= 8192 &&
-        !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !busy && model.inputIssue(for: model.input) == nil
     }
 
     var body: some View {
@@ -124,19 +149,11 @@ struct TranslatorView: View {
                     .allowsHitTesting(false)
             }
             .frame(minHeight: 180)
-            HStack(alignment: .firstTextBaseline) {
-                Text(model.text("\(byteCount) / 8,192 UTF-8 bytes",
-                                "\(byteCount) / 8,192 UTF-8 字节"))
-                    .font(.caption).monospacedDigit()
-                    .foregroundStyle(byteCount > 8192 ? Color.red : Color.secondary)
-                Spacer()
+            HStack(alignment: .top) {
+                TranslationInputBudgetView(model: model, text: model.input)
+                Spacer(minLength: 0)
                 Text("⌘ ↩").font(.caption).foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-            }
-            if byteCount > 8192 {
-                Label(model.text("Shorten the text to translate.", "请缩短文字后再翻译。"),
-                      systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.red)
             }
             HStack {
                 Text(model.text("Uses your Codex CLI and account.", "使用你的 Codex CLI 和账号。"))
@@ -153,6 +170,7 @@ struct TranslatorView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .disabled(!canTranslate)
+                    .accessibilityIdentifier("translate-input-text")
                 }
             }
         }
@@ -168,8 +186,7 @@ struct TranslationResultView: View {
 
     private var busy: Bool { model.preparing || model.active }
     private var canRetranslate: Bool {
-        !busy && model.resultHasOriginalInput && !model.output.isEmpty && model.resultInput.utf8.count <= 8192 &&
-        !model.resultInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !busy && model.resultHasOriginalInput && !model.output.isEmpty && model.inputIssue(for: model.resultInput) == nil
     }
 
     var body: some View {
@@ -624,6 +641,82 @@ struct HistoryTranslationDetail: View {
 }
 
 @MainActor
+struct InputLimitSettingsView: View {
+    @ObservedObject var model: ProbeModel
+    private var preference: IntegerPreference { model.inputLimit }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(preference.saved.map {
+                model.text("Saved input limit: \($0) Unicode code points", "已保存输入上限：\($0) 个 Unicode 码点")
+            } ?? model.text("Saved input limit: Not confirmed", "已保存输入上限：尚未确认"))
+                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline) {
+                TextField(model.text("Input limit", "输入上限"), text: Binding(
+                    get: { preference.draft }, set: { model.editInputLimit($0) }
+                ))
+                .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                .disabled(!model.canEditInputLimit)
+                .accessibilityIdentifier("input-limit-input")
+                .accessibilityLabel(model.text("Maximum input Unicode code points", "输入 Unicode 码点上限"))
+                Button(model.text("Apply input limit", "应用输入上限")) { model.applyInputLimit() }
+                    .disabled(!model.canEditInputLimit || preference.proposed == nil ||
+                              preference.proposed == preference.saved)
+                    .accessibilityIdentifier("apply-input-limit")
+            }
+            Text(model.text("Enter a positive whole number, up to \(ConfigurationDocument.maxNumber).",
+                            "请输入不超过 \(ConfigurationDocument.maxNumber) 的正整数。"))
+                .font(.caption).foregroundStyle(.secondary)
+            if let saved = preference.saved, !preference.supported.contains(saved) {
+                Label(model.text("The saved value is invalid for text translation. It has not been changed; enter a positive value to correct it.",
+                                 "已保存的值不适用于文字翻译，尚未改动。请输入正整数并明确保存以纠正。"),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            Text(model.text("Counts Unicode code points, including spaces and line breaks; combining marks count separately. Typed, selected, OCR and dictionary text must also fit 8192 UTF-8 bytes. Raising this setting does not increase that byte budget. Text is never shortened automatically.",
+                            "按 Unicode 码点计数，空格、换行和组合标记均计入。输入、选中、OCR 和词典文字还必须满足 8192 个 UTF-8 字节上限。提高此设置不会增加字节预算，也不会自动缩短原文。"))
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(model.text("Saving does not cancel or replay a submitted request or change saved history. A request uses the setting when the helper captures its configuration. Image translation and result actions keep their own limits.",
+                            "保存不会取消或重放已提交请求，也不更改已保存的历史。请求以助手捕获配置时的设置为准。图片翻译和结果操作沿用各自限制。"))
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !message.isEmpty {
+                Text(message).font(.callout).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .failed = preference.phase {
+                Button(model.text("Reload saved input limit", "重新读取已保存输入上限")) { model.reloadInputLimit() }
+                    .disabled(!model.canReloadInputLimit)
+                    .accessibilityIdentifier("reload-input-limit")
+            }
+        }
+    }
+
+    private var message: String {
+        switch preference.phase {
+        case .idle: return ""
+        case .invalidInput:
+            return model.text("Enter a positive whole number within the range above. Nothing was saved.",
+                              "请输入上述范围内的正整数，尚未保存。")
+        case .saving:
+            return model.text("Saving input limit… The saved limit above is the last confirmed value.",
+                              "正在保存输入上限… 上方显示上次确认的已保存值。")
+        case .readingBack:
+            return model.text("Reading back the saved input limit…", "正在回读已保存输入上限…")
+        case .saved:
+            return model.text("Input limit saved and read back.", "输入上限已保存并回读确认。")
+        case .differentReadback:
+            return model.text("The saved limit differs from your entry. The actual value is shown above; your entry is retained. No write was retried.",
+                              "已保存上限与你的输入不同。上方显示实际回读值，并保留你的输入，未重试写入。")
+        case .failed(let code):
+            return model.text("Input limit could not be confirmed (\(code)). Reload the saved setting; no write was retried.",
+                              "无法确认输入上限（\(code)）。请重新读取已保存设置，未重试写入。")
+        }
+    }
+}
+
+@MainActor
 struct HistoryLimitSettingsView: View {
     @ObservedObject var model: ProbeModel
     private enum Control: Hashable { case input, confirmation }
@@ -742,6 +835,11 @@ struct TranslationSettingsView: View {
                 }
             }
             translationSection
+            Section {
+                InputLimitSettingsView(model: model)
+            } header: {
+                Text(model.text("Input length", "输入长度"))
+            }
             Section {
                 HistoryLimitSettingsView(model: model)
             } header: {

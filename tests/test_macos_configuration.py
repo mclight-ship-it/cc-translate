@@ -149,6 +149,53 @@ class _ConfigurationDirectory(unittest.TestCase):
 
 
 class ConfigurationServiceTests(_ConfigurationDirectory):
+    def test_max_chars_legacy_positive_and_safe_integer_limits_roundtrip_without_clamping_or_other_changes(self):
+        self.session.open()
+        original = dict(self.session.perform({"operation": "config_load"})["config"])
+        self.assertEqual(original["max_chars"], 5000)
+        original["future"] = {"kept": ["e\u0301", False, "\r\n"]}
+        self.session.perform({"operation": "config_save", "config": original})
+        for limit in (1, 20000, 20001, MAX_CONFIG_NUMBER):
+            with self.subTest(limit=limit):
+                desired = original | {"max_chars": limit}
+                self.assertEqual(self.session.perform({"operation": "config_save", "config": desired}),
+                                 {"saved": True})
+                stored = json.loads(self.path.read_bytes())
+                self.assertEqual(stored, desired)
+                self.assertEqual(list(stored), list(original))
+                self.assertEqual({key: value for key, value in stored.items() if key != "max_chars"},
+                                 {key: value for key, value in original.items() if key != "max_chars"})
+                self.session.close()
+                self.session = configuration.ConfigurationSession(self.home, self.identity)
+                self.addCleanup(self.session.close)
+                self.session.open()
+                loaded = self.session.perform({"operation": "config_load"})["config"]
+                self.assertEqual(loaded, desired)
+                self.assertIs(type(loaded["max_chars"]), int)
+                self.assertEqual(json.loads(self.path.read_bytes()), desired)
+
+    def test_max_chars_invalid_save_and_legacy_file_fail_without_hidden_defaults_or_rewrite(self):
+        self.session.open()
+        valid = dict(self.session.perform({"operation": "config_load"})["config"])
+        self.session.perform({"operation": "config_save", "config": valid})
+        before = self.path.read_bytes()
+        for value in ("bad", None, [], {}, MAX_CONFIG_NUMBER + 1, str(MAX_CONFIG_NUMBER + 1)):
+            with self.subTest(value=value):
+                invalid = valid | {"max_chars": value}
+                with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+                    self.session.perform({"operation": "config_save", "config": invalid})
+                self.assertEqual(self.path.read_bytes(), before)
+                legacy = json.dumps(invalid, ensure_ascii=False).encode("utf-8")
+                self.path.write_bytes(legacy)
+                with self.assertRaisesRegex(configuration.ConfigurationError, "^invalid_config$"):
+                    self.session.perform({"operation": "config_load"})
+                self.assertEqual(self.path.read_bytes(), legacy)
+                self.assertEqual(list(self.directory.glob(".tmp_*.json")), [])
+                self.assertEqual(self.session.perform({"operation": "config_save", "config": valid}),
+                                 {"saved": True})
+                self.assertEqual(self.session.perform({"operation": "config_load"})["config"], valid)
+                self.assertEqual(self.path.read_bytes(), before)
+
     def test_exact_raw_migration_compact_and_disk_limits_remain_readable(self):
         def stored_bytes(value):
             return json.dumps(value, ensure_ascii=False, indent=2).replace("\n", os.linesep).encode()

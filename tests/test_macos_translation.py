@@ -671,6 +671,161 @@ class _TranslationDirectory(_ConfigurationDirectory):
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
 
 
+class MaxCharsTranslationTests(_TranslationDirectory):
+    def test_default_limit_and_raw_unicode_scalars_are_enforced_without_trimming_or_truncation(self):
+        cases = (
+            ("a" * 5000, 5000, True), ("a" * 5001, 5000, False),
+            ("\u00e9", 1, True), ("e\u0301", 1, False), ("e\u0301", 2, True),
+            ("A\r\nB", 3, False), ("A\r\nB", 4, True),
+            (" x ", 1, False), (" x ", 3, True), ("\U0001f642", 1, True),
+            ("\U0001f469\u200d\U0001f4bb", 2, False), ("\U0001f469\u200d\U0001f4bb", 3, True),
+        )
+        self.assertEqual(self.session.perform({"operation": "config_load"})["config"][CFG.MAX_CHARS], 5000)
+        for origin in ("text", "selection", "ocr"):
+            for index, (text, limit, valid) in enumerate(cases):
+                with self.subTest(origin=origin, case=index):
+                    self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: limit}})
+                    count = len(self.provider.requests)
+                    id_ = origin + str(index)
+                    self.translate(id_, text=text, origin=origin, use_cache=False, record_history=False)
+                    self.assertTrue(self.stdout.terminal(id_))
+                    terminal = self.stdout.result(id_)
+                    if valid:
+                        self.assertEqual(terminal["type"], "completed")
+                        self.assertEqual(terminal["payload"]["history"], "disabled")
+                        self.assertEqual(self.provider.requests[-1].user_text, text)
+                        self.assertEqual(self.provider.requests[-1].user_text.encode("utf-8"), text.encode("utf-8"))
+                    else:
+                        self.assertEqual(terminal["type"], "failed")
+                        self.assertEqual(terminal["payload"], {
+                            "code": "invalid_translation_settings", "submitted": False})
+                    self.assertEqual(len(self.provider.requests), count + int(valid))
+        self.assertEqual(self.history(), [])
+
+    def test_raw_utf8_admission_budget_is_independent_of_a_large_saved_character_limit(self):
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: 20001}})
+        for index, (text, valid) in enumerate((
+                ("a" * 8192, True), ("a" * 8193, False),
+                ("\u4e2d" * 2730, True), ("\u4e2d" * 2731, False), ("\0" * 8192, True))):
+            with self.subTest(case=index):
+                id_ = "bytes" + str(index)
+                wire = encode_frame(message(id_, "request", **request(
+                    text=text, use_cache=False, record_history=False)))
+                self.assertLessEqual(len(wire), MAX_FRAME_BYTES)
+                count = len(self.provider.requests)
+                self.server._handle(decode_frame(wire))
+                self.assertTrue(self.stdout.terminal(id_))
+                terminal = self.stdout.result(id_)
+                if valid:
+                    self.assertEqual(terminal["type"], "completed")
+                    self.assertEqual(self.provider.requests[-1].user_text, text)
+                else:
+                    self.assertEqual((terminal["type"], terminal["seq"], terminal["payload"]),
+                                     ("failed", 0, {"code": "invalid_translation"}))
+                self.assertEqual(len(self.provider.requests), count + int(valid))
+        self.assertEqual(self.history(), [])
+
+    def test_zero_and_negative_limits_load_but_text_requires_explicit_correction(self):
+        for index, limit in enumerate((0, -7)):
+            with self.subTest(limit=limit):
+                self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: limit}})
+                self.assertEqual(self.session.perform({"operation": "config_load"})["config"][CFG.MAX_CHARS], limit)
+                before = self.path.read_bytes()
+                count = len(self.provider.requests)
+                id_ = "invalid" + str(index)
+                with patch.object(self.session._history, "find_cached",
+                                  side_effect=AssertionError("invalid max_chars reached cache")):
+                    self.translate(id_, record_history=False)
+                    self.assertTrue(self.stdout.terminal(id_))
+                self.assertEqual(self.stdout.result(id_)["payload"], {
+                    "code": "invalid_translation_settings", "submitted": False})
+                self.assertEqual(self.path.read_bytes(), before)
+                self.assertEqual(len(self.provider.requests), count)
+                self.session.perform({"operation": "config_save", "config": self.config})
+                self.assertEqual(len(self.provider.requests), count)
+                corrected = "corrected" + str(index)
+                self.translate(corrected, record_history=False)
+                self.assertTrue(self.stdout.terminal(corrected))
+                self.assertEqual(self.stdout.result(corrected)["type"], "completed")
+                self.assertEqual(len(self.provider.requests), count + 1)
+        self.assertEqual(self.history(), [])
+
+    def test_lower_limit_validates_before_cache_and_raise_restores_hit_with_identical_signature(self):
+        self.translate("original")
+        self.assertTrue(self.stdout.terminal("original"))
+        entries = self.history()
+        self.assertEqual(len(entries), 1)
+        path = self.directory / "history.json"
+        before = path.read_bytes()
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: len(TEXT) - 1}})
+        with patch.object(self.session._history, "find_cached", wraps=self.session._history.find_cached) as cache:
+            self.translate("lowered")
+            self.assertTrue(self.stdout.terminal("lowered"))
+            cache.assert_not_called()
+        self.assertEqual(self.stdout.result("lowered")["payload"], {
+            "code": "invalid_translation_settings", "submitted": False})
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(path.read_bytes(), before)
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: len(TEXT)}})
+        config = self.session.perform({"operation": "config_load"})["config"]
+        self.assertEqual(translation.snapshot_for_translation(config, request()).sig, entries[0]["sig"])
+        with patch.object(self.session._history, "find_cached", wraps=self.session._history.find_cached) as cache:
+            self.translate("raised")
+            self.assertTrue(self.stdout.terminal("raised"))
+            cache.assert_called_once_with(TEXT, entries[0]["kind"], entries[0]["sig"])
+        result = self.stdout.result("raised")["payload"]
+        self.assertEqual((result["cached"], result["submitted"], result["history"]), (True, False, "unchanged"))
+        self.assertEqual(result["text"], OUTPUT)
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_started_is_not_captured_and_later_setting_changes_cannot_mutate_a_captured_request(self):
+        entered, release = threading.Event(), threading.Event()
+        actual_capture = self.session._capture
+        def before_capture(payload):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError("synthetic pre-capture gate was not released")
+            return actual_capture(payload)
+        with patch.object(self.session, "_capture", side_effect=before_capture):
+            self.translate("not-captured", use_cache=False)
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual([event["type"] for event in self.stdout.events if event["id"] == "not-captured"],
+                                 ["accepted", "started"])
+                self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: 1}})
+            finally:
+                release.set()
+            self.assertTrue(self.stdout.terminal("not-captured"))
+        self.assertEqual(self.stdout.result("not-captured")["payload"], {
+            "code": "invalid_translation_settings", "submitted": False})
+        self.assertEqual(self.provider.requests, [])
+        self.session.perform({"operation": "config_save", "config": self.config})
+        self.provider.entered.clear()
+        self.provider.release.clear()
+        with patch.object(self.session, "_execute", wraps=self.session._execute) as execute:
+            self.translate("captured", use_cache=False)
+            try:
+                self.assertTrue(self.provider.entered.wait(1))
+                snapshot = execute.call_args.args[0]
+                self.assertEqual(snapshot.config[CFG.MAX_CHARS], 5000)
+                self.assertEqual(snapshot.input, TEXT)
+                self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: 1}})
+                self.assertEqual(self.session.perform({"operation": "config_load"})["config"][CFG.MAX_CHARS], 1)
+                self.assertEqual(snapshot.config[CFG.MAX_CHARS], 5000)
+                self.assertEqual(snapshot.request, self.provider.requests[0])
+            finally:
+                self.provider.release.set()
+            self.assertTrue(self.stdout.terminal("captured"))
+        self.assertEqual(self.stdout.result("captured")["payload"]["history"], "recorded")
+        self.assertEqual(self.history()[0]["input"], TEXT)
+        self.translate("next")
+        self.assertTrue(self.stdout.terminal("next"))
+        self.assertEqual(self.stdout.result("next")["payload"], {
+            "code": "invalid_translation_settings", "submitted": False})
+        self.assertEqual(len(self.provider.requests), 1)
+
+
 class HistoryRetentionTranslationTests(_TranslationDirectory):
     def seed_history(self, *, cached=False):
         entries = [{"ts": "2026-09-01 12:00", "input": "older " + str(n), "output": "old output",
@@ -1455,6 +1610,20 @@ class TranslationServiceTests(_TranslationDirectory):
 class ResultActionServiceTests(_TranslationDirectory):
     def action(self, id_="action", action="concise", **changes):
         self.server._handle(message(id_, "request", **action_request(action, **changes)))
+
+    def test_small_saved_max_chars_does_not_replace_result_actions_independent_byte_budget(self):
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: 1}})
+        with patch.object(self.session._history, "find_cached", side_effect=AssertionError("action cache")), \
+                patch.object(self.session, "_record", side_effect=AssertionError("action history")):
+            self.action("within-budget", text="a" * 24000)
+            self.assertTrue(self.stdout.terminal("within-budget"))
+            self.assertEqual(self.stdout.result("within-budget")["type"], "completed")
+            self.assertEqual(self.stdout.result("within-budget")["payload"]["history"], "disabled")
+            self.assertEqual(self.provider.requests[0].user_text, "a" * 24000)
+            self.action("over-budget", text="a" * 24001)
+            self.assertEqual(self.stdout.result("over-budget")["payload"], {"code": "invalid_result_action"})
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.history(), [])
 
     def test_all_actions_stream_or_complete_with_exact_translation_terminal_and_no_history_access(self):
         for streaming in (False, True):

@@ -241,11 +241,13 @@ final class ProductTestHarness {
 
     nonisolated static func configuration(direction: String = "auto", model: String = "auto-fast",
                                          language: String = "en_US", history: Bool = true,
-                                         summary: Bool = true, historyLimit: Int64 = 100) -> [String: JSONValue] {
+                                         summary: Bool = true, historyLimit: Int64 = 100,
+                                         maxChars: Int64 = 5000) -> [String: JSONValue] {
         ["direction": .string(direction), "codex_model": .string(model),
          "language": .string(language), "history_enabled": .bool(history),
          "model_provider": .string("codex_cli"), "summary_enabled": .bool(summary),
-         "labs_defaults_migrated": .bool(true), "history_limit": .integer(historyLimit)]
+         "labs_defaults_migrated": .bool(true), "history_limit": .integer(historyLimit),
+         "max_chars": .integer(maxChars)]
     }
 
     @discardableResult

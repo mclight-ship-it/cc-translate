@@ -132,6 +132,13 @@ P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，
 fc089e6的提前日志实际718项、24失败断言/9方法；来源清空此次通过。
 诊断明确阅读锚点混用了合法负偏移下的clip/文档坐标，正在修正坐标转换，
 并使测试读取SwiftUI公开AppKit语义接口；不以窗口呈现或116张截图冒充这些问题已经解决。
+45edbfc/run35303254425的早期原生日志已确认18项字体方法全部通过，坐标根因修复有效；
+但7设置UI方法仍未过，718项有18失败断言、23前置skip，实际116/120PNG，未推广为完整通过。
+输入长度设置与主输入/选择/OCR/词典统一预检也已交付，分别呈现Unicode码点与UTF-8字节，
+不截断原文，不把提高字符上限误作扩大协议预算，不取消/重放已提交请求。
+新增26原生方法/2张预期图及10后端契约，后端连同库存联合237项通过；
+下一源码core最低665，原生744方法/122PNG仍待自己的Mac执行，不借用45edbfc结果。
+见[输入长度检查点](MACOS_TODO.md#native-input-limit-checkpoint)。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

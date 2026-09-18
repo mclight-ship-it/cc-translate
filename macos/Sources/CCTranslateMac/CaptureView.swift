@@ -102,7 +102,8 @@ struct CaptureView: View {
                     Label(model.text("Translate text", "翻译文字"), systemImage: "arrow.right")
                 }
                 .buttonStyle(.bordered).controlSize(.large)
-                .disabled(!capture.canTranslate || model.active || model.preparing)
+                .disabled(!capture.canTranslate(using: model) || model.active || model.preparing)
+                .accessibilityIdentifier("translate-capture-text")
                 Button {
                     capture.translateImage(using: model)
                 } label: {
@@ -157,14 +158,7 @@ struct CaptureView: View {
                 .frame(minHeight: 160, maxHeight: .infinity)
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(
                     editorFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1))
-            Text(model.text("\(capture.text.utf8.count) / 8,192 UTF-8 bytes",
-                            "\(capture.text.utf8.count) / 8,192 UTF-8 字节"))
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-            if capture.text.utf8.count > 8192 {
-                Label(model.text("Shorten the text before translating. Nothing is truncated or sent automatically.",
-                                 "请缩短文字后再翻译。不会自动截断或发送。"), systemImage: "exclamationmark.circle")
-                    .font(.caption).fixedSize(horizontal: false, vertical: true)
-            }
+            TranslationInputBudgetView(model: model, text: capture.text)
         }
     }
 }

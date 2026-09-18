@@ -1,10 +1,7 @@
 import Foundation
 
 struct HistoryLimitPreference {
-    enum Phase: Equatable {
-        case idle, saving, readingBack, saved, differentReadback, invalidInput
-        case failed(String)
-    }
+    typealias Phase = IntegerPreference.Phase
 
     struct Reduction: Equatable {
         let from: Int64
@@ -12,43 +9,34 @@ struct HistoryLimitPreference {
     }
 
     static let supported: ClosedRange<Int64> = 1...10_000
-    private(set) var saved: Int64?
-    private(set) var draft = ""
+    private var value = IntegerPreference(supported: Self.supported, invalidReadbackCode: "invalid_history_limit")
+    var saved: Int64? { value.saved }
+    var draft: String { value.draft }
+    var phase: Phase { value.phase }
     private(set) var confirmation: Reduction?
-    private(set) var phase: Phase = .idle
-    private var edited = false
-    private var requestID: String?
-    private var expected: Int64?
 
-    var proposed: Int64? {
-        guard let value = Int64(draft.trimmingCharacters(in: .whitespacesAndNewlines)),
-              Self.supported.contains(value) else { return nil }
-        return value
-    }
+    var proposed: Int64? { value.proposed }
 
-    func owns(_ id: String) -> Bool { requestID == id }
+    func owns(_ id: String) -> Bool { value.owns(id) }
 
     mutating func edit(_ text: String) {
-        draft = text
-        edited = true
+        value.edit(text)
         confirmation = nil
-        if phase == .invalidInput { phase = .idle }
     }
 
     mutating func propose() -> Int64? {
-        guard let value = proposed else { phase = .invalidInput; return nil }
-        guard let saved, value != saved else { return nil }
-        if value < saved {
-            confirmation = Reduction(from: saved, to: value)
+        guard let proposed = value.propose(), let saved else { return nil }
+        if proposed < saved {
+            confirmation = Reduction(from: saved, to: proposed)
             return nil
         }
-        return value
+        return proposed
     }
 
     mutating func confirm() -> Int64? {
         guard let confirmation, confirmation.from == saved, confirmation.to == proposed else {
             confirmation = nil
-            phase = .failed("confirmation_changed")
+            value.reject("confirmation_changed")
             return nil
         }
         self.confirmation = nil
@@ -58,46 +46,30 @@ struct HistoryLimitPreference {
     mutating func cancelConfirmation() { confirmation = nil }
 
     mutating func beginSave(id: String, value: Int64) {
-        requestID = id
-        expected = value
-        phase = .saving
+        self.value.beginSave(id: id, value: value)
     }
 
     mutating func beginRead(id: String, afterSave: Bool) {
-        requestID = id
-        if !afterSave { expected = nil }
-        phase = .readingBack
+        value.beginRead(id: id, afterSave: afterSave)
     }
 
     mutating func loaded(_ value: Int64?, id: String) {
-        guard let value else { fail("invalid_history_limit"); return }
-        let confirmedSave = owns(id) && expected == value
-        phase = owns(id) && expected != nil ? (confirmedSave ? .saved : .differentReadback) : .idle
-        if !edited || (confirmedSave && proposed == value) {
-            draft = String(value)
-            edited = false
-        }
+        self.value.loaded(value, id: id)
         if confirmation?.from != value { confirmation = nil }
-        saved = value
-        requestID = nil
-        expected = nil
     }
 
     mutating func rejectUnavailable() {
         confirmation = nil
-        phase = .failed("settings_unavailable")
+        value.reject("settings_unavailable")
     }
 
     mutating func fail(_ code: String) {
-        saved = nil
         confirmation = nil
-        requestID = nil
-        expected = nil
-        phase = .failed(code)
+        value.fail(code)
     }
 
     mutating func connectionLost() {
-        if saved != nil || requestID != nil { fail("connection_closed") }
+        value.connectionLost()
         confirmation = nil
     }
 }

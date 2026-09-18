@@ -106,6 +106,31 @@ class MacDictionaryTests(_ConfigurationDirectory):
         return self.session.perform_history(
             {"operation": "history_load", "page_size": 100, "cursor": None}, "read", 2)["entries"]
 
+    def test_max_chars_validation_precedes_cached_disabled_and_ineligible_dictionary_routes(self):
+        self.install()
+        original = self.lookup()["payload"]["result"]
+        self.assertEqual(original["history"], "recorded")
+        path = self.directory / "history.json"
+        before = path.read_bytes()
+        for enabled in (True, False):
+            for text, limit in (("synthetic", 8), (" synthetic ", 9), ("two words", 8), ("a" * 5001, 5000)):
+                with self.subTest(enabled=enabled, limit=limit, size=len(text)):
+                    self.session.perform({"operation": "config_save", "config": self.config | {
+                        CFG.MAX_CHARS: limit, CFG.LOCAL_DICTIONARY_ENABLED: enabled}})
+                    with patch.object(self.service, "_load_store", side_effect=AssertionError("over-limit store")), \
+                            patch.object(self.session._history, "find_cached",
+                                         side_effect=AssertionError("over-limit cache")):
+                        failed = self.lookup(text=text)
+                    self.assertEqual(failed["type"], "failed")
+                    self.assertEqual(failed["payload"], {"code": "invalid_dictionary"})
+                    self.assertEqual(path.read_bytes(), before)
+        self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: 9}})
+        cached = self.lookup()["payload"]["result"]
+        self.assertEqual((cached["cached"], cached["submitted"], cached["history"]), (True, False, "unchanged"))
+        self.assertEqual(cached["text"], original["text"])
+        self.assertEqual(path.read_bytes(), before)
+        self.service.manager._opener.assert_not_called()
+
     def test_capabilities_status_and_lookup_work_without_codex_or_implicit_install(self):
         self.assertEqual(self.stdout.events[0]["payload"]["capabilities"], [
             "config_load", "config_save", "history_load", "history_add", "history_clear",

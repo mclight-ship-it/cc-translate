@@ -30,6 +30,8 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var settingsBusy = false
     @Published private(set) var historyEnabled = true
     @Published private(set) var historyLimit = HistoryLimitPreference()
+    @Published private(set) var inputLimit = IntegerPreference(
+        supported: TextInputPreflight.characterRange, invalidReadbackCode: "invalid_max_chars")
     @Published private(set) var summaryEnabled: Bool?
     @Published private(set) var summaryPreferencePhase: SummaryPreferencePhase = .idle
     private var summarySaveRequest: (id: String, value: Bool)?
@@ -590,9 +592,8 @@ final class ProbeModel: ObservableObject {
         monitor.cancelPendingSelection()
         catalogWasLastRequest = false
         loadPresentation()
-        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf8.count <= 8192 else {
-            failPreparation(text("Enter some text (up to 8192 UTF-8 bytes).",
-                                 "请输入要翻译的文字（最多 8192 UTF-8 字节）。"))
+        if let issue = inputIssue(for: input) {
+            failPreparation(issue.message(using: self))
             return
         }
         translationIntentID = UUID()
@@ -678,6 +679,12 @@ final class ProbeModel: ObservableObject {
               !active, !stopping, !publishingImageRequest, !dictionary.committing,
               let connection = connection else { return }
         if let intent = requested.imageIntent, imageTranslation.attachment(for: intent) == nil { return }
+        if requested.action == nil && requested.imageIntent == nil,
+           let issue = TextInputPreflight.check(requested.text, limit: inputLimit.saved, requireLimit: true) {
+            failPreparation(issue.message(using: self))
+            onTranslationResult?(productMessage)
+            return
+        }
         if requested.action == nil, requested.origin != "ocr", requested.useCache, !requested.lookupFinished {
             let id = UUID().uuidString
             draft = nil
@@ -861,18 +868,21 @@ final class ProbeModel: ObservableObject {
             failPreparation(text("Could not read the selection. Open Translate to type or paste instead.",
                                  "无法读取选中文字，请打开翻译窗口输入或粘贴。"))
         }
-        onTranslationResult?(status + (output.isEmpty ? "" : "\n\n" + output))
+        onTranslationResult?((productPhase == .failed ? productMessage : status) +
+                             (output.isEmpty ? "" : "\n\n" + output))
     }
 
     func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false,
                       summaryExpected: Bool? = nil, summaryReconcile: Bool = false,
-                      historyLimitRead: Bool = false, afterHistoryLimitSave: Bool = false) {
+                      historyLimitRead: Bool = false, afterHistoryLimitSave: Bool = false,
+                      inputLimitRead: Bool = false, afterInputLimitSave: Bool = false) {
         guard connectionMode != .diagnostic, ready, !settingsBusy, let connection = connection else { return }
         settingsBusy = true
         settingsReady = false
         let id = UUID().uuidString
         configLoadID = id
         if historyLimitRead { historyLimit.beginRead(id: id, afterSave: afterHistoryLimitSave) }
+        if inputLimitRead { inputLimit.beginRead(id: id, afterSave: afterInputLimitSave) }
         if summaryExpected != nil || summaryReconcile {
             summaryReadRequest = (id, summaryExpected)
             summaryPreferencePhase = .readingBack
@@ -1102,6 +1112,40 @@ final class ProbeModel: ObservableObject {
     func reloadHistoryLimit() {
         guard canReloadHistoryLimit else { historyLimit.rejectUnavailable(); return }
         loadSettings(historyLimitRead: true)
+    }
+
+    func inputIssue(for text: String) -> TextInputPreflight.Issue? {
+        TextInputPreflight.check(text, limit: settingsReady ? inputLimit.saved : nil, requireLimit: settingsReady)
+    }
+
+    var canEditInputLimit: Bool {
+        ready && settingsReady && !settingsBusy && !stopping && !dictionary.committing &&
+            connectionMode != .diagnostic && savedConfiguration != nil && inputLimit.saved != nil
+    }
+
+    var canReloadInputLimit: Bool {
+        ready && !settingsBusy && !stopping && !dictionary.committing && connectionMode != .diagnostic
+    }
+
+    func editInputLimit(_ value: String) { inputLimit.edit(value) }
+
+    func applyInputLimit() {
+        guard canEditInputLimit, var config = savedConfiguration, let connection else {
+            inputLimit.reject("settings_unavailable")
+            return
+        }
+        guard let value = inputLimit.propose() else { return }
+        config["max_chars"] = .integer(value)
+        let id = UUID().uuidString
+        inputLimit.beginSave(id: id, value: value)
+        settingsBusy = true
+        configSaveID = id
+        connection.saveConfiguration(config, id: id)
+    }
+
+    func reloadInputLimit() {
+        guard canReloadInputLimit else { inputLimit.reject("settings_unavailable"); return }
+        loadSettings(inputLimitRead: true)
     }
 
     var canSaveSummaryPreference: Bool {
@@ -1634,6 +1678,7 @@ final class ProbeModel: ObservableObject {
             modelSettings.connectionLost()
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
+            inputLimit.connectionLost()
             plainPaste.connectionLost()
             historySearchActive = false
             let hadLocalLookup = dictionaryLookup != nil
@@ -1705,6 +1750,7 @@ final class ProbeModel: ObservableObject {
             modelSettings.connectionLost()
             summaryPreferenceConnectionLost()
             historyLimit.connectionLost()
+            inputLimit.connectionLost()
             plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
@@ -1840,6 +1886,7 @@ final class ProbeModel: ObservableObject {
             let pasteSave = plainPaste.preference.ownsSave(event.id)
             let summaryOperation = summarySaveRequest?.id == event.id || summaryReadRequest?.id == event.id
             let historyLimitOperation = historyLimit.owns(event.id)
+            let inputLimitOperation = inputLimit.owns(event.id)
             if event.type == "completed" {
                 if event.id == configSaveID {
                     let modelSave = modelSettings.requestID == event.id
@@ -1850,7 +1897,8 @@ final class ProbeModel: ObservableObject {
                     settingsBusy = false
                     status = "Settings saved. Reloading their normalized view; no write replay."
                     loadSettings(modelRead: modelSave, afterModelSave: modelSave, summaryExpected: summaryExpected,
-                                 historyLimitRead: historyLimitOperation, afterHistoryLimitSave: historyLimitOperation)
+                                 historyLimitRead: historyLimitOperation, afterHistoryLimitSave: historyLimitOperation,
+                                 inputLimitRead: inputLimitOperation, afterInputLimitSave: inputLimitOperation)
                     return true
                 }
                 guard let config = event.payload["config"]?.object,
@@ -1862,6 +1910,7 @@ final class ProbeModel: ObservableObject {
                     summarySaveRequest = nil
                     summaryReadRequest = nil
                     historyLimit.fail("invalid_config")
+                    inputLimit.fail("invalid_config")
                     modelSettings.fail(id: event.id, failure: .invalidReadback)
                     plainPaste.failed(id: event.id, code: "invalid_config")
                     error = .invalidTransition
@@ -1872,6 +1921,7 @@ final class ProbeModel: ObservableObject {
                 }
                 savedConfiguration = config
                 historyLimit.loaded(config["history_limit"]?.integer, id: event.id)
+                inputLimit.loaded(config["max_chars"]?.integer, id: event.id)
                 if case let .bool(value)? = config["summary_enabled"] {
                     summaryEnabled = value
                     if let read = summaryReadRequest, read.id == event.id {
@@ -1934,6 +1984,7 @@ final class ProbeModel: ObservableObject {
             } else {
                 let catalogPreparation = modelCatalog.pending && !active && draft == nil
                 if historyLimitOperation || event.id == configLoadID { historyLimit.fail(event.safeFailureCode) }
+                if inputLimitOperation || event.id == configLoadID { inputLimit.fail(event.safeFailureCode) }
                 if summaryOperation || event.id == configLoadID {
                     summaryEnabled = nil
                     summaryPreferencePhase = .failed(event.safeFailureCode)
@@ -1945,7 +1996,8 @@ final class ProbeModel: ObservableObject {
                 status = "Settings operation failed: \(event.safeFailureCode). No automatic retry."
                 if catalogPreparation { modelCatalog.fail(.connection) }
                 if (!pasteSave || !active) && !catalogPreparation &&
-                    (!(summaryOperation || historyLimitOperation) || (!active && draft != nil)) { failPreparation(status) }
+                    (!(summaryOperation || historyLimitOperation || inputLimitOperation) ||
+                     (!active && draft != nil)) { failPreparation(status) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))

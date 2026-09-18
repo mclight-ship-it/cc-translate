@@ -252,6 +252,26 @@ class ImageServiceTests(_TranslationDirectory):
     def copies(self):
         return list((self.directory / "NativeWorkspace").glob(".cc-image-*"))
 
+    def test_loaded_nonpositive_text_limits_do_not_block_genuine_image_service_requests(self):
+        for limit in (0, -7):
+            with self.subTest(limit=limit):
+                self.session.perform({"operation": "config_save", "config": self.config | {CFG.MAX_CHARS: limit}})
+                self.assertEqual(self.session.perform({"operation": "config_load"})["config"][CFG.MAX_CHARS], limit)
+                before = self.path.read_bytes()
+                id_ = "image" + str(limit)
+                self.send_image(id_, record_history=False)
+                self.assertTrue(self.stdout.terminal(id_))
+                result = self.stdout.result(id_)
+                self.assertEqual(result["type"], "completed")
+                self.assertEqual((result["payload"]["kind"], result["payload"]["cached"],
+                                  result["payload"]["history"]), ("ocr", False, "disabled"))
+                self.assertEqual(self.provider.requests[-1].task, "image")
+                self.assertEqual(len(self.provider.requests[-1].image_paths), 1)
+                self.assertEqual(self.path.read_bytes(), before)
+                self.assertEqual(self.copies(), [])
+        self.assertEqual(len(self.provider.requests), 2)
+        self.assertEqual(self.history(), [])
+
     def test_image_is_explicit_then_private_copy_streams_and_records_only_null_input_output(self):
         self.assertEqual(self.copies(), [])
         self.assertEqual(self.provider.requests, [])
