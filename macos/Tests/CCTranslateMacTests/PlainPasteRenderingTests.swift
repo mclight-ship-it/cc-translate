@@ -8,10 +8,10 @@ import Vision
 extension ProductRenderingTests {
     @MainActor
     func testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste() throws {
-        func stage(_ value: String) throws {
-            try FileHandle.standardError.write(contentsOf: Data("Synthetic paste render stage: \(value)\n".utf8))
+        func stage(_ value: String) {
+            print("Synthetic paste render stage: \(value)")
         }
-        try stage("starting")
+        stage("starting")
         let fixture = try PasteAppFixture()
         defer { fixture.cleanUp() }
         _ = try fixture.ready(true)
@@ -19,9 +19,9 @@ extension ProductRenderingTests {
         let lease = try XCTUnwrap(fixture.registrar.leases.last)
         lease.fire(.pressed)
         let native = try renderPasteSettings(fixture, name: "plain-paste-settings-own-native-light", scheme: .light)
-        try stage("native rendered")
+        stage("native rendered")
         let words = try pasteSettingsWords(native)
-        try stage("native recognized")
+        stage("native recognized")
         XCTAssertTrue(words.contains("native paste and match style was dispatched"))
         XCTAssertFalse(words.contains("pasted successfully"))
         fixture.routing.handlesNativePaste = false
@@ -29,9 +29,9 @@ extension ProductRenderingTests {
         lease.fire(.pressed)
         let unavailable = try renderPasteSettings(fixture, name: "plain-paste-settings-own-unavailable-zh-dark",
                                                  scheme: .dark, chinese: true)
-        try stage("unavailable rendered")
+        stage("unavailable rendered")
         let chinese = try pasteSettingsWords(unavailable, chinese: true).filter { !$0.isWhitespace }
-        try FileHandle.standardError.write(contentsOf: Data("Synthetic paste settings OCR: \(chinese)\n".utf8))
+        print("Synthetic paste settings OCR: \(chinese)")
         XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
         XCTAssertTrue(chinese.contains("未请求外部粘贴"), chinese)
         XCTAssertTrue(chinese.contains("文件与文字混合"), chinese)

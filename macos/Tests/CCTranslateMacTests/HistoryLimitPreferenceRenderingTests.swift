@@ -66,8 +66,9 @@ private final class HistoryLimitSettingsHost {
         host.displayIfNeeded()
     }
 
-    func waitFor(_ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor {
+    func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                 _ condition: @MainActor () -> Bool) async throws {
+        try await CaptureProductFixture.waitFor(file: file, line: line) {
             self.flush()
             return condition()
         }

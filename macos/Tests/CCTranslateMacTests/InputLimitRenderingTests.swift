@@ -301,16 +301,20 @@ extension ProductRenderingTests {
         let image = try render(CaptureView(capture: capture, model: f.model, captureAgain: {}, reselect: {}, close: {}),
                                named: "input-limits-capture-zh-dark", size: NSSize(width: 980, height: 900),
                                scheme: .dark, inspect: { host in
-            let button = try InputLimitNativeViews.button(in: host, id: "translate-capture-text", label: "翻译文字")
-            XCTAssertFalse(button.isEnabled)
-            InputLimitNativeViews.assertVisible(button)
-            for (id, label) in [("input-code-point-count", "2731 / 5000 Unicode 码点"),
-                                ("input-byte-count", "8193 / 8,192 UTF-8 字节")] {
-                let count = try NativeSettingsTestControls.caption(in: host, identifier: id, label: label)
-                InputLimitNativeViews.assertVisible(count)
-            }
+            // Keep a failing lookup as a failure while retaining its actual review bitmap.
+            XCTAssertNoThrow(try {
+                let button = try InputLimitNativeViews.button(in: host, id: "translate-capture-text", label: "翻译文字")
+                XCTAssertFalse(button.isEnabled)
+                InputLimitNativeViews.assertVisible(button)
+                for (id, label) in [("input-code-point-count", "2731 / 5000 Unicode 码点"),
+                                    ("input-byte-count", "8193 / 8,192 UTF-8 字节")] {
+                    let count = try NativeSettingsTestControls.caption(in: host, identifier: id, label: label)
+                    InputLimitNativeViews.assertVisible(count)
+                }
+            }())
         })
         let words = try inputLimitWords(image, chinese: true)
+        print("Synthetic capture counter OCR (repeated input omitted): \(words.replacingOccurrences(of: "中", with: ""))")
         for expected in ["2731", "5000", "8193", "8192", "码点", "字节", "翻译文字"] {
             XCTAssertTrue(words.contains(expected), words)
         }

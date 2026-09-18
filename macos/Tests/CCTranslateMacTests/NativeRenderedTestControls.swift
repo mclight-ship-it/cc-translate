@@ -42,6 +42,7 @@ private enum RenderedGeometry {
 
 @MainActor
 struct NativeSettingsTestControl: NativeRenderedTestRegion {
+    private static var nextMouseEventNumber = 200_000
     @MainActor
     fileprivate enum Backing {
         case button(NSButton)
@@ -112,7 +113,27 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         guard isEnabled else { throw RenderedLookupError.disabled }
         print("Rendered press \(identifier): state=\(backing.state.rawValue), " +
               "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
-        control.performClick(nil)
+        window.makeKeyAndOrderFront(nil)
+        let point = NSPoint(x: frame.midX, y: frame.midY)
+        let number = Self.nextMouseEventNumber
+        Self.nextMouseEventNumber += 2
+        let down = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: number, clickCount: 1, pressure: 1))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseUp, location: point, modifierFlags: [], timestamp: down.timestamp + 0.1,
+            windowNumber: window.windowNumber, context: nil, eventNumber: number + 1, clickCount: 1, pressure: 0))
+        // Tracking controls may consume mouse-up before sendEvent returns.
+        NSApp.postEvent(up, atStart: true)
+        NSApp.sendEvent(down)
+        if let queued = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
+                                        inMode: .default, dequeue: false),
+           queued.windowNumber == up.windowNumber, queued.eventNumber == up.eventNumber {
+            let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
+                                                       inMode: .default, dequeue: true))
+            XCTAssertEqual(release.eventNumber, up.eventNumber)
+            NSApp.sendEvent(release)
+        }
         print("Rendered pressed \(identifier): state=\(backing.state.rawValue), enabled=\(isEnabled)")
     }
 }

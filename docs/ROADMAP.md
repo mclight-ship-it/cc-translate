@@ -156,6 +156,8 @@ a4ac252修复编译后真实执行744项，20输入模型/预检和94剪贴板�
 保留744方法/122预期PNG，不再混同provider getter、真实控件交互与完整AX/VoiceOver三种证据。
 e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操作，仍10方法失败；
 继续依据实际控件几何、渲染就绪与OCR诊断修复，不以部分绿灯提前结束。
+95f3078剩5方法未通过，全部4项输入限额真实交互及新增设置的部分绘制已通过；
+下一步继续本应用正常鼠标事件分派与失败图像诊断，没有修改产品权限或假造保存结果。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

@@ -496,6 +496,18 @@ Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与
 不改原始截图或注入预期词；保留所有业务/截图断言，摘要等待和旧纯文本截图增加定位诊断。
 这些后续修正仍须新源码验证，不以部分通过替代整个产品验收。
 
+`95f3078`正常privacy/full hook1846项/100.755秒通过；
+[run35311397704](https://github.com/mclight-ship-it/cc-translate/actions/runs/35311397704)
+提前日志实际744项/23前置skip/9失败断言（4 unexpected）/422.547秒，剩5方法。
+4项输入限额真实交互全部通过；历史失败恢复、摘要中英文绘制和历史确认态绘制已通过，
+18字号/精确编辑与94剪贴板仍逐方法通过。剩余为历史取消后再点击、2摘要操作、计数caption与旧中文说明OCR。
+日志显示SwiftUI的实际NSButton没有传统target/action；performClick虽改变checkbox外观state，
+却未启动摘要保存。因此下一修正使用本应用NSApplication正常分派一对down/up事件，
+位置来自已唯一确认的实际控件布局中心；先排队up供原生tracking消费，只处理自己尚未消费的release。
+不调用NSWindow.sendEvent、不注入全局CGEvent、不改模型/控件state，也不重试点击。
+计数截图的inspect错误保留为XCTAssertNoThrow失败，同时继续保存原始bitmap以定位丢失文字；
+不是跳过断言或把缺失视为成功。补充stdout诊断，旧中文OCR的具体失败原因仍待完整读回。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证
