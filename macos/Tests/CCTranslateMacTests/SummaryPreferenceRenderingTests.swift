@@ -20,17 +20,113 @@ private struct SummarySettingsSurface: View {
 }
 
 @MainActor
+struct NativeSettingsAXElement {
+    let object: AnyObject
+    private var modern: (any NSAccessibilityProtocol)? { object as? any NSAccessibilityProtocol }
+    private var legacy: NSObject? { object as? NSObject }
+
+    private func attribute(_ name: NSAccessibility.Attribute) -> Any? {
+        guard let legacy, legacy.accessibilityAttributeNames().contains(name) else { return nil }
+        return legacy.accessibilityAttributeValue(name)
+    }
+
+    private var legacyRole: NSAccessibility.Role? {
+        (attribute(.role) as? String).map { NSAccessibility.Role(rawValue: $0) }
+    }
+
+    private var usesLegacy: Bool {
+        legacyRole != nil && (modern?.accessibilityRole() == nil || modern?.accessibilityRole() == .unknown)
+    }
+
+    var role: NSAccessibility.Role? { usesLegacy ? legacyRole : modern?.accessibilityRole() }
+    var identifier: String? {
+        usesLegacy ? attribute(.identifier) as? String : modern?.accessibilityIdentifier()
+    }
+    var label: String? {
+        usesLegacy ? attribute(.description) as? String : modern?.accessibilityLabel()
+    }
+    var title: String? { usesLegacy ? attribute(.title) as? String : modern?.accessibilityTitle() }
+    var value: Any? { usesLegacy ? attribute(.value) : modern?.accessibilityValue() }
+    var isElement: Bool {
+        usesLegacy ? legacy?.accessibilityIsIgnored() == false : modern?.isAccessibilityElement() == true
+    }
+    var isEnabled: Bool {
+        if !usesLegacy, let modern { return modern.isAccessibilityEnabled() }
+        guard let enabled = attribute(.enabled) as? Bool else {
+            XCTFail("The actual accessibility control did not expose an enabled state.")
+            return false
+        }
+        return enabled
+    }
+    var isFocused: Bool {
+        if !usesLegacy, let modern { return modern.isAccessibilityFocused() }
+        guard let focused = attribute(.focused) as? Bool else {
+            XCTFail("The actual accessibility control did not expose a focus state.")
+            return false
+        }
+        return focused
+    }
+
+    var children: [AnyObject] {
+        let modernChildren = (modern?.accessibilityChildren() ?? []).map { $0 as AnyObject }
+        // SwiftUI may expose its semantic children through AppKit's informal API.
+        let legacyChildren = (attribute(.children) as? [Any] ?? []).map { $0 as AnyObject }
+        return modernChildren + legacyChildren
+    }
+
+    var frame: NSRect {
+        if !usesLegacy, let modern { return modern.accessibilityFrame() }
+        guard let position = attribute(.position) as? NSValue, let size = attribute(.size) as? NSValue else {
+            XCTFail("The actual accessibility element did not expose a screen frame.")
+            return .zero
+        }
+        return NSRect(origin: position.pointValue, size: size.sizeValue)
+    }
+
+    func focus() {
+        if usesLegacy, let legacy {
+            guard legacy.accessibilityIsAttributeSettable(.focused) else {
+                XCTFail("The actual control must allow its focus attribute to be set.")
+                return
+            }
+            legacy.accessibilitySetValue(true, forAttribute: .focused)
+        } else if let modern {
+            guard modern.isAccessibilitySelectorAllowed(
+                #selector(NSAccessibilityProtocol.setAccessibilityFocused(_:))) else {
+                XCTFail("The actual control must allow the focus selector.")
+                return
+            }
+            modern.setAccessibilityFocused(true)
+        } else {
+            XCTFail("The actual accessibility element has no focus interface.")
+        }
+    }
+
+    func press() {
+        if usesLegacy, let legacy {
+            let supported = legacy.accessibilityActionNames().contains(.press)
+            XCTAssertTrue(supported, "The actual control must advertise its press action.")
+            if supported { legacy.accessibilityPerformAction(.press) }
+        } else if let modern {
+            XCTAssertTrue(modern.accessibilityPerformPress(), "Dispatch the real control action, not a model setter.")
+        } else {
+            XCTFail("The actual accessibility element has no press interface.")
+        }
+    }
+}
+
+@MainActor
 struct NativeSettingsTestControl {
-    let element: any NSAccessibilityProtocol
+    let element: NativeSettingsAXElement
     let root: NSView
     let onValue: String?
     let offValue: String?
 
-    var isEnabled: Bool { element.isAccessibilityEnabled() }
-    var isFocused: Bool { element.isAccessibilityFocused() }
+    var isEnabled: Bool { element.isEnabled }
+    var isFocused: Bool { element.isFocused }
     var state: NSControl.StateValue? {
-        if let button = element as? NSButton { return button.state }
-        let value = element.accessibilityValue()
+        if let button = element.object as? NSButton { return button.state }
+        let value = element.value
         if let number = value as? NSNumber {
             switch number.intValue {
             case 0: return .off
@@ -46,7 +142,7 @@ struct NativeSettingsTestControl {
         return nil
     }
 
-    var frame: NSRect { element.accessibilityFrame() }
+    var frame: NSRect { element.frame }
 
     var visibleRect: NSRect {
         guard let window = root.window else { return .zero }
@@ -55,23 +151,21 @@ struct NativeSettingsTestControl {
     }
 
     func sameElement(as other: NativeSettingsTestControl) -> Bool {
-        (element as AnyObject) === (other.element as AnyObject)
+        element.object === other.element.object
     }
 
     func focus(in window: NSWindow) {
-        if let view = element as? NSView {
+        if let view = element.object as? NSView {
             XCTAssertTrue(view.acceptsFirstResponder)
             XCTAssertTrue(window.makeFirstResponder(view))
         } else {
-            XCTAssertTrue(element.isAccessibilitySelectorAllowed(
-                #selector(NSAccessibilityProtocol.setAccessibilityFocused(_:))))
-            element.setAccessibilityFocused(true)
+            element.focus()
         }
     }
 
     func press() {
         XCTAssertTrue(isEnabled)
-        XCTAssertTrue(element.accessibilityPerformPress(), "Dispatch the real control action, not a model setter.")
+        element.press()
     }
 }
 
@@ -86,9 +180,7 @@ enum NativeSettingsTestControls {
         while let object = pending.popLast() {
             guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
             result.append(object)
-            if let element = object as? any NSAccessibilityProtocol {
-                pending.append(contentsOf: (element.accessibilityChildren() ?? []).map { $0 as AnyObject })
-            }
+            pending.append(contentsOf: NativeSettingsAXElement(object: object).children)
             if let view = object as? NSView {
                 pending.append(contentsOf: view.subviews.map { $0 as AnyObject })
             }
@@ -96,10 +188,10 @@ enum NativeSettingsTestControls {
         return result
     }
 
-    private static func description(_ element: any NSAccessibilityProtocol) -> String {
-        "\(type(of: element)) role=\(element.accessibilityRole()?.rawValue ?? "-") " +
-            "id=\(element.accessibilityIdentifier() ?? "-") label=\(element.accessibilityLabel() ?? "-") " +
-            "title=\(element.accessibilityTitle() ?? "-") value=\(String(describing: element.accessibilityValue()))"
+    private static func description(_ element: NativeSettingsAXElement) -> String {
+        "\(type(of: element.object)) role=\(element.role?.rawValue ?? "-") " +
+            "id=\(element.identifier ?? "-") label=\(element.label ?? "-") " +
+            "title=\(element.title ?? "-") value=\(String(describing: element.value))"
     }
 
     static func resolve(in root: NSView, identifier: String, label: String, role: NSAccessibility.Role,
@@ -108,35 +200,31 @@ enum NativeSettingsTestControls {
         if let window = root.window, !window.isVisible { window.orderFront(nil) }
         let deadline = Date().addingTimeInterval(1)
         var raw: [AnyObject] = []
-        var inventory: [any NSAccessibilityProtocol] = []
-        var candidates: [any NSAccessibilityProtocol] = []
+        var inventory: [NativeSettingsAXElement] = []
+        var candidates: [NativeSettingsAXElement] = []
         repeat {
             root.layoutSubtreeIfNeeded()
             root.displayIfNeeded()
             raw = objects(from: [root])
-            inventory = raw.compactMap { $0 as? any NSAccessibilityProtocol }
+            inventory = raw.map { NativeSettingsAXElement(object: $0) }
             let anchors = inventory.filter {
-                $0.accessibilityIdentifier() == identifier || $0.accessibilityLabel() == label ||
-                    $0.accessibilityTitle() == label
+                $0.identifier == identifier || $0.label == label || $0.title == label
             }
-            let actionable = { (element: any NSAccessibilityProtocol) in
-                element.isAccessibilityElement() && element.accessibilityRole() == role
+            let actionable = { (element: NativeSettingsAXElement) in
+                element.isElement && element.role == role
             }
             candidates = anchors.filter { actionable($0) }
             if candidates.isEmpty {
                 // SwiftUI can put the identifier on an AX container, not its actionable child.
-                candidates = objects(from: anchors.map { $0 as AnyObject })
-                    .compactMap { $0 as? any NSAccessibilityProtocol }.filter { actionable($0) }
+                candidates = objects(from: anchors.map(\.object))
+                    .map { NativeSettingsAXElement(object: $0) }.filter { actionable($0) }
             }
             if !candidates.isEmpty { break }
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         } while Date() < deadline
         guard candidates.count == 1, let element = candidates.first else {
             XCTFail("Expected one \(identifier) \(role.rawValue); found \(candidates.count).\n" +
-                    raw.map { object in
-                        if let element = object as? any NSAccessibilityProtocol { return description(element) }
-                        return "Untyped accessibility object: \(type(of: object))"
-                    }.joined(separator: "\n"))
+                    inventory.map { description($0) }.joined(separator: "\n"))
             throw LookupError.missingOrAmbiguousControl
         }
         print("Resolved native settings control: \(description(element))")

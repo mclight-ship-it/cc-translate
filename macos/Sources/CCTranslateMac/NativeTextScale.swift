@@ -284,7 +284,8 @@ struct NativeTextViewport {
     private let lineOffset: CGFloat
 
     init(view: NSTextView, scroll: NSScrollView) {
-        origin = scroll.contentView.bounds.origin
+        // AppKit may offset the document frame; glyph positions are document-local.
+        origin = scroll.documentVisibleRect.origin
         guard origin.y > view.textContainerOrigin.y, let layout = view.layoutManager, let container = view.textContainer,
               !view.string.isEmpty else {
             character = nil
@@ -314,8 +315,9 @@ struct NativeTextViewport {
             let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
             point.y = view.textContainerOrigin.y + line.minY + lineOffset * line.height
         }
-        point.y = min(max(0, point.y), max(0, view.bounds.height - scroll.contentView.bounds.height))
-        scroll.contentView.scroll(to: point)
+        point.y = min(max(view.bounds.minY, point.y),
+                      max(view.bounds.minY, view.bounds.maxY - scroll.documentVisibleRect.height))
+        scroll.contentView.scroll(to: view.convert(point, to: scroll.contentView))
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 }

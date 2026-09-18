@@ -129,6 +129,9 @@ P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，
 464a9a7/run35299872986实际718项执行后仍失败：历史18模型/列表及7新Python契约通过，
 但7设置UI、2滚动和1来源清空方法未过（26断言、9 unexpected）。116/120PNG，无App发布或14/26验收。
 继续修原生呈现/异步渲染与诊断；CI提前保留unit日志，不削减测试或放松发布条件。
+fc089e6的提前日志实际718项、24失败断言/9方法；来源清空此次通过。
+诊断明确阅读锚点混用了合法负偏移下的clip/文档坐标，正在修正坐标转换，
+并使测试读取SwiftUI公开AppKit语义接口；不以窗口呈现或116张截图冒充这些问题已经解决。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
