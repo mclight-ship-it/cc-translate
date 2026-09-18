@@ -369,41 +369,45 @@ enum NativeSettingsTestControls {
             "\nExact fixture-caption fragments: \((readback?.fragments ?? []).joined(separator: " | "))"
     }
 
-    static func resolve(in root: NSView, identifier: String, label: String,
-                        kind: NativeRenderedControlKind) throws -> NativeSettingsTestControl {
+    private struct Lookup {
+        let candidates: [NativeSettingsTestControl.Backing]
+        let readback: Readback?
+        let route: String
+    }
+
+    private static func lookup(in root: NSView, identifier: String, label: String,
+                               kind: NativeRenderedControlKind) throws -> Lookup {
         guard !identifier.isEmpty, !normalize(label).isEmpty else {
             XCTFail("A rendered-control lookup needs a fixture identifier and visible caption.")
             throw RenderedLookupError.missingOrAmbiguousControl
         }
-        let deadline = Date().addingTimeInterval(2)
-        var readback: Readback?
-        var candidates: [NativeSettingsTestControl.Backing] = []
-        var route = "public identifier/title"
-        repeat {
-            try prepare(root)
-            let controls = views(in: root).compactMap { backing($0, kind: kind) }.filter {
-                !RenderedGeometry.visibleRect($0.control).isEmpty
+        try prepare(root)
+        let controls = views(in: root).compactMap { backing($0, kind: kind) }.filter {
+            !RenderedGeometry.visibleRect($0.control).isEmpty
+        }
+        let named = controls.filter {
+            $0.control.identifier?.rawValue == identifier ||
+                ($0.control as? NSButton).map { normalize($0.title) == normalize(label) } == true
+        }
+        if !named.isEmpty {
+            return Lookup(candidates: named, readback: nil, route: "public identifier/title")
+        }
+        let pixels = try readCaption(label, in: root)
+        let candidates = controls.flatMap { backing in
+            pixels.matches.compactMap { match in
+                matches(backing.control, caption: match.rectangle, kind: kind, tolerance: pixels.tolerance)
+                    ? backing : nil
             }
-            candidates = controls.filter {
-                $0.control.identifier?.rawValue == identifier ||
-                    ($0.control as? NSButton).map { normalize($0.title) == normalize(label) } == true
-            }
-            if !candidates.isEmpty { break }
-            let pixels = try readCaption(label, in: root)
-            readback = pixels
-            candidates = controls.flatMap { backing in
-                pixels.matches.compactMap { match in
-                    matches(backing.control, caption: match.rectangle, kind: kind, tolerance: pixels.tolerance)
-                        ? backing : nil
-                }
-            }
-            if !candidates.isEmpty { route = "native bitmap caption geometry"; break }
-            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-        } while Date() < deadline
-        guard candidates.count == 1, let candidate = candidates.first else {
-            XCTFail("Expected one rendered \(kind.rawValue), found \(candidates.count). " +
+        }
+        return Lookup(candidates: candidates, readback: pixels, route: "native bitmap caption geometry")
+    }
+
+    private static func resolved(_ lookup: Lookup, in root: NSView, identifier: String, label: String,
+                                 kind: NativeRenderedControlKind) throws -> NativeSettingsTestControl {
+        guard lookup.candidates.count == 1, let candidate = lookup.candidates.first else {
+            XCTFail("Expected one rendered \(kind.rawValue), found \(lookup.candidates.count). " +
                     "Only public NSButton/NSSwitch controls are actionable.\n" +
-                    diagnostics(root, identifier: identifier, caption: label, readback: readback))
+                    diagnostics(root, identifier: identifier, caption: label, readback: lookup.readback))
             throw RenderedLookupError.missingOrAmbiguousControl
         }
         let type: String
@@ -411,9 +415,32 @@ enum NativeSettingsTestControls {
         case .button: type = "NSButton"
         case .toggle: type = "NSSwitch"
         }
-        try NativeRenderEvidence.record("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(route); " +
+        try NativeRenderEvidence.record("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(lookup.route); " +
               "frame=\(RenderedGeometry.frame(candidate.control)); fixture caption=\(label)")
         return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier, kind: kind)
+    }
+
+    static func resolve(in root: NSView, identifier: String, label: String,
+                        kind: NativeRenderedControlKind) throws -> NativeSettingsTestControl {
+        let deadline = Date().addingTimeInterval(2)
+        var result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+        while result.candidates.isEmpty && Date() < deadline {
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+        }
+        return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
+    }
+
+    static func resolveWhenReady(in root: NSView, identifier: String, label: String,
+                                 kind: NativeRenderedControlKind) async throws -> NativeSettingsTestControl {
+        let deadline = Date().addingTimeInterval(2)
+        var result: Lookup
+        repeat {
+            // Yield the actor so conditional SwiftUI controls can finish updating their native tree.
+            try await Task.sleep(nanoseconds: 10_000_000)
+            result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+        } while result.candidates.isEmpty && Date() < deadline
+        return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
     }
 
     static func caption(in root: NSView, identifier: String, label: String) throws -> NativeRenderedTestCaption {

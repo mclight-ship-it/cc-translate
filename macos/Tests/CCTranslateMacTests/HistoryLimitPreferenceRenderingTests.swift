@@ -90,9 +90,10 @@ private final class HistoryLimitSettingsHost {
         try await waitFor { self.model.historyLimit.draft == text }
     }
 
-    func button(_ id: String, _ english: String, _ chinese: String) throws -> NativeSettingsTestControl {
+    func button(_ id: String, _ english: String, _ chinese: String) async throws -> NativeSettingsTestControl {
         flush()
-        return try HistoryLimitControls.button(id, title: model.text(english, chinese), in: host)
+        return try await NativeSettingsTestControls.resolveWhenReady(
+            in: host, identifier: id, label: model.text(english, chinese), kind: .button)
     }
 
     func close() {
@@ -113,17 +114,18 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             let initialOperations = helper.operations
             XCTAssertEqual(try HistoryLimitControls.field(in: surface.host).stringValue, "600")
             try await surface.enter("10001")
-            XCTAssertFalse(try surface.button("apply-history-limit", "Apply limit", "应用条数").isEnabled)
+            let invalidApply = try await surface.button("apply-history-limit", "Apply limit", "应用条数")
+            XCTAssertFalse(invalidApply.isEnabled)
             XCTAssertEqual(helper.operations, initialOperations)
             try await surface.enter("17")
-            let apply = try surface.button("apply-history-limit", "Apply limit", "应用条数")
+            let apply = try await surface.button("apply-history-limit", "Apply limit", "应用条数")
             XCTAssertTrue(apply.isEnabled)
             try await apply.press()
             try await surface.waitFor {
                 f.model.historyLimit.confirmation == HistoryLimitPreference.Reduction(from: 600, to: 17)
             }
             XCTAssertEqual(helper.operations, initialOperations)
-            let cancel = try surface.button("cancel-history-limit-reduction", "Cancel", "取消")
+            let cancel = try await surface.button("cancel-history-limit-reduction", "Cancel", "取消")
             try await cancel.press()
             try await surface.waitFor { f.model.historyLimit.confirmation == nil && apply.isEnabled }
             XCTAssertEqual(helper.operations, initialOperations)
@@ -131,7 +133,7 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             XCTAssertEqual(f.model.historyLimit.draft, "17")
             try await apply.press()
             try await surface.waitFor { f.model.historyLimit.confirmation != nil }
-            let confirm = try surface.button("confirm-history-limit-reduction", "Reduce and save", "降低并保存")
+            let confirm = try await surface.button("confirm-history-limit-reduction", "Reduce and save", "降低并保存")
             XCTAssertTrue(confirm.isEnabled)
             try await confirm.press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
@@ -173,8 +175,9 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
             try await surface.waitFor { f.model.historyLimit.saved == nil && !f.model.settingsBusy }
-            XCTAssertFalse(try surface.button("apply-history-limit", "Apply limit", "应用条数").isEnabled)
-            let reload = try surface.button("reload-history-limit", "Reload saved history limit", "重新读取已保存条数")
+            let unavailableApply = try await surface.button("apply-history-limit", "Apply limit", "应用条数")
+            XCTAssertFalse(unavailableApply.isEnabled)
+            let reload = try await surface.button("reload-history-limit", "Reload saved history limit", "重新读取已保存条数")
             XCTAssertTrue(reload.isEnabled)
             try await reload.press()
             try await surface.waitFor { helper.configurationLoads.count == 2 }
