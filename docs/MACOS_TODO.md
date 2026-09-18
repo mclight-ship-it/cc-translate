@@ -460,6 +460,16 @@ OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚
 修正源码`2d68fb6`正常privacy/full hook1846项/96.302秒通过并已推送；
 [run35328456101](https://github.com/mclight-ship-it/cc-translate/actions/runs/35328456101)已实际启动，
 继续要求780原生方法、23既定构包前skip、127PNG及完整同包验证，未修改生产代码或CI门禁。
+该轮实际编译34.25秒，780项/23构包前skip/4失败断言（1 unexpected）/609.566秒；
+双击间隔25项新增方法已全部通过，127PNG完整，但两个旧测试复现：
+输入上限的失败恢复中，动态reload按钮尚未进入原生树，同步查找阻塞后续MainActor更新；
+已只把这个动态动作切到既有异步就绪查找，禁用/保存/错值/重开断言与实际点击保持。
+另一个为私有剪贴板的UTF16/NUL负例，在生产reader之前，Carbon已有数据而AppKit仍revision0/无条目。
+`withUniqueName()`和同名核对没有永久消除跨框架发布时序；测试发布阶段现有界等待至多2秒，
+只看新revision与非空item元数据，并让出MainActor。之后原始字节/类型/顺序/revision断言仍一次严格执行，
+生产reader仍一次调用，没有重写数据、重试reader或扩大0.5秒新鲜度窗口。
+原7方法内另验证未发布空板和没有新revision的既有内容会明确超时，不增加skip或改变方法计数。
+新修正尚待Mac验证。正在开发的截图热键两文件已单独保存，先完成这一源码验证，不混入修复提交。
 
 <a id="native-text-scale-checkpoint"></a>
 
