@@ -62,7 +62,10 @@ jobs:
         continue-on-error: true
         env:
           CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/ui-screenshots
-        run: /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
+        run: |
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer
+          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
       - name: Retain native view renders, including failed-test diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

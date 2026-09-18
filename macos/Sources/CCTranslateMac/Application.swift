@@ -7,6 +7,7 @@ import CCTranslateSupport
 enum CCTranslateApplication {
     @MainActor
     static func main() {
+        if let status = ClipboardReadWorker.runIfRequested() { exit(status) }
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         let delegate = AppDelegate()

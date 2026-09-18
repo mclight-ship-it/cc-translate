@@ -110,7 +110,7 @@ struct TranslatorView: View {
             }
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $model.input)
-                    .font(.system(size: 15))
+                    .font(.system(size: model.nativeTextScale.points(15)))
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .focused($editorFocused)
@@ -119,7 +119,7 @@ struct TranslatorView: View {
                                                  "输入或粘贴文字，按 Command Return 翻译。"))
                 if model.input.isEmpty {
                     Text(model.text("Type or paste text here…", "在这里输入或粘贴文字…"))
-                        .font(.system(size: 15))
+                        .font(.system(size: model.nativeTextScale.points(15)))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 13).padding(.vertical, 16)
                         .allowsHitTesting(false)
@@ -205,7 +205,8 @@ struct TranslationResultView: View {
             ZStack {
                 NativeResultText(text: model.output, formatted: formatted, streaming: busy,
                                  label: model.text("Translation result", "翻译结果"),
-                                 verbatimPrefix: model.isLocalDictionaryResult ? model.primaryResult : nil)
+                                 verbatimPrefix: model.isLocalDictionaryResult ? model.primaryResult : nil,
+                                 textScale: model.nativeTextScale)
                 if model.output.isEmpty {
                     emptyState
                 }
@@ -501,8 +502,8 @@ struct TranslationHistoryView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(row.hasOriginalInput ? row.input : row.kind == "ocr"
                              ? model.text("Image translation", "图片翻译") : model.text("Translation", "翻译结果"))
-                            .font(.body).lineLimit(2)
-                        Text(row.output).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            .font(model.nativeTextScale.bodyFont).lineLimit(2)
+                        Text(row.output).font(model.nativeTextScale.captionFont).foregroundStyle(.secondary).lineLimit(2)
                         HStack {
                             Text(resultKindName(row.kind, model: model))
                             Spacer(minLength: 4)
@@ -591,7 +592,8 @@ struct HistoryTranslationDetail: View {
                 .accessibilityAddTraits(.isHeader)
             if row.hasOriginalInput {
                 NativeResultText(text: row.input, formatted: false, streaming: false,
-                                 label: model.text("Saved original text", "已保存的原文"))
+                                 label: model.text("Saved original text", "已保存的原文"),
+                                 textScale: model.nativeTextScale)
                     .frame(minHeight: 80, maxHeight: 150)
             } else {
                 Text(model.text("Original text is not stored in this record.", "此记录未保存原文。"))
@@ -601,7 +603,8 @@ struct HistoryTranslationDetail: View {
             Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
                 .accessibilityAddTraits(.isHeader)
             NativeResultText(text: row.output, formatted: !row.isLocalDictionary, streaming: false,
-                             label: model.text("Saved translation", "已保存的翻译"))
+                             label: model.text("Saved translation", "已保存的翻译"),
+                             textScale: model.nativeTextScale)
                 .frame(minHeight: 110)
             ViewThatFits(in: .horizontal) {
                 HStack { historyActions }
@@ -676,6 +679,7 @@ struct TranslationSettingsView: View {
                 Text(model.text("English", "英语")).tag("en")
                 Text(model.text("Chinese", "中文")).tag("zh")
             }
+            NativeTextScalePicker(model: model)
         } header: {
             Text(model.text("General", "通用"))
         }
@@ -1088,12 +1092,14 @@ struct NativeResultText: NSViewRepresentable {
     var streaming: Bool
     var label: String
     var verbatimPrefix: String? = nil
+    var textScale: NativeTextScale = .standard
 
     final class Coordinator {
         var source = ""
         var renderedRich = false
         var requestedRich = true
         var verbatimPrefix: String?
+        var textScale: NativeTextScale = .standard
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -1134,26 +1140,35 @@ struct NativeResultText: NSViewRepresentable {
         let rich = formatted && !streaming &&
             (context.coordinator.renderedRich || selected.length == 0 || modeChanged)
         context.coordinator.requestedRich = formatted
-        guard context.coordinator.source != text || context.coordinator.renderedRich != rich ||
-                context.coordinator.verbatimPrefix != verbatimPrefix else { return }
+        let contentChanged = context.coordinator.source != text || context.coordinator.renderedRich != rich ||
+            context.coordinator.verbatimPrefix != verbatimPrefix
+        let scaleChanged = context.coordinator.textScale != textScale
+        guard contentChanged || scaleChanged else { return }
         let origin = scroll.contentView.bounds.origin
+        let viewport = scaleChanged && context.coordinator.renderedRich == rich &&
+            context.coordinator.verbatimPrefix == verbatimPrefix
+            ? NativeTextViewport(view: view, scroll: scroll) : nil
         let atBottom = view.bounds.height - scroll.contentView.bounds.maxY <= 28
         let continuing = !context.coordinator.source.isEmpty && text.hasPrefix(context.coordinator.source)
-        if continuing && !rich && !context.coordinator.renderedRich {
+        if !contentChanged {
+            textScale.apply(to: storage, replacing: context.coordinator.textScale)
+        } else if continuing && !rich && !context.coordinator.renderedRich {
+            textScale.apply(to: storage, replacing: context.coordinator.textScale)
             let suffix = String(text.dropFirst(context.coordinator.source.count))
-            storage.append(Self.plain(suffix))
+            if !suffix.isEmpty { storage.append(scaled(Self.plain(suffix))) }
         } else {
             if rich, let verbatimPrefix, text.hasPrefix(verbatimPrefix) {
                 let content = NSMutableAttributedString(attributedString: Self.plain(verbatimPrefix))
                 content.append(Self.styled(String(text.dropFirst(verbatimPrefix.count))))
-                storage.setAttributedString(content)
+                storage.setAttributedString(scaled(content))
             } else {
-                storage.setAttributedString(rich ? Self.styled(text) : Self.plain(text))
+                storage.setAttributedString(scaled(rich ? Self.styled(text) : Self.plain(text)))
             }
         }
         context.coordinator.source = text
         context.coordinator.renderedRich = rich
         context.coordinator.verbatimPrefix = verbatimPrefix
+        context.coordinator.textScale = textScale
         let location = min(selected.location, storage.length)
         let preservedSelection = NSRange(location: location, length: min(selected.length, storage.length - location))
         if !NSEqualRanges(view.selectedRange(), preservedSelection) {
@@ -1163,12 +1178,23 @@ struct NativeResultText: NSViewRepresentable {
         if continuing && atBottom && selected.length == 0 {
             view.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
         } else if continuing {
-            scroll.contentView.scroll(to: origin)
-            scroll.reflectScrolledClipView(scroll.contentView)
+            if let viewport {
+                viewport.restore(view: view, scroll: scroll)
+            } else {
+                scroll.contentView.scroll(to: origin)
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
         } else {
             scroll.contentView.scroll(to: .zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+    }
+
+    private func scaled(_ content: NSAttributedString) -> NSAttributedString {
+        guard textScale != .standard else { return content }
+        let result = NSMutableAttributedString(attributedString: content)
+        textScale.apply(to: result)
+        return result
     }
 
     private static func plain(_ source: String) -> NSAttributedString {

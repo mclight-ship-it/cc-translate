@@ -630,6 +630,10 @@ class SmokeContractTests(unittest.TestCase):
         self.assertIn("dictionary-product-tests.json", workflow)
         native = workflow.index("      - name: Native Swift tests")
         native_end = workflow.index("      - name: Retain native view renders", native)
+        native_body = workflow[native:native_end]
+        for product in ("CCTranslateMac", "CCClipboardTestProducer"):
+            build = "swift build --package-path macos --triple arm64-apple-macosx14.0 --product " + product
+            self.assertLess(native_body.index(build), native_body.index("swift test --package-path macos"))
         self.assertIn("        id: native_units\n", workflow[native:native_end])
         self.assertIn("        continue-on-error: true\n", workflow[native:native_end])
         self.assertEqual(workflow.count("continue-on-error:"), 1)

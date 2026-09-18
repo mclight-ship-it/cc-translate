@@ -149,7 +149,7 @@ struct CaptureView: View {
             Text(model.text("Recognized text · Editable", "识别文字 · 可编辑"))
                 .font(.subheadline.bold()).accessibilityAddTraits(.isHeader)
             TextEditor(text: $capture.text)
-                .font(.system(size: 15))
+                .font(.system(size: model.nativeTextScale.points(15)))
                 .focused($editorFocused)
                 .disabled(capture.busy)
                 .accessibilityLabel(model.text("Reviewed screenshot text to translate", "确认后用于翻译的截图文字"))

@@ -164,13 +164,31 @@ def prepare_harness(destination):
             "Tests/CCTranslateSupportTests/LocalOCRTests.swift",
             "Tests/CCTranslateSupportTests/PlainTextPasteTests.swift",
             "Tests/CCTranslateSupportTests/FreshCopyClipboardTests.swift",
+            "Tests/CCTranslateSupportTests/ClipboardProcessTests.swift",
             "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "macos" / relative, target)
         need(bundle.digest(target) == bundle.digest(ROOT / "macos" / relative),
              "native clipboard/OCR test/fixture source changed")
+    fixture = Path("Tests/CCTranslateSupportTests/Fixtures/ClipboardProducer")
+    shutil.copytree(ROOT / "macos" / fixture, destination / fixture)
+    for source in (ROOT / "macos" / fixture).rglob("*"):
+        if source.is_file():
+            target = destination / source.relative_to(ROOT / "macos")
+            need(bundle.digest(target) == bundle.digest(source),
+                 "clipboard producer fixture source changed")
     return tree_digest(destination)
+
+
+def run_swift_harness(harness, environment, arguments, error):
+    result = subprocess.run(
+        ["/usr/bin/xcrun", "swift", *arguments, "--package-path", str(harness),
+         "--triple", "arm64-apple-macosx14.0"],
+        env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(result.stdout, flush=True)
+    need(result.returncode == 0, error)
+    return result.stdout
 
 
 def require_xctest_passes(text, test_class, methods):
@@ -392,6 +410,34 @@ def fresh_copy_result(text):
             "scope": "same_source_fresh_text_reader_private_pasteboards_not_global_events_or_TCC"}
 
 
+CLIPBOARD_PROCESS_METHODS = (
+    "testDecoderPreservesFragmentedBodyBeyondTranslationFrameLimit",
+    "testDecoderRejectsWrongRequestVersionAndBackgroundReader",
+    "testDecoderRejectsEarlyResultDuplicateHelloAndOversizedMetadata",
+    "testDecoderRejectsTruncatedTrailingAndMalformedUTF8Bodies",
+    "testDecoderRequiresMatchingSuccessfulProcessReceipt",
+    "testUnrelatedLaunchDoesNotEnterClipboardWorker",
+    "testActualAppRejectsMalformedWorkerInvocationWithoutUIBootstrap",
+    "testConstructionAndPrecancelledReadDoNotLaunchAWorker",
+    "testMissingExecutableFailsWithoutChangingClipboard",
+    "testActualAppTransfersLargeExactBytesAndReapsBeforeGrantingLease",
+    "testTimeoutReapsOnlyReaderAndDoesNotClaimExternalProducerStopped",
+)
+
+
+def clipboard_process_result(text):
+    source = ROOT / "macos/Tests/CCTranslateSupportTests/ClipboardProcessTests.swift"
+    methods = re.findall(r"\bfunc (test\w+)\(", source.read_text(encoding="utf-8"))
+    need(len(methods) == len(CLIPBOARD_PROCESS_METHODS) and set(methods) == set(CLIPBOARD_PROCESS_METHODS),
+         "clipboard process source test inventory changed")
+    require_xctest_passes(text, "CCTranslateSupportTests.ClipboardProcessTests", CLIPBOARD_PROCESS_METHODS)
+    need("NSPasteboard: synchronous promise fulfillment requested from a background thread" not in text,
+         "clipboard worker still invokes AppKit background promise fulfillment")
+    return {"tests_run": len(CLIPBOARD_PROCESS_METHODS), "failures": 0, "skipped": 0,
+            "methods": list(CLIPBOARD_PROCESS_METHODS),
+            "scope": "actual_app_worker_private_clipboard_external_producer_and_owned_process_cleanup"}
+
+
 def seal(args):
     verify_checkout(args.source_sha)
     environment = environment_record(15, "16.4")
@@ -456,6 +502,9 @@ def run_runtime(args):
         report["harness_source_sha256"] = prepare_harness(harness)
         environment = os.environ.copy()
         environment["CC_TRANSLATE_APP"] = str(app)
+        report["stage"] = "clipboard-producer-build"
+        run_swift_harness(harness, environment, ["build", "--product", "CCClipboardTestProducer"],
+                          "clipboard producer fixture build failed")
         for stage, test_class, key, validate, error in (
                 ("integration-harness", "HelperIntegrationTests", "integration", integration_result,
                  "integration harness compile/run failed"),
@@ -465,16 +514,13 @@ def run_runtime(args):
                  "local OCR harness failed"),
                 ("fresh-copy-harness", "FreshCopyClipboardTests", "fresh_copy", fresh_copy_result,
                  "fresh copy clipboard harness failed"),
+                ("clipboard-worker-harness", "ClipboardProcessTests", "clipboard_worker", clipboard_process_result,
+                 "clipboard worker harness failed"),
                 ("plain-text-paste-harness", "PlainTextPasteTests", "plain_text_paste", plain_text_paste_result,
                  "plain text paste harness failed")):
             report["stage"] = stage
-            result = subprocess.run(
-                ["/usr/bin/xcrun", "swift", "test", "--package-path", str(harness),
-                 "--triple", "arm64-apple-macosx14.0", "--filter", test_class],
-                env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            print(result.stdout, flush=True)
-            need(result.returncode == 0, error)
-            report[key] = validate(result.stdout)
+            text = run_swift_harness(harness, environment, ["test", "--filter", test_class], error)
+            report[key] = validate(text)
         report["stage"] = "audit-after"
         after = bundle.audit_bundle(app, bundle.load_lock(), os.environ.copy())
         need(after["inventory"] == audited["inventory"] and tree_digest(app) == before,

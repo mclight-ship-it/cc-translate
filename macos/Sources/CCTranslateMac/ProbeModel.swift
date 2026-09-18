@@ -63,6 +63,7 @@ final class ProbeModel: ObservableObject {
     }
     @Published var interfaceLanguage = "system"
     @Published var appearance = "system"
+    @Published var nativeTextScale: NativeTextScale = .standard
     @Published var historySearch = "" {
         didSet { if historySearch != oldValue { queueHistorySearch(debounce: true) } }
     }
@@ -368,6 +369,7 @@ final class ProbeModel: ObservableObject {
         let defaults = preferences ?? .standard
         defaults.set(interfaceLanguage, forKey: "interfaceLanguage")
         defaults.set(appearance, forKey: "appearance")
+        defaults.set(nativeTextScale.rawValue, forKey: NativeTextScale.preferenceKey)
         if cliName == "codex", !selectedCLI.isEmpty {
             defaults.set(selectedCLI, forKey: "selectedCodexPath")
         }
@@ -380,6 +382,9 @@ final class ProbeModel: ObservableObject {
                 let defaults = preferences ?? .standard
                 interfaceLanguage = defaults.string(forKey: "interfaceLanguage") ?? "system"
                 appearance = defaults.string(forKey: "appearance") ?? "system"
+                nativeTextScale = NativeTextScale(
+                    rawValue: defaults.string(forKey: NativeTextScale.preferenceKey) ?? ""
+                ) ?? .standard
                 if let custom = defaults.string(forKey: "lastCustomCodexModel") {
                     modelSettings.restoreCustom(custom)
                 }

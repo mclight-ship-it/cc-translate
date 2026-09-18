@@ -106,7 +106,10 @@ P2双Cmd+C关联回退另有37项新原生测试，父已审阅并接上共享�
 37项新P2和18项来源方法各自真实通过；同App三系统的46粘贴/7新读取也均通过。
 不过15/26出现后台AppKit promise线程警告，26被原有检查拒绝，完整run退出1；
 14完成全部后置审计。继续修线程用法，不删警告检查冒充解决；工程包未替换推荐包。
-同时继续P3原生文字大小设置，默认保持现有字号，覆盖主界面/历史/截图；该后续实现不在c7745ec中。
+主线程隔离reader已合并：复用App早期只读入口，独立测试producer履约，原46项保留并新增11项；
+消费者新增同App worker验收，本地bundle/runtime联合72项已过，Mac执行仍待新源码CI。
+P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，覆盖主界面/历史/截图，
+不依赖helper或重写业务配置。新增16项测试和3张预期截图尚待新源码Mac执行；不在c7745ec中。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

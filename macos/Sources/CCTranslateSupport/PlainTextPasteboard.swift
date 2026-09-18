@@ -1,14 +1,14 @@
 import AppKit
-import CoreServices
-import UniformTypeIdentifiers
 
-// AppKit change-count checks and eager writes stay on MainActor. Item enumeration and
-// potentially blocking promise/RTF reads use queue-confined AppKit items for one interaction.
+// Only local lease state is queue-confined. Blocking reads run on a separate process's
+// physical main thread; revision checks and eager writes stay on the host MainActor.
 final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked Sendable {
     private static let queue = DispatchQueue(label: "CCTranslate.plain-text-paste.clipboard", qos: .userInitiated)
     private let name: NSPasteboard.Name
     private let identity = UUID()
     private let trace: (@Sendable (String) -> Void)?
+    private let readerExecutable: URL?
+    private let workerTimeout: TimeInterval
     private var nextToken = 0
     private var readable: Lease?
     private var written: Lease?
@@ -18,8 +18,11 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         let changeCount: Int
     }
 
-    init(name: NSPasteboard.Name = .general, trace: (@Sendable (String) -> Void)? = nil) {
+    init(name: NSPasteboard.Name = .general, readerExecutable: URL? = nil,
+         workerTimeout: TimeInterval = 35, trace: (@Sendable (String) -> Void)? = nil) {
         self.name = name
+        self.readerExecutable = readerExecutable
+        self.workerTimeout = workerTimeout
         self.trace = trace
     }
 
@@ -31,29 +34,27 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
             return self.nextToken
         }
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
+        guard let executable = readerExecutable ?? Bundle.main.executableURL,
+              readerExecutable != nil || executable.lastPathComponent == "CCTranslateMac" else {
+            trace?("clipboard reader executable unavailable")
+            return .failure(.unavailableData)
+        }
         let initialCount = await currentChangeCount()
-        let result = await onQueue {
-            self.trace?("read token \(token), initial change count \(initialCount)")
-            return self.readText(token: token, expectedChangeCount: initialCount, cancellation: cancellation)
+        let run = ClipboardReadRun(request: UUID(), revision: initialCount, trace: trace ?? { _ in })
+        let read = await run.read(executable: executable, name: name.rawValue,
+                                  cancellation: cancellation, timeout: workerTimeout)
+        let result: PlainTextPasteRead
+        switch read {
+        case .success(let text):
+            result = .text(PlainTextPasteSnapshot(changeCount: token, text: text, sourceIdentity: identity))
+        case .failure(let failure): result = .failure(failure.reason)
         }
         let count = await currentChangeCount()
         return await onQueue {
             self.trace?("read finish token \(token)/\(self.nextToken), change count \(initialCount)/\(count), cancelled \(cancellation.isCancelled)")
-            guard !cancellation.isCancelled else {
-                self.trace?("read rejected cancelled")
-                return .failure(.cancelled)
-            }
-            guard self.nextToken == token, count == initialCount else {
-                self.trace?("read rejected clipboardChanged")
-                return .failure(.clipboardChanged)
-            }
-            switch result {
-            case .text:
-                self.readable = Lease(token: token, changeCount: count)
-                self.trace?("read accepted text lease")
-            case .failure(let reason):
-                self.trace?("read rejected \(reason)")
-            }
+            guard !cancellation.isCancelled else { return .failure(.cancelled) }
+            guard self.nextToken == token, count == initialCount else { return .failure(.clipboardChanged) }
+            if case .text = result { self.readable = Lease(token: token, changeCount: count) }
             return result
         }
     }
@@ -96,9 +97,7 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
     }
 
     @MainActor
-    private func currentChangeCount() -> Int {
-        NSPasteboard(name: name).changeCount
-    }
+    private func currentChangeCount() -> Int { NSPasteboard(name: name).changeCount }
 
     @MainActor
     private func write(_ data: Data, replacing expected: Int,
@@ -116,103 +115,6 @@ final class SystemPlainTextPasteClipboard: PlainTextPasteClipboard, @unchecked S
         cancellation.record(clipboard: .plainTextWritten)
         guard board.changeCount == count else { return .failure(.clipboardChanged) }
         return .written(count)
-    }
-
-    private func readText(token: Int, expectedChangeCount: Int,
-                          cancellation: PlainTextPasteCancellation) -> PlainTextPasteRead {
-        dispatchPrecondition(condition: .onQueue(Self.queue))
-        guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        let board = NSPasteboard(name: name)
-        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
-        // Global types include legacy AppKit file declarations; item types are UTIs.
-        guard !(board.types ?? []).contains(where: { Self.isFileFlavor($0.rawValue) }) else {
-            return .failure(.noText)
-        }
-        guard let pasteboardItems = board.pasteboardItems else { return .failure(.unavailableData) }
-        trace?("AppKit item count \(pasteboardItems.count)")
-        guard !pasteboardItems.isEmpty else { return .failure(.noText) }
-        var items: [(item: NSPasteboardItem, flavors: [String])] = []
-        for (index, item) in pasteboardItems.enumerated() {
-            guard !cancellation.isCancelled else { return .failure(.cancelled) }
-            guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
-            let flavors = item.types.map(\.rawValue)
-            trace?("AppKit item \(index), types \(flavors)")
-            guard !flavors.contains(where: Self.isFileFlavor) else { return .failure(.noText) }
-            items.append((item, flavors))
-        }
-        // Inspect every item's metadata before requesting any promised data. Exact type
-        // membership avoids conformance-based object importers (notably HTML and file URLs).
-        var strings: [String] = []
-        for (item, flavors) in items {
-            if let flavor = PasteboardTextRepresentation.preferred(in: flavors) {
-                switch copyData(board, item: item, type: flavor.type,
-                                expectedChangeCount: expectedChangeCount, cancellation: cancellation) {
-                case .failure(let reason): return .failure(reason)
-                case .success(let data):
-                    guard let text = flavor.decode(data) else {
-                        trace?("decode \(flavor.type) failed, bytes \(data.count)")
-                        return .failure(.unavailableData)
-                    }
-                    trace?("decode \(flavor.type) succeeded, bytes \(data.count)")
-                    strings.append(text)
-                }
-            } else if flavors.contains("public.rtf") {
-                switch copyData(board, item: item, type: "public.rtf",
-                                expectedChangeCount: expectedChangeCount, cancellation: cancellation) {
-                case .failure(let reason): return .failure(reason)
-                case .success(let data):
-                    guard data.starts(with: Array("{\\rtf".utf8)),
-                          let version = data.dropFirst(5).first, (0x30...0x39).contains(version),
-                          let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
-                        return .failure(.invalidRichText)
-                    }
-                    var attachment = false
-                    rich.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rich.length), options: []) { value, _, stop in
-                        if value != nil { attachment = true; stop.pointee = true }
-                    }
-                    guard !attachment else { return .failure(.unsupportedRepresentation) }
-                    strings.append(rich.string)
-                }
-            } else {
-                return .failure(flavors.contains("public.html") || flavors.contains("com.apple.flat-rtfd")
-                                ? .unsupportedRepresentation : .noText)
-            }
-        }
-        guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        return .text(PlainTextPasteSnapshot(changeCount: token, text: strings.joined(separator: "\n"),
-                                            sourceIdentity: identity))
-    }
-
-    private enum FlavorData {
-        case success(Data), failure(PlainTextPasteReason)
-    }
-
-    private func copyData(_ board: NSPasteboard, item: NSPasteboardItem, type: String,
-                          expectedChangeCount: Int,
-                          cancellation: PlainTextPasteCancellation) -> FlavorData {
-        guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
-        let data = item.data(forType: NSPasteboard.PasteboardType(type))
-        trace?("AppKit copy \(type), bytes \(data?.count ?? -1)")
-        guard !cancellation.isCancelled else { return .failure(.cancelled) }
-        guard board.changeCount == expectedChangeCount else { return .failure(.clipboardChanged) }
-        guard let data else { return .failure(.unavailableData) }
-        return .success(data)
-    }
-
-    private static let legacyFileFlavors: Set<String> = [
-        "NSFilenamesPboardType", "NSFileContentsPboardType", "NSFilesPromisePboardType"
-    ]
-    private static let pasteboardTagClass = UTTagClass(rawValue: kUTTagClassNSPboardType as String)
-
-    private static func isFileFlavor(_ type: String) -> Bool {
-        if type == "public.file-url" || legacyFileFlavors.contains(type) ||
-            type.hasPrefix("com.apple.pasteboard.promised-file-") { return true }
-        guard let uniformType = UTType(type) else { return false }
-        if uniformType.conforms(to: .fileURL) { return true }
-        // Carbon exposes some legacy AppKit file flavors as dynamic UTIs. Their public
-        // tag specification preserves the pasteboard type; the opaque dyn.* string is not stable.
-        return uniformType.tags[pasteboardTagClass]?.contains(where: legacyFileFlavors.contains) == true
     }
 
     private func onQueue<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {

@@ -190,6 +190,39 @@ class FreshCopyEvidenceTests(unittest.TestCase):
                 runtime.fresh_copy_result(self.log())
 
 
+class ClipboardProcessEvidenceTests(unittest.TestCase):
+    def log(self):
+        cases = []
+        for method in runtime.CLIPBOARD_PROCESS_METHODS:
+            case = "Test Case '-[CCTranslateSupportTests.ClipboardProcessTests " + method + "]' "
+            cases.extend((case + "started.", case + "passed (0.1 seconds)."))
+        return "\n".join(cases) + "\nExecuted 11 tests, with 0 failures\n"
+
+    def test_worker_requires_real_methods_without_skip_failure_duplicate_or_warning(self):
+        text = self.log()
+        self.assertEqual(runtime.clipboard_process_result(text), {
+            "tests_run": 11, "failures": 0, "skipped": 0, "methods": list(runtime.CLIPBOARD_PROCESS_METHODS),
+            "scope": "actual_app_worker_private_clipboard_external_producer_and_owned_process_cleanup"})
+        for invalid in ("", text + text, text.replace("passed", "skipped"),
+                        text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
+                        text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
+                        text.replace("Executed 11 tests", "Executed 10 tests"),
+                        text.replace("ClipboardProcessTests", "SomeOtherTests"),
+                        text + "\nNSPasteboard: synchronous promise fulfillment requested from a background thread!",
+                        text.replace(runtime.CLIPBOARD_PROCESS_METHODS[0], "testUnexpected")):
+            with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
+                runtime.clipboard_process_result(invalid)
+
+    def test_worker_source_inventory_cannot_silently_change(self):
+        for methods in ((), runtime.CLIPBOARD_PROCESS_METHODS[:-1],
+                        (*runtime.CLIPBOARD_PROCESS_METHODS, "testAnother"),
+                        (*runtime.CLIPBOARD_PROCESS_METHODS[:-1], runtime.CLIPBOARD_PROCESS_METHODS[0])):
+            source = "\n".join("func " + method + "() {}" for method in methods)
+            with self.subTest(methods=methods), patch.object(Path, "read_text", return_value=source), \
+                    self.assertRaises(bundle.BundleError):
+                runtime.clipboard_process_result(self.log())
+
+
 class RuntimeMatrixTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -438,14 +471,53 @@ class RuntimeMatrixTests(unittest.TestCase):
                          "Sources/CCTranslateSupport/FreshCopyClipboard.swift",
                          "Sources/CCTranslateSupport/FreshCopySelection.swift",
                          "Tests/CCTranslateSupportTests/FreshCopyClipboardTests.swift",
+                          "Sources/CCTranslateSupport/ClipboardProcess.swift",
+                          "Sources/CCTranslateSupport/ClipboardReadWorker.swift",
+                          "Tests/CCTranslateSupportTests/ClipboardProcessTests.swift",
                          "Tests/CCTranslateSupportTests/Fixtures/about-metadata-zh-narrow.png"):
             self.assertEqual((harness / relative).read_bytes(), (runtime.ROOT / "macos" / relative).read_bytes())
         package = (harness / "Package.swift").read_text()
         self.assertIn('define("CC_TRANSLATE_RESOURCE_HARNESS")', package)
         self.assertIn('exclude: ["Fixtures"]', package)
-        self.assertNotIn("executableTarget", package)
+        self.assertEqual(package.count(".executableTarget("), 1)
+        self.assertIn('.executableTarget(name: "CCClipboardTestProducer"', package)
+        self.assertNotIn('name: "CCTranslateMac"', package)
+        fixture = Path("Tests/CCTranslateSupportTests/Fixtures/ClipboardProducer")
+        originals = {p.relative_to(runtime.ROOT / "macos"): p.read_bytes()
+                     for p in (runtime.ROOT / "macos" / fixture).rglob("*") if p.is_file()}
+        copies = {p.relative_to(harness): p.read_bytes()
+                  for p in (harness / fixture).rglob("*") if p.is_file()}
+        self.assertIn(fixture / "main.swift", originals)
+        self.assertEqual(copies, originals)
         with self.assertRaises(bundle.BundleError):
             runtime.prepare_harness(harness)
+
+    def test_harness_builds_only_fixture_and_tests_with_same_app_environment(self):
+        harness = self.root / "harness"
+        environment = {"CC_TRANSLATE_APP": str(self.app)}
+        for arguments in (["build", "--product", "CCClipboardTestProducer"],
+                          ["test", "--filter", "PlainTextPasteTests"]):
+            with self.subTest(arguments=arguments), patch.object(runtime.subprocess, "run") as process, \
+                    patch("builtins.print") as output:
+                process.return_value = SimpleNamespace(returncode=0, stdout="native evidence\n")
+                self.assertEqual(runtime.run_swift_harness(harness, environment, arguments, "failed"),
+                                 "native evidence\n")
+                process.assert_called_once_with(
+                    ["/usr/bin/xcrun", "swift", *arguments, "--package-path", str(harness),
+                     "--triple", "arm64-apple-macosx14.0"],
+                    env=environment, stdout=runtime.subprocess.PIPE, stderr=runtime.subprocess.STDOUT, text=True)
+                output.assert_called_once_with("native evidence\n", flush=True)
+
+    def test_failed_harness_build_or_test_preserves_output_and_stops(self):
+        for arguments in (["build", "--product", "CCClipboardTestProducer"],
+                          ["test", "--filter", "PlainTextPasteTests"]):
+            with self.subTest(arguments=arguments), patch.object(runtime.subprocess, "run") as process, \
+                    patch("builtins.print") as output, self.assertRaisesRegex(bundle.BundleError, "native failed"):
+                process.return_value = SimpleNamespace(returncode=1, stdout="native diagnostic\n")
+                try:
+                    runtime.run_swift_harness(self.root, {}, arguments, "native failed")
+                finally:
+                    output.assert_called_once_with("native diagnostic\n", flush=True)
 
     def test_runtime_failure_writes_not_passed_report_without_running_harness(self):
         output = self.root / "report"

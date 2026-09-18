@@ -4,10 +4,15 @@ import PackageDescription
 let package = Package(
     name: "CCTranslateRuntimeHarness",
     platforms: [.macOS(.v14)],
+    products: [
+        .executable(name: "CCClipboardTestProducer", targets: ["CCClipboardTestProducer"])
+    ],
     targets: [
         .target(name: "CCProcessSupport"),
         .target(name: "CCTranslateSupport", dependencies: ["CCProcessSupport"]),
         .target(name: "CCTranslateAppResources"),
+        .executableTarget(name: "CCClipboardTestProducer",
+                          path: "Tests/CCTranslateSupportTests/Fixtures/ClipboardProducer"),
         .testTarget(name: "CCTranslateSupportTests", dependencies: ["CCTranslateSupport"],
                     exclude: ["Fixtures"]),
         .testTarget(name: "CCTranslateMacTests", dependencies: ["CCTranslateAppResources"],
