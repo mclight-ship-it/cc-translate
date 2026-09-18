@@ -30,16 +30,19 @@ private enum HistoryLimitControls {
     }
 
     static func field(in root: NSView) throws -> NSTextField {
-        try XCTUnwrap(views(NSTextField.self, in: root).first { $0.isEditable })
+        let fields = views(NSTextField.self, in: root).filter { $0.isEditable }
+        XCTAssertEqual(fields.count, 1)
+        return try XCTUnwrap(fields.count == 1 ? fields.first : nil)
     }
 
     static func button(_ id: String, title: String, in root: NSView) throws -> NativeSettingsTestControl {
-        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: title, role: .button)
+        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: title, kind: .button)
     }
 }
 
 @MainActor
 private final class HistoryLimitSettingsHost {
+    private let windowFocus = NativeTestWindowFocus()
     let host: NSHostingView<HistoryLimitSettingsSurface>
     let window: NSWindow
     let model: ProbeModel
@@ -49,11 +52,12 @@ private final class HistoryLimitSettingsHost {
         self.model = model
         host = NSHostingView(rootView: HistoryLimitSettingsSurface(model: model))
         let size = NSSize(width: 640, height: 680)
-        window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless,
+        window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .titled,
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         host.frame = NSRect(origin: .zero, size: size)
+        window.makeKeyAndOrderFront(nil)
         flush()
     }
 
@@ -74,6 +78,7 @@ private final class HistoryLimitSettingsHost {
         let field = try HistoryLimitControls.field(in: host)
         XCTAssertTrue(window.makeFirstResponder(field))
         let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        XCTAssertTrue(window.firstResponder === editor)
         editor.selectAll(nil)
         editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(window.makeFirstResponder(nil))
@@ -86,8 +91,7 @@ private final class HistoryLimitSettingsHost {
     }
 
     func close() {
-        window.contentView = nil
-        window.close()
+        windowFocus.close(window)
     }
 }
 
@@ -109,22 +113,22 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             try await surface.enter("17")
             let apply = try surface.button("apply-history-limit", "Apply limit", "应用条数")
             XCTAssertTrue(apply.isEnabled)
-            apply.press()
+            try apply.press()
             try await surface.waitFor {
                 f.model.historyLimit.confirmation == HistoryLimitPreference.Reduction(from: 600, to: 17)
             }
             XCTAssertEqual(helper.operations, initialOperations)
             let cancel = try surface.button("cancel-history-limit-reduction", "Cancel", "取消")
-            cancel.press()
+            try cancel.press()
             try await surface.waitFor { f.model.historyLimit.confirmation == nil && apply.isEnabled }
             XCTAssertEqual(helper.operations, initialOperations)
             XCTAssertEqual(f.model.historyLimit.saved, 600)
             XCTAssertEqual(f.model.historyLimit.draft, "17")
-            apply.press()
+            try apply.press()
             try await surface.waitFor { f.model.historyLimit.confirmation != nil }
             let confirm = try surface.button("confirm-history-limit-reduction", "Reduce and save", "降低并保存")
             XCTAssertTrue(confirm.isEnabled)
-            confirm.press()
+            try confirm.press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
             XCTAssertEqual(helper.configurationSaves.last?.config["history_limit"], .integer(17))
             XCTAssertEqual(f.model.historyLimit.saved, 600)
@@ -167,7 +171,7 @@ final class HistoryLimitPreferenceInteractionTests: XCTestCase {
             XCTAssertFalse(try surface.button("apply-history-limit", "Apply limit", "应用条数").isEnabled)
             let reload = try surface.button("reload-history-limit", "Reload saved history limit", "重新读取已保存条数")
             XCTAssertTrue(reload.isEnabled)
-            reload.press()
+            try reload.press()
             try await surface.waitFor { helper.configurationLoads.count == 2 }
             try f.finishConfiguration(on: helper)
             try await surface.waitFor { f.model.canEditHistoryLimit }

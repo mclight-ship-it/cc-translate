@@ -32,14 +32,14 @@ private enum InputLimitNativeViews {
     static func field(in root: NSView) throws -> NSTextField {
         let fields = views(NSTextField.self, in: root).filter { $0.isEditable }
         XCTAssertEqual(fields.count, 1)
-        return try XCTUnwrap(fields.first)
+        return try XCTUnwrap(fields.count == 1 ? fields.first : nil)
     }
 
     static func button(in root: NSView, id: String, label: String) throws -> NativeSettingsTestControl {
-        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: label, role: .button)
+        try NativeSettingsTestControls.resolve(in: root, identifier: id, label: label, kind: .button)
     }
 
-    static func assertVisible(_ control: NativeSettingsTestControl, file: StaticString = #filePath,
+    static func assertVisible(_ control: any NativeRenderedTestRegion, file: StaticString = #filePath,
                               line: UInt = #line) {
         XCTAssertGreaterThan(control.visibleRect.height, 0, file: file, line: line)
         XCTAssertEqual(control.visibleRect.height, control.frame.height, accuracy: 1, file: file, line: line)
@@ -49,6 +49,7 @@ private enum InputLimitNativeViews {
 
 @MainActor
 private final class InputLimitNativeHost<Content: View> {
+    private let windowFocus = NativeTestWindowFocus()
     let host: NSHostingView<Content>
     let window: NSWindow
 
@@ -81,6 +82,7 @@ private final class InputLimitNativeHost<Content: View> {
         let field = try InputLimitNativeViews.field(in: host)
         XCTAssertTrue(window.makeFirstResponder(field))
         let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        XCTAssertTrue(window.firstResponder === editor)
         editor.selectAll(nil)
         editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(window.makeFirstResponder(nil))
@@ -91,12 +93,13 @@ private final class InputLimitNativeHost<Content: View> {
         flush()
         let editors = InputLimitNativeViews.views(NSTextView.self, in: host).filter { $0.isEditable }
         XCTAssertEqual(editors.count, 1)
-        return try XCTUnwrap(editors.first)
+        return try XCTUnwrap(editors.count == 1 ? editors.first : nil)
     }
 
     func enterText(_ text: String) throws -> NSTextView {
         let editor = try editor()
         XCTAssertTrue(window.makeFirstResponder(editor))
+        XCTAssertTrue(window.firstResponder === editor)
         editor.selectAll(nil)
         editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         return editor
@@ -108,8 +111,7 @@ private final class InputLimitNativeHost<Content: View> {
     }
 
     func close() {
-        window.contentView = nil
-        window.close()
+        windowFocus.close(window)
     }
 }
 
@@ -304,7 +306,7 @@ extension ProductRenderingTests {
             InputLimitNativeViews.assertVisible(button)
             for (id, label) in [("input-code-point-count", "2731 / 5000 Unicode 码点"),
                                 ("input-byte-count", "8193 / 8,192 UTF-8 字节")] {
-                let count = try NativeSettingsTestControls.resolve(in: host, identifier: id, label: label, role: .staticText)
+                let count = try NativeSettingsTestControls.caption(in: host, identifier: id, label: label)
                 InputLimitNativeViews.assertVisible(count)
             }
         })

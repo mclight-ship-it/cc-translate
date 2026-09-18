@@ -152,6 +152,8 @@ bb1f851已实际编译并执行744项，新增20模型/预检及18字体方法�
 a4ac252修复编译后真实执行744项，20输入模型/预检和94剪贴板通过一次，仍15方法失败。
 正继续处理等价Unicode拼写的SwiftUI更新、真实控件交互和中文截图诊断；未删断言或改系统权限，
 116/122图片完整性通过不等于原生产品验证通过。
+实际渲染控件helper已交付并审阅，将与精确字节编辑器修正一起重新验证；
+保留744方法/122预期PNG，不再混同provider getter、真实控件交互与完整AX/VoiceOver三种证据。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

@@ -473,6 +473,14 @@ C发布者先退役、随后释放资源顺序，并先刷新AppKit revision再�
 后置21方法无skip且逐方法一次通过，新增10后端及旧历史7方法也逐冻结源码核验。
 原生门禁仍阻止新App和14/26验收；新修正尚未验证，没有新推荐包。
 
+设置交互helper现已交付并完整审阅：4个测试文件，13个既有方法及7张相关PNG库存不变。
+使用实际公开NSButton/NSSwitch的title/identifier或原生bitmap中唯一可见caption几何定位，
+然后读取真实enabled/state、执行performClick、检查实际firstResponder和对象身份；
+缺失/歧义仍失败，无模型setter、私有类名、AX客户端自查询或权限修改兜底。
+计数文本使用实际渲染caption的几何，不再伪装成AX节点；fixture结束关闭自己的窗口并恢复仍有效的旧焦点。
+这与精确字节representable修正一起进入下一源码验证。全局仍744方法、122预期PNG；
+Windows无诊断仅是静态检查，不能宣称Mac动作/焦点/OCR已经通过，完整AX与VoiceOver仍单列未验。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证
