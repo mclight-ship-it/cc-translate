@@ -456,13 +456,15 @@ enum NativeSettingsTestControls {
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
     }
 
-    static func remainingActionWhenReady(in root: NSView, excluding toggle: NativeSettingsTestControl,
+    static func remainingActionWhenReady(in root: NSView, excluding toggle: NativeSettingsTestControl? = nil,
                                         identifier: String, label: String) async throws -> NativeSettingsTestControl {
-        guard toggle.kind == .toggle, toggle.root === root,
-              toggle.backing.control.isDescendant(of: root),
-              !RenderedGeometry.visibleRect(toggle.backing.control).isEmpty else {
-            XCTFail("The isolated fixture must retain its already identified visible toggle.")
-            throw RenderedLookupError.missingOrAmbiguousControl
+        if let toggle {
+            guard toggle.kind == .toggle, toggle.root === root,
+                  toggle.backing.control.isDescendant(of: root),
+                  !RenderedGeometry.visibleRect(toggle.backing.control).isEmpty else {
+                XCTFail("The isolated fixture must retain its already identified visible toggle.")
+                throw RenderedLookupError.missingOrAmbiguousControl
+            }
         }
         let deadline = Date().addingTimeInterval(2)
         var buttons: [NSButton]
@@ -471,12 +473,13 @@ enum NativeSettingsTestControls {
             try prepare(root)
             // SwiftUI can own AX semantics above these controls. Exclude the known toggle by identity, not role or state.
             buttons = views(in: root).compactMap { $0 as? NSButton }.filter {
-                !($0 is NSPopUpButton) && $0 !== toggle.backing.control &&
+                !($0 is NSPopUpButton) && $0 !== toggle?.backing.control &&
                     !RenderedGeometry.visibleRect($0).isEmpty
             }
-        } while buttons.isEmpty && Date() < deadline
+        } while buttons.count != 1 && Date() < deadline
         return try resolved(Lookup(candidates: buttons.map { .button($0) }, readback: nil,
-                                   route: "sole visible NSButton excluding the identified toggle"),
+                                   route: toggle == nil ? "sole visible NSButton in isolated fixture" :
+                                       "sole visible NSButton excluding the identified toggle"),
                             in: root, identifier: identifier, label: label, kind: .button)
     }
 

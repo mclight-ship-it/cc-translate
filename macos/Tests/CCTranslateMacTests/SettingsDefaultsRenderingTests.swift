@@ -40,7 +40,9 @@ final class SettingsDefaultsInteractionTests: XCTestCase {
                     in: surface.host, identifier: id, label: f.model.text(english, chinese), kind: kind)
             }
             for cancel in [true, false] {
-                let prepare = try await button("restore-default-settings", "Restore default settings…", "恢复默认设置…")
+                let prepare = try await NativeSettingsTestControls.remainingActionWhenReady(
+                    in: surface.host, identifier: "restore-default-settings",
+                    label: f.model.text("Restore default settings…", "恢复默认设置…"))
                 XCTAssertTrue(prepare.isEnabled)
                 try await prepare.press()
                 try await surface.waitFor { f.model.defaultsPhase == .loading }

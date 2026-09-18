@@ -575,9 +575,20 @@ producer完整App和同包14/26仍在后续验证，未提前修改推荐下载�
 另新增1项中英文真实原生点击交互、1项三状态渲染（3PNG）、1项Swift协议生命周期测试。
 既有Foundation配置集成方法增加缺文件/已有文件的真实打包helper默认预览与字节不变检查，方法数仍21。
 Python新增4方法后配置集41项通过；配置/打包/runtime联合113项/13.857秒通过，
-保留显式HTTPS未授权的预期负例输出。真实Swift编译和上述13新方法尚未执行，不以Windows通过代替。
+保留显式HTTPS未授权的预期负例输出。这些Windows结果不替代Mac，首轮实际Mac结果与修正见下。
 截图快捷键仍在独立`3ffb141` / run35338542005验收，此恢复功能未混入该源码或推荐包。
 行为细节见[恢复默认设置](MACOS_DEVELOPMENT.md#native-restore-defaults)。
+
+首源码`91773dd` / [run35340058827](https://github.com/mclight-ship-it/cc-translate/actions/runs/35340058827)
+正常privacy/3 Python编译/1850项103.974秒通过；实际Swift编译37.99秒，
+811项/23构包前skip/14失败断言（1 unexpected）/513.468秒，134PNG完整。
+13新方法中11通过；其中真实生产缺陷是仅在transport failure清理恢复状态，
+遗漏正常`.stopped`通知，4阶段断连测试揭示迟到预览可重开确认、失败状态不收敛。
+现补同一退休清理到正常停止分支，保留4阶段/迟到消息/显式重连断言，不自动重放。
+另一个失败是测试未匹配唯一可见171×20原生恢复按钮的完整英文OCR标签。
+截图中按钮实际可见，现复用已有独立fixture唯一NSButton定位与单次原生点击，
+不按预期enabled/state选按钮，不改控件状态；确认和取消仍走各自原生动作。
+新修正待独立Mac复验，不把其余11项或134PNG当作整包通过。
 
 <a id="native-text-scale-checkpoint"></a>
 

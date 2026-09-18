@@ -2000,6 +2000,7 @@ final class ProbeModel: ObservableObject {
             historyLimit.connectionLost()
             inputLimit.connectionLost()
             copyInterval.connectionLost()
+            if defaultsPhase.busy || defaultsPhase == .confirming { failDefaultsRestore("connection_closed") }
             plainPaste.connectionLost(preservingQueuedChoice: plainPasteConfigAfterStop)
             settingsReady = false
             settingsBusy = false
