@@ -2036,13 +2036,13 @@ final class ProbeModel: ObservableObject {
                 }
             case "failed":
                 flushBufferedDelta()
-                status = event.safeFailureMessage
+                status = event.safeFailureMessage(provider: connectedProvider ?? translationProvider)
                 if !hideCurrentOutput {
                     if activeAction != nil {
                         output += "\n\n[" + text("Result action failed", "结果操作失败") + "]"
                     }
                     productPhase = .failed
-                    productMessage = imageRequest ? imageFailureMessage(event) : event.safeFailureMessage
+                    productMessage = imageRequest ? imageFailureMessage(event) : status
                 }
             default: break
             }

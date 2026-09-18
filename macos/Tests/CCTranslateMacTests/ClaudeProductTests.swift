@@ -30,6 +30,25 @@ enum ClaudeProductFixture {
 }
 
 final class ClaudeProductTests: XCTestCase {
+    @MainActor
+    func testClaudeProtocolFailureNamesClaudeAndDoesNotSuggestCodexOrReplay() throws {
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        f.preferences.set("claude_cli", forKey: "lastConfirmedTranslationProvider")
+        let helper = try f.ready(configuration: ClaudeProductFixture.configuration())
+        f.model.input = "A synthetic sentence."
+        f.model.translate()
+        let request = try XCTUnwrap(helper.translations.last)
+        helper.event("failed", id: request.id,
+                     payload: ["code": .string("provider_protocol_error"), "submitted": .bool(true)])
+        XCTAssertEqual(f.model.productPhase, .failed)
+        XCTAssertTrue(f.model.productMessage.contains("Claude"))
+        XCTAssertTrue(f.model.productMessage.contains("outcome is unknown"))
+        XCTAssertFalse(f.model.productMessage.contains("Codex"))
+        XCTAssertFalse(f.model.productMessage.contains("app-server"))
+        XCTAssertEqual(helper.translations.count, 1)
+    }
+
     func testPresetsAndCustomValidationAreProviderSpecificWithoutAnAccountCheck() {
         let codex = CodexModelSettings()
         let claude = CodexModelSettings(provider: .claude)
@@ -285,7 +304,9 @@ final class ClaudeProductTests: XCTestCase {
         defer { f.cleanUp() }
         let helper = try f.localReady()
         let surface = NativeSettingsTestHost(
-            Form { TranslationSettingsView(model: f.model).translationSection }.formStyle(.grouped),
+            Form {
+                TranslationSettingsView(model: f.model, showDiagnostics: {}, showAbout: {}).translationSection
+            }.formStyle(.grouped),
             size: NSSize(width: 760, height: 980))
         defer { surface.close() }
         try await surface.waitFor {
@@ -335,7 +356,9 @@ extension ProductRenderingTests {
         f.model.editCustomModelID("future/Claude-Custom")
         for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
             f.model.interfaceLanguage = language
-            _ = try render(Form { TranslationSettingsView(model: f.model).translationSection }
+            _ = try render(Form {
+                TranslationSettingsView(model: f.model, showDiagnostics: {}, showAbout: {}).translationSection
+            }
                 .formStyle(.grouped), named: "claude-settings-\(language)-\(scheme == .light ? "light" : "dark")",
                            size: NSSize(width: 760, height: 980), scheme: scheme, inspect: { host in
                 let buttons = ScaleTestSupport.views(NSPopUpButton.self, in: host)

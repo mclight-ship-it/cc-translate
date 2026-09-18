@@ -1076,7 +1076,9 @@ run35348803751 producer已实际通过新9项Darwin provider用例与966portable
 402目标契约与1925正常hook通过；3e53aec的新5Swift连接用例已实际通过，
 4Darwin业务链仍待该源码完整结果。
 下一源码继续接入Claude设置入口、两套路径/模型草稿、保存读回后切换helper及两套模型恢复默认，
-新增15项原生产品/菜单/渲染测试。UI仍待新源码Mac验证，不影响当前8f898aa推荐包，
+首UI源码da41955正常hook通过，但首Mac运行因两处新增测试漏传视图回调而编译失败；
+已修复测试构造并补Claude错误身份提示，现有16项新原生产品/菜单/渲染测试。
+UI仍待修正源码Mac验证，不影响当前8f898aa推荐包，
 也不代表已使用真实Claude账号或模型验收。
 进度与验证边界见[Claude服务检查点](MACOS_TODO.md#native-claude-provider-checkpoint)。
 

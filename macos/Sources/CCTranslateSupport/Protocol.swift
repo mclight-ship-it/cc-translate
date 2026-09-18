@@ -579,6 +579,10 @@ public struct ServerEvent: Equatable {
     }
 
     public var safeFailureMessage: String {
+        safeFailureMessage(provider: .codex)
+    }
+
+    public func safeFailureMessage(provider: TranslationProvider) -> String {
         let action: String
         switch HelperFailureCode(rawValue: safeFailureCode) {
         case .providerVersionUnsupported:
@@ -588,9 +592,15 @@ public struct ServerEvent: Equatable {
         case .providerVersionPrerelease:
             action = "Codex prereleases are not supported. Select stable Codex \(CodexVersion.minimum) or newer and run the explicit --version probe."
         case .providerProtocolError:
-            action = payload["submitted"] == .bool(false)
-                ? "The Codex app-server response failed strict protocol validation before model submission. Check the selected Codex installation. Meeting the version minimum does not prove protocol compatibility."
-                : "The Codex app-server response failed strict protocol validation after possible model submission. Do not replay this request; its remote outcome is unknown."
+            if provider == .claude {
+                action = payload["submitted"] == .bool(false)
+                    ? "The selected Claude CLI returned an unreadable response before model submission."
+                    : "Claude returned an incomplete or unreadable translation response after possible submission. Do not replay this request; its remote outcome is unknown."
+            } else {
+                action = payload["submitted"] == .bool(false)
+                    ? "The Codex app-server response failed strict protocol validation before model submission. Check the selected Codex installation. Meeting the version minimum does not prove protocol compatibility."
+                    : "The Codex app-server response failed strict protocol validation after possible model submission. Do not replay this request; its remote outcome is unknown."
+            }
         default:
             return "Helper request failed: \(safeFailureCode). No fallback or automatic retry."
         }
