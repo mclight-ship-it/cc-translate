@@ -418,6 +418,14 @@ UI分别显示两种计数；提高字符上限不扩大字节预算。准备期
 该增量不在45edbfc的CI中，仍待自己的构建、实际控件操作、截图与同包验证。
 说明见[输入长度与预检](MACOS_DEVELOPMENT.md#native-input-limit)。
 
+首轮`76ae1f3`/[run35304718654](https://github.com/mclight-ship-it/cc-translate/actions/runs/35304718654)
+已正常推送（privacy、6文件编译及完整1846项/96.416秒通过），实际Mac便携903项/15.160秒通过；
+但App编译失败：父整合时复用的`TranslationDocument.maxInputBytes`尚为Support模块内部符号。
+没有执行原生方法、生成新PNG或发布App；不能把903项当作原生通过。
+现按既有配置文档命名空间的方式，只公开这个只读预算及其类型，校验器和其他成员仍保持内部，
+不重复定义8192、不改变任何协议限制。设置测试同时补上所属窗口的语义树入口，
+仍要求实际控件唯一匹配及原动作/状态断言，不访问其他应用、不改产品控件；均待新源码验证。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证

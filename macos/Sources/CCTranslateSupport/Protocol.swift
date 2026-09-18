@@ -436,10 +436,10 @@ public enum ResultAction: String, CaseIterable {
     }
 }
 
-enum TranslationDocument {
+public enum TranslationDocument {
     static let modelOperations: Set<String> = ["translate", "result_action", "translate_image"]
     static let targetLanguages: Set<String> = ["zh", "en", "ja", "ko", "fr", "de", "es"]
-    static let maxInputBytes = 8192
+    public static let maxInputBytes = 8192
     static let maxDeltaBytes = 4096
     static let maxTextBytes = 24_000
     static let maxWireBytes = 1_048_576

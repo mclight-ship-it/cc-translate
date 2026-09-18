@@ -198,6 +198,8 @@ enum NativeSettingsTestControls {
                         onValue: String? = nil, offValue: String? = nil) throws -> NativeSettingsTestControl {
         // Present the fixture before querying SwiftUI's live semantic tree.
         if let window = root.window, !window.isVisible { window.orderFront(nil) }
+        var roots: [AnyObject] = [root]
+        if let window = root.window { roots.append(window) }
         let deadline = Date().addingTimeInterval(1)
         var raw: [AnyObject] = []
         var inventory: [NativeSettingsAXElement] = []
@@ -205,7 +207,7 @@ enum NativeSettingsTestControls {
         repeat {
             root.layoutSubtreeIfNeeded()
             root.displayIfNeeded()
-            raw = objects(from: [root])
+            raw = objects(from: roots)
             inventory = raw.map { NativeSettingsAXElement(object: $0) }
             let anchors = inventory.filter {
                 $0.identifier == identifier || $0.label == label || $0.title == label

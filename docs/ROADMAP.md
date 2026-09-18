@@ -139,6 +139,9 @@ fc089e6的提前日志实际718项、24失败断言/9方法；来源清空此次
 新增26原生方法/2张预期图及10后端契约，后端连同库存联合237项通过；
 下一源码core最低665，原生744方法/122PNG仍待自己的Mac执行，不借用45edbfc结果。
 见[输入长度检查点](MACOS_TODO.md#native-input-limit-checkpoint)。
+首轮76ae1f3/run35304718654通过正常1846项hook与Mac903项便携测试，但预算常量的模块可见性
+导致App编译失败，没有原生执行或新包。正公开既有只读预算并补齐所属窗口的测试语义树入口，
+不改变预算、控件或断言；继续新源码验证。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
