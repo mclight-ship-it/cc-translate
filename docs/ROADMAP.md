@@ -191,8 +191,8 @@ bf89495实际原生744项/23构包前skip/零失败，英中历史操作完整�
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
-上述早期候选当时不替换推荐下载；当前已改为本节开头的bf89495核验包。
-结果位置偏好、完整模型/设置余项及其余P3–P6仍未完成。
+上述早期候选当时不替换推荐下载；当前已升级为本节开头的9b55942核验包，已包含结果位置。
+完整模型/设置余项及其余P3–P6仍未完成。
 可实现部分不等待完整权限矩阵，
 也不把一个切片的绿色当成P2–P6全部完成。见[正在实施的清单](MACOS_TODO.md#native-product-ui)。
 

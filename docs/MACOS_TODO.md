@@ -457,6 +457,9 @@ OCR未匹配整句“Apply interval”，只记录到分开的标题片段，尚
 不按期望的禁用状态筛选控件，不设置原生state，不改真正保存/回读/重开的点击路线。
 127张图完整，已实际查看新增英浅/中深图片；原生结果位置、原设置、关联复制/worker方法仍通过。
 这一测试定位修正仍需新源码Mac验证，首轮失败和日志保留，不把24/25或截图齐全叫整包通过。
+修正源码`2d68fb6`正常privacy/full hook1846项/96.302秒通过并已推送；
+[run35328456101](https://github.com/mclight-ship-it/cc-translate/actions/runs/35328456101)已实际启动，
+继续要求780原生方法、23既定构包前skip、127PNG及完整同包验证，未修改生产代码或CI门禁。
 
 <a id="native-text-scale-checkpoint"></a>
 
