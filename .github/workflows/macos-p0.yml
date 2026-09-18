@@ -39,7 +39,7 @@ jobs:
           python3 -c 'import sys; assert sys.version_info >= (3, 9), "Build harness requires Python 3.9+"'
       - name: Portable offline contract and packaging tests
         run: >-
-          python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle
+          python3 -B -m unittest tests.test_macos_protocol tests.test_macos_bundle tests.test_macos_updates
           tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
           tests.test_catalog_storage_portable

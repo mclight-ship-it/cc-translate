@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
     private(set) var aboutPanel: NSPanel?
+    private(set) var updatesPanel: NSPanel?
     private var selectionOverlay: RegionSelectionOverlay?
     private weak var captureReturnWindow: NSWindow?
     private weak var captureReturnResponder: NSResponder?
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let diagnostics: ProbeModel
     private let aboutModel: AboutModel
     private let loginItems: LoginItemModel
+    private let updates: AppUpdateModel
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
@@ -59,12 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil,
-         loginItems: LoginItemModel? = nil) {
+         loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil) {
         self.model = model
         self.capture = capture
         self.diagnostics = diagnostics
         self.aboutModel = about ?? AboutModel()
         self.loginItems = loginItems ?? LoginItemModel()
+        self.updates = updates ?? AppUpdateModel()
         super.init()
         model.captureShortcut.canCapture = { [weak self] in
             guard let self, !self.terminating, self.selectionOverlay == nil else { return false }
@@ -149,12 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(.separator())
         add(model.text("Diagnostics…", "诊断…"), action: #selector(openDiagnostics), to: menu)
         add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(openAbout), to: menu)
+        add(model.text("Check for Updates…", "检查更新…"), action: #selector(checkForUpdates), to: menu)
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: menu)
         statusItem?.menu = menu
 
         let main = NSMenu()
         let application = NSMenu()
         add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(openAbout), to: application)
+        add(model.text("Check for Updates…", "检查更新…"), action: #selector(checkForUpdates), to: application)
         add(model.text("Settings…", "设置…"), action: #selector(openSettings), key: ",", to: application)
         application.addItem(.separator())
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: application)
@@ -202,9 +207,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         diagnosticsPanel?.title = model.text("Diagnostics", "诊断")
         capturePanel?.title = model.text("Screenshot translation", "截图翻译")
         aboutPanel?.title = model.text("About CC Translate", "关于 CC Translate")
+        updatesPanel?.title = model.text("Software updates", "软件更新")
         let appearance: NSAppearance? = model.appearance == "dark" ? NSAppearance(named: .darkAqua) :
             model.appearance == "light" ? NSAppearance(named: .aqua) : nil
-        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel, aboutPanel] { panel?.appearance = appearance }
+        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel, aboutPanel, updatesPanel] { panel?.appearance = appearance }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -242,6 +248,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if selectionOverlay != nil { return menuItem.action == #selector(quit) }
+        if menuItem.action == #selector(checkForUpdates) {
+            return !terminating && (updates.channel != .configured || updates.canCheck)
+        }
         if menuItem.action == #selector(submitInput) {
             if capturePanel?.isKeyWindow == true {
                 let composing = (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
@@ -387,7 +396,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func settingsContent() -> TranslationSettingsView {
         TranslationSettingsView(model: model,
             showDiagnostics: { [weak self] in self?.openDiagnostics() },
-            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems)
+            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates)
+    }
+
+    @objc private func checkForUpdates() {
+        if terminating {
+            updates.check()
+            return
+        }
+        if updates.check() {
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        if updatesPanel == nil {
+            updatesPanel = makePanel(title: model.text("Software updates", "软件更新"),
+                width: 580, height: 300, minimum: NSSize(width: 500, height: 270),
+                root: AppUpdatePanelView(model: model, updates: updates))
+        }
+        activate(updatesPanel)
     }
 
     @objc private func openDiagnostics() {
@@ -508,6 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        updates.prepareToQuit()
         model.captureShortcut.cancelPendingTrigger()
         terminationResolved = false
         aboutModel.close()
@@ -525,6 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updates.prepareToQuit()
         model.captureShortcut.shutdown()
         aboutModel.close()
         selectionOverlay?.dismiss()

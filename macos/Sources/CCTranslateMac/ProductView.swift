@@ -954,11 +954,100 @@ struct HistoryLimitSettingsView: View {
 }
 
 @MainActor
+struct AppUpdateSettingsView: View {
+    @ObservedObject var model: ProbeModel
+    @ObservedObject var updates: AppUpdateModel
+
+    var body: some View {
+        Text(statusMessage)
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("software-update-status")
+        if updates.sessionInProgress {
+            ProgressView().controlSize(.small)
+                .accessibilityLabel(model.text("Update in progress", "正在处理更新"))
+        }
+        if let issue = updates.issue, issue != .channelUnavailable {
+            Text(issueMessage(issue))
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("software-update-error")
+        }
+        HStack {
+            Button(model.text("Check for Updates…", "检查更新…")) { updates.check() }
+                .disabled(!updates.canCheck)
+                .accessibilityIdentifier("check-software-update")
+            Button(model.text("View verified downloads", "查看已验证下载")) { updates.showDownloads() }
+                .disabled(!updates.canOpenDownloads)
+                .accessibilityIdentifier("open-verified-downloads")
+        }
+        Text(model.text("Update checks are off by default. Updates do not run your translation CLI or change its account.",
+                        "默认不自动检查更新。软件更新不会运行翻译 CLI 或更改其账号。"))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var statusMessage: String {
+        switch updates.channel {
+        case .unconfigured:
+            return model.text("This development build uses verified downloads. An automatic update channel has not been published yet.",
+                              "此开发包使用已验证的下载，自动更新渠道尚未发布。")
+        case .invalid:
+            return model.text("This build's update settings are incomplete. Use a verified download instead.",
+                              "此构建的更新配置不完整，请使用已验证的下载。")
+        case .configured:
+            return updates.sessionInProgress
+                ? model.text("An update is in progress. Continue in the update window.", "正在处理更新，请在更新窗口中继续。")
+                : model.text("Check for a new version. The update window guides you through downloading and installing.",
+                             "检查新版本，随后可在更新窗口中下载和安装。")
+        }
+    }
+
+    private func issueMessage(_ issue: AppUpdateModel.Issue) -> String {
+        switch issue {
+        case .channelUnavailable:
+            return statusMessage
+        case .notReady:
+            return model.text("An update is already being processed. Follow the update window, then try again.",
+                              "已有更新正在处理，请在更新窗口中完成后再试。")
+        case .failed(let code):
+            return model.text("The update check could not start (error \(code)). Try again or use a verified download.",
+                              "未能开始检查更新（错误 \(code)）。请重试或使用已验证的下载。")
+        case .downloadsUnavailable:
+            return model.text("The downloads page could not be opened. Check your default browser and try again.",
+                              "无法打开下载页面，请检查默认浏览器后重试。")
+        case .terminating:
+            return model.text("CC Translate is closing. Reopen the app before checking for updates.",
+                              "CC Translate 正在退出，请重新打开应用后再检查更新。")
+        }
+    }
+}
+
+@MainActor
+struct AppUpdatePanelView: View {
+    @ObservedObject var model: ProbeModel
+    @ObservedObject var updates: AppUpdateModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.text("Software updates", "软件更新")).font(.headline)
+                AppUpdateSettingsView(model: model, updates: updates)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .preferredColorScheme(model.preferredColorScheme)
+    }
+}
+
+@MainActor
 struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
     var showDiagnostics: () -> Void
     var showAbout: () -> Void
     var loginItems: LoginItemModel? = nil
+    var updates: AppUpdateModel? = nil
 
     private var busy: Bool { model.active || model.preparing }
 
@@ -1001,6 +1090,13 @@ struct TranslationSettingsView: View {
                     LoginItemSettingsView(model: model, loginItems: loginItems)
                 } header: {
                     Text(model.text("Login item", "登录项"))
+                }
+                if let updates {
+                    Section {
+                        AppUpdateSettingsView(model: model, updates: updates)
+                    } header: {
+                        Text(model.text("Software updates", "软件更新"))
+                    }
                 }
             }
         }
