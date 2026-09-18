@@ -154,6 +154,8 @@ a4ac252修复编译后真实执行744项，20输入模型/预检和94剪贴板�
 116/122图片完整性通过不等于原生产品验证通过。
 实际渲染控件helper已交付并审阅，将与精确字节编辑器修正一起重新验证；
 保留744方法/122预期PNG，不再混同provider getter、真实控件交互与完整AX/VoiceOver三种证据。
+e314fa6实际通过18字号/精确编辑、94剪贴板及部分真实设置操作，仍10方法失败；
+继续依据实际控件几何、渲染就绪与OCR诊断修复，不以部分绿灯提前结束。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

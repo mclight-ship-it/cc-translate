@@ -18,7 +18,13 @@ private enum RenderedLookupError: Error {
 
 @MainActor
 private enum RenderedGeometry {
-    static func frame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: nil) }
+    static func frame(_ view: NSView) -> NSRect {
+        if let control = view as? NSControl, let parent = control.superview {
+            // Native bezel/shadow outsets are not the control's layout content.
+            return parent.convert(control.alignmentRect(forFrame: control.frame), to: nil)
+        }
+        return view.convert(view.bounds, to: nil)
+    }
 
     static func visibleRect(_ view: NSView) -> NSRect {
         guard view.window != nil else { return .zero }
@@ -58,6 +64,7 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
 
     fileprivate let backing: Backing
     fileprivate let root: NSView
+    fileprivate let identifier: String
 
     var isEnabled: Bool { backing.control.isEnabled }
     var isFocused: Bool {
@@ -83,14 +90,19 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         let control = backing.control
         guard control.window === window, root.window === window else { throw RenderedLookupError.detachedView }
         window.makeKeyAndOrderFront(nil)
-        XCTAssertTrue(control.acceptsFirstResponder)
+        print("Rendered focus \(identifier): acceptsFirstResponder=\(control.acceptsFirstResponder)")
         XCTAssertTrue(window.makeFirstResponder(control))
         XCTAssertTrue(window.firstResponder === control, "The actual NSControl must own the responder focus.")
         guard window.firstResponder === control else { throw RenderedLookupError.focusFailed }
     }
 
-    func press() throws {
+    func press(file: StaticString = #filePath, line: UInt = #line) async throws {
         let control = backing.control
+        try await CaptureProductFixture.waitFor(file: file, line: line) {
+            root.layoutSubtreeIfNeeded()
+            root.displayIfNeeded()
+            return control.isEnabled
+        }
         guard let window = root.window, control.window === window,
               control.isDescendant(of: root), !visibleRect.isEmpty else {
             XCTFail("The resolved control must still be attached and visible in its fixture.")
@@ -98,7 +110,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         }
         XCTAssertTrue(isEnabled)
         guard isEnabled else { throw RenderedLookupError.disabled }
+        print("Rendered press \(identifier): state=\(backing.state.rawValue), " +
+              "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
         control.performClick(nil)
+        print("Rendered pressed \(identifier): state=\(backing.state.rawValue), enabled=\(isEnabled)")
     }
 }
 
@@ -193,6 +208,7 @@ enum NativeSettingsTestControls {
         }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
+        request.minimumTextHeight = 0
         request.recognitionLanguages = caption.unicodeScalars.allSatisfy { $0.isASCII }
             ? ["en-US"] : ["zh-Hans", "en-US"]
         request.usesLanguageCorrection = false
@@ -230,8 +246,13 @@ enum NativeSettingsTestControls {
                                 tolerance: CGFloat) -> Bool {
         let rectangle = RenderedGeometry.frame(control)
         let expanded = rectangle.insetBy(dx: -tolerance, dy: -tolerance)
-        if expanded.contains(caption) { return true }
-        guard kind == .toggle, rectangle.maxX <= caption.minX + tolerance else { return false }
+        let intersection = expanded.intersection(caption)
+        // Vision's substring box can extend past a glyph into the next label.
+        if expanded.contains(NSPoint(x: caption.midX, y: caption.midY)),
+           !intersection.isEmpty, intersection.width * intersection.height >= caption.width * caption.height / 2 {
+            return true
+        }
+        guard kind == .toggle, rectangle.midX < caption.minX + tolerance else { return false }
         // Checkbox captions may be separate SwiftUI drawing, beside the actual public control.
         return (expanded.minY...expanded.maxY).contains(caption.midY) ||
             ((caption.minY - tolerance)...(caption.maxY + tolerance)).contains(rectangle.midY)
@@ -246,7 +267,8 @@ enum NativeSettingsTestControls {
             else if control is NSSwitch { name = "NSSwitch" }
             else if control is NSTextField { name = "NSTextField" }
             else { name = "NSControl (unsupported public control type)" }
-            return "\(name) frame=\(RenderedGeometry.frame(control)) visible=\(RenderedGeometry.visibleRect(control))"
+            return "\(name) layout=\(RenderedGeometry.frame(control)) " +
+                "nativeBounds=\(control.convert(control.bounds, to: nil)) visible=\(RenderedGeometry.visibleRect(control))"
         }
         let excerpts = readback?.matches.map { "caption=\($0.excerpt) bounds=\($0.rectangle)" } ?? []
         return "Fixture \(identifier), expected caption=\(caption).\n" +
@@ -300,7 +322,7 @@ enum NativeSettingsTestControls {
         }
         print("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(route); " +
               "frame=\(RenderedGeometry.frame(candidate.control)); fixture caption=\(label)")
-        return NativeSettingsTestControl(backing: candidate, root: root)
+        return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier)
     }
 
     static func caption(in root: NSView, identifier: String, label: String) throws -> NativeRenderedTestCaption {

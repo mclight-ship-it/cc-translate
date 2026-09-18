@@ -59,8 +59,9 @@ private final class SummarySettingsHost {
         host.displayIfNeeded()
     }
 
-    func waitFor(_ condition: @MainActor () -> Bool) async throws {
-        try await CaptureProductFixture.waitFor {
+    func waitFor(file: StaticString = #filePath, line: UInt = #line,
+                 _ condition: @MainActor () -> Bool) async throws {
+        try await CaptureProductFixture.waitFor(file: file, line: line) {
             self.flush()
             return condition()
         }
@@ -93,7 +94,7 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             try button.focus(in: surface.window)
             try await surface.waitFor { button.isFocused }
             let source = f.model.input
-            try button.press()
+            try await button.press()
             try await surface.waitFor { helper.configurationSaves.count == 1 && !button.isEnabled }
             let save = try XCTUnwrap(helper.configurationSaves.last)
             XCTAssertEqual(save.config["summary_enabled"], .bool(false))
@@ -117,7 +118,7 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             f.model.openProduct()
             let reopened = try f.ready(configuration: save.config)
             try await surface.waitFor { button.state == .off && button.isEnabled }
-            try button.press()
+            try await button.press()
             try await surface.waitFor { reopened.configurationSaves.count == 1 }
             try SummaryPreferenceFixture.completeSave(f, helper: reopened)
             try await surface.waitFor { button.state == .on && button.isEnabled }
@@ -137,7 +138,7 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             let surface = SummarySettingsHost(model: f.model)
             defer { surface.close() }
             let button = try surface.toggle()
-            try button.press()
+            try await button.press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
@@ -147,12 +148,12 @@ final class SummaryPreferenceInteractionTests: XCTestCase {
             surface.window.makeKeyAndOrderFront(nil)
             try reload.focus(in: surface.window)
             try await surface.waitFor { reload.isFocused }
-            try reload.press()
+            try await reload.press()
             try await surface.waitFor { helper.configurationLoads.count == 2 }
             try f.finishConfiguration(on: helper)
             try await surface.waitFor { button.state == .on && button.isEnabled }
             XCTAssertEqual(helper.configurationSaves.count, 1)
-            try button.press()
+            try await button.press()
             try await surface.waitFor { helper.configurationSaves.count == 2 }
             helper.event("completed", id: try XCTUnwrap(helper.configurationSaves.last?.id))
             try f.finishConfiguration(on: helper)

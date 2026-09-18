@@ -132,7 +132,7 @@ final class InputLimitInteractionTests: XCTestCase {
             XCTAssertFalse(try surface.button("apply-input-limit", label).isEnabled)
             try await surface.enterLimit("17", model: f.model)
             XCTAssertEqual(helper.operations, operations, "Typing is not a configuration save.")
-            try surface.button("apply-input-limit", label).press()
+            try await surface.button("apply-input-limit", label).press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
             XCTAssertEqual(f.model.inputLimit.saved, 20_001)
             let save = try XCTUnwrap(helper.configurationSaves.last)
@@ -169,20 +169,20 @@ final class InputLimitInteractionTests: XCTestCase {
             XCTAssertEqual(try InputLimitNativeViews.field(in: surface.host).stringValue, "-7")
             try await surface.enterLimit("20001", model: f.model)
             let apply = f.model.text("Apply input limit", "应用输入上限")
-            try surface.button("apply-input-limit", apply).press()
+            try await surface.button("apply-input-limit", apply).press()
             try await surface.waitFor { helper.configurationSaves.count == 1 }
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
             try await surface.waitFor { f.model.inputLimit.saved == nil }
             XCTAssertFalse(try surface.button("apply-input-limit", apply).isEnabled)
-            try surface.button("reload-input-limit",
+            try await surface.button("reload-input-limit",
                                f.model.text("Reload saved input limit", "重新读取已保存输入上限")).press()
             try await surface.waitFor { helper.configurationLoads.count == 2 }
             try f.finishConfiguration(on: helper)
             try await surface.waitFor { f.model.canEditInputLimit }
             XCTAssertEqual(try InputLimitNativeViews.field(in: surface.host).stringValue, "20001")
             XCTAssertEqual(helper.configurationSaves.count, 1)
-            try surface.button("apply-input-limit", apply).press()
+            try await surface.button("apply-input-limit", apply).press()
             try await surface.waitFor { helper.configurationSaves.count == 2 }
             helper.event("completed", id: try XCTUnwrap(helper.configurationSaves.last?.id))
             try f.finishConfiguration(on: helper, configuration: ProductTestHarness.configuration(maxChars: 20_000))
@@ -214,7 +214,7 @@ final class InputLimitInteractionTests: XCTestCase {
         let settings = InputLimitNativeHost(InputLimitSettingsSurface(model: f.model))
         defer { settings.close() }
         try await settings.enterLimit("2", model: f.model)
-        try settings.button("apply-input-limit", "Apply input limit").press()
+        try await settings.button("apply-input-limit", "Apply input limit").press()
         try await settings.waitFor { helper.configurationSaves.count == 1 }
         try InputLimitFixture.finish(f, helper)
         try await surface.waitFor { f.model.inputLimit.saved == 2 }
@@ -224,7 +224,7 @@ final class InputLimitInteractionTests: XCTestCase {
         XCTAssertEqual(editor.selectedRange(), selection)
         XCTAssertEqual(editor.enclosingScrollView?.contentView.bounds.origin, viewport)
         XCTAssertTrue(helper.translations.isEmpty)
-        try surface.button("translate-input-text", "Translate").press()
+        try await surface.button("translate-input-text", "Translate").press()
         try await surface.waitFor { helper.translations.count == 1 }
         XCTAssertEqual(Array(try XCTUnwrap(helper.translations.last?.text).utf8), Array("e\u{301}".utf8))
         XCTAssertTrue(helper.messages.isEmpty)
@@ -253,7 +253,7 @@ final class InputLimitInteractionTests: XCTestCase {
         XCTAssertEqual(Array(editor.string.utf8), Array("e\u{301}".utf8))
         _ = try surface.enterText("é")
         try await surface.waitFor { capture.text.unicodeScalars.count == 1 }
-        try surface.button("translate-capture-text", "翻译文字").press()
+        try await surface.button("translate-capture-text", "翻译文字").press()
         try await surface.waitFor { helper.translations.count == 1 }
         XCTAssertEqual(helper.translations.last?.text, "é")
         XCTAssertEqual(helper.translations.last?.origin, "ocr")

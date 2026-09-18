@@ -481,6 +481,21 @@ C发布者先退役、随后释放资源顺序，并先刷新AppKit revision再�
 这与精确字节representable修正一起进入下一源码验证。全局仍744方法、122预期PNG；
 Windows无诊断仅是静态检查，不能宣称Mac动作/焦点/OCR已经通过，完整AX与VoiceOver仍单列未验。
 
+`e314fa6`正常privacy/full hook1846项/95.832秒通过；
+[run35309939960](https://github.com/mclight-ship-it/cc-translate/actions/runs/35309939960)
+提前日志实际744项/23前置skip/20失败断言（9 unexpected）/388.500秒，10方法未通过。
+精确字节修正的全部18字号/编辑器方法（含双向和相同长度组合标记顺序）已实际通过；
+94剪贴板及20输入模型/预检仍逐方法通过，原生主输入操作、双语输入限额保存/重开等也首次走通。
+实际控件已确认为公开NSButton，不再是查不到SwiftUI provider节点的问题。
+后续修正针对实际日志：使用公开alignmentRect区分按钮内容与bezel阴影外扩；
+Vision子串框越过Cancel边缘或覆盖checkbox边缘时，按实测中心与主要重叠且唯一匹配，不放宽成任意坐标；
+等待真实控件变为enabled后仅点击一次，不修改state或模型、不自动重发业务请求。
+`acceptsFirstResponder`为false但实际makeFirstResponder及身份检查成功，故该先验查询仅作诊断，
+保留实际responder断言；不据此声称系统Tab导航或VoiceOver通过。
+已为UI识别显式设置minimumTextHeight为0，避免默认1/32的图高过滤掉小caption，
+不改原始截图或注入预期词；保留所有业务/截图断言，摘要等待和旧纯文本截图增加定位诊断。
+这些后续修正仍须新源码验证，不以部分通过替代整个产品验收。
+
 <a id="native-history-limit-checkpoint"></a>
 
 ### P3 历史保留条数：界面与提交时机契约已交付，待新源码原生验证

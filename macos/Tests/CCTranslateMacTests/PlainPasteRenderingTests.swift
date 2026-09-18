@@ -8,6 +8,10 @@ import Vision
 extension ProductRenderingTests {
     @MainActor
     func testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste() throws {
+        func stage(_ value: String) throws {
+            try FileHandle.standardError.write(contentsOf: Data("Synthetic paste render stage: \(value)\n".utf8))
+        }
+        try stage("starting")
         let fixture = try PasteAppFixture()
         defer { fixture.cleanUp() }
         _ = try fixture.ready(true)
@@ -15,7 +19,9 @@ extension ProductRenderingTests {
         let lease = try XCTUnwrap(fixture.registrar.leases.last)
         lease.fire(.pressed)
         let native = try renderPasteSettings(fixture, name: "plain-paste-settings-own-native-light", scheme: .light)
+        try stage("native rendered")
         let words = try pasteSettingsWords(native)
+        try stage("native recognized")
         XCTAssertTrue(words.contains("native paste and match style was dispatched"))
         XCTAssertFalse(words.contains("pasted successfully"))
         fixture.routing.handlesNativePaste = false
@@ -23,6 +29,7 @@ extension ProductRenderingTests {
         lease.fire(.pressed)
         let unavailable = try renderPasteSettings(fixture, name: "plain-paste-settings-own-unavailable-zh-dark",
                                                  scheme: .dark, chinese: true)
+        try stage("unavailable rendered")
         let chinese = try pasteSettingsWords(unavailable, chinese: true).filter { !$0.isWhitespace }
         try FileHandle.standardError.write(contentsOf: Data("Synthetic paste settings OCR: \(chinese)\n".utf8))
         XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
@@ -222,6 +229,7 @@ extension ProductRenderingTests {
                 x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1000, image.height - y)))))
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
+            request.minimumTextHeight = 0
             // These are authored UI sentences, not arbitrary user text whose spelling must be preserved.
             request.usesLanguageCorrection = true
             request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
