@@ -147,6 +147,8 @@ bb1f851已实际编译并执行744项，新增20模型/预检及18字体方法�
 并以实际渲染控件/公开动作验证设置接线；不把provider getter当成完整AX客户端，也不将截图冒充VoiceOver验收。
 一项私有剪贴板fixture与一项中文说明OCR也保持未通过并继续处理，全部原断言保留。
 903便携、232进程、665核心及21后置Foundation通过只代表这些阶段，不代表完整App或整个移植完成。
+后续7f54e7e因本次fixture编辑意外重复局部声明而未执行原生方法；已定位并删除重复声明，
+保留失败原日志和全部原断言，继续新的完整源码验证。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；

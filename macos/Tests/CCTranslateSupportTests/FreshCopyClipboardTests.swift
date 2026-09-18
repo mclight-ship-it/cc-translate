@@ -301,7 +301,6 @@ final class FreshCopyClipboardTests: XCTestCase {
             try assertPublished([(type, bytes)], on: board)
         }
         let board = newPrivateBoard()
-        let board = newPrivateBoard()
         let malformed: [(String, Data)] = [
             ("public.utf8-plain-text", Data([0xc0, 0xaf])),
             ("public.utf16-external-plain-text", try XCTUnwrap("do not use a later alias".data(using: .utf16)))
