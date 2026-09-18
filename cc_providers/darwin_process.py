@@ -45,14 +45,14 @@ def load_supervision():
 
 
 class OwnedProcess:
-    def __init__(self, args, env, work_dir, *, rpc=False):
+    def __init__(self, args, env, work_dir, *, rpc=False, input_pipe=False):
         self.bridge = load_supervision()
         self.finished = False
         self.closed = False
         self.owned = True
         try:
             self.process = subprocess.Popen(
-                args, stdin=subprocess.PIPE if rpc else subprocess.DEVNULL,
+                args, stdin=subprocess.PIPE if rpc or input_pipe else subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL if rpc else subprocess.PIPE,
                 env=env, cwd=work_dir, start_new_session=True, bufsize=0,
             )

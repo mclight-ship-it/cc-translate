@@ -28,7 +28,7 @@ CONTRACT_FILES = ("__init__.py", "base.py", "registry.py")
 CONFIG_FILES = ("codex_config.py", "codex_config_darwin.py", "darwin_process.py", "codex_instructions.txt")
 CATALOG_FILES = ("codex_catalog.py",)
 NATIVE_FILES = ("codex_cli.py", "codex_jsonl.py", "codex_appserver.py",
-                "codex_darwin.py", "darwin_rpc.py")
+                "codex_darwin.py", "darwin_rpc.py", "darwin_print.py")
 PROVIDER_FILES = CONTRACT_FILES + CONFIG_FILES + CATALOG_FILES + NATIVE_FILES
 
 

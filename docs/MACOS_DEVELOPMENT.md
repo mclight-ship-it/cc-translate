@@ -1062,6 +1062,12 @@ f8a014b已实际通过全部18项新增方法，中英文重试均完成；798�
 917已实际watch exit1，
 发布门禁阻止归档和App发布，未用其907portable/232process/669core/21Foundation通过替代原生失败。
 
+### Claude服务（后续开发，当前包未提供）
+
+后续Claude接入正在增加独立的一次性Darwin stdin/EOF/stdout/stderr传输，并复用已有进程组owner。
+这是开发中的底层能力，尚未提供Claude设置入口或真实请求；不影响当前8f898aa推荐包。
+进度与验证边界见[Claude服务检查点](MACOS_TODO.md#native-claude-provider-checkpoint)。
+
 <a id="native-text-scale"></a>
 
 ### 原生文字大小（已包含在当前核验包中）

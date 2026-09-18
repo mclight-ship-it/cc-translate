@@ -23,6 +23,7 @@ PROCESS_TEST_MODULES = (
     "test_configuration_ipc_process",
     "test_history_ipc_process",
     "test_darwin_rpc_process",
+    "test_darwin_print_process",
     "test_native_provider_process",
     "test_translation_ipc_process",
     "test_image_translation_ipc_process",
@@ -46,6 +47,7 @@ CORE_TEST_MODULES = (
     "test_macos_history",
     "test_request_snapshot",
     "test_darwin_rpc_contract",
+    "test_darwin_print_contract",
     "test_codex_darwin",
     "test_summary_rules",
     "test_macos_translation",
@@ -55,12 +57,13 @@ CORE_TEST_MODULES = (
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 232, "core": 665}
+MINIMUM_TEST_COUNTS = {"process": 240, "core": 688}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",
     "cc_providers.darwin_process",
     "cc_providers.darwin_rpc",
+    "cc_providers.darwin_print",
     "cc_providers.codex_darwin",
     "cc_macos.native_provider_fixture",
     "cc_history",
@@ -95,6 +98,7 @@ CORE_BUNDLE_MODULES = (
     "cc_providers.codex_catalog",
     "cc_providers.codex_darwin",
     "cc_providers.darwin_rpc",
+    "cc_providers.darwin_print",
     "cc_result_rules",
     "cc_storage",
     "cc_macos.storage_fixture",
