@@ -175,7 +175,11 @@ final class DictionarySourcesInteractionTests: XCTestCase {
         button.performClick(nil)
         XCTAssertTrue(button.sourcesPopover.isShown)
         f.model.clearTranslation()
-        surface.flush()
+        try await CaptureProductFixture.waitFor {
+            surface.flush()
+            return DictionarySourcesHost.views(DictionarySourcesButton.self, in: surface.host).isEmpty &&
+                !button.sourcesPopover.isShown
+        }
         XCTAssertTrue(DictionarySourcesHost.views(DictionarySourcesButton.self, in: surface.host).isEmpty)
         XCTAssertFalse(button.sourcesPopover.isShown)
         button.performClick(nil)

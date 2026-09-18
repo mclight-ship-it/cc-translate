@@ -629,8 +629,17 @@ class SmokeContractTests(unittest.TestCase):
         self.assertEqual(workflow.count("--filter DictionaryProductIntegrationTests"), 1)
         self.assertIn("dictionary-product-tests.json", workflow)
         native = workflow.index("      - name: Native Swift tests")
+        native_log = workflow.index("      - name: Retain original native unit log", native)
         native_end = workflow.index("      - name: Retain native view renders", native)
-        native_body = workflow[native:native_end]
+        native_body = workflow[native:native_log]
+        self.assertIn("        shell: bash\n", native_body)
+        self.assertIn("          set -euo pipefail\n", native_body)
+        self.assertEqual(native_body.count(" | tee "), 3)
+        self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 2)
+        log_upload = workflow[native_log:native_end]
+        self.assertIn("        if: always()\n", log_upload)
+        self.assertIn("name: cc-translate-native-unit-log-${{ github.sha }}", log_upload)
+        self.assertIn("path: tools/macos/.build/native-unit-tests.log", log_upload)
         for product in ("CCTranslateMac", "CCClipboardTestProducer"):
             build = "swift build --package-path macos --triple arm64-apple-macosx14.0 --product " + product
             self.assertLess(native_body.index(build), native_body.index("swift test --package-path macos"))

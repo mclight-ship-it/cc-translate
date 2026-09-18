@@ -169,6 +169,7 @@ private final class ScaleTestHost<Content: View> {
         window.isReleasedWhenClosed = false
         window.contentView = host
         host.frame = NSRect(origin: .zero, size: size)
+        window.orderFront(nil)
         flush()
     }
 
@@ -197,6 +198,18 @@ private final class ScaleTestHost<Content: View> {
 
 @MainActor
 enum ScaleTestSupport {
+    static func describeLayout(_ view: NSTextView, phase: String) {
+        guard let scroll = view.enclosingScrollView else {
+            XCTFail("An editor must remain attached to its scroll view.")
+            return
+        }
+        print("Native editor \(phase): frame=\(view.frame) bounds=\(view.bounds) flipped=\(view.isFlipped) " +
+              "clip=\(scroll.contentView.bounds) documentVisible=\(scroll.documentVisibleRect) " +
+              "min=\(view.minSize) max=\(view.maxSize) selected=\(view.selectedRange()) " +
+              "container=\(String(describing: view.textContainer?.containerSize)) origin=\(view.textContainerOrigin) " +
+              "windowVisible=\(view.window?.isVisible == true)")
+    }
+
     static func views<T: NSView>(_ type: T.Type, in root: NSView) -> [T] {
         (root as? T).map { [$0] } ?? root.subviews.flatMap { views(type, in: $0) }
     }
@@ -333,6 +346,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let scroll = try XCTUnwrap(editor.enclosingScrollView)
         XCTAssertGreaterThan(editor.bounds.height, scroll.contentView.bounds.height,
                              "Initial text must have a scrollable document before the first edit.")
+        ScaleTestSupport.describeLayout(editor, phase: "main initial")
         XCTAssertTrue(surface.window.makeFirstResponder(editor))
         let undo = try XCTUnwrap(editor.undoManager)
         undo.removeAllActions()
@@ -343,7 +357,9 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let edited = (ScaleTestSupport.longText as NSString).replacingCharacters(
             in: NSRange(location: insertion, length: 0), with: "EDIT ")
         try await surface.waitFor { f.model.input == edited }
+        ScaleTestSupport.describeLayout(editor, phase: "main edited")
         editor.scrollRangeToVisible(editor.selectedRange())
+        ScaleTestSupport.describeLayout(editor, phase: "main scrolled")
         let selection = editor.selectedRange()
         XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
         let layout = try XCTUnwrap(editor.layoutManager)
@@ -355,6 +371,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         defer { observation.cancel() }
         f.model.nativeTextScale = .largest
         try await surface.waitFor { ScaleTestSupport.hasFont(editor, size: 22.5) }
+        ScaleTestSupport.describeLayout(editor, phase: "main scaled")
         XCTAssertEqual(inputWrites, 0)
         XCTAssertEqual(f.model.input, edited)
         XCTAssertEqual(editor.string, edited)
@@ -519,6 +536,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let scroll = try XCTUnwrap(editor.enclosingScrollView)
         XCTAssertGreaterThan(editor.bounds.height, scroll.contentView.bounds.height,
                              "Recognized text must have a scrollable document before review.")
+        ScaleTestSupport.describeLayout(editor, phase: "OCR initial")
         XCTAssertTrue(surface.window.makeFirstResponder(editor))
         editor.insertText("Reviewed ", replacementRange: NSRange(location: 0, length: 0))
         try await surface.waitFor { capture.text.hasPrefix("Reviewed ") }
@@ -526,6 +544,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         let selected = (editor.string as NSString).range(of: "Line 30")
         editor.setSelectedRange(selected)
         editor.scrollRangeToVisible(selected)
+        ScaleTestSupport.describeLayout(editor, phase: "OCR scrolled")
         XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
         let layout = try XCTUnwrap(editor.layoutManager)
         let container = try XCTUnwrap(editor.textContainer)
@@ -537,6 +556,7 @@ final class NativeTextScaleRenderingTests: XCTestCase {
         defer { observation.cancel() }
         f.model.nativeTextScale = .largest
         try await surface.waitFor { ScaleTestSupport.hasFont(editor, size: 22.5) }
+        ScaleTestSupport.describeLayout(editor, phase: "OCR scaled")
         XCTAssertEqual(writes, 0)
         XCTAssertEqual(capture.text, reviewed)
         XCTAssertEqual(editor.string, reviewed)

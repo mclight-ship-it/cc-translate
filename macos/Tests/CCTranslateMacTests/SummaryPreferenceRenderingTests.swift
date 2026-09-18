@@ -79,14 +79,14 @@ struct NativeSettingsTestControl {
 enum NativeSettingsTestControls {
     private enum LookupError: Error { case missingOrAmbiguousControl }
 
-    private static func elements(from roots: [AnyObject]) -> [any NSAccessibilityProtocol] {
+    private static func objects(from roots: [AnyObject]) -> [AnyObject] {
         var pending = roots
         var visited = Set<ObjectIdentifier>()
-        var result: [any NSAccessibilityProtocol] = []
+        var result: [AnyObject] = []
         while let object = pending.popLast() {
             guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            result.append(object)
             if let element = object as? any NSAccessibilityProtocol {
-                result.append(element)
                 pending.append(contentsOf: (element.accessibilityChildren() ?? []).map { $0 as AnyObject })
             }
             if let view = object as? NSView {
@@ -104,13 +104,17 @@ enum NativeSettingsTestControls {
 
     static func resolve(in root: NSView, identifier: String, label: String, role: NSAccessibility.Role,
                         onValue: String? = nil, offValue: String? = nil) throws -> NativeSettingsTestControl {
+        // Present the fixture before querying SwiftUI's live semantic tree.
+        if let window = root.window, !window.isVisible { window.orderFront(nil) }
         let deadline = Date().addingTimeInterval(1)
+        var raw: [AnyObject] = []
         var inventory: [any NSAccessibilityProtocol] = []
         var candidates: [any NSAccessibilityProtocol] = []
         repeat {
             root.layoutSubtreeIfNeeded()
             root.displayIfNeeded()
-            inventory = elements(from: [root])
+            raw = objects(from: [root])
+            inventory = raw.compactMap { $0 as? any NSAccessibilityProtocol }
             let anchors = inventory.filter {
                 $0.accessibilityIdentifier() == identifier || $0.accessibilityLabel() == label ||
                     $0.accessibilityTitle() == label
@@ -121,14 +125,18 @@ enum NativeSettingsTestControls {
             candidates = anchors.filter { actionable($0) }
             if candidates.isEmpty {
                 // SwiftUI can put the identifier on an AX container, not its actionable child.
-                candidates = elements(from: anchors.map { $0 as AnyObject }).filter { actionable($0) }
+                candidates = objects(from: anchors.map { $0 as AnyObject })
+                    .compactMap { $0 as? any NSAccessibilityProtocol }.filter { actionable($0) }
             }
             if !candidates.isEmpty { break }
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         } while Date() < deadline
         guard candidates.count == 1, let element = candidates.first else {
             XCTFail("Expected one \(identifier) \(role.rawValue); found \(candidates.count).\n" +
-                    inventory.map { description($0) }.joined(separator: "\n"))
+                    raw.map { object in
+                        if let element = object as? any NSAccessibilityProtocol { return description(element) }
+                        return "Untyped accessibility object: \(type(of: object))"
+                    }.joined(separator: "\n"))
             throw LookupError.missingOrAmbiguousControl
         }
         print("Resolved native settings control: \(description(element))")

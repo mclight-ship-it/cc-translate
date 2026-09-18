@@ -60,12 +60,23 @@ jobs:
         id: native_units
         # Collect independent bundled checks too; the mandatory gate below still blocks publication.
         continue-on-error: true
+        shell: bash
         env:
           CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/ui-screenshots
         run: |
-          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac
-          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer
-          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0
+          set -euo pipefail
+          mkdir -p tools/macos/.build
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac 2>&1 | tee tools/macos/.build/native-unit-tests.log
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
+          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
+      - name: Retain original native unit log before bundled lifecycle checks
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cc-translate-native-unit-log-${{ github.sha }}
+          path: tools/macos/.build/native-unit-tests.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain native view renders, including failed-test diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

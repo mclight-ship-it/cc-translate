@@ -126,6 +126,9 @@ P3原生文字大小已交付：90%/100%/125%/150%，默认保持现有字号，
 7项实际存储契约与bundle库存联合236项通过，下一core最低655。该增量仍需自己的原生CI，不借用569结果。
 编辑器布局和摘要/历史真实AX控件测试修复已合并待验，静态718原生方法/预期120PNG，
 不以静态检查冒充新源码编译或交互通过。
+464a9a7/run35299872986实际718项执行后仍失败：历史18模型/列表及7新Python契约通过，
+但7设置UI、2滚动和1来源清空方法未过（26断言、9 unexpected）。116/120PNG，无App发布或14/26验收。
+继续修原生呈现/异步渲染与诊断；CI提前保留unit日志，不削减测试或放松发布条件。
 详见[关联复制进展](MACOS_TODO.md#native-associated-copy-checkpoint)。
 详见[来源按钮检查点](MACOS_TODO.md#native-dictionary-sources-checkpoint)。
 详见[图片翻译进展](MACOS_TODO.md#native-image-translation-checkpoint)；
