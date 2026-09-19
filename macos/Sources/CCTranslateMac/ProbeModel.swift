@@ -270,7 +270,7 @@ final class ProbeModel: ObservableObject {
     private var connectedCLI = ""
     private var connectedProvider: TranslationProvider?
     private let preferences: UserDefaults?
-    private let persistsPreferences: Bool
+    private var persistsPreferences: Bool
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
     private let runtimeProvider: () throws -> BundleRuntime
     private let locateCandidates: (String, URL?) -> [CLICandidate]
@@ -2696,6 +2696,10 @@ final class ProbeModel: ObservableObject {
         plainPaste.shutdown()
         stopMonitor()
         closePanel()
+    }
+
+    func stopPersistingPreferencesForUninstall() {
+        persistsPreferences = false
     }
 
     private func notifyStoppedIfIdle() {

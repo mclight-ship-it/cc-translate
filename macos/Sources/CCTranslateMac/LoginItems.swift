@@ -57,6 +57,25 @@ final class LoginItemModel: ObservableObject {
         service.openSystemSettings()
     }
 
+    func removeForUninstall() async -> Bool {
+        guard !busy else { issue = .notConfirmed; return false }
+        issue = nil
+        refresh()
+        if status == .notRegistered { return true }
+        busy = true
+        defer { busy = false }
+        do {
+            try await service.unregister()
+            status = service.readStatus()
+            guard status == .notRegistered else { issue = .notConfirmed; return false }
+            return true
+        } catch {
+            status = service.readStatus()
+            issue = .operationFailed((error as NSError).code)
+            return false
+        }
+    }
+
     func setEnabled(_ enabled: Bool) {
         guard !busy else { return }
         issue = nil

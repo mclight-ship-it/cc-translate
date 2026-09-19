@@ -47,6 +47,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let aboutModel: AboutModel
     private let loginItems: LoginItemModel
     private let updates: AppUpdateModel
+    private let uninstaller: any AppUninstallServing
+    private var uninstallPreparing = false
+    private var pendingUninstall: (locations: AppUninstallLocations, includingData: Bool)?
+    var terminateApplication: @MainActor () -> Void = { NSApp.terminate(nil) }
+    var uninstallNotice: (@MainActor (String) -> Void)?
+    var uninstallOutcome: (@MainActor (AppUninstallOutcome) -> Void)?
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
@@ -67,13 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil,
-         loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil) {
+         loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil,
+         uninstaller: (any AppUninstallServing)? = nil) {
         self.model = model
         self.capture = capture
         self.diagnostics = diagnostics
         self.aboutModel = about ?? AboutModel()
         self.loginItems = loginItems ?? LoginItemModel()
         self.updates = updates ?? AppUpdateModel()
+        self.uninstaller = uninstaller ?? AppUninstallService()
         super.init()
         model.captureShortcut.canCapture = { [weak self] in
             guard let self, !self.terminating, self.selectionOverlay == nil else { return false }
@@ -160,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         add(model.text("Diagnostics…", "诊断…"), action: #selector(openDiagnostics), to: menu)
         add(model.text("About CC Translate", "关于 CC Translate"), action: #selector(openAbout), to: menu)
         add(model.text("Check for Updates…", "检查更新…"), action: #selector(checkForUpdates), to: menu)
+        add(model.text("Uninstall CC Translate…", "卸载 CC Translate…"), action: #selector(openUninstall), to: menu)
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: menu)
         statusItem?.menu = menu
 
@@ -169,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         add(model.text("Check for Updates…", "检查更新…"), action: #selector(checkForUpdates), to: application)
         add(model.text("Settings…", "设置…"), action: #selector(openSettings), key: ",", to: application)
         application.addItem(.separator())
+        add(model.text("Uninstall CC Translate…", "卸载 CC Translate…"), action: #selector(openUninstall), to: application)
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: application)
         let appItem = NSMenuItem()
         appItem.submenu = application
@@ -254,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func handleSelection(_ selection: SelectionResult) {
-        guard !terminating else { return }
+        guard !terminating, !uninstallPreparing else { return }
         model.translateSelection(selection)
         if model.productPhase == .failed {
             // A new gesture can reveal its error without letting old callbacks reopen a closed result.
@@ -263,6 +273,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if terminating || uninstallPreparing { return menuItem.action == #selector(quit) }
+        if menuItem.action == #selector(openUninstall) { return !updates.sessionInProgress && !loginItems.busy }
         if selectionOverlay != nil { return menuItem.action == #selector(quit) }
         if menuItem.action == #selector(checkForUpdates) {
             return !terminating && (updates.channel != .configured || updates.canCheck)
@@ -477,6 +489,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
+    @objc func openUninstall() {
+        guard !terminating, !uninstallPreparing, !updates.sessionInProgress, !loginItems.busy else {
+            showUninstallNotice(model.text("Finish the current update or login-item change before uninstalling.",
+                                           "请先完成当前更新或登录项更改，再卸载应用。"))
+            return
+        }
+        do {
+            let locations = try uninstaller.preview()
+            let alert = uninstallConfirmation(locations)
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+            let includingData = (alert.accessoryView as? NSButton)?.state == .on
+            Task { await requestUninstall(locations, includingData: includingData) }
+        } catch {
+            showUninstallNotice(model.text(
+                "Could not prepare this app for removal (error \((error as NSError).code)). No files were removed. You can quit and move the app to Trash in Finder.",
+                "未能准备卸载此应用（错误 \((error as NSError).code)）。未移除任何文件。你可以退出应用，再在 Finder 中将其移到废纸篓。"))
+        }
+    }
+
+    func uninstallConfirmation(_ locations: AppUninstallLocations) -> NSAlert {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = model.text("Move CC Translate to Trash?", "将 CC Translate 移到废纸篓？")
+        alert.informativeText = model.text(
+            "The app will stop its work, remove its login item, and quit. Your data is kept unless you select the option below. CLI installations, shared accounts, Node, and dictionaries outside this app's data folder are not removed.",
+            "应用将停止当前工作、移除自身登录项并退出。默认保留你的数据，除非选中下面的选项。不会移除 CLI、共享账号、Node 或应用数据目录之外的词典。")
+            + "\n\n" + locations.application.path
+        alert.addButton(withTitle: model.text("Cancel", "取消"))
+        alert.addButton(withTitle: model.text("Move App to Trash", "将应用移到废纸篓"))
+        let option = NSButton(checkboxWithTitle: model.text(
+            "Also trash this app's data and cache, and erase its preferences",
+            "同时将此应用的数据和缓存移到废纸篓，并清除其偏好设置"), target: nil, action: nil)
+        option.state = .off
+        option.setAccessibilityIdentifier("uninstall-own-data")
+        option.sizeToFit()
+        alert.accessoryView = option
+        return alert
+    }
+
+    func requestUninstall(_ locations: AppUninstallLocations, includingData: Bool) async {
+        guard !terminating, !uninstallPreparing, !updates.sessionInProgress, !loginItems.busy else {
+            showUninstallNotice(model.text("Uninstall is unavailable while another lifecycle operation is running.",
+                                           "其他生命周期操作正在进行，暂时无法卸载。"))
+            return
+        }
+        uninstallPreparing = true
+        defer { uninstallPreparing = false }
+        guard await loginItems.removeForUninstall() else {
+            showUninstallNotice(model.text("The login item was not confirmed removed. No files were removed. Check Login Items in System Settings, then try again.",
+                                           "尚未确认移除登录项。未移除任何文件。请检查系统设置中的登录项，再重试。"))
+            return
+        }
+        guard !terminating else { return }
+        guard !updates.sessionInProgress else {
+            showUninstallNotice(model.text("An update started before uninstall. The login item was removed, but no files were removed. Finish the update first.",
+                                           "卸载前有更新开始。登录项已移除，但未移除任何文件，请先完成更新。"))
+            return
+        }
+        pendingUninstall = (locations, includingData)
+        terminateApplication()
+    }
+
+    private func finishUninstallIfRequested() {
+        guard let request = pendingUninstall else { return }
+        pendingUninstall = nil
+        model.stopPersistingPreferencesForUninstall()
+        diagnostics.stopPersistingPreferencesForUninstall()
+        for panel in [inputPanel, resultPanel, historyPanel, settingsPanel, diagnosticsPanel, updatesPanel] {
+            panel?.orderOut(nil)
+        }
+        let outcome = uninstaller.remove(request.locations, includingData: request.includingData)
+        uninstallOutcome?(outcome)
+        if let failure = outcome.failure {
+            let name: String
+            switch failure.step {
+            case .application: name = model.text("the application", "应用")
+            case .support: name = model.text("application data", "应用数据")
+            case .cache: name = model.text("the cache", "缓存")
+            case .preferences: name = model.text("native preferences", "原生偏好设置")
+            }
+            showUninstallNotice(model.text(
+                "Could not remove \(name) (error \(failure.code)). Removal stopped; earlier completed items were not restored. Files already moved can be recovered from Trash. The app will now quit. You can reopen it or remove remaining items in Finder.",
+                "未能移除\(name)（错误 \(failure.code)）。已停止移除，先前完成的项目未还原。已移动的文件可从废纸篓恢复。应用即将退出，你可以重新打开应用，或在 Finder 中处理剩余项目。"))
+        }
+    }
+
+    private func showUninstallNotice(_ message: String) {
+        if let uninstallNotice { uninstallNotice(message); return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = model.text("CC Translate uninstall", "卸载 CC Translate")
+        alert.informativeText = message
+        alert.addButton(withTitle: terminating ? model.text("Quit", "退出") : model.text("OK", "好"))
+        alert.runModal()
+    }
+
     func showResult(reposition: Bool = false) {
         if resultPanel == nil {
             let panel = ResultPanel(
@@ -604,6 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if waitForProcesses || model.hasProcesses || diagnostics.hasProcesses { return .terminateLater }
         if !allowQuitAfterImageCleanup() { return .terminateLater }
         terminationResolved = true
+        finishUninstallIfRequested()
         return .terminateNow
     }
 
@@ -625,6 +734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             !diagnostics.hasProcesses && !reviewingImageCleanup {
             if allowQuitAfterImageCleanup() {
                 terminationResolved = true
+                finishUninstallIfRequested()
                 terminationReply(true)
             }
         }
