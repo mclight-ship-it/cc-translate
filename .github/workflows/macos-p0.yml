@@ -58,6 +58,24 @@ jobs:
           tests.test_codex_version_smoke
           tests.test_macos_runtime tests.test_macos_bundled_tests
           tests.test_macos_dictionary_fixture tests.test_macos_dictionary
+      - name: Build and audit development-only bundle with pinned runtime
+        run: python3 tools/macos/bundle.py build --development --build-number '${{ github.run_number }}'
+      - name: Disposable signed Sparkle update lifecycle (not a release or TCC validation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/macos/update_fixture.py --app tools/macos/.build/CCTranslateMac-P0.app \
+            --output tools/macos/.build/update-fixture 2>&1 | tee tools/macos/.build/update-fixture.log
+      - name: Retain disposable update lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cc-translate-update-fixture-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            tools/macos/.build/update-fixture/*.json
+            tools/macos/.build/update-fixture.log
       - name: Native Swift tests (not GUI or first-use TCC validation)
         id: native_units
         # Collect independent bundled checks too; the mandatory gate below still blocks publication.
@@ -89,24 +107,6 @@ jobs:
             tools/macos/.build/ui-screenshots/*.txt
           if-no-files-found: warn
           retention-days: 7
-      - name: Build and audit development-only bundle with pinned runtime
-        run: python3 tools/macos/bundle.py build --development --build-number '${{ github.run_number }}'
-      - name: Disposable signed Sparkle update lifecycle (not a release or TCC validation)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -B tools/macos/update_fixture.py --app tools/macos/.build/CCTranslateMac-P0.app \
-            --output tools/macos/.build/update-fixture 2>&1 | tee tools/macos/.build/update-fixture.log
-      - name: Retain disposable update lifecycle evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cc-translate-update-fixture-${{ github.sha }}
-          retention-days: 7
-          if-no-files-found: warn
-          path: |
-            tools/macos/.build/update-fixture/*.json
-            tools/macos/.build/update-fixture.log
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
         shell: bash
         run: |

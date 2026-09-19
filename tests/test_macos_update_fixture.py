@@ -15,6 +15,19 @@ from cc_config_store import normalize_config
 
 
 class SignedUpdateFixtureTests(unittest.TestCase):
+    def test_key_files_and_all_scenario_directories_can_coexist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keys = fixture.fixture_key_paths(root)
+            for path in keys:
+                path.write_bytes(b"synthetic, not a key")
+            for scenario in fixture.SCENARIOS:
+                (root / scenario).mkdir()
+            self.assertTrue(all(path.is_file() and path.parent == root / "keys" for path in keys))
+            self.assertTrue(all((root / scenario).is_dir() for scenario in fixture.SCENARIOS))
+            if fixture.os.name != "nt":
+                self.assertEqual((root / "keys").stat().st_mode & 0o777, 0o700)
+
     def test_configuration_seed_is_read_back_in_its_real_normalized_type(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -200,7 +213,7 @@ class SignedUpdateFixtureTests(unittest.TestCase):
             root = Path(directory)
             report = root / "report.json"
             app = root / "CCTranslate.app"
-            report.write_text(json.dumps({"owned_pids": [321]}))
+            report.write_text(json.dumps({"owned_pids": [321], "cleanup_complete": True}))
             expected = str((app / "Contents/MacOS/CCTranslateMac").resolve()).encode()
             alive = subprocess.CompletedProcess([], 0, expected, b"")
             gone = subprocess.CompletedProcess([], 1, b"", b"")
@@ -213,6 +226,21 @@ class SignedUpdateFixtureTests(unittest.TestCase):
                  patch.object(fixture.os, "kill") as kill:
                 with self.assertRaises(fixture.FixtureCleanupError):
                     fixture.stop_fixture_processes(report, app)
+                for payload in (b"{", b"null", b"[]", b"{}", b'{"owned_pids":null}', b"\xff"):
+                    report.write_bytes(payload)
+                    with self.subTest(payload=payload), patch.object(fixture.os, "kill") as kill:
+                        with self.assertRaises(fixture.FixtureCleanupError):
+                            fixture.stop_fixture_processes(report, app)
+                        kill.assert_not_called()
+                report.write_text(json.dumps({"owned_pids": [321], "launch_requested": True}))
+                with patch.object(fixture.subprocess, "run", return_value=gone), \
+                     self.assertRaises(fixture.FixtureCleanupError):
+                    fixture.stop_fixture_processes(report, app)
+                report.write_text(json.dumps({"owned_pids": [321], "cleanup_complete": True}))
+                for failure in (PermissionError("synthetic"), subprocess.TimeoutExpired("ps", 5)):
+                    with patch.object(fixture.subprocess, "run", side_effect=failure), \
+                         self.assertRaises(fixture.FixtureCleanupError):
+                        fixture.stop_fixture_processes(report, app)
                 kill.assert_not_called()
             report.write_text(json.dumps({"owned_pids": [], "launch_requested": True}))
             with self.assertRaises(fixture.FixtureCleanupError):

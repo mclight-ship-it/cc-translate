@@ -34,9 +34,18 @@ class FixtureCleanupError(RuntimeError):
 
 
 def stop_fixture_processes(report_path, app):
+    try:
+        _stop_fixture_processes(report_path, app)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
+        raise FixtureCleanupError("Could not verify fixture process cleanup; retain the fixture") from error
+
+
+def _stop_fixture_processes(report_path, app):
     if not report_path.is_file():
         raise FixtureCleanupError("No process ledger; retain fixture files rather than deleting a running app")
     report = json.loads(report_path.read_bytes())
+    if not isinstance(report, dict) or not isinstance(report.get("owned_pids"), list):
+        raise FixtureCleanupError("Invalid process ledger; retain the fixture")
     if report.get("launch_requested") and not report["owned_pids"] and not report.get("launch_failed"):
         raise FixtureCleanupError("Launch was requested but no PID was recorded; retain the fixture")
     executable = (app / "Contents/MacOS/CCTranslateMac").resolve()
@@ -44,8 +53,9 @@ def stop_fixture_processes(report_path, app):
         if not isinstance(pid, int) or pid < 2 or pid == os.getpid():
             raise FixtureCleanupError("Invalid fixture PID")
         for attempt in range(60):
-            state = subprocess.run(["/bin/ps", "-ww", "-p", str(pid), "-o", "comm="], capture_output=True)
-            if state.returncode == 1:
+            state = subprocess.run(["/bin/ps", "-ww", "-p", str(pid), "-o", "comm="],
+                                   capture_output=True, timeout=5)
+            if state.returncode == 1 and not state.stderr:
                 break
             if state.returncode != 0 or Path(state.stdout.decode().strip()).resolve() != executable:
                 raise FixtureCleanupError("PID identity changed; refusing to signal another process")
@@ -57,6 +67,8 @@ def stop_fixture_processes(report_path, app):
             time.sleep(0.1)
         else:
             raise FixtureCleanupError("Owned fixture process did not terminate")
+    if type(report.get("cleanup_complete")) not in (bool, int) or report["cleanup_complete"] != 1:
+        raise FixtureCleanupError("Driver did not confirm final cleanup; a replacement PID may be unknown")
 
 
 def fixture_info(original, identifier, feed, public_key, version):
@@ -295,6 +307,12 @@ def run_case(app, root, server, signer, driver, key_file, public_key, wrong_key,
             command(["/usr/bin/defaults", "delete", identity], capture_output=True)
 
 
+def fixture_key_paths(root):
+    directory = root / "keys"
+    directory.mkdir(mode=0o700)
+    return directory / "signing", directory / "incorrect"
+
+
 def run_scenarios(execute, report):
     failures = {}
     for scenario in SCENARIOS:
@@ -321,7 +339,7 @@ def run(app, output):
     try:
         root.chmod(0o700)
         signer, driver = compile_tools(app, root)
-        key_file, wrong_file = root / "temporary-key", root / "wrong-key"
+        key_file, wrong_file = fixture_key_paths(root)
         try:
             key = json_command([signer, "generate", key_file])["public_key"]
             wrong = json_command([signer, "generate", wrong_file])["public_key"]
