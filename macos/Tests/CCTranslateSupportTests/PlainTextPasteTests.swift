@@ -181,6 +181,7 @@ private final class PasteSchedulerDouble: PlainTextPasteScheduler {
 
 private enum PasteboardFixtureError: Error {
     case systemPasteboard, status(OSStatus), missingReference, missingItemData, identifierExhausted, untrackedBoard
+    case publicationTimeout
 }
 
 private struct PasteboardFixtureGeneration {
@@ -626,19 +627,20 @@ final class PlainTextPasteTests: XCTestCase {
 
     @MainActor
     @discardableResult
-    private func publish(_ board: NSPasteboard, items: [NSPasteboardItem]) throws -> [PasteboardItemID] {
+    private func publish(_ board: NSPasteboard, items: [NSPasteboardItem]) async throws -> [PasteboardItemID] {
         let representations = try items.map { item in
             try item.types.map { type in
                 guard let data = item.data(forType: type) else { throw PasteboardFixtureError.missingItemData }
                 return (type.rawValue, data)
             }
         }
-        return try publish(board, representations: representations)
+        return try await publish(board, representations: representations)
     }
 
     @MainActor
     @discardableResult
-    private func publish(_ board: NSPasteboard, representations: [[(String, Data)]]) throws -> [PasteboardItemID] {
+    private func publish(_ board: NSPasteboard, representations: [[(String, Data)]]) async throws -> [PasteboardItemID] {
+        let previousChangeCount = board.changeCount
         let reference = try privatePasteboardReference(board)
         // A private global pasteboard can disappear when its final C reference is released.
         publishedReferences.append(reference)
@@ -664,6 +666,16 @@ final class PlainTextPasteTests: XCTestCase {
         publishedItems[board.name] = zip(identifiers, representations).map { pair in
             (pair.0, pair.1.map { $0.0 })
         }
+        // C publication can precede AppKit's change-count notification. Wait for metadata
+        // readiness without reading representations or priming the product's AppKit reader.
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while board.changeCount <= previousChangeCount {
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                throw PasteboardFixtureError.publicationTimeout
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        print("PasteboardFixture publication visible: change count \(previousChangeCount)/\(board.changeCount)")
         try verifyPublication(board, identifiers: identifiers, representations: representations)
         return identifiers
     }
@@ -1235,7 +1247,7 @@ final class PlainTextPasteTests: XCTestCase {
                                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setData(data, forType: .rtf))
-        try publish(board, items: [item])
+        try await publish(board, items: [item])
         let adapter = clipboard(name: board.name)
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else { return XCTFail("Expected RTF text") }
@@ -1256,7 +1268,7 @@ final class PlainTextPasteTests: XCTestCase {
             XCTAssertTrue(item.setString(text, forType: .string))
             return item
         }
-        try publish(board, items: items)
+        try await publish(board, items: items)
         let adapter = clipboard(name: board.name)
         let token = PlainTextPasteCancellation()
         guard case .text(let snapshot) = await adapter.read(cancellation: token) else { return XCTFail("Expected all items") }
@@ -1274,7 +1286,7 @@ final class PlainTextPasteTests: XCTestCase {
             defer { releasePrivatePasteboard(predecessor) }
             predecessorGeneration = try XCTUnwrap(pasteboardFixtureLatestGeneration[predecessor.name.rawValue])
             let bytes = Data("<b>synthetic predecessor</b>".utf8)
-            try publish(predecessor, representations: [[("public.html", bytes)]])
+            try await publish(predecessor, representations: [[("public.html", bytes)]])
             let count = predecessor.changeCount
             let token = PlainTextPasteCancellation()
             let adapter = clipboard(name: predecessor.name)
@@ -1305,7 +1317,7 @@ final class PlainTextPasteTests: XCTestCase {
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(Data([1, 2, 3]), forType: type))
             if type == .fileURL { XCTAssertTrue(item.setString("filename.txt", forType: .string)) }
-            try publish(board, items: [item])
+            try await publish(board, items: [item])
             let count = board.changeCount
             let adapter = clipboard(name: board.name)
             guard case .failure(.noText) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -1355,7 +1367,7 @@ final class PlainTextPasteTests: XCTestCase {
         let html = "<html><img src='https://invalid.example/not-fetched'><b>text</b></html>"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(html, forType: .html))
-        try publish(board, items: [item])
+        try await publish(board, items: [item])
         let count = board.changeCount
         let adapter = clipboard(name: board.name)
         guard case .failure(.unsupportedRepresentation) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
@@ -1392,7 +1404,7 @@ final class PlainTextPasteTests: XCTestCase {
         let text = "name\tvalue\r\nfirst\t 42 \r\n"
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString(text, forType: .tabularText))
-        try publish(board, items: [item])
+        try await publish(board, items: [item])
         let adapter = clipboard(name: board.name)
         guard case .text(let snapshot) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {
             return XCTFail("Expected system tabular text representation")
@@ -1409,12 +1421,13 @@ final class PlainTextPasteTests: XCTestCase {
             defer { releasePrivatePasteboard(board) }
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(data, forType: .rtf))
-            let identifiers = try publish(board, items: [item])
+            let identifiers = try await publish(board, items: [item])
             let identifier = UInt(bitPattern: try XCTUnwrap(identifiers.first))
             XCTAssertGreaterThan(identifier, previousIdentifier, "Fixture IDs must not reset on a new private board")
             previousIdentifier = identifier
             print("Synthetic malformed RTF case \(index): published item \(String(identifier, radix: 16))")
             let count = board.changeCount
+            XCTAssertGreaterThan(count, 0, "The published fixture must be visible before the product read")
             let adapter = clipboard(name: board.name) {
                 print("Synthetic malformed RTF case \(index): \($0)")
             }
@@ -1499,7 +1512,7 @@ final class PlainTextPasteTests: XCTestCase {
         let item = NSPasteboardItem()
         XCTAssertTrue(item.setString("private synthetic text", forType: .string))
         XCTAssertTrue(item.setString("<b>private synthetic text</b>", forType: .html))
-        try publish(board, items: [item])
+        try await publish(board, items: [item])
         let input = PasteInputDouble()
         let paste = service(clipboard(name: board.name), input: input,
                             scheduler: PasteSchedulerDouble())
@@ -1569,7 +1582,7 @@ final class PlainTextPasteTests: XCTestCase {
             let bytes = try XCTUnwrap(text.data(using: encoding))
             // NSPasteboardItem may translate legacy aliases, including their line endings.
             // Publish the intended external bytes directly rather than pre-converting the fixture.
-            let published = try publish(board, representations: [[(type, bytes)]])
+            let published = try await publish(board, representations: [[(type, bytes)]])
             let count = board.changeCount
             let sourceReference = try privatePasteboardReference(board)
             defer { withExtendedLifetime(sourceReference) {} }
@@ -1639,7 +1652,7 @@ final class PlainTextPasteTests: XCTestCase {
         let first = "\u{FEFF}UTF-8 first\r\n"
         let second = "UTF-16 first\r\n"
         let alternative = "not the preferred representation"
-        try publish(board, representations: [
+        try await publish(board, representations: [
             [("public.utf8-plain-text", Data(first.utf8)),
              ("public.utf16-external-plain-text", try XCTUnwrap(alternative.data(using: .utf16)))],
             [("public.utf16-external-plain-text", try XCTUnwrap(second.data(using: .utf16))),
@@ -1678,7 +1691,7 @@ final class PlainTextPasteTests: XCTestCase {
             let bytes = Data(codeUnits)
             let item = NSPasteboardItem()
             XCTAssertTrue(item.setData(bytes, forType: .string))
-            try publish(board, items: [item])
+            try await publish(board, items: [item])
             let count = board.changeCount
             let adapter = clipboard(name: board.name)
             guard case .failure(.unavailableData) = await adapter.read(cancellation: PlainTextPasteCancellation()) else {

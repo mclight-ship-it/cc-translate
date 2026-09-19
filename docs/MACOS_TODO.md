@@ -1,7 +1,7 @@
 # macOS 实施与验收清单
 
 设计和安全契约：[MACOS_DEVELOPMENT.md](MACOS_DEVELOPMENT.md)。
-基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-19。
+基线：`148f7a1`；仅独立开发分支。更新日期：2026-09-20。
 **当前路线：GitHub 免费站外分发，不要求付费 Apple Developer，不上 App Store。**
 Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付费首开前置/冻结理由保留为历史，
 已由末尾 2026-09-13 决策更新；不能据旧记录继续阻断免费首测，也不能把未实机门槛勾为通过。
@@ -3058,6 +3058,30 @@ CI仅把既有构包和签名fixture提前到完整原生测试前，让短的�
 没有删除原生/同包/消费者断言，也没有提前发布。完整成功仍要求全部44steps，
 原生阶段仍不提供CC_TRANSLATE_APP，因此23个可选方法的skip范围不变；
 此后称“无App环境可选skip”，不再按时间顺序称“构包前”。
+
+源码`f15782d962b60d30c338ccd0f0b87fe7c3c9f200` / build160 /
+[run35461428103](https://github.com/mclight-ship-it/cc-translate/actions/runs/35461428103)
+已实际通过全部六个签名升级场景：安装旧PID5100退出、新PID5116重启，两者均入ledger；
+坏签名/错误公钥均为4005→4005→3002及明确EdDSA不匹配，未进入ready-to-install；
+下载取消在该阶段之前、安装取消在该阶段之后，下载失败为2001/HTTP503。
+全部配置前后font16、marker及SHA一致，偏好/自有数据哨兵保留；拒绝/取消保留build1及App树，
+安装为build2。全部会话结束、优雅清理，临时密钥/目录已删除，case_failures为空。
+原App树保持不变；这是隔离副本验证，不是正式渠道或真人TCC保持。
+
+正常privacy/full hook1958项、102.709秒通过；本源码Swift25.82秒、890原生项
+（23无App环境可选skip、零失败）、568.160秒，151PNG完整（artifact10590530677）。
+13项卸载方法逐项通过；本轮重新查看失败提示及440浅色/420深色按钮图。
+producer15和consumer14成功，但consumer26的46项主动粘贴测试有一个方法、两个断言失败，
+因此最终watch/full collector仍exit1，未下载完整App，推荐仍为build153。
+
+原始失败为`testPrivateInvalidRTFDoesNotClearClipboard`的空RTF用例：
+C发布/独立C读回已经成功，但AppKit计数仍为0；启动只读worker后成为1，实际日志为
+`read finish ... change count 0/1`，产品正确拒绝为clipboardChanged，而非预期格式拒绝。
+另外三个非空损坏RTF均以计数1/1拒绝为invalidRichText。不是安装/重启失败，
+也不能据此将空RTF放行或允许读取期间忽略换主。
+当前仅修测试publisher：C发布后有界等待AppKit计数推进，再开始产品读取；
+不预读正文、不预热AppKit条目、不重复发布，不改变生产读写/计数检查或原拒绝断言。
+全部既有eager publisher调用复用该等待，增加发布可见断言；新源码仍需自己的Mac验证。
 
 ### P4剩余验收
 
