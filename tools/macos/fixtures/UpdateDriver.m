@@ -1,5 +1,40 @@
 #import <AppKit/AppKit.h>
 #import <Sparkle/Sparkle.h>
+#import <libproc.h>
+#import <errno.h>
+
+static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
+    NSMutableArray<NSNumber *> *pending = [NSMutableArray arrayWithObject:@(root)];
+    NSMutableDictionary *processes = [NSMutableDictionary dictionary];
+    for (NSUInteger index = 0; index < pending.count; index++) {
+        pid_t pid = pending[index].intValue;
+        struct rusage_info_v2 usage = {0};
+        if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) {
+            *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+            return nil;
+        }
+        processes[pending[index].stringValue] = @{
+            @"start_identity": @(usage.ri_proc_start_abstime),
+            @"cpu_ns": @(usage.ri_user_time + usage.ri_system_time),
+            @"rss_bytes": @(usage.ri_resident_size),
+            @"footprint_bytes": @(usage.ri_phys_footprint)
+        };
+        pid_t children[128];
+        errno = 0;
+        int count = proc_listchildpids(pid, children, sizeof(children));
+        if (count < 0 || (count == 0 && errno != 0) || count >= 128) {
+            *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno ?: EOVERFLOW userInfo:nil];
+            return nil;
+        }
+        for (int child = 0; child < count; child++) {
+            NSNumber *number = @(children[child]);
+            if (children[child] > 1 && ![pending containsObject:number]) {
+                [pending addObject:number];
+            }
+        }
+    }
+    return processes;
+}
 
 @interface FixtureDriver : NSObject <SPUUserDriver>
 @property(nonatomic, strong) NSURL *applicationURL;
@@ -92,23 +127,72 @@
             [self rememberApplication:application];
             self.report[@"original_pid"] = @(application.processIdentifier);
             if (![self record:@"launched-original"] || self.finishing) { return; }
-            // The host, not this external driver, must be terminated and relaunched.
-            self.updater = [[SPUUpdater alloc] initWithHostBundle:host applicationBundle:host
-                                                     userDriver:self delegate:nil];
-            NSError *startError = nil;
-            if (![self.updater startUpdater:&startError]) {
-                [self showUpdaterError:startError acknowledgement:^{}];
-                return;
+            if ([self.scenario isEqual:@"install"]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    self.report[@"idle_resources"] = [@{
+                        @"root_pid": @(application.processIdentifier), @"settle_s": @5,
+                        @"scope": @"Disposable native App and current descendants before fixture update check; no input or model",
+                        @"samples": [NSMutableArray array], @"targets_are_gates": @NO
+                    } mutableCopy];
+                    [self sampleIdleForHost:host start:NSProcessInfo.processInfo.systemUptime];
+                });
+            } else {
+                [self startUpdateForHost:host];
             }
-            [self.updater checkForUpdates];
         });
     }];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 90 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    int64_t deadlineSeconds = [self.scenario isEqual:@"install"] ? 125 : 90;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, deadlineSeconds * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (!self.finishing) {
             self.outcome = @"timeout";
             [self finish];
         }
     });
+}
+
+- (void)startUpdateForHost:(NSBundle *)host {
+    if (self.finishing) { return; }
+    // The host, not this external driver, must be terminated and relaunched.
+    self.updater = [[SPUUpdater alloc] initWithHostBundle:host applicationBundle:host
+                                             userDriver:self delegate:nil];
+    NSError *error = nil;
+    if (![self.updater startUpdater:&error]) {
+        [self showUpdaterError:error acknowledgement:^{}];
+        return;
+    }
+    [self.updater checkForUpdates];
+}
+
+- (void)sampleIdleForHost:(NSBundle *)host start:(NSTimeInterval)start {
+    if (self.finishing) { return; }
+    if (self.original.terminated) {
+        self.outcome = @"idle-application-terminated";
+        [self finish];
+        return;
+    }
+    NSError *error = nil;
+    NSDictionary *processes = OwnedResourceSnapshot(self.original.processIdentifier, &error);
+    if (!processes) {
+        self.outcome = @"idle-measurement-error";
+        self.report[@"idle_error"] = error.localizedDescription;
+        [self finish];
+        return;
+    }
+    NSMutableArray *samples = self.report[@"idle_resources"][@"samples"];
+    [samples addObject:@{@"elapsed_s": @(NSProcessInfo.processInfo.systemUptime - start),
+                         @"processes": processes}];
+    if (![self writeReport]) {
+        self.outcome = @"evidence-write-error";
+        [self finish];
+        return;
+    }
+    if (samples.count == 31) {
+        [self startUpdateForHost:host];
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [self sampleIdleForHost:host start:start];
+        });
+    }
 }
 
 - (NSArray<NSRunningApplication *> *)ownedApplications {

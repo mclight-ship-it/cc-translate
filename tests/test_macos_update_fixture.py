@@ -175,6 +175,8 @@ class SignedUpdateFixtureTests(unittest.TestCase):
 
         def execute(scenario):
             visited.append(scenario)
+            if scenario == "install":
+                raise ValueError("synthetic incomplete resource samples")
             if scenario == "bad-signature":
                 raise AssertionError("synthetic verification failure")
             if scenario == "wrong-key":
@@ -184,7 +186,7 @@ class SignedUpdateFixtureTests(unittest.TestCase):
         report = {"cases": {}}
         fixture.run_scenarios(execute, report)
         self.assertEqual(visited, list(fixture.SCENARIOS))
-        self.assertEqual(set(report["case_failures"]), {"bad-signature", "wrong-key"})
+        self.assertEqual(set(report["case_failures"]), {"install", "bad-signature", "wrong-key"})
         self.assertEqual(set(report["cases"]), set(fixture.SCENARIOS) - set(report["case_failures"]))
         visited.clear()
 

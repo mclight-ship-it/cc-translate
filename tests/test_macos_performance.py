@@ -140,5 +140,63 @@ class PerformanceIntegrationTests(unittest.TestCase):
         self.assertIn('report["performance"] = performance.run_measurements(app, Path(asset))', runtime)
 
 
+class IdleResourceTests(unittest.TestCase):
+    def report(self):
+        return {"root_pid": 100, "settle_s": 5, "targets_are_gates": False, "samples": [
+            {"elapsed_s": index * 1.1, "processes": {
+                "100": {"start_identity": 10, "cpu_ns": index * 11_000_000,
+                        "rss_bytes": 1_000_000 + index, "footprint_bytes": 700_000},
+                "101": {"start_identity": 20, "cpu_ns": index * 11_000_000,
+                        "rss_bytes": 500_000, "footprint_bytes": 400_000},
+            }} for index in range(31)]}
+
+    def test_native_app_and_helper_counters_use_actual_elapsed_time(self):
+        result = metrics.summarize_idle_resources(self.report())
+        self.assertEqual(result["duration_s"], 33)
+        self.assertEqual(result["process_count"], 2)
+        self.assertAlmostEqual(result["cpu_percent_whole_interval"], 2)
+        self.assertEqual(len(result["cpu_percent_one_core"]["samples"]), 30)
+        self.assertAlmostEqual(result["cpu_percent_one_core"]["p95"], 2)
+        self.assertEqual(result["rss_bytes"]["p95"], 1_500_029)
+        self.assertEqual(result["rss_bytes"]["max"], 1_500_030)
+        self.assertEqual(result["physical_footprint_bytes"]["max"], 1_100_000)
+
+    def test_restarted_disappeared_or_replaced_process_is_not_idle_evidence(self):
+        for mutation in ("restart", "missing_root", "counter_regression"):
+            report = self.report()
+            processes = report["samples"][5]["processes"]
+            if mutation == "restart":
+                processes["101"]["start_identity"] += 1
+            elif mutation == "missing_root":
+                del processes["100"]
+            else:
+                processes["101"]["cpu_ns"] = 0
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                metrics.summarize_idle_resources(report)
+
+    def test_partial_nonmonotonic_and_invalid_resource_samples_are_rejected(self):
+        for mutation in ("partial", "timestamp", "nan", "negative", "boolean", "too_short"):
+            report = self.report()
+            if mutation == "partial":
+                report["samples"].pop()
+            elif mutation in ("timestamp", "nan"):
+                report["samples"][3]["elapsed_s"] = 0 if mutation == "timestamp" else float("nan")
+            elif mutation in ("negative", "boolean"):
+                report["samples"][3]["processes"]["100"]["rss_bytes"] = -1 if mutation == "negative" else True
+            else:
+                for sample in report["samples"]:
+                    sample["elapsed_s"] /= 2
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                metrics.summarize_idle_resources(report)
+
+    def test_slow_or_large_idle_results_are_measured_not_a_usage_gate(self):
+        report = self.report()
+        for index, sample in enumerate(report["samples"]):
+            sample["processes"]["100"].update(cpu_ns=index * 2_000_000_000, rss_bytes=2_000_000_000)
+        result = metrics.summarize_idle_resources(report)
+        self.assertGreater(result["cpu_percent_whole_interval"], 100)
+        self.assertGreater(result["rss_bytes"]["max"], 2_000_000_000)
+
+
 if __name__ == "__main__":
     unittest.main()

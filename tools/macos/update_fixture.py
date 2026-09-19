@@ -21,9 +21,11 @@ from xml.sax.saxutils import quoteattr
 
 if __package__:
     from .runtime_matrix import tree_digest
+    from .performance_metrics import summarize_idle_resources
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from tools.macos.runtime_matrix import tree_digest
+    from tools.macos.performance_metrics import summarize_idle_resources
 
 HERE = Path(__file__).resolve().parent
 SCENARIOS = ("install", "bad-signature", "wrong-key", "cancel-download", "cancel-install", "download-error")
@@ -226,7 +228,7 @@ def compile_tools(app, root):
             "NSExceptionDomains": {"127.0.0.1": {"NSExceptionAllowsInsecureHTTPLoads": True}}},
     }))
     command(["/usr/bin/xcrun", "clang", "-fobjc-arc", "-Werror", "-Wno-deprecated-declarations",
-             "-mmacosx-version-min=14.0", "-framework", "AppKit", "-framework", "Sparkle",
+             "-mmacosx-version-min=14.0", "-lproc", "-framework", "AppKit", "-framework", "Sparkle",
              "-F", frameworks, "-Wl,-rpath,@executable_path/../Frameworks",
              HERE / "fixtures/UpdateDriver.m", "-o", executable])
     sign_bundle(driver)
@@ -282,6 +284,8 @@ def run_case(app, root, server, signer, driver, key_file, public_key, wrong_key,
         report = json.loads(report_path.read_bytes())
         after = json_command([*probe, "read"])
         verify_case(scenario, report, before, after)
+        if scenario == "install":
+            report["idle_resources"]["summary"] = summarize_idle_resources(report["idle_resources"])
         assert all(sentinel.read_bytes() == b"isolated preserved data" for sentinel in sentinels)
         marker = command(["/usr/bin/defaults", "read", identity, "updateFixtureMarker"], capture_output=True)
         assert marker.stdout.strip() == b"preserved"
@@ -318,7 +322,7 @@ def run_scenarios(execute, report):
     for scenario in SCENARIOS:
         try:
             report["cases"][scenario] = execute(scenario)
-        except (AssertionError, subprocess.CalledProcessError) as error:
+        except (AssertionError, ValueError, subprocess.CalledProcessError) as error:
             # run_case checks cleanup in finally; FixtureCleanupError must abort.
             failures[scenario] = f"{type(error).__name__}: {error}"
     report["case_failures"] = failures
