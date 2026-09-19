@@ -100,10 +100,10 @@ def verify_archive(path):
             names.add(entry.filename)
             need(not (entry.external_attr >> 16) & 0o7000, "privileged archive mode")
         need(archive.testzip() is None, "archive CRC failed")
-        for name in ("Contents/MacOS/CCTranslateMac", "Contents/Helpers/python/bin/python3.12"):
+        for name in ("Contents/MacOS/CCTranslateMac", "Contents/Resources/python/bin/python3.12"):
             entry = archive.getinfo(APP_NAME + "/" + name)
             need(stat.S_IMODE(entry.external_attr >> 16) == 0o755, "archive executable mode mismatch")
-        link = archive.getinfo(APP_NAME + "/Contents/Helpers/python/bin/python3")
+        link = archive.getinfo(APP_NAME + "/Contents/Resources/python/bin/python3")
         need(stat.S_ISLNK(link.external_attr >> 16) and archive.read(link) == b"python3.12",
              "archive Python link mismatch")
 
@@ -473,7 +473,7 @@ def run_runtime(args):
         need(args.allow_https, "runtime requires explicit --allow-https")
         verify_checkout(args.source_sha)
         need(sys.flags.isolated and sys.dont_write_bytecode, "bundled runtime requires -I -B")
-        need(Path(sys.executable).resolve() == (app / "Contents/Helpers/python/bin/python3").resolve(),
+        need(Path(sys.executable).resolve() == (app / "Contents/Resources/python/bin/python3").resolve(),
              "host Python cannot run runtime validation")
         report["runtime"] = environment_record(args.os_major, args.xcode)
         receipt, manifest, count = verify_receipt(

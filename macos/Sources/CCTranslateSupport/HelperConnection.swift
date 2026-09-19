@@ -13,10 +13,10 @@ public struct BundleRuntime {
 
     public init(appURL: URL, resourcesURL: URL? = nil) throws {
         contents = appURL.appendingPathComponent("Contents", isDirectory: true)
-        executable = contents.appendingPathComponent("Helpers/python/bin/python3")
+        executable = contents.appendingPathComponent("Resources/python/bin/python3")
         launcher = (resourcesURL ?? contents.appendingPathComponent("Resources", isDirectory: true))
             .appendingPathComponent("Core/launch.py")
-        let runtimeRoot = contents.resolvingSymlinksInPath().appendingPathComponent("Helpers/python").path + "/"
+        let runtimeRoot = contents.resolvingSymlinksInPath().appendingPathComponent("Resources/python").path + "/"
         let coreRoot = contents.resolvingSymlinksInPath().appendingPathComponent("Resources/Core").path + "/"
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: executable.path, isDirectory: &isDirectory),

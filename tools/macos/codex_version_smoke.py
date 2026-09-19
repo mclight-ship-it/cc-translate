@@ -99,7 +99,7 @@ def verify(app):
     if sys.platform != "darwin" or platform.machine() != "arm64":
         raise ValueError("official_cli_smoke_requires_darwin_arm64")
     app = Path(app).resolve(strict=True)
-    python = app / "Contents" / "Helpers" / "python" / "bin" / "python3"
+    python = app / "Contents" / "Resources" / "python" / "bin" / "python3"
     core = app / "Contents" / "Resources" / "Core"
     if not python.is_file() or not core.is_dir():
         raise ValueError("explicit_bundled_runtime_required")

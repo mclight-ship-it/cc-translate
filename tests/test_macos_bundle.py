@@ -416,9 +416,9 @@ class MachORulesTests(ProjectDirectory):
                 "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
                 "LSUIElement": True, "LSMinimumSystemVersion": "14.0",
                 "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "42"}
-        binaries = ["MacOS/CCTranslateMac", "Helpers/python/bin/python3",
-                    "Helpers/python/lib/libpython3.12.dylib",
-                    "Helpers/python/lib/libCCProcessSupport.dylib"]
+        binaries = ["MacOS/CCTranslateMac", "Resources/python/bin/python3",
+                    "Resources/python/lib/libpython3.12.dylib",
+                    "Resources/python/lib/libCCProcessSupport.dylib"]
         binaries += ["Frameworks/Sparkle.framework/" + path
                      for path in (*bundle.SPARKLE_HELPERS, "Versions/B/Sparkle")]
         resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
@@ -561,7 +561,7 @@ class MachORulesTests(ProjectDirectory):
 
     def test_audit_checks_unreferenced_macho_and_rejects_newer_os(self):
         app = self.synthetic_app()
-        extra = app / "Contents/Helpers/python/lib/extra.dylib"
+        extra = app / "Contents/Resources/python/lib/extra.dylib"
         extra.write_bytes(b"\xcf\xfa\xed\xfeSYNTHETIC")
 
         def wrong_arch(args, environment=None):
@@ -682,10 +682,10 @@ Load command 2
 
     def test_bundle_rpath_resolution_and_external_rejection(self):
         app = self.root / "Probe.app"
-        binary = app / "Contents/Helpers/python/bin/python3.12"
+        binary = app / "Contents/Resources/python/bin/python3.12"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"synthetic")
-        library = app / "Contents/Helpers/python/lib/libpython3.12.dylib"
+        library = app / "Contents/Resources/python/lib/libpython3.12.dylib"
         library.parent.mkdir()
         library.write_bytes(b"synthetic")
         base = bundle.expand_dyld("@loader_path/../lib", binary, binary, app)

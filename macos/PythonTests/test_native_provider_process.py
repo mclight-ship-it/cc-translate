@@ -52,7 +52,7 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertIsInstance(bridge, ctypes.CDLL)
         self.assertEqual(bridge.cc_process_support_abi(), 1)
         self.assertEqual(Path(bridge._name).resolve(),
-                         self.contents / "Helpers" / "python" / "lib" / "libCCProcessSupport.dylib")
+                         self.contents / "Resources" / "python" / "lib" / "libCCProcessSupport.dylib")
         self.assertIs(codex_darwin.RpcProcess, darwin_rpc.RpcProcess)
 
     def create(self, mode="normal"):

@@ -250,7 +250,7 @@ final class TranslationHelperConnectionTests: XCTestCase {
             .appendingPathComponent(".translation-connection-\(UUID().uuidString)", isDirectory: true)
         let app = root.appendingPathComponent("Synthetic.app", isDirectory: true)
         let home = root.appendingPathComponent("home", isDirectory: true)
-        let bin = app.appendingPathComponent("Contents/Helpers/python/bin", isDirectory: true)
+        let bin = app.appendingPathComponent("Contents/Resources/python/bin", isDirectory: true)
         let core = app.appendingPathComponent("Contents/Resources/Core", isDirectory: true)
         do {
             for directory in [home, bin, core] {

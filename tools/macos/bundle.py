@@ -604,8 +604,8 @@ def audit_bundle(app, lock, environment=None):
     info = plistlib.loads((contents / "Info.plist").read_bytes())
     validate_plist(info, lock)
     required = [
-        "MacOS/CCTranslateMac", "Helpers/python/bin/python3",
-        "Helpers/python/lib/libCCProcessSupport.dylib",
+        "MacOS/CCTranslateMac", "Resources/python/bin/python3",
+        "Resources/python/lib/libCCProcessSupport.dylib",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
         "Resources/Core/cc_macos/dictionary_probe.py",
         "Resources/Core/cc_macos/dictionary.py",
@@ -631,7 +631,7 @@ def audit_bundle(app, lock, environment=None):
     required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
-         os.access(contents / "Helpers/python/bin/python3", os.X_OK), "non-executable bundle entry")
+         os.access(contents / "Resources/python/bin/python3", os.X_OK), "non-executable bundle entry")
     provenance = json.loads((contents / "Resources/source-manifest.json").read_bytes())
     need(provenance["lock"] == lock, "bundle source lock mismatch")
     need(provenance.get("application") == application_metadata(info, lock),
@@ -649,6 +649,7 @@ def audit_bundle(app, lock, environment=None):
          digest(license_path) == sparkle.get("license_sha256"), "Sparkle license changed")
     resource_hashes = provenance["resource_hashes"]
     need(all(path in resource_hashes for path in required if path.startswith("Resources/")
+             and not path.startswith("Resources/python/")
              and path != "Resources/source-manifest.json"), "incomplete resource source inventory")
     for name, expected in resource_hashes.items():
         safe = archive_path(name)
@@ -679,9 +680,9 @@ def audit_bundle(app, lock, environment=None):
             need(path.is_dir(), "special bundle entry")
     need(files, "bundle has no Mach-O files")
     native = contents / "MacOS/CCTranslateMac"
-    python = (contents / "Helpers/python/bin/python3").resolve()
-    libpython = contents / "Helpers/python/lib/libpython3.12.dylib"
-    bridge = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
+    python = (contents / "Resources/python/bin/python3").resolve()
+    libpython = contents / "Resources/python/lib/libpython3.12.dylib"
+    bridge = contents / "Resources/python/lib/libCCProcessSupport.dylib"
     need(all(path in files for path in (native, python, libpython, bridge)), "bundle runtime is not Mach-O")
     run(["/usr/bin/codesign", "--verify", "--strict", "--deep", framework], environment)
     parsed, report = {}, []
@@ -703,7 +704,7 @@ def audit_bundle(app, lock, environment=None):
         parsed[binary]["dependencies"] = parse_dependencies(
             run(["/usr/bin/otool", "-L", *slice_args, binary], environment))
     for binary, commands in parsed.items():
-        executable = python if binary.is_relative_to(contents / "Helpers") else native
+        executable = python if binary.is_relative_to(contents / "Resources/python") else native
         if binary in {framework / path for path in SPARKLE_HELPERS}:
             executable = binary
         parents = [executable]
@@ -786,9 +787,11 @@ def build(lock, offline=False, build_number=None):
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     embed_sparkle(contents, sparkle, sparkle_license)
-    excluded = extract_runtime(assets["runtime"], contents / "Helpers/python", lock)
+    # A Python installation includes non-bundle directories such as python3.12.
+    # Keep that tree out of macOS's reserved nested-code directories.
+    excluded = extract_runtime(assets["runtime"], contents / "Resources/python", lock)
     shutil.copy2(binary_directory / "libCCProcessSupport.dylib",
-                 contents / "Helpers/python/lib/libCCProcessSupport.dylib")
+                 contents / "Resources/python/lib/libCCProcessSupport.dylib")
     core = contents / "Resources/Core"
     copy_core_sources(core)
     (core / "cacert.pem").write_bytes(ca)
@@ -807,7 +810,8 @@ def build(lock, offline=False, build_number=None):
     copy_sources(dictionaries, license_root / "dictionary")
     resources = contents / "Resources"
     resource_hashes = {path.relative_to(contents).as_posix(): digest(path)
-                       for path in sorted(resources.rglob("*")) if path.is_file()}
+                       for path in sorted(resources.rglob("*"))
+                       if path.is_file() and not path.is_relative_to(resources / "python")}
     write_json(contents / "Resources/source-manifest.json", {
         "schema": 1, "development_only": True, "signing": "NOT performed by these scripts",
         "release_gate": "NOT PASSED", "application_license": "requires separate confirmation",

@@ -141,7 +141,7 @@ jobs:
             --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
       - name: Native provider and repository owner lifecycle with bundled Python (synthetic only)
         run: >-
-          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/python/bin/python3 -I -B
           tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app
           --suite process --report tools/macos/.build/process-tests.json
       - name: Native Foundation.Process to bundled helper integration (not optional here)
@@ -158,7 +158,7 @@ jobs:
         run: python3 tools/macos/smoke.py --allow-https
       - name: Shared rules and prompt contracts with bundled Python
         run: >-
-          tools/macos/.build/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/.build/CCTranslateMac-P0.app/Contents/Resources/python/bin/python3 -I -B
           tools/macos/bundled_tests.py --app tools/macos/.build/CCTranslateMac-P0.app
           --suite core --report tools/macos/.build/core-tests.json
       - name: Require native Swift unit success before archiving or publishing
@@ -258,9 +258,9 @@ jobs:
           test ! -e CCTranslateMac-P0.app
           printf '%s  CCTranslateMac-P0.zip\n' "$EXPECTED_SHA256" | /usr/bin/shasum -a 256 -c -
           /usr/bin/ditto -x -k CCTranslateMac-P0.zip .
-          test -x CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3
+          test -x CCTranslateMac-P0.app/Contents/Resources/python/bin/python3
           test -x CCTranslateMac-P0.app/Contents/MacOS/CCTranslateMac
-          test "$(readlink CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3)" = python3.12
+          test "$(readlink CCTranslateMac-P0.app/Contents/Resources/python/bin/python3)" = python3.12
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
         shell: bash
         run: |
@@ -270,7 +270,7 @@ jobs:
           echo "CC_TRANSLATE_DICTIONARY_TEST_ASSET=$fixture" >> "$GITHUB_ENV"
       - name: Run the immutable producer app with this OS and a separate integration harness
         run: >-
-          tools/macos/.build/received/CCTranslateMac-P0.app/Contents/Helpers/python/bin/python3 -I -B
+          tools/macos/.build/received/CCTranslateMac-P0.app/Contents/Resources/python/bin/python3 -I -B
           tools/macos/runtime_matrix.py run --directory tools/macos/.build/received
           --output tools/macos/.build/runtime-evidence --source-sha '${{ github.sha }}'
           --run-id '${{ github.run_id }}' --archive-sha256 '${{ needs.p0.outputs.archive_sha256 }}'

@@ -34,7 +34,7 @@ work = Path(sys.argv[2]).resolve()
 sys.path.insert(0, str(core))
 from cc_providers import darwin_process, darwin_rpc
 assert sys.flags.isolated and sys.dont_write_bytecode
-assert Path(sys.executable).resolve().is_relative_to(core.parent.parent / "Helpers" / "python")
+assert Path(sys.executable).resolve().is_relative_to(core.parent / "python")
 for module in (darwin_process, darwin_rpc):
     assert Path(module.__file__).resolve() == core.joinpath(*module.__name__.split(".")).with_suffix(".py")
 assert Path(os.environ["HOME"]).resolve() == work.parent
@@ -152,7 +152,7 @@ class TestDarwinRpcProcess(OwnerProcessCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.library = cls.contents / "Helpers" / "python" / "lib" / "libCCProcessSupport.dylib"
+        cls.library = cls.contents / "Resources" / "python" / "lib" / "libCCProcessSupport.dylib"
         bridge = owned.load_supervision()
         if Path(bridge._name).resolve() != cls.library.resolve():
             raise RuntimeError("RPC supervision must load the same app's C dylib.")

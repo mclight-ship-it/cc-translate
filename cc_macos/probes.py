@@ -37,7 +37,7 @@ def _check_cancel(cancel: Event) -> None:
 
 def runtime_probe(*, https: bool, cancel: Event) -> dict:
     _check_cancel(cancel)
-    runtime_root = BUNDLE_CORE.parent.parent / "Helpers" / "python"
+    runtime_root = BUNDLE_CORE.parent / "python"
     bundle_runtime = Path(sys.executable).resolve().is_relative_to(runtime_root.resolve())
     config_fixture = {"status": "not_run"}
     catalog_process = {"status": "not_run"}

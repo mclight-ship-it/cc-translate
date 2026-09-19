@@ -236,8 +236,8 @@ class RuntimeMatrixTests(unittest.TestCase):
         with zipfile.ZipFile(path, "w") as archive:
             for name, mode, data in (
                     ("Contents/MacOS/CCTranslateMac", stat.S_IFREG | native_mode, b"synthetic"),
-                    ("Contents/Helpers/python/bin/python3.12", stat.S_IFREG | 0o755, b"synthetic"),
-                    ("Contents/Helpers/python/bin/python3", stat.S_IFLNK | 0o777, link)):
+                    ("Contents/Resources/python/bin/python3.12", stat.S_IFREG | 0o755, b"synthetic"),
+                    ("Contents/Resources/python/bin/python3", stat.S_IFLNK | 0o777, link)):
                 info = zipfile.ZipInfo(runtime.APP_NAME + "/" + name)
                 info.create_system = 3
                 info.external_attr = mode << 16

@@ -184,7 +184,7 @@ final class ProductTestHarness {
         preferences.removePersistentDomain(forName: suiteName)
         preferences.set("en", forKey: "interfaceLanguage")
         let app = root.appendingPathComponent("Fixture.app", isDirectory: true)
-        let python = app.appendingPathComponent("Contents/Helpers/python/bin/python3")
+        let python = app.appendingPathComponent("Contents/Resources/python/bin/python3")
         let launcher = app.appendingPathComponent("Contents/Resources/Core/launch.py")
         do {
             for file in [python, launcher, executable, alternateExecutable] {

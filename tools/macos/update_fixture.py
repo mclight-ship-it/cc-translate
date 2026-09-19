@@ -181,8 +181,7 @@ def json_command(arguments):
 
 
 def sign_bundle(app):
-    # Nested executables/frameworks are already signed. Deep signing misidentifies
-    # the embedded Python stdlib directory as another bundle.
+    # Seal the outer bundle without replacing the nested framework's signatures.
     command(["/usr/bin/codesign", "--force", "--sign", "-", app], capture_output=True)
     command(["/usr/bin/codesign", "--verify", "--deep", "--strict", app], capture_output=True)
 
@@ -254,7 +253,7 @@ def run_case(app, root, server, signer, driver, key_file, public_key, wrong_key,
         for directory in owned_data_directories(home, identity):
             directory.mkdir(mode=0o700, parents=False, exist_ok=False)
             owned.append(directory)
-        probe = [current / "Contents/Helpers/python/bin/python3", "-I", "-B",
+        probe = [current / "Contents/Resources/python/bin/python3", "-I", "-B",
                  HERE / "fixtures/update_storage.py", current, home, identity]
         before = json_command([*probe, "seed"])
         sentinels = [directory / "update-fixture-sentinel" for directory in owned]

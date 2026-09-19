@@ -150,11 +150,11 @@ def validate_runtime(app):
             "Invoke the bundled Python with -I -B.")
     app = Path(app).resolve(strict=True)
     require(app.is_dir() and app.suffix == ".app", "An explicit app bundle is required.")
-    runtime = app / "Contents" / "Helpers" / "python"
+    runtime = app / "Contents" / "Resources" / "python"
     executable = Path(sys.executable).resolve(strict=True)
     expected = (runtime / "bin" / "python3").resolve(strict=True)
     require(executable.is_file() and executable == expected and executable.is_relative_to(runtime),
-            "The interpreter must be this app's Contents/Helpers/python/bin/python3.")
+            "The interpreter must be this app's Contents/Resources/python/bin/python3.")
     core = app / "Contents" / "Resources" / "Core"
     require(core.is_dir() and core.resolve(strict=True) == core,
             "Core must be a real directory inside the selected app.")

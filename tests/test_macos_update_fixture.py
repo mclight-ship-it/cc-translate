@@ -53,7 +53,7 @@ class SignedUpdateFixtureTests(unittest.TestCase):
             contents.mkdir(parents=True)
             info = contents / "Info.plist"
             info.write_bytes(plistlib.dumps(original))
-            runtime = contents / "Helpers/python/lib/python3.12"
+            runtime = contents / "Resources/python/lib/python3.12"
             runtime.mkdir(parents=True)
             (runtime / "sentinel.py").write_bytes(b"preserved runtime")
             before = fixture.tree_digest(source)

@@ -273,7 +273,7 @@ def run_smoke(app, build, *, untested_os=()):
         scratch.mkdir()
         scratch_created = True
         write_json(report_path, {"status": "NOT PASSED", "development_only": True})
-        command = [app / "Contents/Helpers/python/bin/python3", "-I", "-B",
+        command = [app / "Contents/Resources/python/bin/python3", "-I", "-B",
                    app / "Contents/Resources/Core/launch.py"]
         session = Session(command, scratch)
         report = exercise(session, load_lock())

@@ -54,7 +54,7 @@ class TestDarwinConfigContract(unittest.TestCase):
             contents = Path(directory) / "Synthetic.app/Contents"
             core = contents / "Resources/Core/cc_providers"
             core.mkdir(parents=True)
-            library = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
+            library = contents / "Resources/python/lib/libCCProcessSupport.dylib"
             library.parent.mkdir(parents=True)
             library.write_bytes(b"synthetic-not-a-library")
             bridge = Mock()

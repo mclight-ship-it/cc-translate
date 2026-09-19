@@ -24,7 +24,7 @@ class ProjectDirectory(unittest.TestCase):
         self.app = self.root / "Synthetic.app"
         self.core = self.app / "Contents" / "Resources" / "Core"
         self.core.mkdir(parents=True)
-        self.python = self.app / "Contents" / "Helpers" / "python" / "bin" / "python3"
+        self.python = self.app / "Contents" / "Resources" / "python" / "bin" / "python3"
         self.python.parent.mkdir(parents=True)
         self.python.write_bytes(b"synthetic, never executable")
 
@@ -61,7 +61,8 @@ class RuntimeTests(ProjectDirectory):
     def test_host_sibling_and_other_in_bundle_executables_are_rejected(self):
         others = (
             self.root / "host-python",
-            self.root / "Other.app" / "Contents" / "Helpers" / "python" / "bin" / "python3",
+            self.root / "Other.app" / "Contents" / "Resources" / "python" / "bin" / "python3",
+            self.app / "Contents" / "Helpers" / "python" / "bin" / "python3",
             self.python.with_name("unrelated-python"),
         )
         for other in others:

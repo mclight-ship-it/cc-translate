@@ -59,7 +59,7 @@ def close_selector(selector):
 def load_supervision():
     core = Path(__file__).resolve().parents[1]
     contents = core.parent.parent
-    library = contents / "Helpers/python/lib/libCCProcessSupport.dylib"
+    library = contents / "Resources/python/lib/libCCProcessSupport.dylib"
     if (core.name != "Core" or core.parent.name != "Resources" or contents.name != "Contents"
             or not library.is_file() or library.is_symlink()
             or not library.resolve().is_relative_to(contents.resolve())):

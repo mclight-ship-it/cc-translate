@@ -2968,6 +2968,9 @@ tree `c4120c906a558233f731aac9e6dfbcbe52e63a1c4b66f9f8835fe694077dbb3e`。
 已补“开始卸载退出即隐藏业务窗口”、退出期间拒绝迟到设置/展示入口，并扩展原排空测试
 经真实菜单打开设置、确认等待期间隐藏和迟到入口无效；此增量待自己的Mac验证，
 不借build154的绿灯。因此当前日常推荐仍为build153，完整签名升级fixture同时推进。
+增量源码1e9a5fc在build156已通过完整890原生项，其中修改的双helper/真实设置菜单回归通过；
+Swift35.65秒、552.381秒测试、23既定前置skip、151PNG完整。
+但签名fixture阻止了该run的完整App/消费者链，因此不冒充新完整包验收。
 
 ### P4临时签名升级fixture（实施中，待本源码Mac验证）
 
@@ -2996,6 +2999,20 @@ CryptoKit signer与ObjC driver亦实际编译成功，但首个副本准备阶�
 便携回归明确检查源树/运行时字节不变及签名、深度验证命令分离。
 同时补原始NSWorkspace实例归属、launch请求/PID ledger及未知启动状态保留证据，
 避免长可执行路径截断影响清理核验。此修正待新的真实Mac结果，不当作已解决。
+
+第二轮源码`1e9a5fc297e469397ebd7c976cb805639a61fd60` /
+[run35457135134](https://github.com/mclight-ship-it/cc-translate/actions/runs/35457135134)
+实际仍exit1：不带`--deep`的外层签名也在同一标准库目录失败，六场景仍未执行。
+这否定了“只调整签名参数即可修复”的假说，保留两轮原始错误，不继续无修改重试。
+
+根因修正将完整Python运行时（含项目C桥）放入`Contents/Resources/python`，
+不再使用预留嵌套代码目录`Contents/Helpers/python`。Swift定位、Python自检/C桥、
+官方CLI探针、独立包内测试及三系统workflow/归档校验全部同步；没有旧路径静默回退。
+运行时内部相对路径和字节不变，数据目录仍由原Bundle ID派生；不改用户配置/账号。
+Core/许可证的resource_hashes保持独立；运行时仍纳入完整文件/模式/链接清单、
+Mach-O依赖审计及固定上游字节校验，没有因为放入Resources而略过二进制。
+临时升级副本仍必须通过外层签名、`--verify --deep --strict`和六场景实际安装/拒绝检查。
+本布局修正待新源码Mac验证；此前build153仍是当前推荐。
 
 ### P4剩余验收
 

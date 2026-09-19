@@ -16,7 +16,7 @@ class OwnerProcessCase(unittest.TestCase):
         executable = Path(sys.executable).resolve()
         contents = next((parent for parent in executable.parents
                          if parent.name == "Contents" and parent.parent.suffix == ".app"), None)
-        if contents is None or not executable.is_relative_to(contents / "Helpers" / "python"):
+        if contents is None or not executable.is_relative_to(contents / "Resources" / "python"):
             raise RuntimeError("The owner process suite must use the app's bundled Python.")
         cls.contents = contents
         cls.core = contents / "Resources" / "Core"

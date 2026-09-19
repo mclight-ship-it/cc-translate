@@ -561,7 +561,7 @@ TERM 宽限后升级 KILL。先用 `waitid(WNOWAIT)` 保留 leader，再发最�
 
 Codex 配置探针复用既有 `read_native_config`，Darwin 分支保留原 argv/env/cwd 与安全覆盖，
 只发送 `initialize` / `config/read`，不改模型/认证选择，不创建模型 turn。CPP 组信号原语
-同时构建成项目自有 `Helpers/python/lib/libCCProcessSupport.dylib`，与 CPython 分开标识来源；
+同时构建成项目自有 `Resources/python/lib/libCCProcessSupport.dylib`，与 CPython 分开标识来源；
 Python 只从包内固定位置加载且要求 ABI 1，不搜索宿主库或降级到裸 PID。
 非阻塞 stdin/stdout 共用 8 秒 RPC 预算，最多接收 8 MiB；stderr 丢弃，错误为固定代码。
 不在最后组信号之前调用 `Popen.poll/wait/communicate`；先 TERM、200ms 后 KILL，再有限等待回收，
@@ -1363,6 +1363,10 @@ producer执行877个原生测试（854通过、23构包前可选skip、零失败
 没有已发布feed，因此此包不执行真正的签名升级；无需你为此准备账号、密钥或额外CLI。
 较新的卸载基础包build154已通过独立验收，但仍在补卸载排空期间的交互边界，
 没有用它替换本节推荐；临时签名升级fixture亦单独验证，不要求用户参与卸载测试。
+后续开发源码把随包Python整树从`Contents/Helpers/python`移到`Contents/Resources/python`：
+标准库不是原生子bundle，不能放在系统预留的嵌套代码目录。Swift启动器、C桥定位、
+包内测试及CI归档检查一起切换；不迁移用户配置、历史、词典或CLI路径。
+此布局修正尚待自己的完整Mac包验证，不改变上面已核验build153的布局/下载信息。
 
 1. 从固定artifact取出内层zip；如需核对下载，可用系统`/usr/bin/shasum -a 256`比对上述内层值。
    先退出旧Mac测试App；如“应用程序”里有同名包，停止并自行妥善移开旧测试副本，不覆盖正在运行的包。

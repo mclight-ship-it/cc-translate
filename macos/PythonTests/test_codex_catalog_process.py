@@ -42,7 +42,7 @@ class TestOwnedCatalogProcess(unittest.TestCase):
         executable = Path(sys.executable).resolve()
         contents = next((parent for parent in executable.parents
                          if parent.name == "Contents" and parent.parent.suffix == ".app"), None)
-        if contents is None or not executable.is_relative_to(contents / "Helpers" / "python"):
+        if contents is None or not executable.is_relative_to(contents / "Resources" / "python"):
             raise RuntimeError("The catalog process suite must use the app's bundled Python.")
         cls.contents = contents
         cls.core = contents / "Resources" / "Core"
@@ -85,7 +85,7 @@ class TestOwnedCatalogProcess(unittest.TestCase):
         self.assertIsInstance(bridge, ctypes.CDLL)
         self.assertTrue(bridge._handle)
         self.assertEqual(Path(bridge._name).resolve(),
-                         self.contents / "Helpers" / "python" / "lib" / "libCCProcessSupport.dylib")
+                         self.contents / "Resources" / "python" / "lib" / "libCCProcessSupport.dylib")
         self.assertEqual(bridge.cc_process_support_abi(), 1)
         self.assertTrue(issubclass(CatalogProbeError, RuntimeError))
         self.assertFalse(issubclass(CatalogProbeError, ValueError))
