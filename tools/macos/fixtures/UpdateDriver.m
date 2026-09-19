@@ -152,6 +152,7 @@
         self.report[@"original_terminated"] = @(self.original.terminated);
         NSMutableArray *pids = [NSMutableArray array];
         for (NSRunningApplication *application in applications) {
+            [self rememberApplication:application];
             [pids addObject:@(application.processIdentifier)];
             [application terminate];
         }

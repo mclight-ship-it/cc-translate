@@ -10,20 +10,47 @@ from unittest.mock import patch
 from xml.etree import ElementTree
 
 from tools.macos import update_fixture as fixture
+from tools.macos.fixtures.update_storage import configuration_evidence
+from cc_config_store import normalize_config
 
 
 class SignedUpdateFixtureTests(unittest.TestCase):
+    def test_configuration_seed_is_read_back_in_its_real_normalized_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+
+            class Session:
+                loads = 0
+
+                def perform(self, payload):
+                    if payload["operation"] == "config_save":
+                        path.write_text(json.dumps(payload["config"]))
+                        return {"saved": True}
+                    self.loads += 1
+                    return {"config": normalize_config(json.loads(path.read_bytes()) if path.exists() else {})}
+
+            session = Session()
+            before = configuration_evidence(session, path, "seed")
+            self.assertEqual(session.loads, 2)
+            self.assertEqual(type(before["font_size"]), int)
+            self.assertEqual(before, configuration_evidence(Session(), path, "read"))
+            config = json.loads(path.read_bytes())
+            config["font_size"] = 12
+            path.write_text(json.dumps(config))
+            with self.assertRaises(AssertionError):
+                configuration_evidence(Session(), path, "read")
+
     def report(self, scenario):
         result = {
             "scenario": scenario, "graceful_cleanup": True, "cleanup_complete": True,
             "session_in_progress": False, "events": ["launched-original", "found", "download"],
-            "offered_build": "2", "original_pid": 101, "running_pids_before_cleanup": [101],
+            "offered_build": "2", "original_pid": 101, "running_pids_before_cleanup": [101], "owned_pids": [101],
             "original_terminated": False, "installed_build": "1", "outcome": scenario,
             "installed_identifier": fixture.PREFIX + "unique", "expected_identifier": fixture.PREFIX + "unique",
         }
         if scenario == "install":
             result.update(outcome="installed", installed_build="2", relaunched=True,
-                          original_terminated=True, running_pids_before_cleanup=[102])
+                          original_terminated=True, running_pids_before_cleanup=[102], owned_pids=[101, 102])
             result["events"] += ["ready-to-install", "installed"]
         elif scenario in ("bad-signature", "wrong-key", "download-error"):
             result.update(outcome="error", errors=[{
@@ -110,6 +137,7 @@ class SignedUpdateFixtureTests(unittest.TestCase):
             ("relaunched", False), ("original_terminated", False), ("installed_build", "1"),
             ("running_pids_before_cleanup", [101]), ("running_pids_before_cleanup", []),
             ("installed_identifier", fixture.PREFIX + "different"),
+            ("owned_pids", [101]), ("owned_pids", [102]),
         ):
             report = self.report("install")
             report[key] = value

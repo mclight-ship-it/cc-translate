@@ -99,6 +99,8 @@ def verify_case(scenario, report, before, after):
     assert "launched-original" in events and "found" in events
     assert report["offered_build"] == "2"
     assert "permission-request" not in events
+    assert report["original_pid"] in report["owned_pids"]
+    assert set(report["running_pids_before_cleanup"]) <= set(report["owned_pids"])
     if scenario == "install":
         assert report["outcome"] == "installed" and report["installed_build"] == "2"
         assert report["relaunched"] and report["original_terminated"]
