@@ -52,7 +52,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[041df14：Mac 0.1.0/build150，包含原生检查更新入口及此前完整功能](#native-update-ui-checkpoint)，
+最新推荐包现为[2392c14：Mac 0.1.0/build152，修复结果窗口与浏览器复制并保留此前功能](#native-result-copy-usability)，
 已完成完整App同包三系统验收；继续P4更新/分发/卸载，不把移植整体标为完成。
 
 <a id="native-result-copy-usability"></a>
@@ -88,8 +88,39 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 后续修正：状态区按实际内容自然高度收缩，只有超长提示才在90/140点上限内滚动；
 新增真实NSScrollView短→长→短尺寸/滚动回归，保留旧summary可见断言。
 错误文字改为callout/primary；仅这两张新错误图使用现有双分辨率原生绘制，精确文案断言不放宽。
-同时同步监听状态说明，避免界面仍错误宣称“AX优先”。**此修正尚待自己的Mac验证及同包验收**；
-当前推荐仍是已验证build150，不能用它的绿色替代本轮验证。P4/P5/P6及真人平台矩阵仍未完成。
+同时同步监听状态说明，避免界面仍错误宣称“AX优先”。
+
+修正源码`2392c14d3e191a6497a7f3cb8a98c72ff0e137ea`正常privacy/full hook
+1947项、108.346秒通过；[run35450515330](https://github.com/mclight-ship-it/cc-translate/actions/runs/35450515330)
+实际watch exit0，attempt1的3jobs/42steps全success。Swift编译26.60秒，874项原生测试：
+851通过、23既定构包前可选skip、零失败/意外，552.070秒。五项实际窗口/状态高度方法、
+旧短summary及新双语失败图片检查逐项通过；145张PNG库存/CRC/尺寸/IDAT完整，
+两张错误图和原浅/深短结果图已实际查看，正文/底部操作均在可见范围。
+
+producer：1004portable/15.564秒、253process/519.067秒、744core/5.577秒。
+同一个App在15.7.9、14.8.9、26.6.2各通过253process/744core/21后置Foundation，
+后置零skip；实际About版本152、Vision4、主动粘贴46、关联复制读取9及只读worker11通过。
+三系统SQLite、HTTPS证书、取消、EOF、bundle不可变及临时清理字段均读回true。
+这不等于真人浏览器/全局按键/TCC验收，也未调用真实账号或模型。
+
+- [完整App：0.1.0/build152](https://github.com/mclight-ship-it/cc-translate/actions/runs/35450515330/artifacts/10585684873)；
+  [145张原生截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35450515330/artifacts/10586786097)。
+- 外层artifact20,409,248 bytes；内层zip20,669,127 bytes；
+  SHA-256 `fb8ff816098dd12411cbd0288f8e0f456501ed4e8b452fde176ce4f08b205f02`；
+  tree `9c44756cb82dce813b0babc38148aad183f6f7f2c764d87d7aaed1891582e5de`。
+- 独立核对788库存/84资源/55源码路径（54唯一）/11真实Mach-O、
+  19运行时许可证、Sparkle完整许可及94项厂商原字节/权限/链接；C桥normalized SHA仍一致。
+  Info/manifest实际0.1.0/build152、原bundle身份、arm64/minimum14及四个SU默认key全部一致，
+  无feed/public key。artifact到期2026-09-26T15:25:40Z。
+- 本地整包仅下载一次。初次独立审计被会话采集器遗留的43方法聚合计数拦下：
+  分项34+9+7已经逐名通过，聚合应为50。只修正该计数，使用原下载重新审计exit0，
+  单独完成实际版本核对；没有重跑源码CI、弱化断言或再下载App。
+  最后重核内层大小/SHA，仅删除确切zip并确认不存在，报告和原失败图片保留。
+- 首轮6ff的实际watch exit1、最终native gate失败/归档发布跳过、runtime跳过均已记录，
+  没有下载过该失败轮App，不把其部分通过当成整包通过。
+
+**当前推荐已升级为build152。** 本轮两个用户优先问题已有自己的完整包证据；
+继续后续边界完善、P4/P5/P6，真人平台矩阵、签名升级与自有数据卸载仍未完成。
 
 <a id="native-product-preferences-checkpoint"></a>
 

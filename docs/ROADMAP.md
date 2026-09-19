@@ -7,17 +7,17 @@
 2026-09-19用户实测新增两项优先问题：结果浮窗过高/越界难以缩小，浏览器双击复制经常失败。
 已进入[结果窗口与浏览器取词修正](MACOS_TODO.md#native-result-copy-usability)，先完成真实Mac验证再升级推荐包；
 不要求用户改CLI/账号，不以旧包绿色代替新源码验证，后续P4–P6继续。
-首轮6ff2a7d真实编译并通过窗口/复制回归，但873原生项仍有两项渲染方法共3断言失败；
-后续修正状态区自然高度与错误文字可读性，未采用未全通过的新包。
+首轮6ff2a7d真实编译并通过窗口/复制回归，但873原生项有两项渲染方法共3断言失败；
+其失败包未发布。后续2392c14修正状态区自然高度与错误文字可读性，已通过自己的完整验证。
 
-**最新已核验包：041df14，Mac 0.1.0/build150 / [run35387156483](https://github.com/mclight-ship-it/cc-translate/actions/runs/35387156483)。**
+**最新已核验包：2392c14，Mac 0.1.0/build152 / [run35450515330](https://github.com/mclight-ship-it/cc-translate/actions/runs/35450515330)。**
 图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
 另已补齐Claude完整后端、原生选择、独立路径/模型草稿、切换与恢复默认。
 本轮新增Sparkle框架和原生检查更新菜单/设置/窗口，未发布渠道时提供明确手动下载入口。
-真实watch0、3jobs/42steps全通过；原生861项（23构包前可选skip、零失败）、143PNG已核验，
+真实watch0、3jobs/42steps全通过；原生874项（23构包前可选skip、零失败）、145PNG已核验，
 同App15/14/26各253process/744core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[完整审计](MACOS_TODO.md#native-update-ui-checkpoint)已绑定本源码与实际版本；
+[完整审计](MACOS_TODO.md#native-result-copy-usability)已绑定本源码与实际版本；
 [登录项检查点](MACOS_TODO.md#native-login-item-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 继续更新/分发/卸载及P5–P6；真实账号、TCC/IME/VoiceOver仍另验，**整个移植尚未完成**。
 P4首项已接入SMAppService实际登录状态与原生设置，不自动注册、不以本地开关假装系统批准；
@@ -25,7 +25,7 @@ P4首项已接入SMAppService实际登录状态与原生设置，不自动注册
 系统批准、下一次登录启动和升级后保持仍待实机，不用合成服务冒充真实登录项更改。
 Mac独立版本/递增开发构建号与清单一致性已在4dfb04a自己的完整Mac包验证，
 保留已有bundle身份及数据位置；目标bundle/runtime80项、正常1933项hook通过，
-三系统实际About在该检查点核对0.1.0/build146；当前build150已在本轮重新核对。
+三系统实际About在该检查点核对0.1.0/build146；当前build152已在本轮重新核对。
 继续Sparkle接入、更新签名资产和N→N+1保护；已核对稳定2.10.0的官方依赖及延迟启动API，
 后续18d6d6d已完成原样framework/helper/许可打包及受限架构审计，13项新便携契约、联合93项及正常1946项通过，
 真实框架加载方法、846原生项和140PNG已通过；实际watch0、3jobs/42steps和build147完整App独立审计通过，
