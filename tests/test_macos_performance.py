@@ -107,10 +107,10 @@ class PerformanceIntegrationTests(unittest.TestCase):
                     patch.object(performance.platform, "machine", return_value="arm64"), \
                     patch.object(performance.subprocess, "run", return_value=process) as run, \
                     patch.object(performance.smoke, "Session", return_value=session) as create:
-                result = performance.run_measurements(app, asset)
+                result = performance.run_measurements(app / ".." / app.name, asset)
                 self.assertFalse(result["targets_are_gates"])
                 self.assertEqual(result["dictionary"]["hello"]["warm"]["target_result"], "measured_miss")
-                self.assertEqual(run.call_args.args[0][0], str(app / "Contents/Resources/python/bin/python3"))
+                self.assertEqual(run.call_args.args[0][0], str(app.resolve() / "Contents/Resources/python/bin/python3"))
                 self.assertEqual(run.call_args.args[0][1:3], ["-I", "-B"])
                 self.assertIn("--config-home", create.call_args.args[0])
                 sent = session.send.call_args_list
