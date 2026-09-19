@@ -54,7 +54,8 @@ class SignedUpdateFixtureTests(unittest.TestCase):
             result["events"] += ["ready-to-install", "installed"]
         elif scenario in ("bad-signature", "wrong-key", "download-error"):
             result.update(outcome="error", errors=[{
-                "domain": "SUSparkleErrorDomain", "code": 2001 if scenario == "download-error" else 3001
+                "domain": "SUSparkleErrorDomain", "code": 2001 if scenario == "download-error" else 3002,
+                "description": "Download failed." if scenario == "download-error" else "EdDSA signature does not match."
             }])
             result["events"].append("error")
         elif scenario == "cancel-install":
@@ -146,11 +147,41 @@ class SignedUpdateFixtureTests(unittest.TestCase):
 
     def test_invalid_signature_cannot_pass_for_a_transport_or_configuration_failure(self):
         for scenario in ("bad-signature", "wrong-key"):
-            for code in (1, 1002, 2001, 3002):
+            for code in (1, 1002, 2001, 3001, 4005):
                 report = self.report(scenario)
                 report["errors"][0]["code"] = code
                 with self.subTest(scenario=scenario, code=code), self.assertRaises(AssertionError):
                     fixture.verify_case(scenario, report, {}, {})
+            report = self.report(scenario)
+            report["errors"][0]["description"] = "Unrelated bundle validation failure."
+            with self.assertRaises(AssertionError):
+                fixture.verify_case(scenario, report, {}, {})
+
+    def test_scenarios_collect_case_failures_but_stop_on_unknown_cleanup(self):
+        visited = []
+
+        def execute(scenario):
+            visited.append(scenario)
+            if scenario == "bad-signature":
+                raise AssertionError("synthetic verification failure")
+            if scenario == "wrong-key":
+                raise subprocess.CalledProcessError(1, ["synthetic-driver"])
+            return {"scenario": scenario}
+
+        report = {"cases": {}}
+        fixture.run_scenarios(execute, report)
+        self.assertEqual(visited, list(fixture.SCENARIOS))
+        self.assertEqual(set(report["case_failures"]), {"bad-signature", "wrong-key"})
+        self.assertEqual(set(report["cases"]), set(fixture.SCENARIOS) - set(report["case_failures"]))
+        visited.clear()
+
+        def unsafe(scenario):
+            visited.append(scenario)
+            raise fixture.FixtureCleanupError("keep the fixture and stop")
+
+        with self.assertRaises(fixture.FixtureCleanupError):
+            fixture.run_scenarios(unsafe, {"cases": {}})
+        self.assertEqual(visited, [fixture.SCENARIOS[0]])
 
     def test_no_case_can_pass_with_changed_data_pending_session_or_forced_cleanup(self):
         for scenario in fixture.SCENARIOS:

@@ -113,7 +113,8 @@ def verify_case(scenario, report, before, after):
         assert "installed" not in events
         if scenario in ("bad-signature", "wrong-key"):
             assert report["outcome"] == "error"
-            assert any(error["code"] == 3001 and error["domain"] == "SUSparkleErrorDomain"
+            assert any(error["code"] == 3002 and error["domain"] == "SUSparkleErrorDomain"
+                       and error["description"].startswith("EdDSA signature does not match.")
                        for error in report["errors"]), "Must fail signature validation, not an unrelated gate"
             assert "ready-to-install" not in events
         elif scenario == "download-error":
@@ -294,6 +295,17 @@ def run_case(app, root, server, signer, driver, key_file, public_key, wrong_key,
             command(["/usr/bin/defaults", "delete", identity], capture_output=True)
 
 
+def run_scenarios(execute, report):
+    failures = {}
+    for scenario in SCENARIOS:
+        try:
+            report["cases"][scenario] = execute(scenario)
+        except (AssertionError, subprocess.CalledProcessError) as error:
+            # run_case checks cleanup in finally; FixtureCleanupError must abort.
+            failures[scenario] = f"{type(error).__name__}: {error}"
+    report["case_failures"] = failures
+
+
 def run(app, output):
     if sys.platform != "darwin":
         raise RuntimeError("The signed-update fixture requires macOS")
@@ -314,9 +326,8 @@ def run(app, output):
             key = json_command([signer, "generate", key_file])["public_key"]
             wrong = json_command([signer, "generate", wrong_file])["public_key"]
             with fixture_server() as server:
-                for scenario in SCENARIOS:
-                    report["cases"][scenario] = run_case(
-                        app, root, server, signer, driver, key_file, key, wrong, scenario, output)
+                run_scenarios(lambda scenario: run_case(
+                    app, root, server, signer, driver, key_file, key, wrong, scenario, output), report)
                 report["loopback_requests"] = server.requests
         finally:
             for path in (key_file, wrong_file):
@@ -325,6 +336,7 @@ def run(app, output):
             report["temporary_keys_removed"] = not key_file.exists() and not wrong_file.exists()
         report["original_bundle_unchanged"] = tree_digest(app) == original
         assert report["original_bundle_unchanged"]
+        assert not report["case_failures"], report["case_failures"]
         report["status"] = "passed"
     except FixtureCleanupError:
         cleanup_safe = False

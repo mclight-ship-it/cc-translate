@@ -223,8 +223,6 @@
                             @"description": current.localizedDescription}];
     }
     self.report[@"errors"] = errors;
-    self.report[@"signature_error"] = @([error.domain isEqual:SUSparkleErrorDomain] &&
-                                       error.code == SUSignatureError);
     acknowledgement();
     [self finish];
 }
