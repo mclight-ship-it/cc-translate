@@ -40,6 +40,7 @@ jobs:
       - name: Portable offline contract and packaging tests
         run: >-
           python3 -B -m unittest -v tests.test_macos_protocol tests.test_macos_bundle tests.test_macos_updates
+          tests.test_macos_update_fixture
           tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
           tests.test_catalog_storage_portable
@@ -90,6 +91,22 @@ jobs:
           retention-days: 7
       - name: Build and audit development-only bundle with pinned runtime
         run: python3 tools/macos/bundle.py build --development --build-number '${{ github.run_number }}'
+      - name: Disposable signed Sparkle update lifecycle (not a release or TCC validation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/macos/update_fixture.py --app tools/macos/.build/CCTranslateMac-P0.app \
+            --output tools/macos/.build/update-fixture 2>&1 | tee tools/macos/.build/update-fixture.log
+      - name: Retain disposable update lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cc-translate-update-fixture-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            tools/macos/.build/update-fixture/*.json
+            tools/macos/.build/update-fixture.log
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)
         shell: bash
         run: |
