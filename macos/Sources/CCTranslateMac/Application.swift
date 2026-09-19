@@ -99,11 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             // Reviewing a capture never opts its text into passive translation.
             guard self.selectionOverlay == nil, self.capturePanel?.isKeyWindow != true else { return }
             if self.model.translatePassiveSelections {
-                self.model.translateSelection(result)
+                self.handleSelection(result)
             }
         }
         model.onTranslationStarted = { [weak self] in
-            guard let self, ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
+            guard let self, !self.terminating,
+                  ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
             self.showTranslationResults = true
             self.showResult(reposition: true)
         }
@@ -249,7 +250,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func translateSelection() {
-        model.translateSelection(SelectionProbe.read(target: menuTarget))
+        handleSelection(SelectionProbe.read(target: menuTarget))
+    }
+
+    func handleSelection(_ selection: SelectionResult) {
+        guard !terminating else { return }
+        model.translateSelection(selection)
+        if model.productPhase == .failed {
+            // A new gesture can reveal its error without letting old callbacks reopen a closed result.
+            showResult(reposition: true)
+        }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -598,6 +608,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        statusItem = nil
         updates.prepareToQuit()
         model.captureShortcut.shutdown()
         aboutModel.close()

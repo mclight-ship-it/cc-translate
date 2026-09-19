@@ -198,6 +198,90 @@ final class NativeResultPlacementModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNewFailedSelectionReopensClosedResultWithoutEnablingLateCallbacks() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let previousMenu = NSApp.mainMenu
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer {
+            application.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            if let panel = application.resultPanel { focus.close(panel) }
+            NSApp.mainMenu = previousMenu
+        }
+        f.model.onSelection?(.absent)
+        XCTAssertNil(application.resultPanel, "Passive translation remains opt-in.")
+        f.model.translatePassiveSelections = true
+        for selection in [SelectionResult.absent, .unknown(.copyNotObserved), .present(" \n "),
+                          .present(String(repeating: "x", count: 8193))] {
+            f.model.onSelection?(selection)
+            let panel = try XCTUnwrap(application.resultPanel)
+            try await settle(panel)
+            XCTAssertTrue(panel.isVisible, "A new failed gesture must not disappear after a previous close.")
+            XCTAssertEqual(f.model.productPhase, .failed)
+            XCTAssertFalse(f.model.productMessage.isEmpty)
+            panel.performClose(nil)
+            XCTAssertFalse(panel.isVisible)
+            f.model.onTranslationResult?("Late callback from the previous request")
+            XCTAssertFalse(panel.isVisible)
+        }
+        application.handleSelection(.unknown(.unsupported))
+        XCTAssertTrue(application.resultPanel?.isVisible == true, "The menu uses the same new-intent presentation.")
+        application.resultPanel?.performClose(nil)
+        XCTAssertEqual(application.applicationShouldTerminate(NSApp), .terminateNow)
+        f.model.onSelection?(.absent)
+        f.model.onTranslationStarted?()
+        f.model.onTranslationResult?("Late callback during termination")
+        XCTAssertFalse(application.resultPanel?.isVisible == true)
+        XCTAssertTrue(f.helpers.isEmpty)
+        XCTAssertEqual(f.runtimeRequests, 0)
+        XCTAssertEqual(f.locatorRequests, 0)
+    }
+
+    @MainActor
+    func testClosedResultStaysClosedForLateHelperEventsUntilANewSelection() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let previousMenu = NSApp.mainMenu
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready()
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer {
+            application.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            if let panel = application.resultPanel { focus.close(panel) }
+            NSApp.mainMenu = previousMenu
+        }
+        f.model.translatePassiveSelections = true
+        f.model.onSelection?(.present("Synthetic selected sentence."))
+        let request = try XCTUnwrap(helper.translations.last)
+        let panel = try XCTUnwrap(application.resultPanel)
+        XCTAssertTrue(panel.isVisible)
+        panel.performClose(nil)
+        XCTAssertTrue(helper.messages.contains { $0.type == "cancel" && $0.payload["request_id"] == .string(request.id) })
+        helper.event("delta", id: request.id, payload: ["text": .string("Late partial"), "submitted": .bool(true)])
+        try await CaptureProductFixture.waitFor { f.model.output == "Late partial" }
+        XCTAssertFalse(panel.isVisible)
+        f.model.onSelection?(.absent)
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(f.model.productPhase, .failed)
+        XCTAssertEqual(f.model.output, "Late partial", "A read failure does not discard the previous result.")
+        panel.performClose(nil)
+        helper.event("completed", id: request.id, payload: ScaleTestSupport.result("Late partial"))
+        try await CaptureProductFixture.waitFor { !f.model.active }
+        XCTAssertFalse(panel.isVisible)
+        f.model.onSelection?(.unknown(.unsupported))
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(f.model.productPhase, .failed)
+        XCTAssertEqual(helper.translations.count, 1, "Failed selection never retries or submits a model request.")
+    }
+
+    @MainActor
     private func settle(_ panel: NSPanel) async throws {
         for _ in 0..<3 {
             panel.contentView?.layoutSubtreeIfNeeded()
@@ -403,6 +487,32 @@ extension ProductRenderingTests {
             let words = try LocalOCR.recognize(image).text.lowercased()
             XCTAssertTrue(language == "en" ? words.contains("no text selected") : words.contains("没有选中文字"),
                           "The actual failure message must remain visible: \(words)")
+            if language == "en" {
+                XCTAssertTrue(words.contains("retranslate"), "The disabled action must not truncate: \(words)")
+            }
+        }
+        XCTAssertTrue(f.helpers.isEmpty)
+        XCTAssertEqual(f.runtimeRequests, 0)
+    }
+
+    @MainActor
+    func testResultToolbarKeepsCompleteLabelsAtCompactAndDefaultWidths() throws {
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        f.model.reuseHistory(.init(id: "toolbar-layout", input: "Synthetic source sentence.",
+                                  output: "Synthetic result sentence."))
+        for width in [420, 440, 590] {
+            for scheme in [ColorScheme.light, .dark] {
+                let bytes = try render(
+                    TranslationResultView(model: f.model, compact: true),
+                    named: "result-toolbar-\(width)-\(scheme == .light ? "light" : "dark")",
+                    size: NSSize(width: CGFloat(width), height: 360), scheme: scheme,
+                    highResolution: true)
+                let image = try XCTUnwrap(NSBitmapImageRep(data: bytes)?.cgImage)
+                let words = try LocalOCR.recognize(image).text.lowercased()
+                XCTAssertTrue(words.contains("copy bilingual"), "The bilingual action must remain readable: \(words)")
+                XCTAssertTrue(words.contains("retranslate"), "The entire action label must fit: \(words)")
+            }
         }
         XCTAssertTrue(f.helpers.isEmpty)
         XCTAssertEqual(f.runtimeRequests, 0)

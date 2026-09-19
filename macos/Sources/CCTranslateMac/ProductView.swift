@@ -380,9 +380,11 @@ struct TranslationResultView: View {
         Button { model.copyResult() } label: {
             Label(model.text("Copy", "复制"), systemImage: "doc.on.doc")
         }
+        .fixedSize(horizontal: true, vertical: false)
         .disabled(model.output.isEmpty)
         .help(model.text("Copy the current result as plain text", "以纯文本复制当前结果"))
         Button(model.text("Copy bilingual", "复制双语")) { model.copyBilingual() }
+            .fixedSize(horizontal: true, vertical: false)
             .disabled(model.output.isEmpty || !model.resultHasOriginalInput)
             .help(model.text("Copy the original text and its result", "复制原文及其翻译结果"))
     }
@@ -420,6 +422,7 @@ struct TranslationResultView: View {
     private var translationAction: some View {
         if busy {
             Button(model.text("Cancel", "取消")) { model.cancel() }
+                .fixedSize(horizontal: true, vertical: false)
                 .keyboardShortcut(".", modifiers: .command)
         } else {
             Button {
@@ -428,6 +431,7 @@ struct TranslationResultView: View {
             } label: {
                 Label(model.text("Retranslate", "重新翻译"), systemImage: "arrow.clockwise")
             }
+            .fixedSize(horizontal: true, vertical: false)
             .disabled(!canRetranslate)
             .help(model.text("Reload this result's original text and translate again without using cached results.",
                              "重新载入此结果的原文并翻译，不使用缓存结果。"))
