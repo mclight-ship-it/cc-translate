@@ -407,6 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func openSettings() {
+        guard !terminating else { return }
         if settingsPanel == nil {
             settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 660, height: 650,
                 minimum: NSSize(width: 530, height: 460),
@@ -469,6 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func activate(_ panel: NSPanel?) {
+        guard !terminating else { return }
         applyAppearance()
         NSApp.activate(ignoringOtherApps: true)
         panel?.makeKeyAndOrderFront(nil)
@@ -556,9 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         pendingUninstall = nil
         model.stopPersistingPreferencesForUninstall()
         diagnostics.stopPersistingPreferencesForUninstall()
-        for panel in [inputPanel, resultPanel, historyPanel, settingsPanel, diagnosticsPanel, updatesPanel] {
-            panel?.orderOut(nil)
-        }
+        hideWindowsForUninstall()
         let outcome = uninstaller.remove(request.locations, includingData: request.includingData)
         uninstallOutcome?(outcome)
         if let failure = outcome.failure {
@@ -575,6 +575,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
 
+    private func hideWindowsForUninstall() {
+        for panel in [inputPanel, resultPanel, historyPanel, settingsPanel, capturePanel,
+                      diagnosticsPanel, aboutPanel, updatesPanel] {
+            panel?.orderOut(nil)
+        }
+    }
+
     private func showUninstallNotice(_ message: String) {
         if let uninstallNotice { uninstallNotice(message); return }
         let alert = NSAlert()
@@ -586,6 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func showResult(reposition: Bool = false) {
+        guard !terminating else { return }
         if resultPanel == nil {
             let panel = ResultPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 590, height: 400),
@@ -698,6 +706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        if pendingUninstall != nil { hideWindowsForUninstall() }
         updates.prepareToQuit()
         model.captureShortcut.cancelPendingTrigger()
         terminationResolved = false

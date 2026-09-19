@@ -10,11 +10,12 @@
 首轮6ff2a7d真实编译并通过窗口/复制回归，但873原生项有两项渲染方法共3断言失败；
 其失败包未发布。后续2392c14修正状态区自然高度与错误文字可读性，已通过自己的完整验证。
 
-**最新已核验包：2392c14，Mac 0.1.0/build152 / [run35450515330](https://github.com/mclight-ship-it/cc-translate/actions/runs/35450515330)。**
+**当前推荐包：8495d67，Mac 0.1.0/build153 / [run35453455630](https://github.com/mclight-ship-it/cc-translate/actions/runs/35453455630)。**
 图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
 另已补齐Claude完整后端、原生选择、独立路径/模型草稿、切换与恢复默认。
 本轮新增Sparkle框架和原生检查更新菜单/设置/窗口，未发布渠道时提供明确手动下载入口。
-真实watch0、3jobs/42steps全通过；原生874项（23构包前可选skip、零失败）、145PNG已核验，
+已进一步补齐关闭后新取词失败提示、旧回调不重新弹窗以及窄工具栏完整文字。
+真实watch0、3jobs/42steps全通过；原生877项（23构包前可选skip、零失败）、151PNG已核验，
 同App15/14/26各253process/744core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
 [完整审计](MACOS_TODO.md#native-result-copy-usability)已绑定本源码与实际版本；
@@ -25,7 +26,11 @@ P4首项已接入SMAppService实际登录状态与原生设置，不自动注册
 系统批准、下一次登录启动和升级后保持仍待实机，不用合成服务冒充真实登录项更改。
 Mac独立版本/递增开发构建号与清单一致性已在4dfb04a自己的完整Mac包验证，
 保留已有bundle身份及数据位置；目标bundle/runtime80项、正常1933项hook通过，
-三系统实际About在该检查点核对0.1.0/build146；当前build152已在本轮重新核对。
+三系统实际About在该检查点核对0.1.0/build146；当前推荐build153已在本轮重新核对。
+自有数据卸载基础实现aad2ec8/build154也已通过890原生项、13项新卸载回归及独立同包三系统，
+默认保留数据，勾选后只清理自身目录/偏好，不碰CLI/账号/外部词典。排空期间设置窗口交互
+仍在增量修正，所以暂不替换日常推荐。临时签名升级fixture已实施并开始真实Mac验证，
+使用唯一副本、临时密钥及loopback feed；未发布正式feed，不把同源码版本号升级当两版业务迁移。
 继续Sparkle接入、更新签名资产和N→N+1保护；已核对稳定2.10.0的官方依赖及延迟启动API，
 后续18d6d6d已完成原样framework/helper/许可打包及受限架构审计，13项新便携契约、联合93项及正常1946项通过，
 真实框架加载方法、846原生项和140PNG已通过；实际watch0、3jobs/42steps和build147完整App独立审计通过，

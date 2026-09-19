@@ -37,12 +37,14 @@ def stop_fixture_processes(report_path, app):
     if not report_path.is_file():
         raise FixtureCleanupError("No process ledger; retain fixture files rather than deleting a running app")
     report = json.loads(report_path.read_bytes())
+    if report.get("launch_requested") and not report["owned_pids"] and not report.get("launch_failed"):
+        raise FixtureCleanupError("Launch was requested but no PID was recorded; retain the fixture")
     executable = (app / "Contents/MacOS/CCTranslateMac").resolve()
     for pid in report["owned_pids"]:
         if not isinstance(pid, int) or pid < 2 or pid == os.getpid():
             raise FixtureCleanupError("Invalid fixture PID")
         for attempt in range(60):
-            state = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "comm="], capture_output=True)
+            state = subprocess.run(["/bin/ps", "-ww", "-p", str(pid), "-o", "comm="], capture_output=True)
             if state.returncode == 1:
                 break
             if state.returncode != 0 or Path(state.stdout.decode().strip()).resolve() != executable:
@@ -179,7 +181,9 @@ def json_command(arguments):
 
 
 def sign_bundle(app):
-    command(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", app], capture_output=True)
+    # Nested executables/frameworks are already signed. Deep signing misidentifies
+    # the embedded Python stdlib directory as another bundle.
+    command(["/usr/bin/codesign", "--force", "--sign", "-", app], capture_output=True)
     command(["/usr/bin/codesign", "--verify", "--deep", "--strict", app], capture_output=True)
 
 

@@ -37,6 +37,7 @@
 }
 
 - (BOOL)ownsApplication:(NSRunningApplication *)application {
+    if (application && application == self.original) { return YES; }
     return [application.bundleIdentifier isEqual:self.identifier] &&
         [application.bundleURL.URLByResolvingSymlinksInPath.path isEqual:self.applicationURL.path];
 }
@@ -71,11 +72,18 @@
     configuration.activates = NO;
     configuration.addsToRecentItems = NO;
     configuration.createsNewApplicationInstance = YES;
+    self.report[@"launch_requested"] = @YES;
+    if (![self writeReport]) {
+        self.outcome = @"evidence-write-error";
+        [self finish];
+        return;
+    }
     [[NSWorkspace sharedWorkspace] openApplicationAtURL:self.applicationURL configuration:configuration
                                     completionHandler:^(NSRunningApplication *application, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (error || !application) {
                 self.outcome = @"launch-error";
+                self.report[@"launch_failed"] = @YES;
                 self.report[@"launch_error"] = error.localizedDescription ?: @"No application";
                 [self finish];
                 return;
@@ -106,9 +114,10 @@
 - (NSArray<NSRunningApplication *> *)ownedApplications {
     NSMutableArray *applications = [NSMutableArray array];
     if (!self.original) { return applications; }
+    if (!self.original.terminated) { [applications addObject:self.original]; }
     for (NSRunningApplication *application in
          [NSRunningApplication runningApplicationsWithBundleIdentifier:self.identifier]) {
-        if ([self ownsApplication:application]) {
+        if (application.processIdentifier != self.original.processIdentifier && [self ownsApplication:application]) {
             [applications addObject:application];
         }
     }

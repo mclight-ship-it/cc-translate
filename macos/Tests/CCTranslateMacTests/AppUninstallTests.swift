@@ -229,6 +229,9 @@ final class AppUninstallTests: XCTestCase {
     @MainActor
     func testUninstallWaitsForBothHelpersAndThenSuppressesLatePreferenceWrites() async throws {
         _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let previousMenu = NSApp.mainMenu
+        defer { NSApp.mainMenu = previousMenu }
         let f = try ProductTestHarness()
         let diagnostic = try ProductTestHarness()
         defer { f.cleanUp(); diagnostic.cleanUp() }
@@ -239,6 +242,13 @@ final class AppUninstallTests: XCTestCase {
         login.current = .enabled
         let application = AppDelegate(model: f.model, capture: CaptureModel(), diagnostics: diagnostic.model,
                                       loginItems: LoginItemModel(service: login), uninstaller: service)
+        application.configureMenus()
+        let menu = try XCTUnwrap(NSApp.mainMenu?.items.first?.submenu)
+        let settingsItem = try XCTUnwrap(menu.items.first { $0.action == NSSelectorFromString("openSettings") })
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(settingsItem.action), to: settingsItem.target, from: settingsItem))
+        let settings = try XCTUnwrap(application.settingsPanel)
+        defer { focus.close(settings) }
+        XCTAssertTrue(settings.isVisible)
         var requested = 0
         var replies: [Bool] = []
         application.terminateApplication = { requested += 1 }
@@ -254,6 +264,9 @@ final class AppUninstallTests: XCTestCase {
         XCTAssertEqual(login.removals, 1)
         XCTAssertTrue(service.requests.isEmpty)
         XCTAssertEqual(application.applicationShouldTerminate(NSApp), .terminateLater)
+        XCTAssertFalse(settings.isVisible, "Do not leave the login toggle or settings editable during uninstall drain.")
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(settingsItem.action), to: settingsItem.target, from: settingsItem))
+        XCTAssertFalse(settings.isVisible, "A queued settings action must not reopen the surface during shutdown.")
         XCTAssertTrue(service.requests.isEmpty)
         primary.stopped()
         try await CaptureProductFixture.waitFor { !f.model.hasProcesses }

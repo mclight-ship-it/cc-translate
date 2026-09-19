@@ -2,6 +2,7 @@ import base64
 from copy import deepcopy
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -45,6 +46,28 @@ class SignedUpdateFixtureTests(unittest.TestCase):
         self.assertFalse(result["SUEnableAutomaticChecks"])
         self.assertNotIn("NSAppTransportSecurity", original)
         self.assertEqual(result["SUPublicEDKey"], key)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "original.app"
+            destination = Path(directory) / "fixture.app"
+            contents = source / "Contents"
+            contents.mkdir(parents=True)
+            info = contents / "Info.plist"
+            info.write_bytes(plistlib.dumps(original))
+            runtime = contents / "Helpers/python/lib/python3.12"
+            runtime.mkdir(parents=True)
+            (runtime / "sentinel.py").write_bytes(b"preserved runtime")
+            before = fixture.tree_digest(source)
+            with patch.object(fixture, "command") as signing:
+                fixture.configure_copy(source, destination, fixture.PREFIX + "unique",
+                                       "http://127.0.0.1:1234/feed", key, "1")
+            self.assertEqual(fixture.tree_digest(source), before)
+            self.assertEqual(plistlib.loads((destination / "Contents/Info.plist").read_bytes()), result)
+            self.assertEqual((destination / runtime.relative_to(source) / "sentinel.py").read_bytes(),
+                             b"preserved runtime")
+            self.assertEqual([call.args[0] for call in signing.call_args_list], [
+                ["/usr/bin/codesign", "--force", "--sign", "-", destination],
+                ["/usr/bin/codesign", "--verify", "--deep", "--strict", destination],
+            ])
 
     def test_only_disposable_identity_local_feed_and_real_key_shape_are_allowed(self):
         key = base64.b64encode(bytes(32)).decode()
@@ -132,3 +155,6 @@ class SignedUpdateFixtureTests(unittest.TestCase):
                 with self.assertRaises(fixture.FixtureCleanupError):
                     fixture.stop_fixture_processes(report, app)
                 kill.assert_not_called()
+            report.write_text(json.dumps({"owned_pids": [], "launch_requested": True}))
+            with self.assertRaises(fixture.FixtureCleanupError):
+                fixture.stop_fixture_processes(report, app)

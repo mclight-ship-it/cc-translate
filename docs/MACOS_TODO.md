@@ -52,7 +52,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[2392c14：Mac 0.1.0/build152，修复结果窗口与浏览器复制并保留此前功能](#native-result-copy-usability)，
+最新推荐包现为[8495d67：Mac 0.1.0/build153，补齐关闭后失败提示与窄窗口完整按钮](#native-result-copy-usability)，
 已完成完整App同包三系统验收；继续P4更新/分发/卸载，不把移植整体标为完成。
 
 <a id="native-result-copy-usability"></a>
@@ -122,13 +122,33 @@ producer：1004portable/15.564秒、253process/519.067秒、744core/5.577秒。
 **当前推荐已升级为build152。** 本轮两个用户优先问题已有自己的完整包证据；
 继续后续边界完善、P4/P5/P6，真人平台矩阵、签名升级与自有数据卸载仍未完成。
 
-后续边界实现（待本源码Mac验证，不以build152代替）：菜单取词和已启用的双击复制
+后续边界实现（8495d67已完成自己的Mac验证）：菜单取词和已启用的双击复制
 统一处理新的选区意图；结果窗关闭后，再次取词的空值、读取失败和输入预检失败
 会显式显示提示，但不重新允许旧请求回调打开已关闭窗口，也不丢弃上次结果或自动重试。
 退出期间不接受新选区/开始回调；退出清理移除自身状态栏项。
 底部复制、双语、取消和重译按钮保留自然文字宽度，窄窗口由已有布局退到两行，
 不靠截断操作名称硬塞单行。新增真实启动回调/关闭/迟到helper事件回归和
 420/440/590点浅深两色的完整按钮文字渲染检查；旧失败图也检查禁用重译文字。
+
+源码`8495d676661128aaf59bb2cc1f0ea68daa65d0da`正常privacy/full hook
+1947项、104.063秒通过；[run35453455630](https://github.com/mclight-ship-it/cc-translate/actions/runs/35453455630)
+实际watch/full collector均exit0，3jobs/42steps全success。Swift38.93秒，
+877原生项/23既定构包前skip/零失败、556.077秒；151PNG完整。新增3方法逐项读回通过，
+实际查看英文失败图及440浅色、420深色工具栏，完整按钮和两行退回均可见。
+producer1004portable/14.234秒、253process/526.659秒、744core/6.199秒；
+同App15.7.9/14.8.9/26.6.2各253process/744core/21后置Foundation且零skip，fresh-copy9。
+
+- [当前推荐完整App：0.1.0/build153](https://github.com/mclight-ship-it/cc-translate/actions/runs/35453455630/artifacts/10587907156)；
+  [151张截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35453455630/artifacts/10587716895)。
+- 外层20,410,753 bytes；内层20,671,298 bytes；
+  SHA-256 `d7a66c0ba6a736e96f6e6019445cca3499e0992329f51ce7b0afd2b2583c81cd`；
+  tree `a6b4fcb842c628db151a744395f5124b0fe0881ef5205cb521e089093308356c`。
+  到期2026-09-26T16:23:04Z。
+- 独立核对788库存/84资源/55源码路径（54唯一）/11Mach-O/19运行时许可证；
+  Sparkle94项原字节/mode/symlink、C桥normalized SHA均保持。Info/manifest实际153、
+  原身份/arm64/min14/四个SU默认值匹配，无feed/public key。
+  三系统SQLite、HTTPS证书、取消、EOF、不可变、临时清理字段均逐项读回true。
+  仅下载一次完整App；最终重核大小/SHA并删除确切内层zip，报告/截图保留。
 
 <a id="native-product-preferences-checkpoint"></a>
 
@@ -2915,7 +2935,7 @@ Sparkle真实安装重启/取消是否完整保留该处理，仍待端到端验
 上述定位修正随后已在041df14自己的完整验证中通过；11的最终watch也为exit1，未归档/发布App。
 本步仍无feed、私钥或Release；尚不能把入口/合成服务测试当作已验证签名升级。
 
-### P4自有数据卸载实现（待本源码Mac验证）
+### P4自有数据卸载实现（基础验证通过，排空交互继续完善）
 
 菜单和应用菜单增加卸载入口：原生确认默认取消/保留数据，只有明确勾选才将本应用的
 Application Support与Caches目录移到废纸篓并清除其偏好域。应用本体最后移到废纸篓。
@@ -2929,7 +2949,25 @@ Application Support与Caches目录移到废纸篓并清除其偏好域。应用�
 
 新增覆盖默认保留、显式清理、外部链接/相邻应用、缺失数据、真实FileManager废纸篓移动、
 部分失败、双helper排空、迟到偏好写入、登录项失败及更新竞争的原生测试。
-目前仅实现，尚未将其标为已验证或把早先包当作该功能证据；完整签名升级fixture仍独立待做。
+源码`aad2ec8aba867d80dbc7ed545d4d2c08aa4a859c`正常privacy/full hook1947项、
+105.711秒通过；[run35454164574](https://github.com/mclight-ship-it/cc-translate/actions/runs/35454164574)
+实际watch/full collector均exit0，3jobs/42steps成功。Swift23.97秒、890原生项/23既定
+构包前skip/零失败、587.937秒；13项卸载方法逐项通过，包括真实FileManager废纸篓方法，
+151PNG完整。producer1004portable/13.155秒、253process/539.098秒、744core/6.490秒；
+同App15.7.9/14.8.9/26.6.2各253process/744core/21后置Foundation，零skip；
+SQLite/证书/取消/EOF/不可变/清理均通过。
+
+完整App artifact10587718357为0.1.0/build154，外层20,429,136 bytes、内层20,688,697 bytes；
+SHA-256 `310abb207f713f035707b8743d43cb1752f37cef7a3371d32384a9fff385ccbe`，
+tree `c4120c906a558233f731aac9e6dfbcbe52e63a1c4b66f9f8835fe694077dbb3e`。
+788库存/84资源/55路径（54唯一）/11Mach-O及19许可、厂商94项均独立核对；
+实际Info/manifest版本154和SU默认值一致。单次下载后重核并删除确切zip，证据保留。
+这不等于已在用户Mac移除登录项或卸载实际安装。
+
+后续代码检查发现：等待helper排空时仍可操作设置窗口，可能重新开启刚移除的登录项。
+已补“开始卸载退出即隐藏业务窗口”、退出期间拒绝迟到设置/展示入口，并扩展原排空测试
+经真实菜单打开设置、确认等待期间隐藏和迟到入口无效；此增量待自己的Mac验证，
+不借build154的绿灯。因此当前日常推荐仍为build153，完整签名升级fixture同时推进。
 
 ### P4临时签名升级fixture（实施中，待本源码Mac验证）
 
@@ -2944,6 +2982,20 @@ hostBundle与applicationBundle均指向被测副本，外部driver自身不替�
 使用既有工具链、无账号/模型、无发布动作；原始App树必须保持不变。
 只按捕获的PID并核对精确可执行路径清理自建实例，不按进程名全局终止。
 失败日志单独保留，任何未确认的进程清理均失败并保留fixture，不作通过。
+
+首个源码`33425c152c60af9d040cd524e63f7bf0e281ce0c`的
+[run35455964539](https://github.com/mclight-ship-it/cc-translate/actions/runs/35455964539)
+实际watch/full collector退出1，没有完整App发布或消费者成功证据。
+原生Swift41.21秒编译通过；890项/23既定前置skip/零失败、699.499秒，151PNG完整。
+CryptoKit signer与ObjC driver亦实际编译成功，但首个副本准备阶段的
+`codesign --force --deep --sign -`把包内`python/lib/python3.12`当嵌套bundle而失败；
+六个安装场景尚未执行，不能声称签名安装通过。失败报告的临时密钥和目录清理均为true。
+
+修正只对外层副本签名，保留嵌套可执行文件/框架已有签名；
+仍执行`codesign --verify --deep --strict`，不删除验证或放宽Sparkle签名错误断言。
+便携回归明确检查源树/运行时字节不变及签名、深度验证命令分离。
+同时补原始NSWorkspace实例归属、launch请求/PID ledger及未知启动状态保留证据，
+避免长可执行路径截断影响清理核验。此修正待新的真实Mac结果，不当作已解决。
 
 ### P4剩余验收
 
