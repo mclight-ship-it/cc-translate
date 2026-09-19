@@ -179,6 +179,34 @@ struct TranslatorView: View {
     }
 }
 
+private struct StatusContentHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+@MainActor
+struct ContentSizedStatusScrollView<Content: View>: View {
+    let maximumHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+    @State private var contentHeight: CGFloat = 20
+
+    var body: some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: StatusContentHeight.self, value: geometry.size.height)
+                    }
+                }
+        }
+        .frame(height: min(contentHeight, maximumHeight))
+        .onPreferenceChange(StatusContentHeight.self) { contentHeight = $0.rounded(.up) }
+    }
+}
+
 @MainActor
 struct TranslationResultView: View {
     @ObservedObject var model: ProbeModel
@@ -231,11 +259,9 @@ struct TranslationResultView: View {
                     .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
                     .allowsHitTesting(false)
             }
-            ViewThatFits(in: .vertical) {
+            ContentSizedStatusScrollView(maximumHeight: compact ? 90 : 140) {
                 phaseStatus
-                ScrollView { phaseStatus }
             }
-            .frame(maxHeight: compact ? 90 : 140)
             ImageCleanupView(model: model)
             if !model.resultHasOriginalInput && !model.output.isEmpty {
                 Text(model.resultKind == "ocr"
@@ -337,7 +363,8 @@ struct TranslationResultView: View {
             }
             Text(model.productMessage.isEmpty ?
                  model.text("Ready when you are.", "随时可以开始。") : model.productMessage)
-                .font(.caption).foregroundStyle(.secondary)
+                .font(model.productPhase == .failed ? .callout : .caption)
+                .foregroundStyle(model.productPhase == .failed ? .primary : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 0)

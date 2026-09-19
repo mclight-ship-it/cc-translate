@@ -207,6 +207,47 @@ final class NativeResultPlacementModelTests: XCTestCase {
     }
 
     @MainActor
+    private func statusFixture(_ text: String) -> some View {
+        VStack(spacing: 0) {
+            ContentSizedStatusScrollView(maximumHeight: 90) {
+                Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    @MainActor
+    func testStatusUsesNaturalHeightAndScrollsLongDetailsInsteadOfReservingEmptySpace() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let panel = NSPanel(contentRect: NSRect(x: 100, y: 100, width: 440, height: 300),
+                            styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: statusFixture("Short status"))
+        host.sizingOptions = []
+        panel.contentView = host
+        panel.orderFrontRegardless()
+        defer { focus.close(panel) }
+        for text in ["Short status", String(repeating: "A longer status detail that must stay readable.\n", count: 60),
+                     "Short again"] {
+            host.rootView = statusFixture(text)
+            try await settle(panel)
+            let scroll = try XCTUnwrap(ScaleTestSupport.views(NSScrollView.self, in: host).first)
+            if text.count < 30 {
+                XCTAssertGreaterThan(scroll.bounds.height, 10)
+                XCTAssertLessThan(scroll.bounds.height, 40, "A short status must not consume the full 90-point ceiling.")
+            } else {
+                XCTAssertEqual(scroll.bounds.height, 90, accuracy: 1)
+                XCTAssertGreaterThan(scroll.documentView?.bounds.height ?? 0, 90)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: 200))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+            }
+            XCTAssertEqual(panel.contentView?.bounds.height ?? 0, 300, accuracy: 1)
+        }
+    }
+
+    @MainActor
     func testActualResultPanelStaysBoundedAndVerticallyResizableWhenSelectionIsEmpty() async throws {
         _ = NSApplication.shared
         let focus = NativeTestWindowFocus()
@@ -357,7 +398,7 @@ extension ProductRenderingTests {
                         XCTAssertTrue(host.bounds.contains(host.convert(button.bounds, from: button)),
                                       "Bottom action clipped: \(button.title)")
                     }
-                })
+                }, highResolution: true)
             let image = try XCTUnwrap(NSBitmapImageRep(data: bytes)?.cgImage)
             let words = try LocalOCR.recognize(image).text.lowercased()
             XCTAssertTrue(language == "en" ? words.contains("no text selected") : words.contains("没有选中文字"),

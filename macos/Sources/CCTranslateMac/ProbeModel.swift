@@ -2585,8 +2585,8 @@ final class ProbeModel: ObservableObject {
 
     private func updateMonitorStatus() {
         monitorStatus = translatePassiveSelections && !monitorAXOnly
-            ? text("Double Cmd+C: Accessibility first; only a newly changed, correlated plain-text copy can be used as fallback.",
-                   "双击 Cmd+C：优先使用辅助功能；仅在本次复制产生可关联的新纯文本时回退。")
+            ? text("Double Cmd+C: translate newly copied text or the accessible selection. Your clipboard stays unchanged.",
+                   "选中文字并双击 Cmd+C，即可翻译。优先读取本次复制的文字，不改写剪贴板。")
             : text("AX-only diagnostic monitoring. Clipboard fallback is off.",
                    "仅监听辅助功能选区的诊断模式。剪贴板回退已关闭。")
     }

@@ -63,6 +63,7 @@ final class SelectionShortcutModelTests: XCTestCase {
         let monitor = SelectionMonitorFixture()
         let f = try ProductTestHarness(selectionMonitor: monitor)
         defer { f.cleanUp(); f.model.stopMonitor() }
+        f.model.interfaceLanguage = "en"
         f.model.translatePassiveSelections = true
         XCTAssertTrue(monitor.fallback)
         XCTAssertEqual(monitor.starts, 0)
@@ -70,6 +71,8 @@ final class SelectionShortcutModelTests: XCTestCase {
         XCTAssertTrue(f.model.monitorEnabled)
         XCTAssertEqual(monitor.starts, 1)
         XCTAssertTrue(monitor.fallback)
+        XCTAssertTrue(f.model.monitorStatus.contains("newly copied text"))
+        XCTAssertTrue(f.model.monitorStatus.contains("clipboard stays unchanged"))
         monitor.pending = true
         f.model.translatePassiveSelections = false
         XCTAssertFalse(monitor.pending)
