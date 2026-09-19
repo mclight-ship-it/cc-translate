@@ -739,6 +739,7 @@ class SmokeContractTests(unittest.TestCase):
 
     def test_valid_frame(self):
         self.assertEqual(smoke.decode_event(self.event())["seq"], 0)
+        self.assertEqual(smoke.decode_event(self.event(type="started"))["type"], "started")
 
     def test_ready_matches_exact_p0_contract(self):
         ready = {"protocol": 1, "capabilities": ["fixture", "runtime_probe"],

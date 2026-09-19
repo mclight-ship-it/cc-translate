@@ -39,7 +39,7 @@ def decode_event(raw):
          "invalid helper event ID")
     need(type(event["seq"]) is int and event["seq"] >= 0, "invalid helper sequence")
     need(isinstance(event["type"], str) and
-         event["type"] in {"ready", "accepted", "delta", "completed", "cancelled", "failed"},
+         event["type"] in {"ready", "accepted", "started", "delta", "completed", "cancelled", "failed"},
          "unknown helper event")
     need(isinstance(event["payload"], dict), "invalid helper payload")
     return event

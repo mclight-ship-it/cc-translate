@@ -41,6 +41,7 @@ jobs:
         run: >-
           python3 -B -m unittest -v tests.test_macos_protocol tests.test_macos_bundle tests.test_macos_updates
           tests.test_macos_update_fixture
+          tests.test_macos_performance
           tests.test_classify tests.test_is_single_word tests.test_direction tests.test_classify_import
           tests.test_prompts tests.test_provider_contracts tests.test_dictionary_store_portable
           tests.test_catalog_storage_portable
@@ -129,6 +130,8 @@ jobs:
             --filter DictionaryProductIntegrationTests 2>&1 | tee tools/macos/.build/dictionary-product-tests.log
           python3 -B tools/macos/runtime_matrix.py dictionary-product --directory tools/macos/.build \
             --source-sha '${{ github.sha }}' --run-id '${{ github.run_id }}'
+          python3 -B tools/macos/performance.py --app tools/macos/.build/CCTranslateMac-P0.app \
+            --asset "$CC_TRANSLATE_DICTIONARY_TEST_ASSET" --report tools/macos/.build/performance.json
       - name: Native About reader against complete bundled metadata and licenses (no app launch)
         env:
           CC_TRANSLATE_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
@@ -201,6 +204,7 @@ jobs:
             tools/macos/.build/integration-tests.json
             tools/macos/.build/codex-version-smoke.json
             tools/macos/.build/dictionary-product-tests.json
+            tools/macos/.build/performance.json
             tools/macos/.build/about-tests.json
 
   runtime:
@@ -287,3 +291,4 @@ jobs:
             tools/macos/.build/runtime-evidence/process.json
             tools/macos/.build/runtime-evidence/core.json
             tools/macos/.build/runtime-evidence/helper-smoke.json
+            tools/macos/.build/runtime-evidence/performance.json

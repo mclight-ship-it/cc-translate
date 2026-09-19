@@ -15,10 +15,10 @@ import sys
 import zipfile
 
 if __package__:
-    from . import bundle, smoke
+    from . import bundle, performance, smoke
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from tools.macos import bundle, smoke
+    from tools.macos import bundle, performance, smoke
 
 
 ARCHIVE = "CCTranslateMac-P0.zip"
@@ -499,6 +499,11 @@ def run_runtime(args):
         report["stage"] = "https-smoke"
         need(smoke.run_smoke(app, output) == 0, "bundled smoke failed")
         report["smoke"] = json.loads((output / "helper-smoke.json").read_bytes())
+        report["stage"] = "model-free-performance"
+        asset = os.environ.get("CC_TRANSLATE_DICTIONARY_TEST_ASSET")
+        need(bool(asset), "performance requires the explicit pinned dictionary fixture")
+        report["performance"] = performance.run_measurements(app, Path(asset))
+        bundle.write_json(output / "performance.json", report["performance"])
         report["stage"] = "integration-harness"
         harness = output / "harness"
         report["harness_source_sha256"] = prepare_harness(harness)
