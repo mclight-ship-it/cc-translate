@@ -142,11 +142,12 @@ class PerformanceIntegrationTests(unittest.TestCase):
 
 class IdleResourceTests(unittest.TestCase):
     def report(self):
-        return {"root_pid": 100, "settle_s": 5, "targets_are_gates": False, "samples": [
+        return {"root_pid": 100, "settle_s": 5, "targets_are_gates": False,
+                "timebase_numer": 1, "timebase_denom": 1, "samples": [
             {"elapsed_s": index * 1.1, "processes": {
-                "100": {"start_identity": 10, "cpu_ns": index * 11_000_000,
+                "100": {"start_identity": 10, "cpu_ticks": index * 11_000_000,
                         "rss_bytes": 1_000_000 + index, "footprint_bytes": 700_000},
-                "101": {"start_identity": 20, "cpu_ns": index * 11_000_000,
+                "101": {"start_identity": 20, "cpu_ticks": index * 11_000_000,
                         "rss_bytes": 500_000, "footprint_bytes": 400_000},
             }} for index in range(31)]}
 
@@ -161,6 +162,17 @@ class IdleResourceTests(unittest.TestCase):
         self.assertEqual(result["rss_bytes"]["max"], 1_500_030)
         self.assertEqual(result["physical_footprint_bytes"]["max"], 1_100_000)
 
+    def test_cpu_ticks_use_the_reported_nonunit_mach_timebase(self):
+        report = self.report()
+        report.update(timebase_numer=125, timebase_denom=3)
+        result = metrics.summarize_idle_resources(report)
+        self.assertAlmostEqual(result["cpu_percent_whole_interval"], 2 * 125 / 3)
+        self.assertAlmostEqual(result["cpu_percent_one_core"]["p95"], 2 * 125 / 3)
+        for value in (0, -1, True, 1.5):
+            report["timebase_denom"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                metrics.summarize_idle_resources(report)
+
     def test_restarted_disappeared_or_replaced_process_is_not_idle_evidence(self):
         for mutation in ("restart", "missing_root", "counter_regression"):
             report = self.report()
@@ -170,7 +182,7 @@ class IdleResourceTests(unittest.TestCase):
             elif mutation == "missing_root":
                 del processes["100"]
             else:
-                processes["101"]["cpu_ns"] = 0
+                processes["101"]["cpu_ticks"] = 0
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 metrics.summarize_idle_resources(report)
 
@@ -192,7 +204,7 @@ class IdleResourceTests(unittest.TestCase):
     def test_slow_or_large_idle_results_are_measured_not_a_usage_gate(self):
         report = self.report()
         for index, sample in enumerate(report["samples"]):
-            sample["processes"]["100"].update(cpu_ns=index * 2_000_000_000, rss_bytes=2_000_000_000)
+            sample["processes"]["100"].update(cpu_ticks=index * 2_000_000_000, rss_bytes=2_000_000_000)
         result = metrics.summarize_idle_resources(report)
         self.assertGreater(result["cpu_percent_whole_interval"], 100)
         self.assertGreater(result["rss_bytes"]["max"], 2_000_000_000)

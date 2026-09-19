@@ -61,6 +61,9 @@ def validate_measurement(value, target_ms):
 
 def summarize_idle_resources(report):
     samples = report["samples"]
+    numerator, denominator = report["timebase_numer"], report["timebase_denom"]
+    if any(type(value) is not int or value <= 0 for value in (numerator, denominator)):
+        raise ValueError("idle CPU counters require the measured Mach timebase")
     if len(samples) != 31 or report["settle_s"] != 5 or report["targets_are_gates"] is not False:
         raise ValueError("idle measurement requires a five-second settle and 31 snapshots")
     identities = None
@@ -80,20 +83,21 @@ def summarize_idle_resources(report):
             raise ValueError("process identities changed during idle measurement")
         identities = current
         for pid, value in processes.items():
-            for key in ("start_identity", "cpu_ns", "rss_bytes", "footprint_bytes"):
+            for key in ("start_identity", "cpu_ticks", "rss_bytes", "footprint_bytes"):
                 if type(value[key]) is not int or value[key] < 0:
                     raise ValueError("invalid process resource counter")
-            if pid in previous_cpu and value["cpu_ns"] < previous_cpu[pid]:
+            if pid in previous_cpu and value["cpu_ticks"] < previous_cpu[pid]:
                 raise ValueError("process CPU counter regressed")
-            previous_cpu[pid] = value["cpu_ns"]
+            previous_cpu[pid] = value["cpu_ticks"]
         times.append(elapsed)
-        cpu.append(sum(value["cpu_ns"] for value in processes.values()))
+        cpu.append(sum(value["cpu_ticks"] for value in processes.values()))
         rss.append(sum(value["rss_bytes"] for value in processes.values()))
         footprint.append(sum(value["footprint_bytes"] for value in processes.values()))
     duration = times[-1] - times[0]
     if duration < 30:
         raise ValueError("idle sampling interval was shorter than 30 seconds")
-    percentages = [(cpu[index] - cpu[index - 1]) / 1e9 / (times[index] - times[index - 1]) * 100
+    percentages = [(cpu[index] - cpu[index - 1]) * numerator / denominator / 1e9
+                   / (times[index] - times[index - 1]) * 100
                    for index in range(1, len(samples))]
 
     def distribution(values):
@@ -104,6 +108,6 @@ def summarize_idle_resources(report):
     return {
         "duration_s": duration, "process_count": len(identities), "stable_process_tree": True,
         "cpu_percent_one_core": distribution(percentages),
-        "cpu_percent_whole_interval": (cpu[-1] - cpu[0]) / 1e9 / duration * 100,
+        "cpu_percent_whole_interval": (cpu[-1] - cpu[0]) * numerator / denominator / 1e9 / duration * 100,
         "rss_bytes": distribution(rss), "physical_footprint_bytes": distribution(footprint),
     }

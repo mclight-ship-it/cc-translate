@@ -2,6 +2,7 @@
 #import <Sparkle/Sparkle.h>
 #import <libproc.h>
 #import <errno.h>
+#import <mach/mach_time.h>
 
 static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
     NSMutableArray<NSNumber *> *pending = [NSMutableArray arrayWithObject:@(root)];
@@ -15,7 +16,7 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
         }
         processes[pending[index].stringValue] = @{
             @"start_identity": @(usage.ri_proc_start_abstime),
-            @"cpu_ns": @(usage.ri_user_time + usage.ri_system_time),
+            @"cpu_ticks": @(usage.ri_user_time + usage.ri_system_time),
             @"rss_bytes": @(usage.ri_resident_size),
             @"footprint_bytes": @(usage.ri_phys_footprint)
         };
@@ -129,8 +130,15 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
             if (![self record:@"launched-original"] || self.finishing) { return; }
             if ([self.scenario isEqual:@"install"]) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    mach_timebase_info_data_t timebase;
+                    if (mach_timebase_info(&timebase) != KERN_SUCCESS || !timebase.numer || !timebase.denom) {
+                        self.outcome = @"idle-timebase-error";
+                        [self finish];
+                        return;
+                    }
                     self.report[@"idle_resources"] = [@{
                         @"root_pid": @(application.processIdentifier), @"settle_s": @5,
+                        @"timebase_numer": @(timebase.numer), @"timebase_denom": @(timebase.denom),
                         @"scope": @"Disposable native App and current descendants before fixture update check; no input or model",
                         @"samples": [NSMutableArray array], @"targets_are_gates": @NO
                     } mutableCopy];
