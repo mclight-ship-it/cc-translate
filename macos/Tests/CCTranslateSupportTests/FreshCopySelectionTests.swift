@@ -90,27 +90,29 @@ private final class CopyFixture {
 
 final class FreshCopySelectionTests: XCTestCase {
     @MainActor
-    func testLongerCopyPairCapturesSecondBaselineBeforeAXWithoutReadingFirstCopy() throws {
+    func testLongerCopyPairUsesGestureBaselineWithoutReadingBeforeSecondPress() throws {
         let f = CopyFixture()
         f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.75)))
         f.press(10)
         f.clipboard.count = 6
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
         f.context.duringAX = { f.clipboard.count = 7 }
         f.press(10.7)
-        XCTAssertEqual(f.clipboard.reads, [7])
+        XCTAssertEqual(f.clipboard.reads, [6])
         XCTAssertEqual(f.context.results, [.present("fresh copy")])
         f.press(10.8)
-        XCTAssertEqual(f.context.axCalls, 1)
+        XCTAssertEqual(f.context.axCalls, 0)
     }
 
     @MainActor
-    func testShorterCopyPairDoesNotCaptureBaselineUntilWithinConfiguredInterval() throws {
+    func testShorterCopyPairReplacesBaselineWhenFirstPressExpires() throws {
         let f = CopyFixture()
         f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.1)))
         f.press(10)
         f.press(10.2)
         XCTAssertEqual(f.context.axCalls, 0)
-        XCTAssertEqual(f.clipboard.revisionCalls, 0)
+        XCTAssertEqual(f.clipboard.revisionCalls, 2)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
         f.context.duringAX = { f.clipboard.count += 1 }
         f.press(10.25)
         XCTAssertEqual(f.clipboard.reads, [6])
@@ -136,7 +138,7 @@ final class FreshCopySelectionTests: XCTestCase {
         stale.context.time = 11.6
         stale.selection.observe(time: 11, isCopy: true, isRepeat: false)
         XCTAssertEqual(stale.context.axCalls, 0)
-        XCTAssertEqual(stale.clipboard.revisionCalls, 0)
+        XCTAssertEqual(stale.clipboard.revisionCalls, 1)
         XCTAssertTrue(stale.context.results.isEmpty)
     }
 
@@ -200,9 +202,9 @@ final class FreshCopySelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testAXPresentAbsentAndNonUnsupportedFailuresNeverReadClipboardText() {
-        for result in [SelectionResult.present("AX selection"), .absent, .unknown(.accessibility),
-                       .unknown(.secureInput), .unknown(.focusChanged), .unknown(.unavailable), .unknown(.tooLarge)] {
+    func testAXPresentAndHardFailuresDoNotWaitForClipboardText() {
+        for result in [SelectionResult.present("AX selection"), .unknown(.accessibility),
+                       .unknown(.secureInput), .unknown(.focusChanged), .unknown(.tooLarge)] {
             let f = CopyFixture()
             f.context.ax = result
             f.context.duringAX = { f.clipboard.count += 1 }
@@ -213,20 +215,21 @@ final class FreshCopySelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testOnlyNewRevisionAfterSecondKeyIsReadAndPairIsConsumed() {
+    func testOnlyNewRevisionWithinCopyGestureIsReadAndPairIsConsumed() {
         let f = CopyFixture()
-        f.press(10)
         f.clipboard.count = 6
-        f.press(10.2)
-        XCTAssertTrue(f.clipboard.reads.isEmpty, "The first copy or any pre-trigger value is not a fallback.")
+        f.press(10)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
         f.clipboard.count = 8
+        f.press(10.2)
+        XCTAssertEqual(f.clipboard.reads, [8], "A copy completed before the global key notification is fresh.")
         f.context.time = 10.3
         f.selection.poll()
         XCTAssertEqual(f.clipboard.reads, [8])
         XCTAssertEqual(f.context.results, [.present("fresh copy")])
         f.selection.poll()
         f.press(10.4)
-        XCTAssertEqual(f.context.axCalls, 1, "A third press cannot reuse the consumed pair.")
+        XCTAssertEqual(f.context.axCalls, 0, "A third press cannot reuse the consumed pair.")
         XCTAssertEqual(f.clipboard.count, 8)
     }
 
@@ -281,7 +284,88 @@ final class FreshCopySelectionTests: XCTestCase {
         f.context.source = .init(target: .init(pid: 42), focusIdentity: nil)
         f.pair()
         XCTAssertEqual(f.context.results, [.unknown(.unsupported)])
-        XCTAssertEqual(f.clipboard.revisionCalls, 0)
+        XCTAssertEqual(f.clipboard.revisionCalls, 2, "Only counters, never contents, may be observed without focus identity.")
+    }
+
+    @MainActor
+    func testFreshCopyAlreadyAvailableAvoidsSlowOrEmptyBrowserAXSelection() {
+        for ax in [SelectionResult.absent, .unknown(.unsupported), .unknown(.unavailable),
+                   .present("AX text differs from the explicit copy")] {
+            let f = CopyFixture()
+            f.context.ax = ax
+            f.context.duringAX = { f.context.time += 1 }
+            f.press(10)
+            f.clipboard.count += 1
+            f.press(10.2)
+            XCTAssertEqual(f.context.results, [.present("fresh copy")])
+            XCTAssertEqual(f.context.axCalls, 0)
+            XCTAssertEqual(f.clipboard.reads, [6])
+        }
+    }
+
+    @MainActor
+    func testEmptyOrUnavailableBrowserAXCanUseCopyArrivingDuringOrAfterAX() {
+        for ax in [SelectionResult.absent, .unknown(.unsupported), .unknown(.unavailable)] {
+            for duringAX in [false, true] {
+                let f = CopyFixture()
+                f.context.ax = ax
+                if duringAX { f.context.duringAX = { f.clipboard.count += 1 } }
+                f.pair()
+                if !duringAX {
+                    XCTAssertTrue(f.context.results.isEmpty)
+                    f.clipboard.count += 1
+                    f.context.time = 10.3
+                    f.selection.poll()
+                }
+                XCTAssertEqual(f.context.results, [.present("fresh copy")])
+                XCTAssertEqual(f.clipboard.reads, [6])
+                XCTAssertEqual(f.context.axCalls, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testEmptyBrowserAXNeverReadsClipboardContentsFromBeforeGesture() {
+        let f = CopyFixture()
+        f.context.ax = .absent
+        f.clipboard.count = 100
+        f.pair()
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        f.context.time = 10.71
+        f.selection.poll()
+        XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+    }
+
+    @MainActor
+    func testFocusChangeBetweenKeysCannotReuseFirstCopyBaseline() {
+        let f = CopyFixture()
+        f.press(10)
+        f.clipboard.count += 1
+        f.context.source = .init(target: .init(pid: 42), focusIdentity: UUID())
+        f.press(10.2)
+        f.press(10.3)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        XCTAssertTrue(f.context.results.isEmpty)
+        f.clipboard.count += 1
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [7])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+    }
+
+    @MainActor
+    func testExpiredFirstPressCannotAuthorizeAnEarlierCopy() throws {
+        let f = CopyFixture()
+        f.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 0.1)))
+        f.press(10)
+        f.clipboard.count += 1
+        f.press(10.2)
+        f.press(10.25)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        f.context.time = 10.76
+        f.selection.poll()
+        XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
     }
 
     @MainActor

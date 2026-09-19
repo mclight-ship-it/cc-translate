@@ -209,13 +209,18 @@ struct TranslationResultView: View {
                 .help(model.text("Formatting is applied when streaming finishes.",
                                  "流式输出结束后应用格式。"))
             }
-            ZStack {
-                NativeResultText(text: model.output, formatted: formatted, streaming: busy,
-                                 label: model.text("Translation result", "翻译结果"),
-                                 verbatimPrefix: model.isLocalDictionaryResult ? model.primaryResult : nil,
-                                 textScale: model.nativeTextScale)
+            NativeResultText(text: model.output, formatted: formatted, streaming: busy,
+                             label: model.text("Translation result", "翻译结果"),
+                             verbatimPrefix: model.isLocalDictionaryResult ? model.primaryResult : nil,
+                             textScale: model.nativeTextScale)
+            .frame(minHeight: compact ? 0 : 180, maxHeight: .infinity)
+            .overlay {
                 if model.output.isEmpty {
-                    emptyState
+                    GeometryReader { viewport in
+                        ScrollView {
+                            emptyState.frame(minHeight: viewport.size.height)
+                        }
+                    }
                 }
             }
             .background(Color(nsColor: .textBackgroundColor),
@@ -226,8 +231,11 @@ struct TranslationResultView: View {
                     .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
                     .allowsHitTesting(false)
             }
-            .frame(minHeight: compact ? 120 : 180)
-            phaseStatus
+            ViewThatFits(in: .vertical) {
+                phaseStatus
+                ScrollView { phaseStatus }
+            }
+            .frame(maxHeight: compact ? 90 : 140)
             ImageCleanupView(model: model)
             if !model.resultHasOriginalInput && !model.output.isEmpty {
                 Text(model.resultKind == "ocr"
@@ -277,7 +285,7 @@ struct TranslationResultView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }
 

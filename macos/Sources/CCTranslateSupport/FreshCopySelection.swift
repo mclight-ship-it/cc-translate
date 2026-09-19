@@ -28,6 +28,7 @@ final class FreshCopySelection {
     private var pair = DoubleCopyState()
     private var pairSource: PassiveCopySource?
     private var pairTime: TimeInterval?
+    private var pairBaseline: Int?
     private var pending: Request?
     private var generation = UUID()
     private var acceptEventsAfter: TimeInterval?
@@ -68,6 +69,7 @@ final class FreshCopySelection {
         pair.reset()
         pairSource = nil
         pairTime = nil
+        pairBaseline = nil
     }
 
     func observe(time: TimeInterval, isCopy: Bool, isRepeat: Bool) {
@@ -86,36 +88,50 @@ final class FreshCopySelection {
             cancel()
             return
         }
-        // Capture only the counter on a potential second press, before AX round trips
-        // can let a fast copy complete. Contents still require the confirmed pair/focus.
-        var baseline: Int?
-        if fallbackEnabled, pairSource?.focusIdentity != nil, let pairTime,
-           time > pairTime, time - pairTime <= pair.interval.seconds {
+        // Global key notifications can arrive after the application has copied.
+        // Remember metadata at the first press; never read contents until the pair.
+        var revisionAtPress: Int?
+        if fallbackEnabled {
             let revision = clipboard.revision()
             guard self.generation == generation else { return }
-            if revision >= 0 { baseline = revision }
+            if revision >= 0 { revisionAtPress = revision }
         }
         guard let source = environment.source(fallbackEnabled) else {
             cancel()
             return
         }
         guard self.generation == generation else { return }
-        if pairSource != source { pair.reset() }
-        pairSource = source
-        pairTime = time
+        if pairSource != source { pair.reset(); pairBaseline = nil }
+        let baseline = pairBaseline
         guard pair.observe(time: time, pid: source.target.pid, isCopy: true, isRepeat: false,
-                           secureInput: false) else { return }
+                           secureInput: false) else {
+            pairSource = source
+            pairTime = time
+            pairBaseline = source.focusIdentity == nil ? nil : revisionAtPress
+            return
+        }
         pairSource = nil
         pairTime = nil
+        pairBaseline = nil
         let id = UUID()
         pending = Request(id: id, source: source, deadline: time + Self.freshnessWindow, baseline: baseline)
+        if fallbackEnabled, baseline != nil {
+            // The user's fresh copy is sufficient; do not block on a browser's
+            // missing/slow AXSelectedText when the copied text is already available.
+            pending?.waiting = true
+            poll()
+            guard pending?.id == id else { return }
+            pending?.waiting = false
+        }
         let selection = environment.selection(source.target)
         guard pending?.id == id else { return }
         if let failure = invalidReason(id: id, requireDeadline: false) {
             finish(id: id, .unknown(failure))
             return
         }
-        guard selection == .unknown(.unsupported), fallbackEnabled, pending?.baseline != nil else {
+        let needsCopy = selection == .absent || selection == .unknown(.unsupported) ||
+            selection == .unknown(.unavailable)
+        guard needsCopy, fallbackEnabled, pending?.baseline != nil else {
             finish(id: id, selection)
             return
         }

@@ -393,7 +393,9 @@ FRESH_COPY_METHODS = (
     "testExactFreshUnicodeTextIsReadWithoutChangingAnyRepresentations",
     "testOldRevisionAndChangeImmediatelyBeforeDataReadAreRejected",
     "testCancellationAfterReadDiscardsTextWithoutClearingUserCopy",
-    "testFileImageConcealedUnknownAndRichOnlyCopiesAreNotTextFallbacks",
+    "testFileImageConcealedGeneratedAndRichOnlyCopiesAreNotTextFallbacks",
+    "testBrowserPlainTextIgnoresRichSourceAndVendorMetadataWithoutMutatingCopy",
+    "testBrowserMetadataAloneNeverBecomesTextAndDoesNotHideSensitiveMarkers",
     "testMultipleItemsAndEmptyBoardAreNotCollapsedIntoOldOrFirstText",
     "testUTF8BudgetInvalidUnicodeEmptyAndNULAreNotInventedSelections",
 )

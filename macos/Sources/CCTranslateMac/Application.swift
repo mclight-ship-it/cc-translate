@@ -55,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     var terminationReply: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
     private var reviewingImageCleanup = false
     private var terminationResolved = false
+    private var resultScreenObserver: NSObjectProtocol?
+    private var fittingResultPanel = false
+
+    deinit {
+        if let resultScreenObserver { NotificationCenter.default.removeObserver(resultScreenObserver) }
+    }
 
     override convenience init() {
         self.init(model: ProbeModel(), capture: CaptureModel(), diagnostics: ProbeModel(persistsPreferences: false))
@@ -476,19 +482,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             panel.becomesKeyOnlyIfNeeded = true
             panel.level = .floating
             panel.delegate = self
-            panel.contentView = NSHostingView(rootView: TranslationResultView(model: model, compact: true))
+            let host = NSHostingView(rootView: TranslationResultView(model: model, compact: true))
+            // The panel owns its viewport size, not SwiftUI's unbounded ideal size.
+            host.sizingOptions = []
+            panel.contentView = host
             panel.center()
             resultPanel = panel
-        }
-        if let panel = resultPanel, reposition || !panel.isVisible {
-            if let frame = model.resultPlacement.frame(
-                current: panel.frame, remembered: model.rememberedResultFrame, pointer: NSEvent.mouseLocation,
-                visibleScreens: NSScreen.screens.map(\.visibleFrame)) {
-                panel.setFrame(frame, display: false)
+            resultScreenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.fitResultPanel(reposition: false, screens: NSScreen.screens.map(\.visibleFrame))
+                }
             }
         }
+        fitResultPanel(reposition: reposition || resultPanel?.isVisible == false,
+                       screens: NSScreen.screens.map(\.visibleFrame))
         applyAppearance()
         resultPanel?.orderFrontRegardless()
+    }
+
+    func fitResultPanel(reposition: Bool, screens: [NSRect]) {
+        guard let panel = resultPanel, !fittingResultPanel else { return }
+        let placement: NativeResultPlacement = reposition ? model.resultPlacement : .remembered
+        let minimumFrame = panel.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 420, height: 300)).size
+        var current = panel.frame
+        current.size.width = max(current.width, minimumFrame.width)
+        current.size.height = max(current.height, minimumFrame.height)
+        guard let frame = placement.frame(
+            current: current, remembered: reposition ? model.rememberedResultFrame : panel.frame,
+            pointer: NSEvent.mouseLocation, visibleScreens: screens),
+              let screen = screens.first(where: { $0.contains(frame) }) else { return }
+        fittingResultPanel = true
+        defer { fittingResultPanel = false }
+        let content = panel.contentRect(forFrameRect: screen).size
+        let minimum = NSSize(width: min(420, content.width), height: min(300, content.height))
+        if panel.contentMinSize != minimum { panel.contentMinSize = minimum }
+        if panel.maxSize != screen.size { panel.maxSize = screen.size }
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
+        if model.rememberedResultFrame != panel.frame { model.rememberResultFrame(panel.frame) }
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -496,7 +528,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func windowDidResize(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === resultPanel, !window.inLiveResize {
+            fitResultPanel(reposition: false, screens: NSScreen.screens.map(\.visibleFrame))
+        }
         rememberResultWindow(notification)
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === resultPanel else { return }
+        fitResultPanel(reposition: false, screens: NSScreen.screens.map(\.visibleFrame))
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === resultPanel else { return }
+        // A drag can straddle screens. Update the size ceiling without snapping its position.
+        if let screen = window.screen { window.maxSize = screen.visibleFrame.size }
     }
 
     private func rememberResultWindow(_ notification: Notification) {

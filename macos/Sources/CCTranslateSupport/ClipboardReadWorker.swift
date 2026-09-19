@@ -211,7 +211,7 @@ public enum ClipboardReadWorker {
     ]
     private static let pasteboardTagClass = UTTagClass(rawValue: kUTTagClassNSPboardType as String)
 
-    private static func isFileFlavor(_ type: String) -> Bool {
+    static func isFileFlavor(_ type: String) -> Bool {
         if type == "public.file-url" || legacyFileFlavors.contains(type) ||
             type.hasPrefix("com.apple.pasteboard.promised-file-") { return true }
         guard let uniformType = UTType(type) else { return false }

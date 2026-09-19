@@ -196,9 +196,177 @@ final class NativeResultPlacementModelTests: XCTestCase {
         XCTAssertEqual(source.permissionCalls, 0)
         XCTAssertEqual(source.layoutCalls, 0)
     }
+
+    @MainActor
+    private func settle(_ panel: NSPanel) async throws {
+        for _ in 0..<3 {
+            panel.contentView?.layoutSubtreeIfNeeded()
+            panel.displayIfNeeded()
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    @MainActor
+    func testActualResultPanelStaysBoundedAndVerticallyResizableWhenSelectionIsEmpty() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.showResult()
+        let panel = try XCTUnwrap(application.resultPanel)
+        defer { focus.close(panel) }
+        let screen = try XCTUnwrap(panel.screen).visibleFrame
+        let initial = panel.frame
+        XCTAssertTrue(panel.styleMask.contains(.resizable))
+        for language in ["en", "zh"] {
+            f.model.interfaceLanguage = language
+            for selection in [SelectionResult.absent, .unknown(.unsupported), .unknown(.copyNotObserved)] {
+                f.model.translateSelection(selection)
+                application.showResult()
+                try await settle(panel)
+                XCTAssertTrue(screen.contains(panel.frame), "\(panel.frame)")
+                XCTAssertEqual(panel.frame.size, initial.size, "An empty/error state must not resize the window.")
+                panel.setContentSize(NSSize(width: 440, height: 310))
+                try await settle(panel)
+                XCTAssertEqual(panel.contentView?.bounds.height ?? 0, 310, accuracy: 1)
+                panel.setFrame(initial, display: true)
+            }
+        }
+        XCTAssertTrue(f.helpers.isEmpty)
+        XCTAssertEqual(f.runtimeRequests, 0)
+    }
+
+    @MainActor
+    func testActualResultPanelStreamsAndScrollsLongTextWithoutGrowingOrLosingUserResize() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready()
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.showResult()
+        let panel = try XCTUnwrap(application.resultPanel)
+        defer { focus.close(panel) }
+        panel.setContentSize(NSSize(width: 440, height: 320))
+        let resized = panel.frame
+        f.model.input = "Synthetic selected text."
+        f.model.translate(origin: "selection")
+        let request = try XCTUnwrap(helper.translations.last)
+        for scale in NativeTextScale.allCases {
+            f.model.nativeTextScale = scale
+            let chunk = ScaleTestSupport.longText + "\nEnd of chunk \(scale.rawValue)\n"
+            let expected = f.model.output + chunk
+            helper.event("delta", id: request.id, payload: ["text": .string(chunk), "submitted": .bool(true)])
+            try await CaptureProductFixture.waitFor { f.model.output == expected }
+            application.showResult()
+            try await settle(panel)
+            XCTAssertEqual(panel.frame, resized, "Streaming and text scale must not resize or reposition the panel.")
+        }
+        let host = try XCTUnwrap(panel.contentView)
+        let text = try XCTUnwrap(ScaleTestSupport.views(NSTextView.self, in: host).first {
+            $0.string == f.model.output
+        })
+        let scroll = try XCTUnwrap(text.enclosingScrollView)
+        XCTAssertGreaterThan(scroll.contentView.bounds.height, 20)
+        XCTAssertTrue(host.bounds.contains(host.convert(scroll.bounds, from: scroll)))
+        XCTAssertGreaterThan(text.bounds.height, scroll.contentView.bounds.height)
+        text.scrollRangeToVisible(NSRange(location: (text.string as NSString).length, length: 0))
+        try await settle(panel)
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "The result must scroll instead of growing its window.")
+        XCTAssertEqual(panel.frame, resized)
+        helper.event("completed", id: request.id, payload: ScaleTestSupport.result(f.model.output))
+        try await CaptureProductFixture.waitFor { !f.model.active }
+        try await settle(panel)
+        XCTAssertEqual(panel.frame, resized)
+        XCTAssertEqual(helper.translations.count, 1)
+    }
+
+    @MainActor
+    func testActualPanelCanFitDisplayShorterThanItsNormalMinimumAndRestoreMinimum() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.showResult()
+        let panel = try XCTUnwrap(application.resultPanel)
+        defer { focus.close(panel) }
+        let actual = try XCTUnwrap(panel.screen).visibleFrame
+        let smaller = NSRect(x: actual.minX, y: actual.minY, width: 400, height: 260)
+        application.fitResultPanel(reposition: false, screens: [smaller])
+        XCTAssertTrue(smaller.contains(panel.frame), "\(panel.frame)")
+        XCTAssertEqual(panel.maxSize, smaller.size)
+        XCTAssertLessThan(panel.contentMinSize.height, 300)
+        XCTAssertLessThanOrEqual(panel.contentMinSize.height,
+                                panel.contentRect(forFrameRect: smaller).height)
+        application.fitResultPanel(reposition: false, screens: [actual])
+        XCTAssertEqual(panel.contentMinSize, NSSize(width: 420, height: 300))
+        panel.setContentSize(NSSize(width: 440, height: 320))
+        try await settle(panel)
+        XCTAssertEqual(panel.contentView?.bounds.height ?? 0, 320, accuracy: 1)
+        XCTAssertTrue(actual.contains(panel.frame))
+    }
+
+    @MainActor
+    func testScreenChangeNotificationRecoversAnOversizedOffscreenResultWindow() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        let application = AppDelegate(model: f.model, capture: CaptureModel(),
+                                      diagnostics: ProbeModel(persistsPreferences: false))
+        application.showResult()
+        let panel = try XCTUnwrap(application.resultPanel)
+        defer { focus.close(panel) }
+        panel.delegate = nil
+        panel.maxSize = NSSize(width: 10_000, height: 10_000)
+        panel.setFrame(NSRect(x: -9_000, y: -5_000, width: 2_000, height: 4_000), display: false)
+        panel.delegate = application
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
+        try await settle(panel)
+        XCTAssertTrue(NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) }, "\(panel.frame)")
+        XCTAssertEqual(f.model.rememberedResultFrame, panel.frame)
+        panel.setContentSize(NSSize(width: 440, height: 320))
+        try await settle(panel)
+        XCTAssertEqual(panel.contentView?.bounds.height ?? 0, 320, accuracy: 1)
+        XCTAssertTrue(f.helpers.isEmpty)
+    }
 }
 
 extension ProductRenderingTests {
+    @MainActor
+    func testCompactSelectionFailureKeepsMessageAndBottomActionsVisibleInBothLanguages() throws {
+        let f = try ProductTestHarness(savedCLI: false)
+        defer { f.cleanUp() }
+        for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
+            f.model.interfaceLanguage = language
+            f.model.translateSelection(.absent)
+            let bytes = try render(
+                TranslationResultView(model: f.model, compact: true),
+                named: "result-selection-empty-\(language)", size: NSSize(width: 440, height: 310),
+                scheme: scheme,
+                inspect: { host in
+                    let buttons = ScaleTestSupport.views(NSButton.self, in: host)
+                        .filter { !$0.isHiddenOrHasHiddenAncestor && !$0.title.isEmpty }
+                    XCTAssertFalse(buttons.isEmpty)
+                    for button in buttons {
+                        XCTAssertTrue(host.bounds.contains(host.convert(button.bounds, from: button)),
+                                      "Bottom action clipped: \(button.title)")
+                    }
+                })
+            let image = try XCTUnwrap(NSBitmapImageRep(data: bytes)?.cgImage)
+            let words = try LocalOCR.recognize(image).text.lowercased()
+            XCTAssertTrue(language == "en" ? words.contains("no text selected") : words.contains("没有选中文字"),
+                          "The actual failure message must remain visible: \(words)")
+        }
+        XCTAssertTrue(f.helpers.isEmpty)
+        XCTAssertEqual(f.runtimeRequests, 0)
+    }
+
     @MainActor
     func testResultPositionPickerRendersNativeLocalizedPreferencesWithoutCLI() throws {
         let f = try ProductTestHarness(savedCLI: false)
