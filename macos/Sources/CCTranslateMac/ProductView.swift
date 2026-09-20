@@ -703,6 +703,7 @@ struct CaptureShortcutSettingsSection: View {
                 Text(model.text("Recognized text", "识别文字")).tag(CaptureTranslationMode.text)
                 Text(model.text("Send image", "发送图片")).tag(CaptureTranslationMode.image)
             }
+            .pickerStyle(.segmented)
             .accessibilityIdentifier("screenshot-translation-mode")
             Text(model.captureTranslationMode == .text ?
                  model.text("Translate automatically after local text recognition.", "在本机识别文字后，自动翻译。") :

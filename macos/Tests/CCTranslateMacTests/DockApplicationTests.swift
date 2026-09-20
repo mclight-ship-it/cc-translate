@@ -424,8 +424,8 @@ final class DockApplicationTests: XCTestCase {
             try DockApplicationTestProcess.running { f in
                 f.product.canLocateCLI = true
                 let helper = try f.product.ready()
-                f.application.showResult(reposition: true)
-                try await CaptureProductFixture.waitFor { f.application.resultPanel?.isKeyWindow == true }
+                f.application.showSettings()
+                try await CaptureProductFixture.waitFor { f.application.settingsPanel?.isKeyWindow == true }
                 XCTAssertTrue(NSApp.sendAction(Selector("startCapture"), to: f.application, from: nil))
                 try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
                 f.capture.select(f.source.layout[0].frame)

@@ -18,12 +18,16 @@ extension ProductRenderingTests {
         for (language, scheme) in [("en", ColorScheme.light), ("zh", .dark)] {
             fixture.model.interfaceLanguage = language
             fixture.model.appearance = scheme == .light ? "light" : "dark"
-            let png = try render(AboutView(model: about, presentation: fixture.model, close: {}),
+            _ = try render(AboutView(model: about, presentation: fixture.model, close: {}),
                                  named: "about-support-entry-\(language)-\(scheme == .light ? "light" : "dark")",
-                                 size: NSSize(width: 660, height: 520), scheme: scheme, highResolution: true)
-            let words = try NativeRenderEvidence.settingsWords(png, chinese: language == "zh")
-                .filter { !$0.isWhitespace }
-            XCTAssertTrue(words.contains(language == "zh" ? "请作者喝杯咖啡" : "buytheauthoracoffee"), words)
+                                 size: NSSize(width: 660, height: 520), scheme: scheme, inspect: { host in
+                let button = try NativeSettingsTestControls.resolve(in: host, identifier: "about-support-author",
+                    label: fixture.model.text("Buy the author a coffee", "请作者喝杯咖啡"),
+                    kind: .button, authoredCaption: true)
+                XCTAssertTrue(button.isEnabled)
+                XCTAssertEqual(button.visibleRect.height, button.frame.height, accuracy: 1)
+                XCTAssertEqual(button.visibleRect.width, button.frame.width, accuracy: 1)
+            }, highResolution: true)
             XCTAssertFalse(about.showingSupport)
             XCTAssertNil(about.supportImage)
         }

@@ -29,7 +29,9 @@ extension ProductRenderingTests {
         let unavailable = try renderPasteSettings(fixture, name: "plain-paste-settings-own-unavailable-zh-dark",
                                                  scheme: .dark, chinese: true)
         try stage("unavailable rendered")
-        let chinese = try pasteSettingsWords(unavailable, chinese: true).filter { !$0.isWhitespace }
+        let chinese = try (pasteSettingsWords(unavailable, chinese: true) + " " +
+            NativeRenderEvidence.settingsWords(unavailable, chinese: true, tileHeight: 600, tileStride: 300))
+            .filter { !$0.isWhitespace }
         try NativeRenderEvidence.record("Synthetic paste settings OCR: \(chinese)")
         XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
         XCTAssertTrue(chinese.contains("未请求外部粘贴"), chinese)

@@ -49,13 +49,14 @@ enum NativeRenderEvidence {
         return bitmap
     }
 
-    static func settingsWords(_ png: Data, chinese: Bool = false) throws -> String {
+    static func settingsWords(_ png: Data, chinese: Bool = false,
+                              tileHeight: Int = 1000, tileStride: Int = 900) throws -> String {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         var pieces: [String] = []
         // Tile native snapshots so Vision does not downsample small captions away.
-        for y in stride(from: 0, to: image.height, by: 900) {
+        for y in stride(from: 0, to: image.height, by: tileStride) {
             let tile = try XCTUnwrap(image.cropping(to: CGRect(
-                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1000, image.height - y)))))
+                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(tileHeight, image.height - y)))))
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.minimumTextHeight = 0

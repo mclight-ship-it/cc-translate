@@ -63,10 +63,10 @@ extension ProductRenderingTests {
                 named: "screenshot-image-mode-\(language)", size: NSSize(width: 760, height: 540),
                 scheme: scheme, inspect: { host in
                     let title = f.model.text("Send image", "发送图片")
-                    let picker = try XCTUnwrap(InputLimitNativeViews.views(NSPopUpButton.self, in: host).first {
-                        $0.itemTitles.contains(title)
+                    let picker = try XCTUnwrap(InputLimitNativeViews.views(NSSegmentedControl.self, in: host).first {
+                        $0.segmentCount == 2 && $0.label(forSegment: 1) == title
                     })
-                    XCTAssertEqual(picker.titleOfSelectedItem, title)
+                    XCTAssertEqual(picker.selectedSegment, 1)
                     XCTAssertGreaterThan(picker.visibleRect.height, 0)
                     XCTAssertEqual(picker.visibleRect.height, picker.bounds.height, accuracy: 1)
                 })

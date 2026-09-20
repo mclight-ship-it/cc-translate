@@ -1026,7 +1026,18 @@ class SmokeContractTests(unittest.TestCase):
         self.assertEqual(native_body.count(" | tee "), 4)
         self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 3)
         self.assertIn("cat tools/macos/.build/native-disclosure-check.log | tee -a", native_body)
-        self.assertIn("grep -q 'Executed 2 tests' tools/macos/.build/native-disclosure-check.log", native_body)
+        self.assertIn("grep -q 'Executed 7 tests' tools/macos/.build/native-disclosure-check.log", native_body)
+        focused = native_body.split("--filter '", 1)[1].split("'", 1)[0].split("|")
+        self.assertEqual(set(focused), {
+            "ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl",
+            "ProductRenderingTests.testInputLimitSettingsRenderLargeSavedValueAndSeparateByteBudgetInEnglishLight",
+            "DockApplicationTests.testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded",
+            "FeedbackSettingsTests.testScreenshotModePickerChangesTheSavedPreferenceThroughNativeControl",
+            "ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese",
+            "ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste",
+            "ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages",
+        })
+        self.assertEqual(len(focused), 7)
         log_upload = workflow[native_log:native_end]
         self.assertIn("        if: always()\n", log_upload)
         self.assertIn("name: cc-translate-native-unit-log-${{ github.sha }}", log_upload)

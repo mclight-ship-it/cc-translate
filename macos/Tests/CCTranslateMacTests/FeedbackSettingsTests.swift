@@ -59,16 +59,19 @@ final class FeedbackSettingsTests: XCTestCase {
         let panel = try XCTUnwrap(app.settingsPanel)
         let content = try XCTUnwrap(panel.contentView)
         try await CaptureProductFixture.waitFor {
-            InputLimitNativeViews.views(NSSegmentedControl.self, in: content).first?.selectedSegment == 1
+            InputLimitNativeViews.views(NSSegmentedControl.self, in: content)
+                .first { $0.segmentCount == SettingsPane.allCases.count }?.selectedSegment == 1
         }
         f.model.editCustomModelID("fixture/preserve-settings-draft")
         app.showSettings(pane: .more)
         try await CaptureProductFixture.waitFor {
-            InputLimitNativeViews.views(NSSegmentedControl.self, in: content).first?.selectedSegment == 3
+            InputLimitNativeViews.views(NSSegmentedControl.self, in: content)
+                .first { $0.segmentCount == SettingsPane.allCases.count }?.selectedSegment == 3
         }
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
         try await CaptureProductFixture.waitFor {
-            InputLimitNativeViews.views(NSSegmentedControl.self, in: content).first?.selectedSegment == 1
+            InputLimitNativeViews.views(NSSegmentedControl.self, in: content)
+                .first { $0.segmentCount == SettingsPane.allCases.count }?.selectedSegment == 1
         }
         XCTAssertTrue(app.settingsPanel === panel)
         XCTAssertTrue(panel.contentView === content)
@@ -116,10 +119,10 @@ final class FeedbackSettingsTests: XCTestCase {
             CaptureShortcutSettingsSection(model: f.model, shortcut: f.model.captureShortcut)
         }.formStyle(.grouped))
         defer { surface.close() }
-        let picker = try XCTUnwrap(InputLimitNativeViews.views(NSPopUpButton.self, in: surface.host).first {
-            $0.itemTitles.contains("Send image")
+        let picker = try XCTUnwrap(InputLimitNativeViews.views(NSSegmentedControl.self, in: surface.host).first {
+            $0.segmentCount == 2 && $0.label(forSegment: 1) == "Send image"
         })
-        picker.selectItem(withTitle: "Send image")
+        picker.selectedSegment = 1
         XCTAssertTrue(picker.sendAction(try XCTUnwrap(picker.action), to: picker.target))
         try await surface.waitFor { f.model.captureTranslationMode == .image }
         XCTAssertEqual(f.preferences.string(forKey: CaptureTranslationMode.preferenceKey), "image")
