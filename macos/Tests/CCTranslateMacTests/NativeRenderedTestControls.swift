@@ -566,25 +566,29 @@ enum NativeSettingsTestControls {
         try await Task.sleep(nanoseconds: 10_000_000)
         try prepare(root)
         var visited = Set<ObjectIdentifier>()
-        var matches: [any NSAccessibilityProtocol] = []
+        var matches: [NSObject] = []
         var roles: [String] = []
-        func visit(_ element: any NSAccessibilityProtocol) {
+        func visit(_ element: NSObject) {
             guard visited.insert(ObjectIdentifier(element)).inserted else { return }
-            let role = element.accessibilityRole()
-            roles.append(role?.rawValue ?? "nil")
-            if role == .disclosureTriangle &&
-                (element.accessibilityIdentifier() == identifier ||
-                 element.accessibilityLabel() == label || element.accessibilityTitle() == label) {
+            // SwiftUI's virtual AX nodes need not declare the full AppKit protocol.
+            // Its public attribute/action bridge also supports those nodes.
+            let role = element.accessibilityAttributeValue(.role) as? String
+            let identity = element.accessibilityAttributeValue(.identifier) as? String
+            let title = element.accessibilityAttributeValue(.title) as? String
+            let description = element.accessibilityAttributeValue(.description) as? String
+            let children = element.accessibilityAttributeValue(.children) as? [NSObject] ?? []
+            roles.append("\(type(of: element)):\(role ?? "nil"):children=\(children.count)")
+            if (role == NSAccessibility.Role.disclosureTriangle.rawValue || role == NSAccessibility.Role.button.rawValue) &&
+                (identity == identifier || description == label || title == label) &&
+                element.accessibilityActionNames().contains(.press) {
                 matches.append(element)
             }
-            for child in element.accessibilityChildren() ?? [] {
-                if let child = child as? any NSAccessibilityProtocol { visit(child) }
-            }
+            for child in children { visit(child) }
         }
         visit(root)
         XCTAssertEqual(matches.count, 1, "Expected one native disclosure \(identifier); roles=\(roles)")
         let disclosure = try XCTUnwrap(matches.count == 1 ? matches.first : nil)
-        XCTAssertTrue(disclosure.accessibilityPerformPress(), "The real disclosure action must toggle its binding.")
+        disclosure.accessibilityPerformAction(.press)
     }
 
     static func caption(in root: NSView, identifier: String, label: String,

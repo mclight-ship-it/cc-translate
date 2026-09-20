@@ -90,6 +90,13 @@ jobs:
           mkdir -p tools/macos/.build
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac 2>&1 | tee tools/macos/.build/native-unit-tests.log
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
+          if ! /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
+            --filter 'ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl|ProductRenderingTests.testInputLimitSettingsRenderLargeSavedValueAndSeparateByteBudgetInEnglishLight' \
+            > tools/macos/.build/native-disclosure-check.log 2>&1; then
+            cat tools/macos/.build/native-disclosure-check.log | tee -a tools/macos/.build/native-unit-tests.log
+            exit 1
+          fi
+          grep -q 'Executed 2 tests' tools/macos/.build/native-disclosure-check.log
           /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
       - name: Retain original native unit log before bundled lifecycle checks
         if: always()

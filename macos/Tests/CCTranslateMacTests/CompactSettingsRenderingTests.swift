@@ -10,12 +10,25 @@ extension ProductRenderingTests {
         let fixture = try ProductTestHarness()
         defer { fixture.cleanUp() }
         let helper = try fixture.ready()
+        let loginService = LoginItemTestService()
+        let login = LoginItemModel(service: loginService)
+        login.refresh()
+        var updaterCreations = 0
+        var downloadOpens = 0
+        let updates = AppUpdateModel(info: [:], factory: {
+            updaterCreations += 1
+            return AppUpdateTestService()
+        }, openDownloads: { downloadOpens += 1; return true })
+        let application = AppDelegate(
+            model: fixture.model, capture: CaptureModel(),
+            diagnostics: NativePresentationTestSupport.offline(fixture.preferences, persists: false),
+            loginItems: login, updates: updates)
         for (language, scheme) in [("en", ColorScheme.light), ("zh", .dark)] {
             fixture.model.interfaceLanguage = language
             fixture.model.appearance = scheme == .dark ? "dark" : "light"
             for pane in SettingsPane.allCases {
                 let png = try render(
-                    TranslationSettingsView(model: fixture.model, showDiagnostics: {}, showAbout: {}, pane: pane),
+                    application.settingsContent(pane: pane),
                     named: "settings-compact-\(pane.rawValue)-\(language)",
                     size: NSSize(width: 660, height: 650), scheme: scheme, highResolution: true)
                 if pane == .translation && language == "en" {
@@ -32,7 +45,7 @@ extension ProductRenderingTests {
                 }
             }
             _ = try render(
-                TranslationSettingsView(model: fixture.model, showDiagnostics: {}, showAbout: {}),
+                application.settingsContent(),
                 named: "settings-compact-narrow-\(language)",
                 size: NSSize(width: 530, height: 460), scheme: scheme, highResolution: true)
         }
@@ -43,6 +56,9 @@ extension ProductRenderingTests {
         XCTAssertFalse(fixture.model.monitorEnabled)
         XCTAssertEqual(fixture.model.permissions, "Not checked.")
         XCTAssertTrue(helper.dictionaryRequests.allSatisfy { $0.request == .status })
+        XCTAssertEqual(loginService.reads, 1)
+        XCTAssertEqual(loginService.registrations + loginService.removals + loginService.settingsOpens, 0)
+        XCTAssertEqual(updaterCreations + downloadOpens, 0)
     }
 
     @MainActor
