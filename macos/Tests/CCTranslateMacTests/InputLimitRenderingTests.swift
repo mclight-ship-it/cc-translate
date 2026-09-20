@@ -24,7 +24,7 @@ private struct InputLimitSettingsSurface: View {
 }
 
 @MainActor
-private enum InputLimitNativeViews {
+enum InputLimitNativeViews {
     static func views<T: NSView>(_ type: T.Type, in root: NSView) -> [T] {
         (root as? T).map { [$0] } ?? root.subviews.flatMap { views(type, in: $0) }
     }
