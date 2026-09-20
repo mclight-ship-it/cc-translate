@@ -105,14 +105,6 @@ private enum RenderedGeometry {
 
 @MainActor
 struct NativeSettingsTestControl: NativeRenderedTestRegion {
-    private static var nextMouseEventNumber = 200_000
-
-    private static func samePointerEvent(_ actual: NSEvent, _ expected: NSEvent) -> Bool {
-        actual.type == expected.type && actual.windowNumber == expected.windowNumber &&
-            actual.locationInWindow == expected.locationInWindow &&
-            abs(actual.timestamp - expected.timestamp) < 0.000_001
-    }
-
     @MainActor
     fileprivate enum Backing {
         case button(NSButton)
@@ -188,8 +180,28 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         guard isEnabled else { throw RenderedLookupError.disabled }
         try NativeRenderEvidence.record("Rendered press \(identifier): state=\(backing.state.rawValue), " +
               "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
+        try NativeTestPointer.press(in: window, at: NSPoint(x: frame.midX, y: frame.midY),
+                                    identifier: identifier, trackingControl: kind == .toggle ? nil : control,
+                                    file: file, line: line)
+        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
+            "enabled=\(isEnabled), attached=\(control.window === window)")
+    }
+}
+
+@MainActor
+private enum NativeTestPointer {
+    private static var nextMouseEventNumber = 200_000
+
+    private static func samePointerEvent(_ actual: NSEvent, _ expected: NSEvent) -> Bool {
+        actual.type == expected.type && actual.windowNumber == expected.windowNumber &&
+            actual.locationInWindow == expected.locationInWindow &&
+            abs(actual.timestamp - expected.timestamp) < 0.000_001
+    }
+
+    static func press(in window: NSWindow, at point: NSPoint, identifier: String,
+                      trackingControl: NSControl? = nil,
+                      file: StaticString = #filePath, line: UInt = #line) throws {
         window.makeKeyAndOrderFront(nil)
-        let point = NSPoint(x: frame.midX, y: frame.midY)
         let number = Self.nextMouseEventNumber
         Self.nextMouseEventNumber += 2
         let down = try XCTUnwrap(NSEvent.mouseEvent(
@@ -225,9 +237,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
         // Native buttons own cell tracking; SwiftUI checkboxes also need gesture dispatch.
-        switch kind {
-        case .button, .destructiveButton: control.mouseDown(with: press)
-        case .toggle: NSApp.sendEvent(press)
+        if let trackingControl {
+            trackingControl.mouseDown(with: press)
+        } else {
+            NSApp.sendEvent(press)
         }
         if !releasedDuringTracking {
             timer.invalidate()
@@ -239,13 +252,13 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertTrue(Self.samePointerEvent(release, up))
-            switch kind {
-            case .button, .destructiveButton: control.mouseUp(with: release)
-            case .toggle: NSApp.sendEvent(release)
+            if let trackingControl {
+                trackingControl.mouseUp(with: release)
+            } else {
+                NSApp.sendEvent(release)
             }
         }
-        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
-            "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")
+        try NativeRenderEvidence.record("Pointer release \(identifier): trackingRelease=\(releasedDuringTracking)")
     }
 }
 
@@ -565,30 +578,68 @@ enum NativeSettingsTestControls {
     static func pressDisclosure(in root: NSView, identifier: String, label: String) async throws {
         try await Task.sleep(nanoseconds: 10_000_000)
         try prepare(root)
-        var visited = Set<ObjectIdentifier>()
-        var matches: [NSObject] = []
-        var roles: [String] = []
-        func visit(_ element: NSObject) {
-            guard visited.insert(ObjectIdentifier(element)).inserted else { return }
-            // SwiftUI's virtual AX nodes need not declare the full AppKit protocol.
-            // Its public attribute/action bridge also supports those nodes.
-            let role = element.accessibilityAttributeValue(.role) as? String
-            let identity = element.accessibilityAttributeValue(.identifier) as? String
-            let title = element.accessibilityAttributeValue(.title) as? String
-            let description = element.accessibilityAttributeValue(.description) as? String
-            let children = element.accessibilityAttributeValue(.children) as? [NSObject] ?? []
-            roles.append("\(type(of: element)):\(role ?? "nil"):children=\(children.count)")
-            if (role == NSAccessibility.Role.disclosureTriangle.rawValue || role == NSAccessibility.Role.button.rawValue) &&
-                (identity == identifier || description == label || title == label) &&
-                element.accessibilityActionNames().contains(.press) {
-                matches.append(element)
-            }
-            for child in children { visit(child) }
+        let title = try caption(in: root, identifier: identifier, label: label, authoredCaption: true)
+        let frame = root.convert(title.frame, from: nil)
+        // SwiftUI draws the chevron without an NSButton in this host. Locate its actual pixels,
+        // rather than clicking the inert title or assuming an absolute screen coordinate.
+        let gutter = NSRect(x: frame.minX - frame.height * 2, y: frame.minY - 2,
+                            width: frame.height * 2 - 2, height: frame.height + 4)
+        XCTAssertTrue(root.visibleRect.contains(gutter))
+        let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: gutter.size)
+        root.effectiveAppearance.performAsCurrentDrawingAppearance {
+            root.cacheDisplay(in: gutter, to: bitmap)
         }
-        visit(root)
-        XCTAssertEqual(matches.count, 1, "Expected one native disclosure \(identifier); roles=\(roles)")
-        let disclosure = try XCTUnwrap(matches.count == 1 ? matches.first : nil)
-        disclosure.accessibilityPerformAction(.press)
+        let width = bitmap.pixelsWide, height = bitmap.pixelsHigh
+        let scale = CGFloat(width) / gutter.width
+        var luminance: [CGFloat] = []
+        for y in 0..<height {
+            for x in 0..<width {
+                let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                luminance.append((color.redComponent + color.greenComponent + color.blueComponent) / 3)
+            }
+        }
+        let background = luminance.sorted()[luminance.count / 2]
+        var foreground = Set(luminance.indices.filter { abs(luminance[$0] - background) > 0.12 })
+        var chevrons: [NSRect] = []
+        while let seed = foreground.first {
+            foreground.remove(seed)
+            var component = [seed]
+            var index = 0
+            while index < component.count {
+                let pixel = component[index]
+                index += 1
+                for y in max(0, pixel / width - 1)...min(height - 1, pixel / width + 1) {
+                    for x in max(0, pixel % width - 1)...min(width - 1, pixel % width + 1) {
+                        let adjacent = y * width + x
+                        if foreground.remove(adjacent) != nil { component.append(adjacent) }
+                    }
+                }
+            }
+            let xs = component.map { CGFloat($0 % width) }
+            let ys = component.map { CGFloat($0 / width) }
+            let bounds = NSRect(x: try XCTUnwrap(xs.min()), y: try XCTUnwrap(ys.min()),
+                                width: try XCTUnwrap(xs.max()) - XCTUnwrap(xs.min()) + 1,
+                                height: try XCTUnwrap(ys.max()) - XCTUnwrap(ys.min()) + 1)
+            guard bounds.width >= 2 * scale, bounds.width <= 10 * scale,
+                  bounds.height >= 4 * scale, bounds.height <= 14 * scale else { continue }
+            var thirds = [[CGFloat]](repeating: [], count: 3)
+            for pixel in component {
+                let third = min(2, Int((CGFloat(pixel / width) - bounds.minY) * 3 / bounds.height))
+                thirds[third].append(CGFloat(pixel % width))
+            }
+            guard thirds.allSatisfy({ !$0.isEmpty }) else { continue }
+            let centers = thirds.map { $0.reduce(0, +) / CGFloat($0.count) }
+            guard centers[1] > centers[0], centers[1] > centers[2] else { continue }
+            chevrons.append(bounds)
+        }
+        XCTAssertEqual(chevrons.count, 1, "Expected one rendered right chevron beside \(label): \(chevrons)")
+        let chevron = try XCTUnwrap(chevrons.count == 1 ? chevrons.first : nil)
+        let local = NSPoint(x: gutter.minX + chevron.midX / scale,
+                            y: root.isFlipped ? gutter.minY + chevron.midY / scale :
+                                gutter.maxY - chevron.midY / scale)
+        let point = root.convert(local, to: nil)
+        try NativeRenderEvidence.record("Rendered disclosure \(identifier): title=\(title.frame), chevronPoint=\(point)")
+        try NativeTestPointer.press(in: XCTUnwrap(root.window), at: point, identifier: identifier)
     }
 
     static func caption(in root: NSView, identifier: String, label: String,
