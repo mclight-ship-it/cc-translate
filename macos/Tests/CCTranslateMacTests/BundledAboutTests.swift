@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import CryptoKit
 #if CC_TRANSLATE_RESOURCE_HARNESS
 @testable import CCTranslateAppResources
 #else
@@ -15,6 +16,11 @@ final class BundledAboutTests: XCTestCase {
         let resources = AboutBundleResources(location: { root })
         let result = resources.overview()
         XCTAssertTrue(result.issues.isEmpty, "\(result.issues)")
+        let hash = try XCTUnwrap(result.source?.resource_hashes?[AboutBundleResources.supportImagePath])
+        let supportImage = try resources.supportImage(expectedSHA256: hash).get()
+        XCTAssertEqual(hash, "73174e37515115d72d72c90985bb6dafe8d40f3d06dad3599614a94681160d4c")
+        XCTAssertEqual(SHA256.hash(data: supportImage).map { String(format: "%02x", $0) }.joined(), hash)
+        XCTAssertEqual(supportImage.count, 262177)
         let info = try XCTUnwrap(try PropertyListSerialization.propertyList(
             from: Data(contentsOf: root.appendingPathComponent("Contents/Info.plist")),
             format: nil) as? [String: Any])

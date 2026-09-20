@@ -132,11 +132,13 @@ final class CaptureModelTests: XCTestCase {
         let probe = ScreenProbe(source: source, makeOCRJob: { job }, notificationCenter: NotificationCenter())
         let capture = CaptureModel(screen: probe)
         defer { capture.cancel() }
+        XCTAssertFalse(capture.automaticallyTranslates)
         XCTAssertEqual(source.permissionCalls, 0)
         XCTAssertEqual(source.layoutCalls, 0)
         XCTAssertTrue(source.requests.isEmpty)
         XCTAssertTrue(fixture.helpers.isEmpty)
         try await CaptureProductFixture.recognize(capture, source: source)
+        XCTAssertFalse(capture.automaticallyTranslates, "The explicit recovery flow still requires confirmation.")
         XCTAssertEqual(capture.phase, .ready)
         XCTAssertEqual(source.permissionCalls, 1)
         XCTAssertEqual(source.requests.count, 1)

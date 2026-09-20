@@ -18,6 +18,12 @@ struct AboutView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button(action: model.showSupport) {
+                    Label(presentation.text("Buy the author a coffee", "请作者喝杯咖啡"),
+                          systemImage: "cup.and.saucer")
+                }
+                .accessibilityIdentifier("about-support-author")
+                .disabled(model.phase != .loaded)
             }
             .padding(20)
             Picker(presentation.text("Section", "页面"), selection: $model.page) {
@@ -57,6 +63,54 @@ struct AboutView: View {
         .frame(minWidth: 660, minHeight: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(presentation.preferredColorScheme)
+        .sheet(isPresented: Binding(get: { model.showingSupport }, set: {
+            if !$0 { model.dismissSupport() }
+        })) {
+            AboutSupportView(model: model, presentation: presentation)
+        }
+    }
+
+    @MainActor
+    struct AboutSupportView: View {
+        @ObservedObject var model: AboutModel
+        @ObservedObject var presentation: ProbeModel
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(presentation.text("Buy the author a coffee", "请作者喝杯咖啡"))
+                    .font(.title2.bold())
+                Text(presentation.text("Scan with Alipay or WeChat Pay. Thank you for your support.",
+                                       "使用支付宝或微信支付扫码。感谢你的支持。"))
+                    .foregroundStyle(.secondary)
+                Group {
+                    if model.supportBusy {
+                        ProgressView(presentation.text("Reading bundled image…", "正在读取随包图片…"))
+                    } else if let error = model.supportError {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("support-author.png", systemImage: "exclamationmark.triangle")
+                            Text(model.message(for: error, using: presentation)).textSelection(.enabled)
+                            Button(presentation.text("Retry reading image", "重试读取图片"), action: model.loadSupport)
+                        }
+                    } else if let image = model.supportImage {
+                        Image(nsImage: image).resizable().interpolation(.none).scaledToFit()
+                            .accessibilityLabel(presentation.text(
+                                "Author support QR codes for Alipay and WeChat Pay",
+                                "支持作者的支付宝和微信支付收款二维码"))
+                    }
+                }
+                .frame(width: 580, height: 338)
+                HStack {
+                    Spacer()
+                    Button(presentation.text("Done", "完成"), action: model.dismissSupport)
+                        .keyboardShortcut(.cancelAction)
+                        .accessibilityIdentifier("about-support-done")
+                }
+            }
+            .padding(20)
+            .frame(width: 620)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .preferredColorScheme(presentation.preferredColorScheme)
+        }
     }
 
     private var overview: some View {

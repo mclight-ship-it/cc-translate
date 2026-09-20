@@ -10,6 +10,7 @@ final class AboutBundleFixture {
         "[Do not open](https://example.invalid)\r\n```text\r\n\tliteral code\r\n```\r\nEND OF NOTICE\r\n"
     static let paths = ["THIRD_PARTY_NOTICES", "Python/licenses/LICENSE.fixture.txt",
                         "certifi/LICENSE", "certifi/MPL-2.0.txt", "dictionary/Fixture-LICENSE.txt"]
+    static let supportSHA256 = "73174e37515115d72d72c90985bb6dafe8d40f3d06dad3599614a94681160d4c"
     let root: URL
 
     init() throws {
@@ -18,6 +19,7 @@ final class AboutBundleFixture {
             try writeInfo()
             for path in Self.paths { try write(Self.text, path: "Contents/Resources/Licenses/" + path) }
             try write("{}", path: "Contents/Resources/Licenses/Python/PYTHON.json")
+            try write(Self.originalSupportImage(), path: "Contents/" + AboutBundleResources.supportImagePath)
             try writeManifest()
         } catch {
             try FileManager.default.removeItem(at: root)
@@ -31,6 +33,12 @@ final class AboutBundleFixture {
     }
 
     func url(_ path: String) -> URL { root.appendingPathComponent(path) }
+
+    static func originalSupportImage() throws -> Data {
+        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try Data(contentsOf: repository.appendingPathComponent("assets/support-author.png"))
+    }
 
     func write(_ text: String, path: String) throws { try write(Data(text.utf8), path: path) }
 
@@ -57,6 +65,7 @@ final class AboutBundleFixture {
             hashes[key] = SHA256.hash(data: try Data(contentsOf: url("Contents/" + key)))
                 .map { String(format: "%02x", $0) }.joined()
         }
+        hashes[AboutBundleResources.supportImagePath] = Self.supportSHA256
         let manifest: [String: Any] = [
             "schema": schema, "source_commit": String(repeating: "a", count: 40),
             "source_tree_dirty": true, "development_only": true,
@@ -72,6 +81,169 @@ final class AboutBundleFixture {
 }
 
 final class AboutTests: XCTestCase {
+    func testSupportImageUsesOriginalWindowsAssetAndManifestChecksum() throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        let overview = fixture.resources.overview()
+        let expected = try XCTUnwrap(overview.source?.resource_hashes?[AboutBundleResources.supportImagePath])
+        let data = try fixture.resources.supportImage(expectedSHA256: expected).get()
+        XCTAssertEqual(data, try AboutBundleFixture.originalSupportImage())
+        XCTAssertEqual(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+                       AboutBundleFixture.supportSHA256)
+        let image = try XCTUnwrap(NSBitmapImageRep(data: data))
+        XCTAssertEqual(image.pixelsWide, 1574)
+        XCTAssertEqual(image.pixelsHigh, 917)
+    }
+
+    func testSupportImageMissingChangedInvalidAndOversizedResourcesRemainExplicit() throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        let path = "Contents/" + AboutBundleResources.supportImagePath
+        let expected = AboutBundleFixture.supportSHA256
+        XCTAssertEqual(AboutBundleResources(location: { nil }).supportImage(expectedSHA256: nil), .failure(.unavailable))
+        try FileManager.default.removeItem(at: fixture.url(path))
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: expected), .failure(.missing))
+        try fixture.write("not an image", path: path)
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: expected), .failure(.checksumMismatch))
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: nil), .failure(.invalidImage))
+        try fixture.write(Data(repeating: 0, count: 2 * 1024 * 1024 + 1), path: path)
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: nil), .failure(.tooLarge))
+        try fixture.write(AboutBundleFixture.originalSupportImage(), path: path)
+        XCTAssertNotNil(try fixture.resources.supportImage(expectedSHA256: expected).get())
+    }
+
+    func testSupportImageRejectsLinkedAndNonRegularResources() throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        let url = fixture.url("Contents/" + AboutBundleResources.supportImagePath)
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: fixture.url("Contents/Info.plist"))
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: nil), .failure(.linkedResource))
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        XCTAssertEqual(fixture.resources.supportImage(expectedSHA256: nil), .failure(.invalidLocation))
+    }
+
+    @MainActor
+    func testSupportIsExplicitLocalAndDismissesWithoutChangingAboutOrTranslation() async throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        let product = try ProductTestHarness(savedCLI: false)
+        defer { product.cleanUp() }
+        let reader = AboutRecordingResources(base: fixture.resources)
+        let model = AboutModel(resources: reader)
+        model.showSupport()
+        XCTAssertFalse(model.showingSupport)
+        model.openResources()
+        await model.loadTask?.value
+        XCTAssertEqual(reader.supportReads, 0)
+        model.page = .licenses
+        model.selectedDocument = "THIRD_PARTY_NOTICES"
+        await model.documentTask?.value
+        let originalStatus = product.model.status
+        model.showSupport()
+        await model.supportTask?.value
+        XCTAssertTrue(model.showingSupport)
+        XCTAssertNotNil(model.supportImage)
+        XCTAssertNil(model.supportError)
+        XCTAssertEqual(reader.supportReads, 1)
+        model.showSupport()
+        XCTAssertEqual(reader.supportReads, 1)
+        model.dismissSupport()
+        XCTAssertFalse(model.showingSupport)
+        XCTAssertNil(model.supportImage)
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertEqual(model.page, .licenses)
+        XCTAssertEqual(model.documentText, AboutBundleFixture.text)
+        XCTAssertEqual(product.model.status, originalStatus)
+        XCTAssertTrue(product.helpers.isEmpty)
+        XCTAssertTrue(product.copiedText.isEmpty)
+        XCTAssertEqual(product.runtimeRequests, 0)
+        XCTAssertEqual(product.locatorRequests, 0)
+        model.close()
+    }
+
+    @MainActor
+    func testSupportRetryRecoversWithoutClearingIndependentMetadataErrors() async throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        try FileManager.default.removeItem(at: fixture.url("Contents/Info.plist"))
+        let path = "Contents/" + AboutBundleResources.supportImagePath
+        try FileManager.default.removeItem(at: fixture.url(path))
+        let model = AboutModel(resources: fixture.resources)
+        model.openResources()
+        await model.loadTask?.value
+        model.showSupport()
+        await model.supportTask?.value
+        XCTAssertNil(model.supportImage)
+        XCTAssertEqual(model.supportError, .missing)
+        XCTAssertTrue(model.overview.issues.contains(.init(resource: "Info.plist", error: .missing)))
+        try fixture.write(AboutBundleFixture.originalSupportImage(), path: path)
+        model.loadSupport()
+        await model.supportTask?.value
+        XCTAssertNotNil(model.supportImage)
+        XCTAssertNil(model.supportError)
+        XCTAssertTrue(model.overview.issues.contains(.init(resource: "Info.plist", error: .missing)))
+        model.reload()
+        XCTAssertFalse(model.showingSupport)
+        XCTAssertNil(model.supportImage)
+        await model.loadTask?.value
+        model.close()
+    }
+
+    @MainActor
+    func testSupportDecodeErrorDoesNotShowAnUndecodablePNGOrHideMetadataErrors() async throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        try fixture.write("invalid metadata", path: "Contents/Resources/source-manifest.json")
+        try fixture.write(Data([137, 80, 78, 71, 13, 10, 26, 10]),
+                          path: "Contents/" + AboutBundleResources.supportImagePath)
+        let model = AboutModel(resources: fixture.resources)
+        model.openResources()
+        await model.loadTask?.value
+        model.showSupport()
+        await model.supportTask?.value
+        XCTAssertTrue(model.showingSupport)
+        XCTAssertNil(model.supportImage)
+        XCTAssertEqual(model.supportError, .invalidImage)
+        XCTAssertTrue(model.overview.issues.contains(.init(resource: "source-manifest.json", error: .invalidMetadata)))
+        model.dismissSupport()
+        XCTAssertNil(model.supportError)
+        model.close()
+    }
+
+    @MainActor
+    func testDismissedSupportReadCannotRestoreImageAfterAboutReopens() async throws {
+        let fixture = try AboutBundleFixture()
+        defer { fixture.cleanUp() }
+        let entered = expectation(description: "Support reader entered")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let reader = AboutRecordingResources(base: fixture.resources, beforeFirstSupport: {
+            entered.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 5), .success)
+        })
+        let model = AboutModel(resources: reader)
+        model.openResources()
+        await model.loadTask?.value
+        model.showSupport()
+        let oldTask = try XCTUnwrap(model.supportTask)
+        await fulfillment(of: [entered], timeout: 3)
+        model.close()
+        model.openResources()
+        await model.loadTask?.value
+        gate.signal()
+        await oldTask.value
+        XCTAssertFalse(model.showingSupport)
+        XCTAssertNil(model.supportImage)
+        XCTAssertNil(model.supportError)
+        model.showSupport()
+        await model.supportTask?.value
+        XCTAssertNotNil(model.supportImage)
+        XCTAssertEqual(reader.supportReads, 2)
+        model.close()
+    }
+
     func testReadsActualBundleFieldsAndAllNestedLicenseFilesWithoutRuntimeMetadataAsLicense() throws {
         let fixture = try AboutBundleFixture()
         defer { fixture.cleanUp() }
@@ -361,16 +533,29 @@ final class AboutTests: XCTestCase {
 private final class AboutRecordingResources: AboutResourceReading, @unchecked Sendable {
     private let lock = NSLock()
     private var calls = [0, 0]
+    private var supportCalls = 0
     private let base: AboutBundleResources
     private let beforeFirstOverview: @Sendable () -> Void
     private let beforeFirstLicense: @Sendable () -> Void
+    private let beforeFirstSupport: @Sendable () -> Void
     init(base: AboutBundleResources, beforeFirstOverview: @escaping @Sendable () -> Void = {},
-         beforeFirstLicense: @escaping @Sendable () -> Void = {}) {
+         beforeFirstLicense: @escaping @Sendable () -> Void = {},
+         beforeFirstSupport: @escaping @Sendable () -> Void = {}) {
         self.base = base
         self.beforeFirstOverview = beforeFirstOverview
         self.beforeFirstLicense = beforeFirstLicense
+        self.beforeFirstSupport = beforeFirstSupport
     }
     var counts: [Int] { lock.lock(); defer { lock.unlock() }; return calls }
+    var supportReads: Int { lock.lock(); defer { lock.unlock() }; return supportCalls }
+    func supportImage(expectedSHA256: String?) -> Result<Data, AboutResourceError> {
+        lock.lock()
+        supportCalls += 1
+        let first = supportCalls == 1
+        lock.unlock()
+        if first { beforeFirstSupport() }
+        return base.supportImage(expectedSHA256: expectedSHA256)
+    }
     func overview() -> AboutOverview {
         lock.lock()
         calls[0] += 1

@@ -697,6 +697,18 @@ struct CaptureShortcutSettingsSection: View {
 
     var body: some View {
         Section {
+            Picker(model.text("Screenshot translation", "截图翻译"), selection: Binding(
+                get: { model.captureTranslationMode }, set: { model.chooseCaptureTranslationMode($0) }
+            )) {
+                Text(model.text("Recognized text", "识别文字")).tag(CaptureTranslationMode.text)
+                Text(model.text("Send image", "发送图片")).tag(CaptureTranslationMode.image)
+            }
+            .accessibilityIdentifier("screenshot-translation-mode")
+            Text(model.captureTranslationMode == .text ?
+                 model.text("Translate automatically after local text recognition.", "在本机识别文字后，自动翻译。") :
+                 model.text("Send the selected image to your translation service automatically.",
+                            "将选定的截图直接发送给当前翻译服务。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Toggle(toggleTitle, isOn: Binding(get: { shortcut.enabled }, set: { shortcut.choose($0) }))
                 .toggleStyle(.checkbox)
                 .disabled(shortcut.isShutDown || shortcut.registration == .registering)
@@ -711,9 +723,6 @@ struct CaptureShortcutSettingsSection: View {
                 Button(retryTitle) { shortcut.retry() }
                     .accessibilityIdentifier("retry-screenshot-shortcut")
             }
-            Text(model.text("Review the capture before choosing what to translate.",
-                            "截图后先预览，再选择要翻译的内容。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } header: {
             Text(model.text("Screenshot shortcut", "截图快捷键"))
         }
@@ -1094,24 +1103,31 @@ enum SettingsPane: String, CaseIterable {
 }
 
 @MainActor
+final class SettingsNavigation: ObservableObject {
+    @Published var pane: SettingsPane
+
+    init(pane: SettingsPane = .translation) { self.pane = pane }
+}
+
+@MainActor
 struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
     var showDiagnostics: () -> Void
     var showAbout: () -> Void
     var loginItems: LoginItemModel? = nil
     var updates: AppUpdateModel? = nil
-    @State var pane: SettingsPane = .translation
+    @ObservedObject private var navigation: SettingsNavigation
     @State private var installationExpanded = false
 
     init(model: ProbeModel, showDiagnostics: @escaping () -> Void, showAbout: @escaping () -> Void,
          loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil,
-         pane: SettingsPane = .translation) {
+         pane: SettingsPane = .translation, navigation: SettingsNavigation? = nil) {
         self.model = model
         self.showDiagnostics = showDiagnostics
         self.showAbout = showAbout
         self.loginItems = loginItems
         self.updates = updates
-        _pane = State(initialValue: pane)
+        self.navigation = navigation ?? SettingsNavigation(pane: pane)
         _installationExpanded = State(initialValue: model.selectedCLI.isEmpty)
     }
 
@@ -1119,7 +1135,7 @@ struct TranslationSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(model.text("Settings category", "设置分类"), selection: $pane) {
+            Picker(model.text("Settings category", "设置分类"), selection: $navigation.pane) {
                 ForEach(SettingsPane.allCases, id: \.self) { category in
                     Text(category.title(using: model)).tag(category)
                 }
@@ -1157,7 +1173,7 @@ struct TranslationSettingsView: View {
                     Text(model.text("Needs attention", "需要处理"))
                 }
             }
-            switch pane {
+            switch navigation.pane {
             case .translation:
                 translationSection
                 providerSection

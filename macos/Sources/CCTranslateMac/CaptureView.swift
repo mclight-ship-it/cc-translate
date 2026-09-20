@@ -3,6 +3,46 @@ import SwiftUI
 import CCTranslateSupport
 
 @MainActor
+struct CaptureStatusView: View {
+    @ObservedObject var capture: CaptureModel
+    @ObservedObject var model: ProbeModel
+    var captureAgain: () -> Void
+    var close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                if capture.busy {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel(model.text("Recognizing text", "正在识别文字"))
+                }
+                ScrollView {
+                    Text(capture.message(using: model))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 0)
+            HStack {
+                Spacer()
+                if !capture.busy {
+                    Button(model.text("Capture again", "重新截图"), action: captureAgain)
+                        .accessibilityIdentifier("automatic-capture-retry")
+                }
+                Button(model.text(capture.busy ? "Cancel" : "Close", capture.busy ? "取消" : "关闭"),
+                       action: close)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("automatic-capture-close")
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(model.preferredColorScheme)
+    }
+}
+
+@MainActor
 struct CaptureView: View {
     @ObservedObject var capture: CaptureModel
     @ObservedObject var model: ProbeModel

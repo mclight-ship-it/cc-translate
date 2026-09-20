@@ -5,10 +5,13 @@ import AppKit
 
 final class CaptureShortcutApplicationTests: XCTestCase {
     @MainActor
-    func testShortcutUsesExistingLocalCaptureAndIgnoresBusyPhasesWithoutSendingTranslation() async throws {
+    func testShortcutTranslatesAfterSelectionAndIgnoresRepeatedPressesWhileCapturing() async throws {
         _ = NSApplication.shared
         let registrar = PasteTestRegistrar()
-        let f = try ProductTestHarness(savedCLI: false, captureRegistrar: registrar)
+        let f = try ProductTestHarness(captureRegistrar: registrar)
+        let helper = try f.ready()
+        let runtimeRequests = f.runtimeRequests
+        let locatorRequests = f.locatorRequests
         let source = CaptureTestSource(image: try CaptureProductFixture.image())
         source.automatic = false
         let ocr = CaptureTestOCR(blocked: true)
@@ -50,12 +53,17 @@ final class CaptureShortcutApplicationTests: XCTestCase {
         XCTAssertEqual(capture.phase, .recognizing)
         XCTAssertEqual(source.permissionCalls, 1)
         XCTAssertEqual(ocr.cancelCount, 0)
+        XCTAssertTrue(helper.translations.isEmpty)
         ocr.gate?.signal()
-        try await CaptureProductFixture.waitFor { capture.phase == .ready }
-        let preview = try XCTUnwrap(capture.preview)
+        try await CaptureProductFixture.waitFor { capture.submitted && helper.translations.count == 1 }
+        XCTAssertNil(capture.preview)
+        XCTAssertTrue(capture.frames.isEmpty)
         shortcut.choose(false)
-        XCTAssertEqual(capture.phase, .ready)
-        XCTAssertTrue(capture.preview === preview)
+        XCTAssertTrue(capture.submitted)
+        XCTAssertEqual(helper.translations[0].text, "Captured local words")
+        XCTAssertEqual(helper.translations[0].origin, "ocr")
+        XCTAssertFalse(helper.translations[0].useCache)
+        helper.event("completed", id: helper.translations[0].id, payload: ["text": .string("Translated screenshot")])
         shortcut.choose(true)
         source.automatic = true
         let next = try XCTUnwrap(registrar.leases.last)
@@ -63,10 +71,9 @@ final class CaptureShortcutApplicationTests: XCTestCase {
         next.fire(.released)
         try await CaptureProductFixture.waitFor { capture.phase == .selecting && source.requests.count == 2 }
         XCTAssertEqual(source.permissionCalls, 2)
-        XCTAssertTrue(f.helpers.isEmpty)
-        XCTAssertEqual(f.runtimeRequests, 0)
-        XCTAssertEqual(f.locatorRequests, 0)
-        XCTAssertTrue(f.model.output.isEmpty)
+        XCTAssertEqual(helper.translations.count, 1)
+        XCTAssertEqual(f.runtimeRequests, runtimeRequests)
+        XCTAssertEqual(f.locatorRequests, locatorRequests)
     }
 
     @MainActor

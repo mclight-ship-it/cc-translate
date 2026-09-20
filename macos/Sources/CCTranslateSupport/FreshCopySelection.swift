@@ -9,7 +9,9 @@ struct PassiveCopySource: Equatable {
 @MainActor
 protocol FreshCopyClipboard {
     func revision() -> Int
-    func read(revision: Int, whileValid: () -> Bool) -> SelectionResult
+    func read(revision: Int, timeout: TimeInterval, cancellation: PlainTextPasteCancellation,
+              whileValid: @escaping @MainActor () -> Bool,
+              completion: @escaping @MainActor (SelectionResult) -> Void)
 }
 
 @MainActor
@@ -23,6 +25,7 @@ struct PassiveCopyEnvironment {
 @MainActor
 final class FreshCopySelection {
     static let freshnessWindow: TimeInterval = 0.5
+    static let copyWaitWindow: TimeInterval = 2
     private let environment: PassiveCopyEnvironment
     private let clipboard: any FreshCopyClipboard
     private var pair = DoubleCopyState()
@@ -43,6 +46,10 @@ final class FreshCopySelection {
         var baseline: Int?
         var waiting = false
         var reading = false
+        var lastFailure: SelectionResult?
+        var attemptedRevision: Int?
+        var retryAfter: TimeInterval = 0
+        let cancellation = PlainTextPasteCancellation()
     }
 
     init(environment: PassiveCopyEnvironment, clipboard: any FreshCopyClipboard) {
@@ -65,6 +72,7 @@ final class FreshCopySelection {
     func cancel() {
         generation = UUID()
         acceptEventsAfter = environment.now()
+        pending?.cancellation.cancel()
         pending = nil
         pair.reset()
         pairSource = nil
@@ -72,9 +80,10 @@ final class FreshCopySelection {
         pairBaseline = nil
     }
 
-    func observe(time: TimeInterval, isCopy: Bool, isRepeat: Bool) {
+    func observe(time: TimeInterval, isCopy: Bool, isRepeat: Bool, revisionBeforeCopy: Int? = nil) {
         let generation = UUID()
         self.generation = generation
+        pending?.cancellation.cancel()
         pending = nil
         let now = environment.now()
         guard isCopy, !isRepeat, time.isFinite, now.isFinite, now >= time,
@@ -88,11 +97,12 @@ final class FreshCopySelection {
             cancel()
             return
         }
-        // Global key notifications can arrive after the application has copied.
-        // Remember metadata at the first press; never read contents until the pair.
+        // The forwarding event tap snapshots only changeCount before delivering C
+        // to the source. A late global notification cannot establish that baseline.
+        // Never inspect clipboard contents until the second press.
         var revisionAtPress: Int?
         if fallbackEnabled {
-            let revision = clipboard.revision()
+            let revision = revisionBeforeCopy ?? clipboard.revision()
             guard self.generation == generation else { return }
             if revision >= 0 { revisionAtPress = revision }
         }
@@ -114,13 +124,14 @@ final class FreshCopySelection {
         pairTime = nil
         pairBaseline = nil
         let id = UUID()
-        pending = Request(id: id, source: source, deadline: time + Self.freshnessWindow, baseline: baseline)
+        pending = Request(id: id, source: source, deadline: time + Self.copyWaitWindow, baseline: baseline)
         if fallbackEnabled, baseline != nil {
             // The user's fresh copy is sufficient; do not block on a browser's
             // missing/slow AXSelectedText when the copied text is already available.
             pending?.waiting = true
             poll()
             guard pending?.id == id else { return }
+            if pending?.reading == true { return }
             pending?.waiting = false
         }
         let selection = environment.selection(source.target)
@@ -140,11 +151,13 @@ final class FreshCopySelection {
     }
 
     func poll() {
-        guard let request = pending, request.waiting, !request.reading, let baseline = request.baseline else { return }
+        guard let request = pending, request.waiting, let baseline = request.baseline else { return }
         if let failure = invalidReason(id: request.id) {
-            finish(id: request.id, .unknown(failure))
+            finish(id: request.id, failure == .copyNotObserved
+                   ? request.lastFailure ?? .unknown(failure) : .unknown(failure))
             return
         }
+        guard !request.reading else { return }
         let revision = clipboard.revision()
         guard pending?.id == request.id else { return }
         if let failure = invalidReason(id: request.id) {
@@ -156,11 +169,21 @@ final class FreshCopySelection {
             return
         }
         guard revision > baseline else { return }
+        guard revision != request.attemptedRevision || environment.now() >= request.retryAfter else { return }
         pending?.reading = true
-        let result = clipboard.read(revision: revision) { [weak self] in
+        pending?.attemptedRevision = revision
+        clipboard.read(revision: revision, timeout: max(0.001, request.deadline - environment.now()),
+                       cancellation: request.cancellation, whileValid: { [weak self] in
             guard let self, self.pending?.id == request.id else { return false }
             return self.invalidReason(id: request.id) == nil
-        }
+        }, completion: { [weak self] result in
+            self?.completeRead(id: request.id, revision: revision, result: result)
+        })
+    }
+
+    private func completeRead(id: UUID, revision: Int, result: SelectionResult) {
+        guard let request = pending, request.id == id else { return }
+        pending?.reading = false
         guard pending?.id == request.id else { return }
         if let failure = invalidReason(id: request.id) {
             finish(id: request.id, .unknown(failure))
@@ -168,7 +191,22 @@ final class FreshCopySelection {
         }
         let finalRevision = clipboard.revision()
         guard pending?.id == request.id else { return }
-        finish(id: request.id, finalRevision == revision ? result : .unknown(.clipboardChanged))
+        guard finalRevision >= revision else {
+            finish(id: id, .unknown(.clipboardChanged))
+            return
+        }
+        let coherent = finalRevision == revision ? result : .unknown(.clipboardChanged)
+        switch coherent {
+        case .unknown(.clipboardChanged), .unknown(.clipboardUnavailable), .unknown(.clipboardUnsupported):
+            // clear/declare/provide and the two native copy commands are separate
+            // publications. Discard partial reads and retry within the same deadline,
+            // including promised data that becomes available without a new revision.
+            pending?.lastFailure = coherent
+            pending?.waiting = true
+            pending?.retryAfter = environment.now() + 0.05
+        default:
+            finish(id: id, coherent)
+        }
     }
 
     private func invalidReason(id: UUID, requireDeadline: Bool = true) -> SelectionResult.Reason? {
@@ -179,13 +217,14 @@ final class FreshCopySelection {
         if requireDeadline {
             let now = environment.now()
             guard now.isFinite, now < request.deadline,
-                  now >= request.deadline - Self.freshnessWindow else { return .copyNotObserved }
+                  now >= request.deadline - Self.copyWaitWindow else { return .copyNotObserved }
         }
         return nil
     }
 
     private func finish(id: UUID, _ result: SelectionResult) {
         guard pending?.id == id else { return }
+        pending?.cancellation.cancel()
         pending = nil
         onSelection?(result)
     }

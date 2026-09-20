@@ -97,6 +97,7 @@ final class ProbeModel: ObservableObject {
     @Published var appearance = "system"
     @Published var nativeTextScale: NativeTextScale = .standard
     @Published var resultPlacement: NativeResultPlacement = .remembered
+    @Published private(set) var captureTranslationMode: CaptureTranslationMode = .text
     private(set) var rememberedResultFrame: NSRect?
     @Published var historySearch = "" {
         didSet { if historySearch != oldValue { queueHistorySearch(debounce: true) } }
@@ -414,6 +415,7 @@ final class ProbeModel: ObservableObject {
         defaults.set(appearance, forKey: "appearance")
         defaults.set(nativeTextScale.rawValue, forKey: NativeTextScale.preferenceKey)
         defaults.set(resultPlacement.rawValue, forKey: NativeResultPlacement.preferenceKey)
+        defaults.set(captureTranslationMode.rawValue, forKey: CaptureTranslationMode.preferenceKey)
         if let provider = TranslationProvider.allCases.first(where: { $0.cliName == cliName }),
            !selectedCLI.isEmpty {
             defaults.set(selectedCLI, forKey: provider.pathPreferenceKey)
@@ -433,6 +435,9 @@ final class ProbeModel: ObservableObject {
                 resultPlacement = NativeResultPlacement(
                     rawValue: defaults.string(forKey: NativeResultPlacement.preferenceKey) ?? ""
                 ) ?? .remembered
+                captureTranslationMode = CaptureTranslationMode(
+                    rawValue: defaults.string(forKey: CaptureTranslationMode.preferenceKey) ?? ""
+                ) ?? .text
                 rememberedResultFrame = NativeResultPlacement.restoredFrame(
                     defaults.string(forKey: NativeResultPlacement.frameKey))
                 // The confirmed local hint restores native timing without starting a helper.
@@ -465,6 +470,12 @@ final class ProbeModel: ObservableObject {
             captureShortcut.restore()
             onPresentationChanged?()
         }
+    }
+
+    func chooseCaptureTranslationMode(_ mode: CaptureTranslationMode) {
+        loadPresentation()
+        captureTranslationMode = mode
+        persistPresentation()
     }
 
     func openProduct() {
@@ -1220,6 +1231,7 @@ final class ProbeModel: ObservableObject {
         appearance = "system"
         nativeTextScale = .standard
         resultPlacement = .remembered
+        captureTranslationMode = .text
         translatePassiveSelections = false
         stopMonitor()
         captureShortcut.choose(false)

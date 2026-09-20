@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import Darwin
 
 enum ClipboardReadFailure: String, Codable, Error {
-    case noText, unsupportedRepresentation, unavailableData, invalidRichText, clipboardChanged, clipboardTimedOut
+    case noText, unsupportedRepresentation, unavailableData, invalidRichText, clipboardChanged, clipboardTimedOut, tooLarge
 
     var reason: PlainTextPasteReason {
         switch self {
@@ -14,6 +14,7 @@ enum ClipboardReadFailure: String, Codable, Error {
         case .invalidRichText: return .invalidRichText
         case .clipboardChanged: return .clipboardChanged
         case .clipboardTimedOut: return .clipboardTimedOut
+        case .tooLarge: return .unavailableData
         }
     }
 }
@@ -42,11 +43,14 @@ struct ClipboardReadDecoder {
     private var body = Data()
     private var terminal: ClipboardReadFrame?
     private let copied: (String, Int) -> Void
+    private let maximumBodyBytes: Int?
 
-    init(request: UUID, revision: Int, copied: @escaping (String, Int) -> Void = { _, _ in }) {
+    init(request: UUID, revision: Int, maximumBodyBytes: Int? = nil,
+         copied: @escaping (String, Int) -> Void = { _, _ in }) {
         self.request = request
         self.revision = revision
         self.copied = copied
+        self.maximumBodyBytes = maximumBodyBytes
     }
 
     mutating func append(_ data: Data) throws {
@@ -77,6 +81,7 @@ struct ClipboardReadDecoder {
                 copied(type, count)
             case "result":
                 guard pid != nil, let count = frame.bytes, count >= 0,
+                      maximumBodyBytes.map({ count <= $0 }) ?? true,
                       frame.revision == revision,
                       frame.failure == nil || count == 0 else { throw ClipboardReadWireError.malformed }
                 terminal = frame
@@ -104,12 +109,14 @@ struct ClipboardReadDecoder {
 
 public enum ClipboardReadWorker {
     public static let argument = "--cc-clipboard-read"
+    static let freshCopyArgument = "--cc-clipboard-fresh-copy"
 
     /// Called before NSApplication/AppDelegate construction. nil means normal UI launch.
     @MainActor
     public static func runIfRequested(arguments: [String] = CommandLine.arguments) -> Int32? {
         guard arguments.dropFirst().contains(where: { $0.hasPrefix("--cc-clipboard-") }) else { return nil }
-        guard Thread.isMainThread, arguments.count == 5, arguments[1] == argument,
+        guard Thread.isMainThread, arguments.count == 5,
+              arguments[1] == argument || arguments[1] == freshCopyArgument,
               !arguments[2].isEmpty, arguments[2].utf8.count <= 4096, !arguments[2].contains("\0"),
               let revision = Int(arguments[3]), revision >= 0,
               let request = UUID(uuidString: arguments[4]) else {
@@ -131,7 +138,12 @@ public enum ClipboardReadWorker {
         do {
             try emit(ClipboardReadFrame(request: request, event: "hello",
                                         pid: getpid(), mainThread: Thread.isMainThread))
-            let result = try read(name: NSPasteboard.Name(arguments[2]), revision: revision, request: request)
+            let result: Result<String, ClipboardReadFailure>
+            if arguments[1] == freshCopyArgument {
+                result = readFreshCopy(name: NSPasteboard.Name(arguments[2]), revision: revision)
+            } else {
+                result = try read(name: NSPasteboard.Name(arguments[2]), revision: revision, request: request)
+            }
             switch result {
             case .success(let text):
                 let data = Data(text.utf8)
@@ -146,6 +158,18 @@ public enum ClipboardReadWorker {
         } catch {
             // stdout may contain an incomplete frame; a nonzero exit forbids accepting it.
             return 74
+        }
+    }
+
+    @MainActor
+    private static func readFreshCopy(name: NSPasteboard.Name, revision: Int) -> Result<String, ClipboardReadFailure> {
+        let reader = FreshCopyPasteboardReader(pasteboard: { NSPasteboard(name: name) })
+        switch reader.read(revision: revision, whileValid: { true }) {
+        case .present(let text): return .success(text)
+        case .unknown(.tooLarge): return .failure(.tooLarge)
+        case .unknown(.clipboardChanged): return .failure(.clipboardChanged)
+        case .unknown(.clipboardUnsupported): return .failure(.unsupportedRepresentation)
+        default: return .failure(.unavailableData)
         }
     }
 
@@ -224,10 +248,13 @@ final class ClipboardReadRun: @unchecked Sendable {
     private var decoder: ClipboardReadDecoder
     private var process: ClipboardProcess?
     private let trace: @Sendable (String) -> Void
+    private let freshCopy: Bool
 
-    init(request: UUID, revision: Int, trace: @escaping @Sendable (String) -> Void) {
+    init(request: UUID, revision: Int, freshCopy: Bool = false, trace: @escaping @Sendable (String) -> Void) {
         self.trace = trace
-        decoder = ClipboardReadDecoder(request: request, revision: revision) {
+        self.freshCopy = freshCopy
+        decoder = ClipboardReadDecoder(request: request, revision: revision,
+                                        maximumBodyBytes: freshCopy ? 8192 : nil) {
             trace("AppKit copy \($0), bytes \($1)")
         }
     }
@@ -244,7 +271,8 @@ final class ClipboardReadRun: @unchecked Sendable {
             })
             self.process = process
             process.start(executable: executable, arguments: [
-                ClipboardReadWorker.argument, name, String(decoder.revision), decoder.request.uuidString
+                freshCopy ? ClipboardReadWorker.freshCopyArgument : ClipboardReadWorker.argument,
+                name, String(decoder.revision), decoder.request.uuidString
             ])
         }
     }

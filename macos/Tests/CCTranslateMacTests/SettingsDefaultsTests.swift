@@ -122,6 +122,7 @@ final class SettingsDefaultsTests: XCTestCase {
         original["future"] = .object(["preserved": .bool(true)])
         original["ocr_hotkey_enabled"] = .bool(true)
         let helper = try f.ready(configuration: original)
+        f.model.chooseCaptureTranslationMode(.image)
         f.model.reuseHistory(.init(id: "saved-row", input: "Existing original", output: "Existing result"))
         f.model.appearance = "dark"
         f.model.interfaceLanguage = "zh"
@@ -150,12 +151,15 @@ final class SettingsDefaultsTests: XCTestCase {
         helper.event("completed", id: save.id)
         XCTAssertEqual(f.model.defaultsPhase, .readingBack)
         XCTAssertEqual(f.model.appearance, "dark", "A save acknowledgement is not verified readback.")
+        XCTAssertEqual(f.model.captureTranslationMode, .image)
         try f.finishConfiguration(on: helper, configuration: save.config)
         XCTAssertEqual(f.model.defaultsPhase, .restored)
         XCTAssertEqual(f.model.appearance, "system")
         XCTAssertEqual(f.model.interfaceLanguage, "system")
         XCTAssertEqual(f.model.nativeTextScale, .standard)
         XCTAssertEqual(f.model.resultPlacement, .remembered)
+        XCTAssertEqual(f.model.captureTranslationMode, .text)
+        XCTAssertEqual(f.preferences.string(forKey: CaptureTranslationMode.preferenceKey), "text")
         XCTAssertFalse(f.model.captureShortcut.enabled)
         XCTAssertFalse(f.model.translatePassiveSelections)
         XCTAssertFalse(monitor.fallback)

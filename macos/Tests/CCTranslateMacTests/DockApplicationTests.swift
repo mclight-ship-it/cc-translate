@@ -169,12 +169,12 @@ private enum DockApplicationTestProcess {
 
 final class DockApplicationTests: XCTestCase {
     @MainActor
-    func testNormalLaunchHasDockIdentityButNoWindowOrBusinessWork() throws {
+    func testNormalLaunchStaysInMenuBarWithoutWindowOrBusinessWork() throws {
         try DockApplicationTestProcess.isolated(#function) {
             let f = try DockApplicationFixture(regularApplication: true)
             defer { f.cleanUp() }
             f.launch()
-            XCTAssertEqual(NSApp.activationPolicy(), .regular)
+            XCTAssertEqual(NSApp.activationPolicy(), .accessory)
             XCTAssertNil(f.application.inputPanel)
             XCTAssertNil(f.application.resultPanel)
             XCTAssertNil(f.application.settingsPanel)
@@ -187,6 +187,37 @@ final class DockApplicationTests: XCTestCase {
             XCTAssertEqual(f.source.layoutCalls, 0)
             XCTAssertFalse(f.product.model.monitorEnabled)
             XCTAssertEqual(f.product.model.permissions, "Not checked.")
+        }
+    }
+
+    @MainActor
+    func testDockIdentityFollowsOpenWindowsAndReturnsWhenReopened() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                XCTAssertEqual(NSApp.activationPolicy(), .accessory)
+                f.reopen()
+                let input = try XCTUnwrap(f.application.inputPanel)
+                try await CaptureProductFixture.waitFor { NSApp.activationPolicy() == .regular }
+                input.miniaturize(nil)
+                try await CaptureProductFixture.waitFor { input.isMiniaturized }
+                XCTAssertEqual(NSApp.activationPolicy(), .regular, "Minimizing does not close a window.")
+                f.application.showSettings(pane: .shortcuts)
+                let settings = try XCTUnwrap(f.application.settingsPanel)
+                input.performClose(nil)
+                XCTAssertEqual(NSApp.activationPolicy(), .regular, "The settings window is still open.")
+                settings.performClose(nil)
+                try await CaptureProductFixture.waitFor { NSApp.activationPolicy() == .accessory }
+                XCTAssertFalse(f.application.applicationShouldTerminateAfterLastWindowClosed(NSApp))
+                f.reopen()
+                try await CaptureProductFixture.waitFor {
+                    NSApp.activationPolicy() == .regular && input.isVisible
+                }
+                f.application.showResult()
+                input.performClose(nil)
+                XCTAssertEqual(NSApp.activationPolicy(), .regular, "A result window also counts.")
+                f.application.resultPanel?.performClose(nil)
+                try await CaptureProductFixture.waitFor { NSApp.activationPolicy() == .accessory }
+            }
         }
     }
 
@@ -388,6 +419,66 @@ final class DockApplicationTests: XCTestCase {
     }
 
     @MainActor
+    func testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                let helper = try f.product.ready()
+                f.application.showResult(reposition: true)
+                try await CaptureProductFixture.waitFor { f.application.resultPanel?.isKeyWindow == true }
+                XCTAssertTrue(NSApp.sendAction(Selector("startCapture"), to: f.application, from: nil))
+                try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
+                f.capture.select(f.source.layout[0].frame)
+                try await CaptureProductFixture.waitFor {
+                    f.capture.phase == .recognizing && f.application.capturePanel?.isKeyWindow == true
+                }
+                XCTAssertTrue(NSApp.sendAction(Selector("openInput"), to: f.application, from: nil))
+                let input = try XCTUnwrap(f.application.inputPanel)
+                try await CaptureProductFixture.waitFor { input.isKeyWindow }
+                f.product.model.input = "A newer manual translation"
+                f.product.model.translate()
+                try await CaptureProductFixture.waitFor {
+                    f.capture.phase == .cancelled && f.application.capturePanel == nil
+                }
+                XCTAssertTrue(input.isKeyWindow, "Superseded OCR must not restore the old result window over new work.")
+                XCTAssertEqual(helper.translations.count, 1)
+                XCTAssertEqual(helper.translations[0].text, "A newer manual translation")
+            }
+        }
+    }
+
+    @MainActor
+    func testAutomaticScreenshotCompletionDoesNotReopenWindowsAfterHide() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                let helper = try f.product.ready()
+                f.capture.startTranslation(using: f.product.model, mode: .text)
+                try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
+                f.capture.select(f.source.layout[0].frame)
+                try await CaptureProductFixture.waitFor {
+                    f.capture.phase == .recognizing && f.application.capturePanel?.isKeyWindow == true
+                }
+                NSApp.hide(nil)
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    NSApp.isHidden
+                }
+                f.ocr.gate?.signal()
+                try await CaptureProductFixture.waitFor {
+                    f.capture.submitted && helper.translations.count == 1 && f.application.capturePanel == nil
+                }
+                XCTAssertNotEqual(f.application.resultPanel?.isVisible, true)
+                XCTAssertFalse(NSApp.isActive, "Finishing OCR must not undo the user's Hide action.")
+                helper.event("completed", id: helper.translations[0].id,
+                             payload: ["text": .string("Hidden screenshot result")])
+                try await Task.sleep(nanoseconds: 30_000_000)
+                XCTAssertNotEqual(f.application.resultPanel?.isVisible, true)
+                XCTAssertNil(f.application.inputPanel)
+            }
+        }
+    }
+
+    @MainActor
     func testOCRCompletionDoesNotUndoHideOrInterruptAnotherWindow() throws {
         try DockApplicationTestProcess.isolated(#function) {
             try DockApplicationTestProcess.running { f in
@@ -485,7 +576,7 @@ final class DockApplicationTests: XCTestCase {
         XCTAssertEqual(minimize.keyEquivalent, "m")
         XCTAssertNil(minimize.target, "The Window menu must use the current responder chain.")
         XCTAssertTrue(main.items.compactMap(\.submenu).flatMap(\.items).contains {
-            $0.action == Selector("openInput") && $0.keyEquivalent == "n"
+            $0.action == Selector("openInput") && $0.keyEquivalent.isEmpty
         })
         f.product.model.interfaceLanguage = "zh"
         f.application.configureMenus()

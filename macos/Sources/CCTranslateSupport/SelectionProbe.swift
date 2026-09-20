@@ -201,6 +201,7 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
 
     public func setClipboardFallbackEnabled(_ enabled: Bool) {
         selection.setFallbackEnabled(enabled)
+        events.setClipboardFallbackEnabled(enabled)
     }
 
     public var copyInterval: DoubleCopyInterval { selection.interval }
@@ -225,9 +226,9 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
         let registration = UUID()
         self.registration = registration
         do {
-            try events.install(observe: { [weak self] event in
+            try events.install(observe: { [weak self] event, revisionBeforeCopy in
                 guard let self, self.running, self.registration == registration else { return }
-                self.observe(event)
+                self.observe(event, revisionBeforeCopy: revisionBeforeCopy)
             }, invalidate: { [weak self] in
                 guard let self, self.running, self.registration == registration else { return }
                 self.cancelPendingSelection()
@@ -264,7 +265,7 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
                 : "Accessibility or Input Monitoring permission lost; monitoring stopped.")
     }
 
-    private func observe(_ event: NSEvent) {
+    private func observe(_ event: NSEvent, revisionBeforeCopy: Int?) {
         guard running else { return }
         if let failure = securityFailure() {
             stopForSecurity(failure)
@@ -278,16 +279,22 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
         selection.observe(
             time: event.timestamp,
             isCopy: event.charactersIgnoringModifiers?.lowercased() == "c" && flags == [.command],
-            isRepeat: event.isARepeat
+            isRepeat: event.isARepeat,
+            revisionBeforeCopy: revisionBeforeCopy
         )
     }
 }
 
 @MainActor
 protocol PassiveCopyEvents {
-    func install(observe: @escaping (NSEvent) -> Void, invalidate: @escaping () -> Void,
+    func install(observe: @escaping (NSEvent, Int?) -> Void, invalidate: @escaping () -> Void,
                  tick: @escaping () -> Void) throws
+    func setClipboardFallbackEnabled(_ enabled: Bool)
     func remove()
+}
+
+extension PassiveCopyEvents {
+    func setClipboardFallbackEnabled(_ enabled: Bool) {}
 }
 
 @MainActor
@@ -296,18 +303,61 @@ final class SystemPassiveCopyEvents: PassiveCopyEvents {
     private var localToken: Any?
     private var workspaceTokens: [NSObjectProtocol] = []
     private var secureTimer: Timer?
+    private var keyTap: CFMachPort?
+    private var keySource: CFRunLoopSource?
+    private var keyObserver: ((NSEvent, Int?) -> Void)?
+    private var tapInvalidation: (() -> Void)?
+    private var tapTick: (() -> Void)?
+    private var registration = UUID()
+    private var clipboardFallbackEnabled = false
 
-    func install(observe: @escaping (NSEvent) -> Void, invalidate: @escaping () -> Void,
+    deinit {
+        // The tap's C context is unretained; never leave it registered after its
+        // Swift owner goes away, even if a caller omitted stop().
+        if let keyTap { CFMachPortInvalidate(keyTap) }
+        if let keySource { CFRunLoopRemoveSource(CFRunLoopGetMain(), keySource, .commonModes) }
+    }
+
+    func setClipboardFallbackEnabled(_ enabled: Bool) {
+        clipboardFallbackEnabled = enabled
+    }
+
+    func install(observe: @escaping (NSEvent, Int?) -> Void, invalidate: @escaping () -> Void,
                  tick: @escaping () -> Void) throws {
-        let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
-        token = NSEvent.addGlobalMonitorForEvents(matching: mask) { event in
+        registration = UUID()
+        keyObserver = observe
+        tapInvalidation = invalidate
+        tapTick = tick
+        // A listen-only/global observer runs AFTER dispatch, so a fast first copy
+        // can already be the baseline and a deduplicated second copy never advances
+        // it. This tap always returns the identical event. Only a counter is sampled
+        // here; AX, payload reads and selection handling are deferred until it returns.
+        keyTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                  options: .defaultTap,
+                                  eventsOfInterest: CGEventMask(1) << CGEventType.keyDown.rawValue,
+                                  callback: { _, type, event, context in
+            if let context {
+                let owner = Unmanaged<SystemPassiveCopyEvents>.fromOpaque(context).takeUnretainedValue()
+                MainActor.assumeIsolated { owner.receiveKey(type: type, event: event) }
+            }
+            return Unmanaged.passUnretained(event)
+        }, userInfo: Unmanaged.passUnretained(self).toOpaque())
+        guard let keyTap, let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, keyTap, 0) else {
+            throw ProbeError.permissionDenied
+        }
+        keySource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: keyTap, enable: true)
+        let mouseMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        token = NSEvent.addGlobalMonitorForEvents(matching: mouseMask) { event in
             // AppKit global event monitors are delivered on the main thread.
             MainActor.assumeIsolated {
-                observe(event)
+                observe(event, nil)
             }
         }
         guard token != nil else { throw ProbeError.permissionDenied }
-        localToken = NSEvent.addLocalMonitorForEvents(matching: mask, handler: Self.localObserver(invalidate: invalidate))
+        localToken = NSEvent.addLocalMonitorForEvents(matching: mouseMask.union(.keyDown),
+                                                     handler: Self.localObserver(invalidate: invalidate))
         guard localToken != nil else {
             throw ProbeError.permissionDenied
         }
@@ -319,12 +369,20 @@ final class SystemPassiveCopyEvents: PassiveCopyEvents {
                 MainActor.assumeIsolated { invalidate() }
             })
         }
-        secureTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+        secureTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { _ in
             MainActor.assumeIsolated { tick() }
         }
     }
 
     func remove() {
+        registration = UUID()
+        if let keyTap { CFMachPortInvalidate(keyTap) }
+        if let keySource { CFRunLoopRemoveSource(CFRunLoopGetMain(), keySource, .commonModes) }
+        keyTap = nil
+        keySource = nil
+        keyObserver = nil
+        tapInvalidation = nil
+        tapTick = nil
         if let token = token { NSEvent.removeMonitor(token) }
         token = nil
         if let localToken { NSEvent.removeMonitor(localToken) }
@@ -333,6 +391,25 @@ final class SystemPassiveCopyEvents: PassiveCopyEvents {
         workspaceTokens = []
         secureTimer?.invalidate()
         secureTimer = nil
+    }
+
+    private func receiveKey(type: CGEventType, event: CGEvent) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            tapInvalidation?()
+            tapTick?()
+            if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
+            return
+        }
+        guard type == .keyDown, let native = NSEvent(cgEvent: event) else { return }
+        let flags = native.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock])
+        let isCopy = flags == [.command] && native.charactersIgnoringModifiers?.lowercased() == "c"
+        let revision = clipboardFallbackEnabled && isCopy && !native.isARepeat
+            ? NSPasteboard.general.changeCount : nil
+        let registration = registration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.registration == registration else { return }
+            self.keyObserver?(native, revision)
+        }
     }
 
     static func localObserver(invalidate: @escaping () -> Void) -> (NSEvent) -> NSEvent? {

@@ -17,9 +17,8 @@ enum CCTranslateApplication {
 
     @MainActor
     static func configureNormalApplication(_ application: NSApplication) {
-        // LSUIElement keeps the clipboard subprocess out of the Dock before main runs.
-        // Only the normal application is promoted; promotion does not open a workspace.
-        application.setActivationPolicy(.regular)
+        // Product windows promote the normal app later; the clipboard worker never does.
+        application.setActivationPolicy(.accessory)
     }
 }
 
@@ -33,9 +32,17 @@ private final class ResultPanel: ProductPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private final class TextMenuItem: NSMenuItem {
+    // Tahoe can supply an action image even when none was assigned to the item.
+    override var image: NSImage? {
+        get { nil }
+        set { super.image = nil }
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSMenuItemValidation {
-    private var statusItem: NSStatusItem?
+    private(set) var statusItem: NSStatusItem?
     private(set) var inputPanel: NSPanel?
     private(set) var resultPanel: NSPanel?
     private var historyPanel: NSPanel?
@@ -48,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private weak var captureReturnWindow: NSWindow?
     private weak var captureReturnResponder: NSResponder?
     private var captureReturnApplication: NSRunningApplication?
+    private var captureReturnIntent: UUID?
     private var menuTarget: FocusTarget?
     private let model: ProbeModel
     private let capture: CaptureModel
@@ -73,6 +81,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var fittingResultPanel = false
     private var openProductWindows: [NSPanel] = []
     private weak var lastFocusedProductWindow: NSWindow?
+    private let settingsNavigation = SettingsNavigation()
+    private var presentedCaptureIntent: UUID?
+    private var announcedCaptureStatus: String?
+
+    var desiredActivationPolicy: NSApplication.ActivationPolicy {
+        openProductWindows.isEmpty ? .accessory : .regular
+    }
 
     deinit {
         if let resultScreenObserver { NotificationCenter.default.removeObserver(resultScreenObserver) }
@@ -123,6 +138,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         model.onTranslationStarted = { [weak self] in
             guard let self, !self.terminating,
                   ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
+            if self.capture.automaticallyTranslates && self.model.translationOrigin == "ocr" {
+                self.presentedCaptureIntent = self.model.translationIntentID
+                if NSApp.isHidden {
+                    self.showTranslationResults = false
+                    return
+                }
+            }
             self.showTranslationResults = true
             self.showResult(reposition: true)
         }
@@ -145,9 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                                 .priority: NSAccessibilityPriorityLevel.medium.rawValue])
             }
         }
-        captureObservation = capture.$phase.dropFirst().removeDuplicates().sink { [weak self] phase in
+        captureObservation = capture.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
-                guard let self, !self.terminating, self.capture.phase == phase else { return }
+                guard let self, !self.terminating else { return }
                 self.updateCapturePresentation()
             }
         }
@@ -157,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @discardableResult
     private func add(_ title: String, action: Selector, key: String = "", to menu: NSMenu) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let item = TextMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         menu.addItem(item)
         return item
@@ -166,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func configureMenus() {
         let menu = NSMenu()
         menu.delegate = self
-        add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: menu)
+        add(model.text("Translate…", "翻译…"), action: #selector(openInput), to: menu)
         add(model.text("Translate selected text", "翻译选中文字"), action: #selector(translateSelection), to: menu)
         add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: menu)
         add(model.text("Show last result", "显示上次结果"), action: #selector(recallResult), to: menu)
@@ -209,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         appItem.submenu = application
         main.addItem(appItem)
         let file = NSMenu(title: model.text("File", "文件"))
-        add(model.text("Translate…", "翻译…"), action: #selector(openInput), key: "n", to: file)
+        add(model.text("Translate…", "翻译…"), action: #selector(openInput), to: file)
         add(model.text("Translate text", "翻译当前文字"), action: #selector(submitInput), key: "\r", to: file)
         add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: file)
         add(model.text("History…", "历史记录…"), action: #selector(openHistory), key: "y", to: file)
@@ -369,25 +391,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 ? nil : application
         }
         selectionOverlay?.dismiss()
+        selectionOverlay = nil
         discardCapturePanel()
-        capture.start()
-        ensureCapturePanel()
-        activate(capturePanel)
+        presentedCaptureIntent = nil
+        announcedCaptureStatus = nil
+        model.loadPresentation()
+        capture.startTranslation(using: model, mode: model.captureTranslationMode)
+        captureReturnIntent = model.translationIntentID
     }
 
     private func ensureCapturePanel() {
         guard capturePanel == nil else { return }
-        capturePanel = makePanel(title: model.text("Screenshot translation", "截图翻译"),
-            width: 860, height: 680, minimum: NSSize(width: 620, height: 600),
-            root: CaptureView(capture: capture, model: model,
-                captureAgain: { [weak self] in self?.startCapture() },
-                reselect: { [weak self] in self?.capture.reselect() },
-                close: { [weak self] in self?.capturePanel?.performClose(nil) }))
+        if capture.automaticallyTranslates {
+            capturePanel = makePanel(title: model.text("Screenshot translation", "截图翻译"),
+                width: 520, height: 190, minimum: NSSize(width: 420, height: 170),
+                root: CaptureStatusView(capture: capture, model: model,
+                    captureAgain: { [weak self] in self?.startCapture() },
+                    close: { [weak self] in self?.capturePanel?.performClose(nil) }))
+        } else {
+            capturePanel = makePanel(title: model.text("Screenshot translation", "截图翻译"),
+                width: 860, height: 680, minimum: NSSize(width: 620, height: 600),
+                root: CaptureView(capture: capture, model: model,
+                    captureAgain: { [weak self] in self?.startCapture() },
+                    reselect: { [weak self] in self?.capture.reselect() },
+                    close: { [weak self] in self?.capturePanel?.performClose(nil) }))
+        }
     }
 
     private func updateCapturePresentation() {
+        if capture.automaticallyTranslates && capture.submitted {
+            selectionOverlay?.dismiss()
+            selectionOverlay = nil
+            if let intent = capture.submittedIntent, intent == model.translationIntentID,
+               presentedCaptureIntent != intent {
+                presentedCaptureIntent = intent
+                showTranslationResults = !NSApp.isHidden
+                if showTranslationResults { showResult(reposition: true) }
+            }
+            discardCapturePanel()
+            return
+        }
         switch capture.phase {
         case .selecting:
+            guard selectionOverlay == nil else { return }
             let appearance = capturePanel?.appearance
             discardCapturePanel()
             let overlay = RegionSelectionOverlay(text: { [weak self] english, chinese in
@@ -405,11 +451,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 }
             }
         case .cancelled, .idle:
+            announcedCaptureStatus = nil
             selectionOverlay?.dismiss()
             selectionOverlay = nil
             discardCapturePanel()
             restoreCaptureFocus()
         case .capturing, .recognizing, .ready, .empty, .failed:
+            if capture.automaticallyTranslates && capture.phase == .capturing { return }
             selectionOverlay?.dismiss()
             selectionOverlay = nil
             let shouldActivate = capturePanel == nil ||
@@ -419,14 +467,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             else { applyAppearance() }
             if capture.phase == .ready || capture.phase == .empty || capture.phase == .failed,
                let capturePanel, capturePanel.isKeyWindow {
-                NSAccessibility.post(element: capturePanel, notification: .announcementRequested,
-                    userInfo: [.announcement: capture.message(using: model),
-                               .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+                let message = capture.message(using: model)
+                if announcedCaptureStatus != message {
+                    announcedCaptureStatus = message
+                    NSAccessibility.post(element: capturePanel, notification: .announcementRequested,
+                        userInfo: [.announcement: message,
+                                   .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+                }
             }
         }
     }
 
     private func restoreCaptureFocus() {
+        guard captureReturnIntent == nil || captureReturnIntent == model.translationIntentID else { return }
         if let application = captureReturnApplication, !application.isTerminated {
             application.activate(options: [.activateIgnoringOtherApps])
             return
@@ -444,6 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         panel?.contentView = nil
         panel?.orderOut(nil)
         panel?.close()
+        updateDockPresence()
     }
 
     @objc private func toggleMonitor() {
@@ -453,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         model.translatePassiveSelections = true
         model.startMonitor()
-        if !model.monitorEnabled { openSettings() }
+        if !model.monitorEnabled { showSettings(pane: .shortcuts) }
     }
 
     @objc private func openHistory() {
@@ -467,7 +521,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func openSettings() {
+        showSettings()
+    }
+
+    func showSettings(pane: SettingsPane? = nil) {
         guard !terminating else { return }
+        if let pane { settingsNavigation.pane = pane }
         if settingsPanel == nil {
             settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 660, height: 650,
                 minimum: NSSize(width: 530, height: 460),
@@ -494,10 +553,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         discardCapturePanel()
     }
 
-    func settingsContent(pane: SettingsPane = .translation) -> TranslationSettingsView {
-        TranslationSettingsView(model: model,
+    func settingsContent(pane: SettingsPane? = nil) -> TranslationSettingsView {
+        if let pane { settingsNavigation.pane = pane }
+        return TranslationSettingsView(model: model,
             showDiagnostics: { [weak self] in self?.openDiagnostics() },
-            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates, pane: pane)
+            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates,
+            navigation: settingsNavigation)
     }
 
     @objc private func checkForUpdates() {
@@ -555,6 +616,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func rememberOpenWindow(_ panel: NSPanel) {
         if !openProductWindows.contains(where: { $0 === panel }) { openProductWindows.append(panel) }
+        updateDockPresence()
+    }
+
+    private func updateDockPresence() {
+        // Only the installed delegate owns process-wide application identity.
+        guard NSApp.delegate === self, NSApp.activationPolicy() != desiredActivationPolicy else { return }
+        if !NSApp.setActivationPolicy(desiredActivationPolicy) {
+            NSLog("CC Translate could not update its Dock visibility.")
+        }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -796,6 +866,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             diagnostics.stopMonitor()
             diagnostics.closePanel()
         }
+        updateDockPresence()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -31,6 +31,8 @@ BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 ICON_NAME = "CCTranslate.icns"
 ICON_SOURCE = ROOT / "assets/icon-dark.png"
+SUPPORT_IMAGE_NAME = "support-author.png"
+SUPPORT_IMAGE_SOURCE = ROOT / "assets" / SUPPORT_IMAGE_NAME
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
                        "cc_dictionary_lookup.py", "cc_dictionary_artifact_core.py", "cc_dictionary_presentation.py",
@@ -609,6 +611,7 @@ def audit_bundle(app, lock, environment=None):
     validate_plist(info, lock)
     required = [
         "Resources/" + ICON_NAME,
+        "Resources/" + SUPPORT_IMAGE_NAME,
         "MacOS/CCTranslateMac", "Resources/python/bin/python3",
         "Resources/python/lib/libCCProcessSupport.dylib",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
@@ -801,6 +804,15 @@ def build_icon(contents, environment):
         shutil.rmtree(iconset)
 
 
+def copy_support_image(contents):
+    """Keep the Windows author's original local QR image byte-for-byte."""
+    need(SUPPORT_IMAGE_SOURCE.is_file() and not SUPPORT_IMAGE_SOURCE.is_symlink(),
+         "author support image missing or linked")
+    destination = contents / "Resources" / SUPPORT_IMAGE_NAME
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SUPPORT_IMAGE_SOURCE, destination)
+
+
 def build(lock, offline=False, build_number=None):
     environment, toolchain = require_macos()
     info = package_info(plistlib.loads((ROOT / "macos/Resources/Info.plist").read_bytes()), lock, build_number)
@@ -822,6 +834,7 @@ def build(lock, offline=False, build_number=None):
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     build_icon(contents, environment)
+    copy_support_image(contents)
     embed_sparkle(contents, sparkle, sparkle_license)
     # A Python installation includes non-bundle directories such as python3.12.
     # Keep that tree out of macOS's reserved nested-code directories.

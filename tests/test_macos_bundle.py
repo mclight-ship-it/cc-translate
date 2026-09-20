@@ -130,7 +130,9 @@ class ApplicationIconTests(ProjectDirectory):
         source = (bundle.ROOT / "macos/Sources/CCTranslateMac/Application.swift").read_text(encoding="utf-8")
         self.assertLess(source.index("ClipboardReadWorker.runIfRequested()"),
                         source.index("configureNormalApplication(application)"))
-        self.assertIn("application.setActivationPolicy(.regular)", source)
+        self.assertIn("application.setActivationPolicy(.accessory)", source)
+        self.assertIn("openProductWindows.isEmpty ? .accessory : .regular", source)
+        self.assertIn("NSApp.setActivationPolicy(desiredActivationPolicy)", source)
         normal_setup = source.split("static func configureNormalApplication", 1)[1].split("\n}", 1)[0]
         self.assertNotIn("openProduct", normal_setup)
         self.assertNotIn("activate(", normal_setup)
@@ -185,6 +187,32 @@ class ApplicationIconTests(ProjectDirectory):
                     bundle, "run", side_effect=invalid_tool), self.assertRaises(bundle.BundleError):
                 bundle.build_icon(contents, {})
             self.assertFalse((self.root / "CCTranslate.iconset").exists())
+
+
+class AuthorSupportResourceTests(ProjectDirectory):
+    def test_reuses_exact_windows_qr_image_without_reencoding(self):
+        source = bundle.ROOT / "assets/support-author.png"
+        self.assertEqual(bundle.SUPPORT_IMAGE_SOURCE, source)
+        windows = (bundle.ROOT / "cc_core.py").read_text(encoding="utf-8")
+        self.assertIn('SUPPORT_IMAGE_PATH = os.path.join(APP_DIR, "assets", "support-author.png")', windows)
+        original = source.read_bytes()
+        self.assertEqual(hashlib.sha256(original).hexdigest(),
+                         "73174e37515115d72d72c90985bb6dafe8d40f3d06dad3599614a94681160d4c")
+        self.assertEqual(struct.unpack(">II", original[16:24]), (1574, 917))
+        contents = self.root / "App.app/Contents"
+        bundle.copy_support_image(contents)
+        self.assertEqual((contents / "Resources/support-author.png").read_bytes(), original)
+
+    def test_missing_and_linked_original_image_fail_before_output_creation(self):
+        contents = self.root / "App.app/Contents"
+        with patch.object(bundle, "SUPPORT_IMAGE_SOURCE", self.root / "missing.png"):
+            with self.assertRaisesRegex(bundle.BundleError, "author support image missing or linked"):
+                bundle.copy_support_image(contents)
+        self.assertFalse(contents.exists())
+        with patch.object(Path, "is_symlink", return_value=True):
+            with self.assertRaisesRegex(bundle.BundleError, "author support image missing or linked"):
+                bundle.copy_support_image(contents)
+        self.assertFalse(contents.exists())
 
 
 class ArchiveRulesTests(ProjectDirectory):
@@ -498,7 +526,8 @@ class MachORulesTests(ProjectDirectory):
                     "Resources/python/lib/libCCProcessSupport.dylib"]
         binaries += ["Frameworks/Sparkle.framework/" + path
                      for path in (*bundle.SPARKLE_HELPERS, "Versions/B/Sparkle")]
-        resources = ["Resources/" + bundle.ICON_NAME, "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+        resources = ["Resources/" + bundle.ICON_NAME, "Resources/" + bundle.SUPPORT_IMAGE_NAME,
+                     "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cc_macos/dictionary.py",
                      "Resources/Core/cc_macos/config_fixture.py",
@@ -540,6 +569,25 @@ class MachORulesTests(ProjectDirectory):
             "resource_hashes": {name: bundle.digest(contents / name) for name in resources},
         })
         return app
+
+    def test_author_support_image_is_required_and_covered_by_bundle_inventory(self):
+        for fault in ("missing", "unrecorded", "changed"):
+            with self.subTest(fault=fault):
+                app = self.synthetic_app()
+                image = app / "Contents/Resources" / bundle.SUPPORT_IMAGE_NAME
+                manifest = app / "Contents/Resources/source-manifest.json"
+                if fault == "missing":
+                    image.unlink()
+                elif fault == "changed":
+                    image.write_bytes(b"not the recorded image")
+                else:
+                    metadata = json.loads(manifest.read_bytes())
+                    del metadata["resource_hashes"]["Resources/" + bundle.SUPPORT_IMAGE_NAME]
+                    bundle.write_json(manifest, metadata)
+                with patch.object(bundle, "run", side_effect=self.fake_apple_tool):
+                    with self.assertRaises(bundle.BundleError):
+                        bundle.audit_bundle(app, bundle.load_lock())
+                shutil.rmtree(app)
 
     @staticmethod
     def fake_apple_tool(args, environment=None):

@@ -46,6 +46,9 @@ private final class CopyClipboard: FreshCopyClipboard {
     var duringRevision: (() -> Void)?
     var duringRead: (() -> Void)?
     var afterReadValidation: (() -> Void)?
+    var deferred = false
+    var completion: ((SelectionResult) -> Void)?
+    var cancellation: PlainTextPasteCancellation?
     func revision() -> Int {
         revisionCalls += 1
         let action = duringRevision
@@ -53,7 +56,15 @@ private final class CopyClipboard: FreshCopyClipboard {
         action?()
         return count
     }
-    func read(revision: Int, whileValid: () -> Bool) -> SelectionResult {
+    func read(revision: Int, timeout: TimeInterval, cancellation: PlainTextPasteCancellation,
+              whileValid: @escaping @MainActor () -> Bool,
+              completion: @escaping @MainActor (SelectionResult) -> Void) {
+        self.cancellation = cancellation
+        let result = readSynchronously(revision: revision, whileValid: whileValid)
+        if deferred { self.completion = completion }
+        else { completion(result) }
+    }
+    private func readSynchronously(revision: Int, whileValid: () -> Bool) -> SelectionResult {
         guard whileValid(), count == revision else { return .unknown(.clipboardChanged) }
         reads.append(revision)
         let action = duringRead
@@ -89,6 +100,113 @@ private final class CopyFixture {
 }
 
 final class FreshCopySelectionTests: XCTestCase {
+    @MainActor
+    func testPreDispatchBaselineSurvivesFastFirstCopyAndDeduplicatedSecondCopy() {
+        let f = CopyFixture()
+        // The first native copy finishes before the main-queue observer runs.
+        // The second native command leaves that same fresh revision unchanged.
+        f.clipboard.count = 6
+        f.selection.observe(time: 10, isCopy: true, isRepeat: false, revisionBeforeCopy: 5)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        f.context.time = 10.2
+        f.selection.observe(time: 10.2, isCopy: true, isRepeat: false, revisionBeforeCopy: 6)
+        XCTAssertEqual(f.clipboard.reads, [6])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+        XCTAssertEqual(f.context.axCalls, 0)
+    }
+
+    @MainActor
+    func testPreDispatchBaselineDoesNotAuthorizeUnchangedPregestureContents() {
+        let f = CopyFixture()
+        f.selection.observe(time: 10, isCopy: true, isRepeat: false, revisionBeforeCopy: 5)
+        f.context.time = 10.2
+        f.selection.observe(time: 10.2, isCopy: true, isRepeat: false, revisionBeforeCopy: 5)
+        f.context.time = 12.21
+        f.selection.poll()
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
+    }
+
+    @MainActor
+    func testAsynchronousCopyAfterOldHalfSecondDeadlineStillUsesOneBoundedRequest() {
+        let f = CopyFixture()
+        f.context.duringAX = { f.context.time += 0.7 }
+        f.pair()
+        XCTAssertTrue(f.context.results.isEmpty)
+        f.context.time = 11.1
+        f.clipboard.count += 1
+        f.selection.poll()
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [6])
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+        XCTAssertEqual(FreshCopySelection.copyWaitWindow, 2)
+    }
+
+    @MainActor
+    func testPartialPublicationRetriesMetadataAndPromisedBytesAtSameOrNewRevision() {
+        for failure in [SelectionResult.unknown(.clipboardUnsupported), .unknown(.clipboardUnavailable)] {
+            for advances in [false, true] {
+                let f = CopyFixture()
+                f.pair()
+                f.clipboard.count = 6
+                f.clipboard.result = failure
+                f.context.time = 10.3
+                f.selection.poll()
+                XCTAssertTrue(f.context.results.isEmpty)
+                f.clipboard.result = .present("completed asynchronous copy")
+                if advances { f.clipboard.count += 1 }
+                f.context.time = 10.4
+                f.selection.poll()
+                XCTAssertEqual(f.clipboard.reads, [6, advances ? 7 : 6])
+                XCTAssertEqual(f.context.results, [.present("completed asynchronous copy")])
+            }
+        }
+    }
+
+    @MainActor
+    func testSecondCopyRacingIsolatedFirstReadDiscardsThenRetriesWithoutDuplicateResults() {
+        let f = CopyFixture()
+        f.press(10)
+        f.clipboard.count = 6
+        f.clipboard.deferred = true
+        f.press(10.2)
+        XCTAssertEqual(f.context.axCalls, 0)
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [6], "Only one isolated read may be in flight.")
+        f.clipboard.count = 7
+        f.clipboard.completion?(.present("obsolete first publication"))
+        XCTAssertTrue(f.context.results.isEmpty)
+        f.clipboard.deferred = false
+        f.clipboard.result = .present("second publication")
+        f.selection.poll()
+        XCTAssertEqual(f.clipboard.reads, [6, 7])
+        f.clipboard.completion?(.present("duplicate late worker callback"))
+        f.selection.poll()
+        XCTAssertEqual(f.context.results, [.present("second publication")])
+    }
+
+    @MainActor
+    func testPendingIsolatedReadIsCancelledOnDeadlineFocusPermissionAndExplicitCancellation() {
+        for reason in ["deadline", "focus", "permission", "cancel"] {
+            let f = CopyFixture()
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.deferred = true
+            f.press(10.2)
+            switch reason {
+            case "deadline": f.context.time = 12.21
+            case "focus": f.context.source = nil
+            case "permission": f.context.failure = .inputMonitoring
+            default: f.selection.cancel()
+            }
+            f.selection.poll()
+            XCTAssertTrue(f.clipboard.cancellation?.isCancelled == true)
+            f.clipboard.completion?(.present("late worker text"))
+            XCTAssertFalse(f.context.results.contains(.present("late worker text")))
+            XCTAssertEqual(f.context.results.count, reason == "cancel" ? 0 : 1)
+        }
+    }
+
     @MainActor
     func testLongerCopyPairUsesGestureBaselineWithoutReadingBeforeSecondPress() throws {
         let f = CopyFixture()
@@ -126,7 +244,7 @@ final class FreshCopySelectionTests: XCTestCase {
         f.press(10)
         f.press(11.2)
         f.clipboard.count += 1
-        f.context.time = 11.71
+        f.context.time = 13.21
         f.selection.poll()
         XCTAssertTrue(f.clipboard.reads.isEmpty)
         XCTAssertEqual(FreshCopySelection.freshnessWindow, 0.5)
@@ -258,7 +376,7 @@ final class FreshCopySelectionTests: XCTestCase {
             let f = CopyFixture()
             f.pair()
             f.clipboard.count = count
-            f.context.time = count == 4 ? 10.3 : 10.71
+            f.context.time = count == 4 ? 10.3 : 12.21
             f.selection.poll()
             XCTAssertTrue(f.clipboard.reads.isEmpty)
             XCTAssertEqual(f.context.results, [.unknown(count == 4 ? .clipboardChanged : .copyNotObserved)])
@@ -331,7 +449,7 @@ final class FreshCopySelectionTests: XCTestCase {
         f.clipboard.count = 100
         f.pair()
         XCTAssertTrue(f.clipboard.reads.isEmpty)
-        f.context.time = 10.71
+        f.context.time = 12.21
         f.selection.poll()
         XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
         XCTAssertTrue(f.clipboard.reads.isEmpty)
@@ -362,7 +480,7 @@ final class FreshCopySelectionTests: XCTestCase {
         f.press(10.2)
         f.press(10.25)
         XCTAssertTrue(f.clipboard.reads.isEmpty)
-        f.context.time = 10.76
+        f.context.time = 12.26
         f.selection.poll()
         XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
         XCTAssertTrue(f.clipboard.reads.isEmpty)
@@ -413,14 +531,14 @@ final class FreshCopySelectionTests: XCTestCase {
             f.clipboard.duringRead = {
                 switch cause {
                 case "revision": f.clipboard.count += 1
-                case "time": f.context.time = 11
+                case "time": f.context.time = 13
                 case "focus": f.context.source = nil
                 default: f.selection.cancel()
                 }
             }
             f.selection.poll()
             XCTAssertFalse(f.context.results.contains(.present("fresh copy")))
-            XCTAssertEqual(f.context.results.count, cause == "cancel" ? 0 : 1)
+            XCTAssertEqual(f.context.results.count, cause == "cancel" || cause == "revision" ? 0 : 1)
         }
     }
 
@@ -500,6 +618,9 @@ final class FreshCopySelectionTests: XCTestCase {
             f.context.duringSource = { f.clipboard.count += 1 }
         }
         f.selection.poll()
+        XCTAssertTrue(f.context.results.isEmpty, "A racing second copy is retried, not delivered incoherently.")
+        f.context.time = 12.21
+        f.selection.poll()
         XCTAssertEqual(f.context.results, [.unknown(.clipboardChanged)])
     }
 }
@@ -512,10 +633,10 @@ private final class CopyEvents: PassiveCopyEvents {
     var observe: ((NSEvent) -> Void)?
     var invalidate: (() -> Void)?
     var tick: (() -> Void)?
-    func install(observe: @escaping (NSEvent) -> Void, invalidate: @escaping () -> Void,
+    func install(observe: @escaping (NSEvent, Int?) -> Void, invalidate: @escaping () -> Void,
                  tick: @escaping () -> Void) throws {
         installations += 1
-        self.observe = observe
+        self.observe = { observe($0, nil) }
         self.invalidate = invalidate
         self.tick = tick
         if fail { throw ProbeError.permissionDenied }

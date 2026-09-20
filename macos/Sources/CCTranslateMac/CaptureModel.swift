@@ -20,6 +20,7 @@ final class CaptureModel: ObservableObject {
         }
     }
     @Published private(set) var submitted = false
+    @Published private(set) var automaticallyTranslates = false
     private let screen: ScreenProbe
     private var observation: AnyCancellable?
     private var generation = UUID()
@@ -31,7 +32,15 @@ final class CaptureModel: ObservableObject {
     private var translationIntent: UUID?
     private var submittedText: String?
     private var submittedImage = false
+    private weak var automaticModel: ProbeModel?
+    private var automaticMode: CaptureTranslationMode = .text
+    private var automaticAttempt: UUID?
+    private var automaticBaseline: UUID?
+    private var automaticObservation: AnyCancellable?
+    private var automaticSubmitting = false
+    private var releasedCapture = false
 
+    var submittedIntent: UUID? { submitted ? translationIntent : nil }
     var busy: Bool { phase == .capturing || phase == .recognizing }
     var submitting: Bool {
         submitted && translationIntent == translationModel?.translationIntentID &&
@@ -70,6 +79,30 @@ final class CaptureModel: ObservableObject {
 
     func start() {
         cancel()
+        beginCapture()
+    }
+
+    func startTranslation(using model: ProbeModel, mode: CaptureTranslationMode) {
+        cancel()
+        automaticModel = model
+        automaticMode = mode
+        automaticBaseline = model.translationIntentID
+        automaticallyTranslates = true
+        guard !model.active, !model.preparing else {
+            releasedCapture = true
+            notice = .translationBusy
+            phase = .failed
+            return
+        }
+        automaticObservation = model.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                _ = self?.discardSupersededAutomaticCapture()
+            }
+        }
+        beginCapture()
+    }
+
+    private func beginCapture() {
         let generation = self.generation
         phase = .capturing
         startingCapture = true
@@ -80,8 +113,10 @@ final class CaptureModel: ObservableObject {
     }
 
     func select(_ rectangle: CGRect) {
+        guard !discardSupersededAutomaticCapture(), phase != .cancelled, !releasedCapture else { return }
         cancelTranslationIfOwned()
         generation = UUID()
+        automaticAttempt = nil
         appliedRecognition = nil
         preview = nil
         text = ""
@@ -99,7 +134,12 @@ final class CaptureModel: ObservableObject {
                 try screen.prepareRegionSelection()
                 throw RegionCaptureError.invalidSelection
             }
-            recognizeSelection()
+            if automaticallyTranslates && automaticMode == .image {
+                synchronize()
+                submitAutomatically()
+            } else {
+                recognizeSelection()
+            }
         } catch let error as RegionCaptureError {
             failSelection(error)
         } catch {
@@ -108,24 +148,33 @@ final class CaptureModel: ObservableObject {
     }
 
     func recognizeSelection() {
+        guard !discardSupersededAutomaticCapture(), phase != .cancelled, !releasedCapture else { return }
+        // An image-mode capture never depends on Vision, including explicit retry callbacks.
+        if automaticallyTranslates && automaticMode == .image {
+            submitAutomatically()
+            return
+        }
         guard screen.selectedRegion != nil else {
             failSelection(.noSelection)
             return
         }
         selectionError = nil
         generation = UUID()
+        automaticAttempt = nil
         appliedRecognition = nil
         screen.confirmOCR()
         synchronize()
     }
 
     func reselect() {
+        guard !discardSupersededAutomaticCapture(), phase != .cancelled, !releasedCapture else { return }
         guard !screen.frames.isEmpty, phase != .capturing else {
             failure = .notReady
             return
         }
         cancelTranslationIfOwned()
         generation = UUID()
+        automaticAttempt = nil
         appliedRecognition = nil
         text = ""
         preview = nil
@@ -142,6 +191,7 @@ final class CaptureModel: ObservableObject {
     }
 
     func translate(using model: ProbeModel) {
+        guard !discardSupersededAutomaticCapture() else { return }
         guard !model.active, !model.preparing else {
             notice = .translationBusy
             objectWillChange.send()
@@ -158,16 +208,42 @@ final class CaptureModel: ObservableObject {
             return
         }
         let reviewed = text
-        translationModel = model
+        let generation = self.generation
         model.input = reviewed
+        guard generation == self.generation else { return }
+        if automaticallyTranslates && automaticBaseline != model.translationIntentID {
+            cancel()
+            return
+        }
+        guard !model.active, !model.preparing else {
+            notice = .translationBusy
+            objectWillChange.send()
+            return
+        }
+        let previousIntent = model.translationIntentID
+        var intent: UUID?
+        // Remember our intent before synchronous model callbacks can replace it with unrelated work.
+        let observation = model.objectWillChange.sink {
+            if intent == nil, model.translationIntentID != previousIntent {
+                intent = model.translationIntentID
+            }
+        }
         model.translate(origin: "ocr", useCache: false)
-        translationIntent = model.translationIntentID
+        observation.cancel()
+        guard let intent else { return }
+        guard generation == self.generation, model.translationIntentID == intent else {
+            if model.translationIntentID == intent { model.cancel() }
+            return
+        }
+        translationModel = model
+        translationIntent = intent
         submittedText = reviewed
         submitted = true
         submittedImage = false
     }
 
     func translateImage(using model: ProbeModel) {
+        guard !discardSupersededAutomaticCapture() else { return }
         guard !model.active, !model.preparing else {
             notice = .translationBusy
             objectWillChange.send()
@@ -193,6 +269,13 @@ final class CaptureModel: ObservableObject {
     func cancel() {
         cancelTranslationIfOwned()
         generation = UUID()
+        automaticallyTranslates = false
+        automaticModel = nil
+        automaticAttempt = nil
+        automaticBaseline = nil
+        automaticObservation = nil
+        automaticSubmitting = false
+        releasedCapture = false
         appliedRecognition = nil
         screen.cancel()
         frames = []
@@ -204,7 +287,7 @@ final class CaptureModel: ObservableObject {
     }
 
     func cancelCurrentAction() {
-        if submittedImage && submitting {
+        if !automaticallyTranslates && submittedImage && submitting {
             translationModel?.cancel()
         } else {
             cancel()
@@ -225,8 +308,19 @@ final class CaptureModel: ObservableObject {
         synchronize()
     }
 
+    private func discardSupersededAutomaticCapture() -> Bool {
+        guard automaticallyTranslates, !submitted, !automaticSubmitting,
+              let model = automaticModel, let baseline = automaticBaseline,
+              model.translationIntentID != baseline else { return false }
+        // A newer manual/selection/history intent owns the result, even if it already completed.
+        // This capture has not submitted anything, so cancellation only releases local work.
+        cancel()
+        return true
+    }
+
     private func synchronize() {
-        guard phase != .cancelled else { return }
+        guard !discardSupersededAutomaticCapture(), !automaticSubmitting,
+              phase != .cancelled, !releasedCapture else { return }
         if startingCapture && screen.phase == .idle { return }
         frames = screen.frames
         failure = screen.lastError ?? selectionError
@@ -239,13 +333,21 @@ final class CaptureModel: ObservableObject {
             phase = .failed
             return
         }
+        if automaticallyTranslates && automaticAttempt == generation && !submitted {
+            phase = .failed
+            return
+        }
         switch screen.phase {
         case .idle: phase = .idle
         case .capturing: phase = .capturing
         case .selecting: phase = .selecting
         case .preview:
-            phase = .failed
-            failure = screen.lastError ?? .notReady
+            if automaticallyTranslates && automaticMode == .image {
+                phase = .ready
+            } else {
+                phase = .failed
+                failure = screen.lastError ?? .notReady
+            }
         case .recognizing: phase = .recognizing
         case .recognized:
             if appliedRecognition != generation {
@@ -253,13 +355,44 @@ final class CaptureModel: ObservableObject {
                 appliedRecognition = generation
             }
             phase = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .ready
+            if phase == .ready { submitAutomatically() }
         case .failed: phase = .failed
         }
     }
 
+    private func submitAutomatically() {
+        guard !discardSupersededAutomaticCapture(), automaticallyTranslates, !releasedCapture, !submitted,
+              automaticAttempt != generation, let model = automaticModel else { return }
+        guard (automaticMode == .text && screen.phase == .recognized && phase == .ready) ||
+              (automaticMode == .image && screen.phase == .preview && failure == nil) else { return }
+        automaticAttempt = generation
+        let generation = self.generation
+        automaticSubmitting = true
+        defer { automaticSubmitting = false }
+        if automaticMode == .image { translateImage(using: model) }
+        else { translate(using: model) }
+        guard generation == self.generation else { return }
+        guard submitted else {
+            phase = .failed
+            return
+        }
+        // The translation owns its frozen text/image now. Clear only local capture resources,
+        // not the owned translation intent; queued ScreenProbe notifications must not restore it.
+        releasedCapture = true
+        automaticObservation = nil
+        self.generation = UUID()
+        screen.clear()
+        frames = []
+        preview = nil
+    }
+
     func message(using model: ProbeModel) -> String {
         switch notice {
-        case .textRequired: return model.text("Review or enter some text before translating.", "请确认或输入文字后再翻译。")
+        case .textRequired:
+            if automaticallyTranslates {
+                return model.text("No readable text found. Capture another region.", "未识别到文字。请截取其他区域。")
+            }
+            return model.text("Review or enter some text before translating.", "请确认或输入文字后再翻译。")
         case .input:
             if let issue = model.inputIssue(for: text) { return issue.message(using: model) }
         case .translationBusy: return model.text("Finish or cancel the current translation first.", "请先完成或取消当前翻译。")
@@ -292,6 +425,10 @@ final class CaptureModel: ObservableObject {
                 return model.text("The retained region could not be composed. Reselect the region or capture again.",
                                   "无法合成保留的截图区域。请重选区域或重新截图。")
             case .ocrFailed:
+                if automaticallyTranslates {
+                    return model.text("Text recognition failed. Capture again or choose Image in Settings. Nothing was sent.",
+                                      "文字识别失败。请重新截图或在设置中选择图片模式。未发送任何内容。")
+                }
                 return model.text("Local text recognition failed. Retry local OCR, select another region, or type the text.",
                                   "本地文字识别失败。请重试识别、重选区域，或手动输入文字。")
             }
@@ -301,8 +438,18 @@ final class CaptureModel: ObservableObject {
         case .capturing: return model.text("Retaining all display frames locally…", "正在本地保留所有屏幕的画面…")
         case .selecting: return model.text("Select a region by dragging, two clicks, or the keyboard.", "请通过拖动、两次点击或键盘选择区域。")
         case .recognizing: return model.text("Recognizing text from the retained region locally…", "正在本地识别保留区域中的文字…")
-        case .ready: return model.text("Review and edit the recognized text. Nothing has been sent automatically.", "请确认并编辑识别文字。未自动发送任何内容。")
-        case .empty: return model.text("No readable text. Select another region, or type the text below.", "没有可读文字。请重选区域，或在下方输入文字。")
+        case .ready:
+            if automaticallyTranslates {
+                if showsTranslationStatus { return model.productMessage }
+                return model.text("Sending the selected region for translation…", "正在翻译所选区域…")
+            }
+            return model.text("Review and edit the recognized text. Nothing has been sent automatically.", "请确认并编辑识别文字。未自动发送任何内容。")
+        case .empty:
+            if automaticallyTranslates {
+                return model.text("No readable text found. Capture again or choose Image in Settings. Nothing was sent.",
+                                  "未识别到文字。请重新截图或在设置中选择图片模式。未发送任何内容。")
+            }
+            return model.text("No readable text. Select another region, or type the text below.", "没有可读文字。请重选区域，或在下方输入文字。")
         case .failed: return model.text("The local operation failed. Retry explicitly.", "本地操作失败，请手动重试。")
         case .cancelled: return model.text("Capture cancelled. Retained images were released.", "已取消截图，并释放保留的图片。")
         }

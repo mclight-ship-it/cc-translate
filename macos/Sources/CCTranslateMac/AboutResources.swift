@@ -3,7 +3,7 @@ import CryptoKit
 
 enum AboutResourceError: Error, Equatable, Sendable {
     case unavailable, missing, unreadable, linkedResource, invalidLocation
-    case invalidMetadata, unsupportedSchema, invalidEncoding, emptyDocument, tooLarge, checksumMismatch
+    case invalidMetadata, unsupportedSchema, invalidEncoding, invalidImage, emptyDocument, tooLarge, checksumMismatch
 }
 
 struct AboutResourceIssue: Identifiable, Equatable, Sendable {
@@ -56,9 +56,11 @@ struct AboutOverview: Sendable {
 protocol AboutResourceReading: Sendable {
     func overview() -> AboutOverview
     func license(_ document: AboutLicenseDocument) -> Result<String, AboutResourceError>
+    func supportImage(expectedSHA256: String?) -> Result<Data, AboutResourceError>
 }
 
 struct AboutBundleResources: AboutResourceReading {
+    static let supportImagePath = "Resources/support-author.png"
     private let location: @Sendable () -> URL?
     private let textLimit = 16 * 1024 * 1024
 
@@ -159,6 +161,21 @@ struct AboutBundleResources: AboutResourceReading {
             guard let text = String(data: data, encoding: .utf8) else { throw AboutResourceError.invalidEncoding }
             guard !text.isEmpty else { throw AboutResourceError.emptyDocument }
             return .success(text)
+        } catch { return .failure(classify(error)) }
+    }
+
+    func supportImage(expectedSHA256: String?) -> Result<Data, AboutResourceError> {
+        guard let root = location(), root.isFileURL else { return .failure(.unavailable) }
+        do {
+            let data = try read(root, path: "Contents/" + Self.supportImagePath, limit: 2 * 1024 * 1024)
+            if let expectedSHA256 {
+                let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                guard actual == expectedSHA256 else { throw AboutResourceError.checksumMismatch }
+            }
+            guard data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else {
+                throw AboutResourceError.invalidImage
+            }
+            return .success(data)
         } catch { return .failure(classify(error)) }
     }
 

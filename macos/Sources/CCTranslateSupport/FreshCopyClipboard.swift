@@ -1,10 +1,61 @@
 import AppKit
 import ApplicationServices
 import Carbon
-import UniformTypeIdentifiers
 
 @MainActor
 final class SystemFreshCopyClipboard: FreshCopyClipboard {
+    private let pasteboard: () -> NSPasteboard
+    private let readerExecutable: URL?
+
+    init(pasteboard: @escaping () -> NSPasteboard = { .general }, readerExecutable: URL? = nil) {
+        self.pasteboard = pasteboard
+        self.readerExecutable = readerExecutable
+    }
+
+    func revision() -> Int { pasteboard().changeCount }
+
+    func read(revision: Int, timeout: TimeInterval, cancellation: PlainTextPasteCancellation,
+              whileValid: @escaping @MainActor () -> Bool,
+              completion: @escaping @MainActor (SelectionResult) -> Void) {
+        guard !cancellation.isCancelled, whileValid() else {
+            completion(.unknown(.clipboardChanged))
+            return
+        }
+        guard let executable = readerExecutable ?? Bundle.main.executableURL,
+              readerExecutable != nil || executable.lastPathComponent == "CCTranslateMac" else {
+            completion(.unknown(.clipboardUnavailable))
+            return
+        }
+        let board = pasteboard()
+        guard board.changeCount == revision else {
+            completion(.unknown(.clipboardChanged))
+            return
+        }
+        let name = board.name.rawValue
+        Task {
+            let run = ClipboardReadRun(request: UUID(), revision: revision, freshCopy: true, trace: { _ in })
+            let result = await run.read(executable: executable, name: name,
+                                        cancellation: cancellation, timeout: timeout)
+            guard !cancellation.isCancelled, whileValid(), board.changeCount == revision else {
+                completion(.unknown(.clipboardChanged))
+                return
+            }
+            switch result {
+            case .success(let text): completion(.present(text))
+            case .failure(.tooLarge): completion(.unknown(.tooLarge))
+            case .failure(.clipboardChanged): completion(.unknown(.clipboardChanged))
+            case .failure(.noText), .failure(.unsupportedRepresentation):
+                completion(.unknown(.clipboardUnsupported))
+            default: completion(.unknown(.clipboardUnavailable))
+            }
+        }
+    }
+}
+
+// Used only in the isolated worker (and named-board tests). A promised AppKit
+// read can block its physical main thread; it must never run on the UI process.
+@MainActor
+final class FreshCopyPasteboardReader {
     private let pasteboard: () -> NSPasteboard
     private static let excludedMarkers: Set<String> = [
         "org.nspasteboard.concealedtype", "org.nspasteboard.transienttype",
@@ -29,8 +80,7 @@ final class SystemFreshCopyClipboard: FreshCopyClipboard {
         // text. Ignore those payloads instead of rejecting the usable text.
         guard !types.contains(where: {
             Self.excludedMarkers.contains($0.rawValue.lowercased()) ||
-                ClipboardReadWorker.isFileFlavor($0.rawValue) ||
-                UTType($0.rawValue)?.conforms(to: .image) == true
+                ClipboardReadWorker.isFileFlavor($0.rawValue)
         }),
               let representation = PasteboardTextRepresentation.preferred(in: types.map(\.rawValue)) else {
             return .unknown(.clipboardUnsupported)
