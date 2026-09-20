@@ -201,7 +201,8 @@ final class InputLimitInteractionTests: XCTestCase {
             helper.event("failed", id: try XCTUnwrap(helper.configurationSaves.last?.id),
                          payload: ["code": .string("config_io_failed")])
             try await surface.waitFor { f.model.inputLimit.saved == nil }
-            XCTAssertFalse(try surface.button("apply-input-limit", apply).isEnabled)
+            let disabledApply = try await surface.buttonWhenReady("apply-input-limit", apply)
+            XCTAssertFalse(disabledApply.isEnabled)
             try await surface.buttonWhenReady("reload-input-limit",
                                f.model.text("Reload saved input limit", "重新读取已保存输入上限")).press()
             try await surface.waitFor { helper.configurationLoads.count == 2 }

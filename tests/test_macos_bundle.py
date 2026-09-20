@@ -1026,7 +1026,7 @@ class SmokeContractTests(unittest.TestCase):
         self.assertEqual(native_body.count(" | tee "), 4)
         self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 3)
         self.assertIn("cat tools/macos/.build/native-disclosure-check.log | tee -a", native_body)
-        self.assertIn("grep -q 'Executed 8 tests' tools/macos/.build/native-disclosure-check.log", native_body)
+        self.assertIn("grep -q 'Executed 9 tests' tools/macos/.build/native-disclosure-check.log", native_body)
         focused = native_body.split("--filter '", 1)[1].split("'", 1)[0].split("|")
         self.assertEqual(set(focused), {
             "ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl",
@@ -1034,11 +1034,12 @@ class SmokeContractTests(unittest.TestCase):
             "DockApplicationTests.testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded",
             "DockApplicationTests.testAutomaticScreenshotCompletionDoesNotReopenWindowsAfterHide",
             "FeedbackSettingsTests.testScreenshotModePickerChangesTheSavedPreferenceThroughNativeControl",
+            "InputLimitInteractionTests.testNativeInvalidSavedValueCorrectionFailureReloadAndMismatchKeepDraft",
             "ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese",
             "ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste",
             "ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages",
         })
-        self.assertEqual(len(focused), 8)
+        self.assertEqual(len(focused), 9)
         log_upload = workflow[native_log:native_end]
         self.assertIn("        if: always()\n", log_upload)
         self.assertIn("name: cc-translate-native-unit-log-${{ github.sha }}", log_upload)
