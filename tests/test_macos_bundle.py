@@ -975,8 +975,10 @@ class SmokeContractTests(unittest.TestCase):
         native_body = workflow[native:native_log]
         self.assertIn("        shell: bash\n", native_body)
         self.assertIn("          set -euo pipefail\n", native_body)
-        self.assertEqual(native_body.count(" | tee "), 3)
-        self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 2)
+        self.assertEqual(native_body.count(" | tee "), 4)
+        self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 3)
+        self.assertIn("cat tools/macos/.build/native-disclosure-check.log | tee -a", native_body)
+        self.assertIn("grep -q 'Executed 2 tests' tools/macos/.build/native-disclosure-check.log", native_body)
         log_upload = workflow[native_log:native_end]
         self.assertIn("        if: always()\n", log_upload)
         self.assertIn("name: cc-translate-native-unit-log-${{ github.sha }}", log_upload)
