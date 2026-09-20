@@ -97,7 +97,7 @@ extension ProductRenderingTests {
             size: NSSize(width: 760, height: 900))
         defer { surface.close() }
         XCTAssertTrue(compactSettingsFields(surface.host).isEmpty)
-        try NativeSettingsTestControls.pressCaption(
+        try await NativeSettingsTestControls.pressDisclosure(
             in: surface.host, identifier: "custom-model-details", label: "Custom model")
         try await surface.waitFor { self.compactSettingsFields(surface.host).count == 1 }
         let editor = try XCTUnwrap(compactSettingsFields(surface.host).first)

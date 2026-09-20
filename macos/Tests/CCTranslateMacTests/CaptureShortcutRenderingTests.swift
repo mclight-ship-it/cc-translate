@@ -124,23 +124,25 @@ extension ProductRenderingTests {
             let labels = CaptureShortcutSettingsSection(model: f.model, shortcut: f.model.captureShortcut)
             _ = try render(CaptureShortcutSurface(model: f.model), named: name,
                            size: NSSize(width: 760, height: 540), scheme: scheme, inspect: { host in
-                let toggle = try NativeSettingsTestControls.resolve(
-                    in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle,
-                    authoredCaption: true)
-                XCTAssertTrue(toggle.isEnabled)
-                XCTAssertEqual(toggle.state, enabled ? .on : .off)
-                XCTAssertGreaterThan(toggle.visibleRect.height, 0)
-                XCTAssertEqual(toggle.visibleRect.height, toggle.frame.height, accuracy: 1)
-                XCTAssertEqual(toggle.visibleRect.width, toggle.frame.width, accuracy: 1)
-                if conflict {
-                    let retry = try NativeSettingsTestControls.resolve(
-                        in: host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle, kind: .button,
+                XCTAssertNoThrow(try {
+                    let toggle = try NativeSettingsTestControls.resolve(
+                        in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle,
                         authoredCaption: true)
-                    XCTAssertTrue(retry.isEnabled)
-                    XCTAssertGreaterThan(retry.visibleRect.height, 0)
-                    XCTAssertEqual(retry.visibleRect.height, retry.frame.height, accuracy: 1)
-                    XCTAssertEqual(retry.visibleRect.width, retry.frame.width, accuracy: 1)
-                }
+                    XCTAssertTrue(toggle.isEnabled)
+                    XCTAssertEqual(toggle.state, enabled ? .on : .off)
+                    XCTAssertGreaterThan(toggle.visibleRect.height, 0)
+                    XCTAssertEqual(toggle.visibleRect.height, toggle.frame.height, accuracy: 1)
+                    XCTAssertEqual(toggle.visibleRect.width, toggle.frame.width, accuracy: 1)
+                    if conflict {
+                        let retry = try NativeSettingsTestControls.resolve(
+                            in: host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle, kind: .button,
+                            authoredCaption: true)
+                        XCTAssertTrue(retry.isEnabled)
+                        XCTAssertGreaterThan(retry.visibleRect.height, 0)
+                        XCTAssertEqual(retry.visibleRect.height, retry.frame.height, accuracy: 1)
+                        XCTAssertEqual(retry.visibleRect.width, retry.frame.width, accuracy: 1)
+                    }
+                }())
             })
             XCTAssertTrue(f.helpers.isEmpty)
             XCTAssertEqual(f.runtimeRequests, 0)

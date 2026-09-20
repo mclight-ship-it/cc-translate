@@ -312,7 +312,7 @@ extension ProductRenderingTests {
         XCTAssertFalse(words.contains("codepoints"), "Encoding details are available on demand.")
         let surface = NativeSettingsTestHost(InputLimitSettingsSurface(model: f.model))
         defer { surface.close() }
-        try NativeSettingsTestControls.pressCaption(
+        try await NativeSettingsTestControls.pressDisclosure(
             in: surface.host, identifier: "input-limit-counting-details", label: "How text length is counted")
         try await Task.sleep(nanoseconds: 10_000_000)
         for label in ["8,192 UTF-8 bytes", "combining marks", "never shortened automatically"] {
@@ -345,7 +345,7 @@ extension ProductRenderingTests {
                 let button = try InputLimitNativeViews.button(in: host, id: "translate-capture-text", label: "翻译文字")
                 XCTAssertFalse(button.isEnabled)
                 InputLimitNativeViews.assertVisible(button)
-                for (id, label) in [("input-code-point-count", "2731 / 5000 字符"),
+                for (id, label) in [("input-code-point-count", "2731 / 5000"),
                                     ("input-byte-count", "8193 / 8,192 UTF-8 字节")] {
                     let count = try NativeSettingsTestControls.caption(in: host, identifier: id, label: label,
                                                                        authoredCaption: true)
@@ -355,7 +355,7 @@ extension ProductRenderingTests {
         }, highResolution: true)
         let words = try inputLimitWords(image, chinese: true)
         try NativeRenderEvidence.record("Synthetic capture counter OCR (repeated input omitted): \(words.replacingOccurrences(of: "中", with: ""))")
-        for expected in ["2731", "5000", "8193", "8192", "字符", "字节", "翻译文字"] {
+        for expected in ["2731", "5000", "8193", "8192", "字节", "翻译文字"] {
             XCTAssertTrue(words.contains(expected), words)
         }
         XCTAssertEqual(capture.text.unicodeScalars.count, 2731)

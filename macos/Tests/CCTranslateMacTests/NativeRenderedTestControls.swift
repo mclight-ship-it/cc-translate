@@ -56,7 +56,12 @@ enum NativeRenderEvidence {
                 $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
             }
         }
-        return pieces.joined(separator: " ").lowercased()
+        let words = pieces.joined(separator: " ").lowercased()
+        if chinese {
+            // Vision can return traditional variants for simplified UI glyphs; the original PNG stays unchanged.
+            return try XCTUnwrap(words.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false))
+        }
+        return words
     }
 }
 
@@ -184,15 +189,6 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         try NativeRenderEvidence.record("Rendered press \(identifier): state=\(backing.state.rawValue), " +
               "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
         window.makeKeyAndOrderFront(nil)
-        let tracked = try Self.dispatchPointer(frame: frame, in: window, identifier: identifier,
-                                               button: kind == .toggle ? nil : control, file: file, line: line)
-        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
-            "enabled=\(isEnabled), trackingRelease=\(tracked), attached=\(control.window === window)")
-    }
-
-    fileprivate static func dispatchPointer(frame: NSRect, in window: NSWindow, identifier: String,
-                                           button: NSControl? = nil,
-                                           file: StaticString = #filePath, line: UInt = #line) throws -> Bool {
         let point = NSPoint(x: frame.midX, y: frame.midY)
         let number = Self.nextMouseEventNumber
         Self.nextMouseEventNumber += 2
@@ -229,8 +225,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
         // Native buttons own cell tracking; SwiftUI checkboxes also need gesture dispatch.
-        if let button { button.mouseDown(with: press) }
-        else { NSApp.sendEvent(press) }
+        switch kind {
+        case .button, .destructiveButton: control.mouseDown(with: press)
+        case .toggle: NSApp.sendEvent(press)
+        }
         if !releasedDuringTracking {
             timer.invalidate()
             NSApp.postEvent(up, atStart: true)
@@ -241,10 +239,13 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertTrue(Self.samePointerEvent(release, up))
-            if let button { button.mouseUp(with: release) }
-            else { NSApp.sendEvent(release) }
+            switch kind {
+            case .button, .destructiveButton: control.mouseUp(with: release)
+            case .toggle: NSApp.sendEvent(release)
+            }
         }
-        return releasedDuringTracking
+        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
+            "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")
     }
 }
 
@@ -347,43 +348,69 @@ enum NativeSettingsTestControls {
             XCTFail("The native fixture bitmap has no CGImage.")
             throw RenderedLookupError.unavailableBitmap
         }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.minimumTextHeight = 0
         let hasChinese = caption.range(of: "\\p{Han}", options: .regularExpression) != nil
-        request.recognitionLanguages = hasChinese ? ["zh-Hans", "en-US"] : ["en-US"]
-        request.usesLanguageCorrection = authoredCaption
-        try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         var matches: [CaptionMatch] = []
         var fragments: [String] = []
+        var observations = 0
         let words = Set(caption.split(whereSeparator: { $0.isWhitespace }).map(String.init))
-        for observation in request.results ?? [] {
-            // Authored UI labels can use ranked readings, but never expected-text recognition hints.
-            for candidate in observation.topCandidates(authoredCaption ? 3 : 1) {
-                // Diagnostics may include only exact pieces of the requested fixture caption.
-                for word in words where word.count > 1 && normalize(word) != normalize(caption) {
-                    for range in ranges(of: word, in: candidate.string) {
-                        if fragments.count < 8 { fragments.append(String(candidate.string[range])) }
+        func recognize(_ region: CGRect) throws {
+            let tile = try XCTUnwrap(image.cropping(to: region))
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.minimumTextHeight = 0
+            request.recognitionLanguages = hasChinese ? ["zh-Hans", "en-US"] : ["en-US"]
+            request.usesLanguageCorrection = authoredCaption
+            try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(tile)).perform([request])
+            observations += request.results?.count ?? 0
+            for observation in request.results ?? [] {
+                // Authored UI labels can use ranked readings, but never expected-text recognition hints.
+                for candidate in observation.topCandidates(authoredCaption ? 3 : 1) {
+                    // Diagnostics may include only exact pieces of the requested fixture caption.
+                    for word in words where word.count > 1 && normalize(word) != normalize(caption) {
+                        for range in ranges(of: word, in: candidate.string) {
+                            if fragments.count < 8 { fragments.append(String(candidate.string[range])) }
+                        }
                     }
+                    let before = matches.count
+                    for range in ranges(of: caption, in: candidate.string) {
+                        guard let box = try candidate.boundingBox(for: range) else { continue }
+                        let boxInTile = box.boundingBox
+                        guard !boxInTile.isEmpty else { continue }
+                        let normalized = CGRect(
+                            x: (region.minX + boxInTile.minX * region.width) / CGFloat(image.width),
+                            y: (CGFloat(image.height) - region.maxY + boxInTile.minY * region.height) / CGFloat(image.height),
+                            width: boxInTile.width * region.width / CGFloat(image.width),
+                            height: boxInTile.height * region.height / CGFloat(image.height))
+                        // Vision uses the image's lower-left origin; NSHostingView can be flipped.
+                        let rectangle = NSRect(
+                            x: bounds.minX + normalized.minX * bounds.width,
+                            y: root.isFlipped ? bounds.maxY - normalized.maxY * bounds.height :
+                                bounds.minY + normalized.minY * bounds.height,
+                            width: normalized.width * bounds.width, height: normalized.height * bounds.height)
+                        let inWindow = root.convert(rectangle, to: nil)
+                        if !matches.contains(where: {
+                            let overlap = $0.rectangle.intersection(inWindow)
+                            return !overlap.isEmpty && overlap.width * overlap.height >
+                                min($0.rectangle.width * $0.rectangle.height, inWindow.width * inWindow.height) * 0.8
+                        }) {
+                            matches.append(CaptionMatch(rectangle: inWindow, excerpt: String(candidate.string[range])))
+                        }
+                    }
+                    if matches.count > before { break }
                 }
-                let before = matches.count
-                for range in ranges(of: caption, in: candidate.string) {
-                    guard let box = try candidate.boundingBox(for: range) else { continue }
-                    let normalized = box.boundingBox
-                    guard !normalized.isEmpty else { continue }
-                    // Vision uses the image's lower-left origin; NSHostingView can be flipped.
-                    let rectangle = NSRect(
-                        x: bounds.minX + normalized.minX * bounds.width,
-                        y: root.isFlipped ? bounds.maxY - normalized.maxY * bounds.height :
-                            bounds.minY + normalized.minY * bounds.height,
-                        width: normalized.width * bounds.width, height: normalized.height * bounds.height)
-                    matches.append(CaptionMatch(rectangle: root.convert(rectangle, to: nil),
-                                                excerpt: String(candidate.string[range])))
-                }
-                if matches.count > before { break }
             }
         }
-        return Readback(matches: matches, fragments: fragments, observationCount: request.results?.count ?? 0,
+        try recognize(CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height)))
+        if matches.isEmpty && authoredCaption {
+            // Small CJK labels can disappear when Vision downsamples a whole window.
+            for y in stride(from: 0, to: image.height, by: 600) {
+                for x in stride(from: 0, to: image.width, by: 600) {
+                    try recognize(CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(min(1000, image.width - x)),
+                                         height: CGFloat(min(1000, image.height - y))))
+                }
+            }
+        }
+        return Readback(matches: matches, fragments: fragments, observationCount: observations,
                         tolerance: max(bounds.width / CGFloat(image.width), bounds.height / CGFloat(image.height)))
     }
 
@@ -535,12 +562,29 @@ enum NativeSettingsTestControls {
                             in: root, identifier: identifier, label: label, kind: .button)
     }
 
-    static func pressCaption(in root: NSView, identifier: String, label: String) throws {
-        let region = try caption(in: root, identifier: identifier, label: label, authoredCaption: true)
-        let window = try XCTUnwrap(root.window)
-        XCTAssertEqual(region.visibleRect, region.frame)
-        window.makeKeyAndOrderFront(nil)
-        _ = try NativeSettingsTestControl.dispatchPointer(frame: region.frame, in: window, identifier: identifier)
+    static func pressDisclosure(in root: NSView, identifier: String, label: String) async throws {
+        try await Task.sleep(nanoseconds: 10_000_000)
+        try prepare(root)
+        var visited = Set<ObjectIdentifier>()
+        var matches: [any NSAccessibility] = []
+        var roles: [String] = []
+        func visit(_ element: any NSAccessibility) {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { return }
+            let role = element.accessibilityRole()
+            roles.append(role?.rawValue ?? "nil")
+            if role == .disclosureTriangle &&
+                (element.accessibilityIdentifier() == identifier ||
+                 element.accessibilityLabel() == label || element.accessibilityTitle() == label) {
+                matches.append(element)
+            }
+            for child in element.accessibilityChildren() ?? [] {
+                if let child = child as? any NSAccessibility { visit(child) }
+            }
+        }
+        visit(root)
+        XCTAssertEqual(matches.count, 1, "Expected one native disclosure \(identifier); roles=\(roles)")
+        let disclosure = try XCTUnwrap(matches.count == 1 ? matches.first : nil)
+        XCTAssertTrue(disclosure.accessibilityPerformPress(), "The real disclosure action must toggle its binding.")
     }
 
     static func caption(in root: NSView, identifier: String, label: String,

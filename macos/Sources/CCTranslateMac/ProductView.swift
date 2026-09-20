@@ -858,6 +858,7 @@ struct InputLimitSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityIdentifier("input-limit-counting-details")
             if !message.isEmpty {
                 Text(message).font(.callout).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
