@@ -15,8 +15,8 @@ struct DictionarySettingsSection: View {
                 Spacer()
                 Text(stateLabel).font(.callout).foregroundStyle(.secondary)
             }
-            Text(model.text("Installed, enabled dictionary entries appear before any CLI requirement, with full senses, pronunciation, and source attribution. Local hits never request AI automatically. Retranslate and result actions use your selected service only when you choose them.",
-                            "已安装并启用的词典会先于 CLI 查询，显示完整释义、发音和来源标注。本地命中后不会自动请求 AI；只有主动选择重译或结果操作时才会使用所选服务。"))
+            Text(model.text("Look up words instantly on this Mac, without an AI request.",
+                            "在本机快速查词，无需请求 AI。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let status = dictionary.status {
@@ -25,14 +25,12 @@ struct DictionarySettingsSection: View {
                         get: { status.enabled }, set: { model.setDictionaryEnabled($0) }
                     ))
                     .disabled(!model.settingsReady || model.settingsBusy || dictionary.busy || dictionary.phase == .unknown)
-                    Text(model.text("\(status.entryCount.formatted()) entries · Data \(status.dataVersion)",
-                                    "\(status.entryCount.formatted()) 条词条 · 数据版本 \(status.dataVersion)"))
+                }
+                if status.state != .ready {
+                    Text(model.text("Download: \(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file))",
+                                    "下载大小：\(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file))"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text(model.text("Download size: \(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file)). The bundled core verifies the pinned SHA-256, version, and schema before enabling it.",
-                                "下载大小：\(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file))。内置核心会校验固定的 SHA-256、版本和格式，验证成功后才会启用。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             if dictionary.phase == .downloading {
                 ProgressView(value: Double(dictionary.received), total: Double(max(1, dictionary.expected)))
@@ -53,16 +51,19 @@ struct DictionarySettingsSection: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
-            Text(model.text("Disabling keeps the file. Delete removes only the installed dictionary, not translation history. Downloads start only when you choose Download; no account is needed.",
-                            "禁用会保留文件。删除仅移除已安装的词典，不会删除翻译历史记录。只有点击“下载”才会联网，无需账号。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button(model.text("Sources & notices…", "来源与声明…")) {
-                    openBundled("THIRD_PARTY_NOTICES")
+            DisclosureGroup(model.text("Dictionary information", "词库信息")) {
+                if let status = dictionary.status, status.state == .ready {
+                    Text(model.text("\(status.entryCount.formatted()) entries · Data \(status.dataVersion)",
+                                    "\(status.entryCount.formatted()) 条词条 · 数据版本 \(status.dataVersion)"))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Button(model.text("Dictionary licenses…", "词典许可证…")) {
-                    openBundled("dictionary")
+                HStack {
+                    Button(model.text("Sources & notices…", "来源与声明…")) {
+                        openBundled("THIRD_PARTY_NOTICES")
+                    }
+                    Button(model.text("Dictionary licenses…", "词典许可证…")) {
+                        openBundled("dictionary")
+                    }
                 }
             }
         } header: {

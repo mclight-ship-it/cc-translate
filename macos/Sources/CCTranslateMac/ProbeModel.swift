@@ -1545,12 +1545,11 @@ final class ProbeModel: ObservableObject {
             return summaryEnabled == nil
                 ? text("The saved summary preference is not loaded yet.", "尚未读取已保存的摘要偏好。") : ""
         case .saving:
-            return text("Saving summary preference… The switch shows the last confirmed value.",
-                        "正在保存摘要偏好… 开关显示上次确认的值。")
+            return text("Saving summary setting…", "正在保存摘要设置…")
         case .readingBack:
-            return text("Reading back the saved summary preference…", "正在回读已保存的摘要偏好…")
+            return text("Confirming summary setting…", "正在确认摘要设置…")
         case .saved:
-            return text("Summary preference saved and read back.", "摘要偏好已保存并回读确认。")
+            return text("Summary setting saved.", "摘要设置已保存。")
         case .differentReadback:
             return text("The saved value differs from your choice. The switch shows the value read back; no write was retried.",
                         "已保存的值与你的选择不同。开关显示回读值，未重试写入。")

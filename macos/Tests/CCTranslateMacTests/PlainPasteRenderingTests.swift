@@ -33,8 +33,8 @@ extension ProductRenderingTests {
         try NativeRenderEvidence.record("Synthetic paste settings OCR: \(chinese)")
         XCTAssertTrue(chinese.contains("没有原生编辑器可处理"), chinese)
         XCTAssertTrue(chinese.contains("未请求外部粘贴"), chinese)
-        XCTAssertTrue(chinese.contains("文件与文字混合"), chinese)
-        XCTAssertTrue(chinese.contains("不读取图片数据"), chinese)
+        XCTAssertTrue(chinese.contains("文件和仅含图片的内容保持不变"), chinese)
+        XCTAssertTrue(chinese.contains("辅助功能权限"), chinese)
         XCTAssertEqual(fixture.routing.nativePastes, 2)
         XCTAssertTrue(fixture.service.requests.isEmpty)
         assertPasteRenderHasNoExternalEffects(fixture)
@@ -57,13 +57,13 @@ extension ProductRenderingTests {
                     scheme: scheme)
                 images.append(png)
                 let words = try pasteSettingsWords(png)
-                XCTAssertTrue(words.contains("appearance"), "Render the whole settings form, not an isolated paste control.")
-                XCTAssertTrue(words.contains("custom model id"))
+                XCTAssertTrue(words.contains("appearance"), "Keep the complete settings navigation, not an isolated paste control.")
+                XCTAssertFalse(words.contains("custom model id"), "Model controls belong to Translation, not Shortcuts.")
                 XCTAssertTrue(words.contains("plain-text paste"))
-                XCTAssertTrue(words.contains("files mixed with text"))
-                XCTAssertTrue(words.contains("no image data is read"), words)
+                XCTAssertTrue(words.contains("files and image-only content"))
+                XCTAssertTrue(words.contains("left unchanged"), words)
                 XCTAssertTrue(words.contains(enabled ? "shortcut reserved" : "shortcut not registered"), words)
-                XCTAssertTrue(words.contains("about"), "The complete form must fit the tall review snapshot.")
+                XCTAssertTrue(words.contains("more"), "Advanced settings remain reachable in the native category picker.")
             }
         }
         XCTAssertNotEqual(images[0], images[1])
@@ -170,6 +170,7 @@ extension ProductRenderingTests {
         let helper = try fixture.ready(true)
         fixture.model.editCustomModelID("fixture/Native-editor")
         _ = try renderPasteSettings(fixture, name: "plain-paste-settings-ime-light", scheme: .light,
+                                    pane: .translation,
                                     inspect: { host in
             guard let field = self.pasteTextFields(host).first(where: { $0.isEditable }),
                   let window = host.window else {
@@ -203,6 +204,7 @@ extension ProductRenderingTests {
     @MainActor
     private func renderPasteSettings(_ fixture: PasteAppFixture, name: String, scheme: ColorScheme,
                                      chinese: Bool = false, highResolution: Bool = false,
+                                     pane: SettingsPane = .shortcuts,
                                      inspect: ((NSView) -> Void)? = nil) throws -> Data {
         fixture.model.loadPresentation()
         fixture.model.interfaceLanguage = chinese ? "zh" : "en"
@@ -210,11 +212,10 @@ extension ProductRenderingTests {
         let diagnostics = ProbeModel(persistsPreferences: false,
                                      plainPaste: PlainPasteModel(service: PasteTestService(), registrar: PasteTestRegistrar()))
         let application = AppDelegate(model: fixture.model, capture: CaptureModel(), diagnostics: diagnostics)
-        let settings = application.settingsContent()
+        let settings = application.settingsContent(pane: pane)
         XCTAssertTrue(settings.model === fixture.model)
-        // Tall native windows expose the complete production Form, including its lower sections.
-        // Neither this window nor the application's menu/window actions are ordered or activated.
-        return try render(settings, named: name, size: NSSize(width: 820, height: 3400),
+        // Show the complete chosen category without expanding unrelated advanced settings.
+        return try render(settings, named: name, size: NSSize(width: 820, height: 1800),
                           scheme: scheme, inspect: inspect, highResolution: highResolution)
     }
 

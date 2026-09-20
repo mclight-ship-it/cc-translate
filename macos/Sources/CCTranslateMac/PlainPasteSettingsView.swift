@@ -13,8 +13,8 @@ struct PlainPasteSettingsSection: View {
                 .disabled(paste.isShutDown)
                 .accessibilityIdentifier("plain-paste-enabled")
             Text(model.text(
-                "Reserves Option–Shift–Command–V exclusively while enabled. In other apps, waits for key release, removes clipboard formatting and sends one paste action. In CC Translate, uses the native Paste and Match Style command without the external paste service or Accessibility permission. It does not translate or use a model.",
-                "开启后独占 Option–Shift–Command–V。在其他应用中，等待松开按键后移除剪贴板格式并发送一次粘贴操作。在 CC Translate 内使用原生“粘贴并匹配样式”，不调用外部粘贴服务，也不需要辅助功能权限。不翻译，也不使用模型。"))
+                "In other apps, paste text without formatting using ⌥⇧⌘V. This also removes formatting from the clipboard.",
+                "在其他应用中按 ⌥⇧⌘V 粘贴纯文本，也会清除剪贴板中的文字格式。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             preferenceStatus.font(.callout)
             registrationStatus.font(.callout)
@@ -70,8 +70,8 @@ struct PlainPasteSettingsSection: View {
                 VStack(alignment: .leading, spacing: 8) { recoveryButtons }
             }
             Text(model.text(
-                "For external apps, file items, including promised files or files mixed with text, are left untouched. Otherwise, plain text or supported RTF is used even when an alternative image format is available; no image data is read. Image-only, HTML-only and RTFD-only content is not converted. Permissions are checked only on an external paste request; enabling does not prompt. Disabling stops external actions immediately, even while saving. CC Translate keeps its native editing command when this feature is off.",
-                "外部粘贴不会改动包含文件的内容，包括延迟提供的文件或文件与文字混合的内容。其他情况下，即使附带备用图片格式，仍使用可用的纯文本或受支持的 RTF，不读取图片数据。不转换仅图片、HTML 或 RTFD 的内容。只有实际请求外部粘贴时才检查权限，开启不会弹出授权请求。关闭会立即停止外部操作，即使偏好仍在保存中。关闭此功能后，CC Translate 内仍保留原生编辑命令。"))
+                "Files and image-only content are left unchanged. macOS may ask for Accessibility permission when you paste.",
+                "文件和仅含图片的内容保持不变。粘贴时可能需要允许辅助功能权限。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } header: {
             Text(model.text("Plain-text paste", "纯文本粘贴"))
@@ -108,10 +108,7 @@ struct PlainPasteSettingsSection: View {
         case .reading:
             ProgressView(model.text("Confirming saved paste preference…", "正在确认已保存的粘贴偏好…")).controlSize(.small)
         case .confirmed:
-            Text(paste.preference.stored == true
-                 ? model.text("Saved preference: enabled.", "已保存偏好：开启。")
-                 : model.text("Saved preference: disabled.", "已保存偏好：关闭。"))
-                .foregroundStyle(.secondary)
+            EmptyView()
         case .failed(let failure):
             Label(preferenceFailure(failure), systemImage: "exclamationmark.triangle")
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)

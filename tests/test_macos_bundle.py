@@ -10,6 +10,8 @@ import plistlib
 import queue
 import shutil
 import stat
+import struct
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -109,6 +111,80 @@ class ApplicationVersionTests(unittest.TestCase):
         workflow = (bundle.ROOT / ".github/workflows/macos-p0.yml").read_text(encoding="utf-8")
         self.assertIn("bundle.py build --development --build-number '${{ github.run_number }}'", workflow)
         self.assertNotIn("--build-number '${{ github.run_attempt }}'", workflow)
+
+
+class ApplicationIconTests(ProjectDirectory):
+    @staticmethod
+    def icon_bytes():
+        png = bundle.ICON_SOURCE.read_bytes()
+        chunk = struct.pack(">4sI", b"ic08", len(png) + 8) + png
+        return struct.pack(">4sI", b"icns", len(chunk) + 8) + chunk
+
+    def test_template_keeps_worker_hidden_and_names_real_logo(self):
+        info = plistlib.loads((bundle.ROOT / "macos/Resources/Info.plist").read_bytes())
+        self.assertIs(info["LSUIElement"], True)
+        self.assertEqual(info["CFBundleIconFile"], bundle.ICON_NAME)
+        logo = bundle.ICON_SOURCE.read_bytes()
+        self.assertEqual(logo[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(struct.unpack(">II", logo[16:24]), (256, 256))
+        source = (bundle.ROOT / "macos/Sources/CCTranslateMac/Application.swift").read_text(encoding="utf-8")
+        self.assertLess(source.index("ClipboardReadWorker.runIfRequested()"),
+                        source.index("configureNormalApplication(application)"))
+        self.assertIn("application.setActivationPolicy(.regular)", source)
+        normal_setup = source.split("static func configureNormalApplication", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("openProduct", normal_setup)
+        self.assertNotIn("activate(", normal_setup)
+        workflow = (bundle.ROOT / ".github/workflows/macos-p0.yml").read_text(encoding="utf-8")
+        self.assertIn("CC_TRANSLATE_DOCK_TEST_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app",
+                      workflow)
+
+    def test_native_iconset_uses_existing_logo_all_sizes_and_cleans_staging(self):
+        contents = self.root / "App.app/Contents"
+        environment = {"synthetic": "environment"}
+        rendered = []
+
+        def native_tool(args, env):
+            self.assertEqual(env, environment)
+            if Path(args[0]).name == "sips":
+                self.assertEqual(args[1], "--resampleHeightWidth")
+                self.assertEqual(args[2], args[3])
+                self.assertEqual(args[4], bundle.ICON_SOURCE)
+                destination = Path(args[-1])
+                destination.write_bytes(bundle.ICON_SOURCE.read_bytes())
+                rendered.append((destination.name, args[2]))
+            else:
+                self.assertEqual(Path(args[0]).name, "iconutil")
+                self.assertEqual(len(list(Path(args[-1]).glob("*.png"))), 10)
+                Path(args[-2]).write_bytes(self.icon_bytes())
+            return ""
+
+        with patch.object(bundle, "BUILD", self.root), patch.object(bundle, "run", side_effect=native_tool):
+            bundle.build_icon(contents, environment)
+        self.assertEqual(rendered, [(f"icon_{points}x{points}" + ("@2x" if scale == 2 else "") + ".png",
+                                    points * scale) for points in (16, 32, 128, 256, 512) for scale in (1, 2)])
+        self.assertEqual((contents / "Resources" / bundle.ICON_NAME).read_bytes(), self.icon_bytes())
+        self.assertFalse((self.root / "CCTranslate.iconset").exists())
+
+    def test_native_tool_failure_is_not_silenced_and_staging_is_cleaned(self):
+        error = subprocess.CalledProcessError(1, "sips")
+        with patch.object(bundle, "BUILD", self.root), patch.object(bundle, "run", side_effect=error):
+            with self.assertRaises(subprocess.CalledProcessError):
+                bundle.build_icon(self.root / "App.app/Contents", {})
+        self.assertFalse((self.root / "CCTranslate.iconset").exists())
+
+    def test_missing_or_invalid_generated_icon_fails_build(self):
+        for invalid in (None, b"not an icon", b"icns\x00\x00\x00\x11" + b"x" * 30):
+            contents = self.root / "App.app/Contents"
+
+            def invalid_tool(args, env):
+                if Path(args[0]).name == "iconutil" and invalid is not None:
+                    Path(args[-2]).write_bytes(invalid)
+                return ""
+
+            with self.subTest(invalid=invalid), patch.object(bundle, "BUILD", self.root), patch.object(
+                    bundle, "run", side_effect=invalid_tool), self.assertRaises(bundle.BundleError):
+                bundle.build_icon(contents, {})
+            self.assertFalse((self.root / "CCTranslate.iconset").exists())
 
 
 class ArchiveRulesTests(ProjectDirectory):
@@ -414,6 +490,7 @@ class MachORulesTests(ProjectDirectory):
         lock = bundle.load_lock()
         info = {"CFBundleIdentifier": lock["bundle_identifier"],
                 "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
+                "CFBundleIconFile": bundle.ICON_NAME,
                 "LSUIElement": True, "LSMinimumSystemVersion": "14.0",
                 "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "42"}
         binaries = ["MacOS/CCTranslateMac", "Resources/python/bin/python3",
@@ -421,7 +498,7 @@ class MachORulesTests(ProjectDirectory):
                     "Resources/python/lib/libCCProcessSupport.dylib"]
         binaries += ["Frameworks/Sparkle.framework/" + path
                      for path in (*bundle.SPARKLE_HELPERS, "Versions/B/Sparkle")]
-        resources = ["Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
+        resources = ["Resources/" + bundle.ICON_NAME, "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
                      "Resources/Core/cc_macos/dictionary_probe.py",
                      "Resources/Core/cc_macos/dictionary.py",
                      "Resources/Core/cc_macos/config_fixture.py",
@@ -449,6 +526,7 @@ class MachORulesTests(ProjectDirectory):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"\xcf\xfa\xed\xfeSYNTHETIC" if name in binaries else b"synthetic fixture")
             path.chmod(0o755 if name in binaries else 0o644)
+        (contents / "Resources" / bundle.ICON_NAME).write_bytes(ApplicationIconTests.icon_bytes())
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         bundle.write_json(contents / "Resources/source-manifest.json", {
             "lock": lock, "certificate_sha256": bundle.digest(contents / "Resources/Core/cacert.pem"),
@@ -499,6 +577,19 @@ class MachORulesTests(ProjectDirectory):
         path.write_bytes(plistlib.dumps(info))
         with patch.object(bundle, "run") as tools, self.assertRaisesRegex(
                 bundle.BundleError, "application version/identity"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        tools.assert_not_called()
+
+    def test_audit_requires_icon_resource_and_checks_its_manifest_hash(self):
+        app = self.synthetic_app()
+        icon = app / "Contents/Resources" / bundle.ICON_NAME
+        original = icon.read_bytes()
+        icon.unlink()
+        with patch.object(bundle, "run") as tools, self.assertRaisesRegex(bundle.BundleError, "missing bundle"):
+            bundle.audit_bundle(app, bundle.load_lock())
+        tools.assert_not_called()
+        icon.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+        with patch.object(bundle, "run") as tools, self.assertRaisesRegex(bundle.BundleError, "source/license content changed"):
             bundle.audit_bundle(app, bundle.load_lock())
         tools.assert_not_called()
 
@@ -714,10 +805,12 @@ Load command 2
             (bundle.ROOT / "macos/Resources/Info.plist").read_bytes()), lock)
         valid = {"CFBundleIdentifier": "dev.cc-translate.macos.probe",
                  "CFBundleExecutable": "CCTranslateMac", "CFBundlePackageType": "APPL",
+                 "CFBundleIconFile": bundle.ICON_NAME,
                  "LSUIElement": True, "LSMinimumSystemVersion": "14.0",
                  "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "42"}
         bundle.validate_plist(plistlib.loads(plistlib.dumps(valid)), lock)
         for key, value in (("CFBundleIdentifier", "production"), ("LSUIElement", 1),
+                           ("CFBundleIconFile", None), ("CFBundleIconFile", "../placeholder.icns"),
                            ("CFBundleExecutable", "python"), ("LSMinimumSystemVersion", "15.0")):
             with self.subTest(key=key), self.assertRaises(bundle.BundleError):
                 bundle.validate_plist({**valid, key: value}, lock)

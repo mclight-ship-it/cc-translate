@@ -145,10 +145,6 @@ struct LoginItemSettingsView: View {
             .disabled(loginItems.busy)
             .accessibilityIdentifier("remove-pending-login-item")
         }
-        Text(model.text("macOS manages this setting. It starts CC Translate in the menu bar, not a translation or CLI request. Restoring translation defaults does not change this system setting.",
-                        "此设置由 macOS 管理。登录时只启动菜单栏中的 CC Translate，不发起翻译或 CLI 请求。恢复翻译默认设置不会改变此系统设置。"))
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var statusMessage: String {

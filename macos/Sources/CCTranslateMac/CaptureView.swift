@@ -21,8 +21,8 @@ struct CaptureView: View {
                 Spacer()
                 Button(model.text("Close", "关闭"), action: close)
             }
-            Text(model.text("Capture and OCR are local. Translate text sends reviewed text. Send image sends only this region using the selected \(model.translationProvider.displayName) model and account.",
-                            "截图和识别在本地进行。“翻译文字”发送确认后的文字。“发送图片翻译”仅通过所选 \(model.translationProvider.displayName) 模型和账号发送此区域。"))
+            Text(model.text("Text recognition stays on this Mac. Choose whether to send the text or this image to \(model.translationProvider.displayName).",
+                            "文字识别在本机完成。你可以选择向 \(model.translationProvider.displayName) 发送文字或这张图片。"))
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
@@ -79,8 +79,9 @@ struct CaptureView: View {
             }
             HStack {
                 Button(model.text("Capture again", "重新截图"), action: captureAgain)
-                Button(model.text("Reselect retained frame", "在保留帧上重选"), action: reselect)
+                Button(model.text("Reselect region", "重选区域"), action: reselect)
                     .disabled(capture.frames.isEmpty || capture.phase == .capturing)
+                    .help(model.text("Choose another region from the same capture.", "在同一次截图中选择其他区域。"))
                 if (capture.failure == .ocrFailed || capture.failure == .notReady) && capture.preview != nil {
                     Button(model.text("Retry local OCR", "重试本地识别")) { capture.recognizeSelection() }
                 }
@@ -92,8 +93,8 @@ struct CaptureView: View {
                 ModelPicker(model: model, selection: $model.modelProfile)
             }
             .disabled(model.active || model.preparing)
-            Text(model.text("Image translation creates a private temporary PNG of this region. It is removed after the request finishes or drains. History may keep the translated text, not the image.",
-                            "图片翻译会为此区域创建私有临时 PNG，并在请求结束或排空后删除。历史记录可能保留翻译文字，但不会保留图片。"))
+            Text(model.text("History saves translated text, not screenshots. Temporary images are removed after use.",
+                            "历史记录只保存译文，不保存截图；临时图片会在使用后删除。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Button {
@@ -138,10 +139,7 @@ struct CaptureView: View {
                 .background(Color(nsColor: .textBackgroundColor))
                 .accessibilityLabel(model.text("Selected screenshot region. Only this image is sent by Send image for translation.",
                                               "所选截图区域。“发送图片翻译”仅发送此图片。"))
-            Text(model.text("Multiple displays are sampled sequentially, not at exactly the same instant.",
-                            "多个屏幕逐一采样，并非严格同时曝光。"))
-                .font(.caption2).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .help(model.text("Multiple displays are captured one after another.", "多个屏幕会依次截图。"))
         }
     }
 

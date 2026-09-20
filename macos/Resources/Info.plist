@@ -10,6 +10,8 @@
     <string>CC Translate</string>
     <key>CFBundleDisplayName</key>
     <string>CC Translate</string>
+    <key>CFBundleIconFile</key>
+    <string>CCTranslate.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

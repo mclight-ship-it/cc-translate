@@ -84,6 +84,7 @@ jobs:
         shell: bash
         env:
           CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/ui-screenshots
+          CC_TRANSLATE_DOCK_TEST_APP: ${{ github.workspace }}/tools/macos/.build/CCTranslateMac-P0.app
         run: |
           set -euo pipefail
           mkdir -p tools/macos/.build

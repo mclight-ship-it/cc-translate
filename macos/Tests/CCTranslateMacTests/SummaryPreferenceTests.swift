@@ -189,7 +189,7 @@ final class SummaryPreferenceTests: XCTestCase {
         try f.finishConfiguration(on: helper)
         XCTAssertEqual(f.model.summaryEnabled, true)
         XCTAssertEqual(f.model.summaryPreferencePhase, .differentReadback)
-        XCTAssertFalse(f.model.summaryPreferenceMessage.contains("saved and read back"))
+        XCTAssertFalse(f.model.summaryPreferenceMessage.contains("Summary setting saved."))
         XCTAssertEqual(helper.configurationSaves.count, 1)
         let invalidValues: [JSONValue?] = [nil, .string("false"), .integer(0), .null]
         for value in invalidValues {

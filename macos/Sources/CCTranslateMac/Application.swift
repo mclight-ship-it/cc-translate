@@ -9,14 +9,22 @@ enum CCTranslateApplication {
     static func main() {
         if let status = ClipboardReadWorker.runIfRequested() { exit(status) }
         let application = NSApplication.shared
-        application.setActivationPolicy(.accessory)
+        configureNormalApplication(application)
         let delegate = AppDelegate()
         application.delegate = delegate
         withExtendedLifetime(delegate) { application.run() }
     }
+
+    @MainActor
+    static func configureNormalApplication(_ application: NSApplication) {
+        // LSUIElement keeps the clipboard subprocess out of the Dock before main runs.
+        // Only the normal application is promoted; promotion does not open a workspace.
+        application.setActivationPolicy(.regular)
+    }
 }
 
 private class ProductPanel: NSPanel {
+    override var canBecomeMain: Bool { true }
     override func cancelOperation(_ sender: Any?) { performClose(sender) }
 }
 
@@ -28,11 +36,11 @@ private final class ResultPanel: ProductPanel {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem?
-    private var inputPanel: NSPanel?
+    private(set) var inputPanel: NSPanel?
     private(set) var resultPanel: NSPanel?
     private var historyPanel: NSPanel?
     private(set) var settingsPanel: NSPanel?
-    private var capturePanel: NSPanel?
+    private(set) var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
     private(set) var aboutPanel: NSPanel?
     private(set) var updatesPanel: NSPanel?
@@ -63,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var terminationResolved = false
     private var resultScreenObserver: NSObjectProtocol?
     private var fittingResultPanel = false
+    private var openProductWindows: [NSPanel] = []
+    private weak var lastFocusedProductWindow: NSWindow?
 
     deinit {
         if let resultScreenObserver { NotificationCenter.default.removeObserver(resultScreenObserver) }
@@ -179,6 +189,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         add(model.text("Settings…", "设置…"), action: #selector(openSettings), key: ",", to: application)
         application.addItem(.separator())
         add(model.text("Uninstall CC Translate…", "卸载 CC Translate…"), action: #selector(openUninstall), to: application)
+        application.addItem(.separator())
+        let hide = NSMenuItem(title: model.text("Hide CC Translate", "隐藏 CC Translate"),
+                              action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        hide.target = NSApp
+        application.addItem(hide)
+        let hideOthers = NSMenuItem(title: model.text("Hide Others", "隐藏其他"),
+                                    action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        hideOthers.target = NSApp
+        application.addItem(hideOthers)
+        let showAll = NSMenuItem(title: model.text("Show All", "全部显示"),
+                                 action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        showAll.target = NSApp
+        application.addItem(showAll)
+        application.addItem(.separator())
         add(model.text("Quit CC Translate", "退出 CC Translate"), action: #selector(quit), key: "q", to: application)
         let appItem = NSMenuItem()
         appItem.submenu = application
@@ -197,7 +222,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let editItem = NSMenuItem(title: edit.title, action: nil, keyEquivalent: "")
         editItem.submenu = edit
         main.addItem(editItem)
+        let window = NSMenu(title: model.text("Window", "窗口"))
+        window.addItem(NSMenuItem(title: model.text("Minimize", "最小化"),
+                                  action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        window.addItem(NSMenuItem(title: model.text("Zoom", "缩放"),
+                                  action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        window.addItem(.separator())
+        let bringAll = NSMenuItem(title: model.text("Bring All to Front", "前置全部窗口"),
+                                  action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        bringAll.target = NSApp
+        window.addItem(bringAll)
+        let windowItem = NSMenuItem(title: window.title, action: nil, keyEquivalent: "")
+        windowItem.submenu = window
+        main.addItem(windowItem)
         NSApp.mainMenu = main
+        NSApp.windowsMenu = window
     }
 
     func makeEditMenu() -> NSMenu {
@@ -236,15 +275,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func openInput() {
+        guard canReopenProductWindow else { return }
         if inputPanel == nil {
             let panel = ProductPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 940, height: 660),
-                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
+                styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false
             )
             panel.title = "CC Translate"
             panel.contentMinSize = NSSize(width: 660, height: 540)
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
+            panel.isExcludedFromWindowsMenu = false
             panel.delegate = self
             panel.contentView = NSHostingView(rootView: TranslatorView(model: model,
                 showHistory: { [weak self] in self?.openHistory() },
@@ -254,9 +295,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             inputPanel = panel
         }
         model.openProduct()
-        applyAppearance()
-        NSApp.activate(ignoringOtherApps: true)
-        inputPanel?.makeKeyAndOrderFront(nil)
+        activate(inputPanel)
+    }
+
+    private var canReopenProductWindow: Bool {
+        !terminating && !uninstallPreparing && pendingUninstall == nil &&
+            selectionOverlay == nil && capture.phase != .selecting && NSApp.modalWindow == nil
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard canReopenProductWindow else { return false }
+        let focused = openProductWindows.first { $0 === lastFocusedProductWindow }
+        if let panel = focused ?? openProductWindows.last {
+            // Restoring an existing editor must not reconnect, resubmit, or reset its draft.
+            activate(panel)
+        } else {
+            openInput()
+        }
+        return false
     }
 
     @objc private func translateSelection() {
@@ -354,7 +412,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         case .capturing, .recognizing, .ready, .empty, .failed:
             selectionOverlay?.dismiss()
             selectionOverlay = nil
-            let shouldActivate = capturePanel?.isVisible != true || capturePanel?.isKeyWindow == true
+            let shouldActivate = capturePanel == nil ||
+                (capturePanel?.isKeyWindow == true && NSApp.isActive && !NSApp.isHidden)
             ensureCapturePanel()
             if shouldActivate { activate(capturePanel) }
             else { applyAppearance() }
@@ -380,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func discardCapturePanel() {
         let panel = capturePanel
         capturePanel = nil
+        openProductWindows.removeAll { $0 === panel }
         panel?.delegate = nil
         panel?.contentView = nil
         panel?.orderOut(nil)
@@ -422,10 +482,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if settingsPanel?.isVisible == true { loginItems.refresh() }
     }
 
-    func settingsContent() -> TranslationSettingsView {
+    func applicationWillHide(_ notification: Notification) {
+        guard selectionOverlay != nil || capture.phase == .selecting else { return }
+        // Hide must not leave an invisible modal selection blocking the next Dock click.
+        selectionOverlay?.dismiss()
+        selectionOverlay = nil
+        captureReturnWindow = nil
+        captureReturnResponder = nil
+        captureReturnApplication = nil
+        capture.cancel()
+        discardCapturePanel()
+    }
+
+    func settingsContent(pane: SettingsPane = .translation) -> TranslationSettingsView {
         TranslationSettingsView(model: model,
             showDiagnostics: { [weak self] in self?.openDiagnostics() },
-            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates)
+            showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates, pane: pane)
     }
 
     @objc private func checkForUpdates() {
@@ -458,11 +530,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func makePanel<Content: View>(title: String, width: CGFloat, height: CGFloat,
                                           minimum: NSSize, root: Content) -> NSPanel {
         let panel = ProductPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                            styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         panel.contentMinSize = minimum
         panel.title = title
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        panel.isExcludedFromWindowsMenu = false
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: root)
         panel.center()
@@ -470,10 +543,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func activate(_ panel: NSPanel?) {
-        guard !terminating else { return }
+        guard !terminating, !uninstallPreparing, pendingUninstall == nil, let panel else { return }
+        rememberOpenWindow(panel)
         applyAppearance()
+        if NSApp.isHidden { NSApp.unhide(nil) }
         NSApp.activate(ignoringOtherApps: true)
-        panel?.makeKeyAndOrderFront(nil)
+        if panel.isMiniaturized { panel.deminiaturize(nil) }
+        panel.makeKeyAndOrderFront(nil)
+        lastFocusedProductWindow = panel
+    }
+
+    private func rememberOpenWindow(_ panel: NSPanel) {
+        if !openProductWindows.contains(where: { $0 === panel }) { openProductWindows.append(panel) }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              openProductWindows.contains(where: { $0 === window }) else { return }
+        lastFocusedProductWindow = window
     }
 
     @objc private func recallResult() {
@@ -594,6 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func showResult(reposition: Bool = false) {
         guard !terminating else { return }
+        let opening = resultPanel == nil || reposition
         if resultPanel == nil {
             let panel = ResultPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 590, height: 400),
@@ -604,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             panel.contentMinSize = NSSize(width: 420, height: 300)
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
+            panel.isExcludedFromWindowsMenu = false
             panel.isFloatingPanel = true
             panel.becomesKeyOnlyIfNeeded = true
             panel.level = .floating
@@ -622,10 +711,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 }
             }
         }
-        fitResultPanel(reposition: reposition || resultPanel?.isVisible == false,
+        fitResultPanel(reposition: opening,
                        screens: NSScreen.screens.map(\.visibleFrame))
         applyAppearance()
-        resultPanel?.orderFrontRegardless()
+        if opening, let resultPanel {
+            rememberOpenWindow(resultPanel)
+            resultPanel.orderFrontRegardless()
+        }
     }
 
     func fitResultPanel(reposition: Bool, screens: [NSRect]) {
@@ -678,6 +770,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        openProductWindows.removeAll { $0 === window }
+        if lastFocusedProductWindow === window { lastFocusedProductWindow = nil }
         if window === aboutPanel {
             aboutModel.close()
             aboutPanel?.contentView = nil
@@ -726,6 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        terminating = true
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
         updates.prepareToQuit()

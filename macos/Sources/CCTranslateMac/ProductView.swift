@@ -10,14 +10,18 @@ struct TranslationInputBudgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(model.inputLimit.saved.map {
-                model.text("\(text.unicodeScalars.count) / \($0) Unicode code points",
-                           "\(text.unicodeScalars.count) / \($0) Unicode 码点")
-            } ?? model.text("\(text.unicodeScalars.count) Unicode code points · Saved limit not loaded",
-                            "\(text.unicodeScalars.count) 个 Unicode 码点 · 尚未读取已保存上限"))
+                model.text("\(text.unicodeScalars.count) / \($0) characters",
+                           "\(text.unicodeScalars.count) / \($0) 字符")
+            } ?? model.text("\(text.unicodeScalars.count) characters",
+                            "\(text.unicodeScalars.count) 字符"))
                 .accessibilityIdentifier("input-code-point-count")
-            Text(model.text("\(text.utf8.count) / 8,192 UTF-8 bytes",
-                            "\(text.utf8.count) / 8,192 UTF-8 字节"))
-                .accessibilityIdentifier("input-byte-count")
+                .help(model.text("Counts Unicode code points. \(text.utf8.count) of 8,192 UTF-8 bytes.",
+                                 "按 Unicode 码点计数。已使用 \(text.utf8.count) / 8,192 个 UTF-8 字节。"))
+            if text.utf8.count > 8192 {
+                Text(model.text("\(text.utf8.count) / 8,192 UTF-8 bytes",
+                                "\(text.utf8.count) / 8,192 UTF-8 字节"))
+                    .accessibilityIdentifier("input-byte-count")
+            }
             if let issue = model.inputIssue(for: text), issue != .empty {
                 Label(issue.message(using: model), systemImage: "exclamationmark.circle")
                     .foregroundStyle(.red)
@@ -156,8 +160,8 @@ struct TranslatorView: View {
                     .accessibilityHidden(true)
             }
             HStack {
-                Text(model.text("Uses your \(model.translationProvider.displayName) CLI and account.",
-                                "使用你的 \(model.translationProvider.displayName) CLI 和账号。"))
+                Text(model.text("Translates with your \(model.translationProvider.displayName) account.",
+                                "使用你的 \(model.translationProvider.displayName) 账号翻译。"))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
@@ -698,8 +702,8 @@ struct CaptureShortcutSettingsSection: View {
                 .disabled(shortcut.isShutDown || shortcut.registration == .registering)
                 .accessibilityIdentifier("screenshot-shortcut")
                 .accessibilityHint(status)
-            Text(model.text("Off by default. When enabled, press and release ⌘⌥⇧X to open region selection from another app. Enabling only reserves the shortcut; screen recording permission is requested when you actually start a capture.",
-                            "默认关闭。开启后，在其他应用中按下并松开 ⌘⌥⇧X 可开始区域截图。开启开关只注册快捷键，实际开始截图时才会请求屏幕录制权限。"))
+            Text(model.text("Press ⌘⌥⇧X to capture a region. macOS asks for screen recording permission when needed.",
+                            "按 ⌘⌥⇧X 截取区域，需要时由 macOS 请求屏幕录制权限。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Label(status, systemImage: statusIcon)
                 .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -707,8 +711,8 @@ struct CaptureShortcutSettingsSection: View {
                 Button(retryTitle) { shortcut.retry() }
                     .accessibilityIdentifier("retry-screenshot-shortcut")
             }
-            Text(model.text("This Mac remembers your choice. The shortcut uses the existing local capture and OCR preview; it never sends text or an image for translation automatically. Turning it off does not close an existing capture. The screenshot menu and button remain available.",
-                            "此 Mac 会记住你的选择。快捷键进入现有的本地截图与 OCR 预览，不会自动发送文字或图片翻译。关闭开关不关闭已有截图；截图菜单和按钮仍可使用。"))
+            Text(model.text("Review the capture before choosing what to translate.",
+                            "截图后先预览，再选择要翻译的内容。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } header: {
             Text(model.text("Screenshot shortcut", "截图快捷键"))
@@ -774,8 +778,8 @@ struct CopyIntervalSettingsView: View {
                               preference.proposed == preference.saved)
                     .accessibilityIdentifier("apply-copy-interval")
             }
-            Text(model.text("Default: 0.5 seconds. Try 0.75 for a slower double press. Use a positive number with a decimal point.",
-                            "默认 0.5 秒。双击较慢时可尝试 0.75 秒。请输入正数，小数使用英文句点。"))
+            Text(model.text("Try 0.75 seconds if you prefer a slower double press.",
+                            "如果双击较慢，可以设为 0.75 秒。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let saved = preference.saved, !preference.supported.contains(saved) {
                 Label(model.text("Saved interval \(saved) is invalid. The active interval above is unchanged; enter a positive value to correct the saved setting.",
@@ -783,9 +787,6 @@ struct CopyIntervalSettingsView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.text("Applies after saving and reading back. Changing the interval clears a partial double press or pending copy, but does not turn on the shortcut or interrupt a submitted translation. A fresh copy still has only 0.5 seconds to arrive after the second press.",
-                            "保存并回读确认后生效。更改间隔会清除尚未成对的按键和等待中的复制，但不会开启快捷键，也不打断已提交的翻译。第二次按键后，新复制内容的等待时间仍为 0.5 秒。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !message.isEmpty {
                 Text(message).font(.callout).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -806,7 +807,7 @@ struct CopyIntervalSettingsView: View {
             return model.text("Enter a positive number no greater than \(ConfigurationDocument.maxNumber). Nothing was saved.",
                               "请输入不超过 \(ConfigurationDocument.maxNumber) 的正数，尚未保存。")
         case .saving: return model.text("Saving interval…", "正在保存间隔…")
-        case .readingBack: return model.text("Reading back the saved interval…", "正在回读已保存间隔…")
+        case .readingBack: return model.text("Confirming interval…", "正在确认间隔…")
         case .saved: return model.text("Interval saved and applied.", "间隔已保存并应用。")
         case .differentReadback:
             return model.text("The saved interval differs from your entry. The current active interval is shown above; your entry is retained. No write was retried.",
@@ -826,7 +827,7 @@ struct InputLimitSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(preference.saved.map {
-                model.text("Saved input limit: \($0) Unicode code points", "已保存输入上限：\($0) 个 Unicode 码点")
+                model.text("Current limit: \($0) characters", "当前上限：\($0) 字符")
             } ?? model.text("Saved input limit: Not confirmed", "已保存输入上限：尚未确认"))
                 .textSelection(.enabled)
             HStack(alignment: .firstTextBaseline) {
@@ -842,8 +843,8 @@ struct InputLimitSettingsView: View {
                               preference.proposed == preference.saved)
                     .accessibilityIdentifier("apply-input-limit")
             }
-            Text(model.text("Enter a positive whole number, up to \(ConfigurationDocument.maxNumber).",
-                            "请输入不超过 \(ConfigurationDocument.maxNumber) 的正整数。"))
+            Text(model.text("Enter a positive whole number. Long text may also reach the translation size limit.",
+                            "请输入正整数。较长的文字还可能达到翻译容量上限。"))
                 .font(.caption).foregroundStyle(.secondary)
             if let saved = preference.saved, !preference.supported.contains(saved) {
                 Label(model.text("The saved value is invalid for text translation. It has not been changed; enter a positive value to correct it.",
@@ -851,14 +852,12 @@ struct InputLimitSettingsView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.text("Counts Unicode code points, including spaces and line breaks; combining marks count separately. Typed, selected, OCR and dictionary text must also fit 8192 UTF-8 bytes. Raising this setting does not increase that byte budget. Text is never shortened automatically.",
-                            "按 Unicode 码点计数，空格、换行和组合标记均计入。输入、选中、OCR 和词典文字还必须满足 8192 个 UTF-8 字节上限。提高此设置不会增加字节预算，也不会自动缩短原文。"))
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(model.text("Saving does not cancel or replay a submitted request or change saved history. A request uses the setting when the helper captures its configuration. Image translation and result actions keep their own limits.",
-                            "保存不会取消或重放已提交请求，也不更改已保存的历史。请求以助手捕获配置时的设置为准。图片翻译和结果操作沿用各自限制。"))
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(model.text("How text length is counted", "字数如何计算")) {
+                Text(model.text("Spaces, line breaks and combining marks count separately. Text must also fit 8,192 UTF-8 bytes and is never shortened automatically. The largest setting is \(ConfigurationDocument.maxNumber).",
+                                "空格、换行和组合标记均计入。文字还须满足 8,192 个 UTF-8 字节上限，不会自动截短。设置最大值为 \(ConfigurationDocument.maxNumber)。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !message.isEmpty {
                 Text(message).font(.callout).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -878,12 +877,11 @@ struct InputLimitSettingsView: View {
             return model.text("Enter a positive whole number within the range above. Nothing was saved.",
                               "请输入上述范围内的正整数，尚未保存。")
         case .saving:
-            return model.text("Saving input limit… The saved limit above is the last confirmed value.",
-                              "正在保存输入上限… 上方显示上次确认的已保存值。")
+            return model.text("Saving input limit…", "正在保存输入上限…")
         case .readingBack:
-            return model.text("Reading back the saved input limit…", "正在回读已保存输入上限…")
+            return model.text("Confirming input limit…", "正在确认输入上限…")
         case .saved:
-            return model.text("Input limit saved and read back.", "输入上限已保存并回读确认。")
+            return model.text("Input limit saved.", "输入上限已保存。")
         case .differentReadback:
             return model.text("The saved limit differs from your entry. The actual value is shown above; your entry is retained. No write was retried.",
                               "已保存上限与你的输入不同。上方显示实际回读值，并保留你的输入，未重试写入。")
@@ -931,8 +929,8 @@ struct HistoryLimitSettingsView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.text("Saving does not delete records immediately. The next time a history record is added, only the newest N records are kept, including the new record; older records are deleted. A translation already in progress may use the new limit when it finishes. Increasing the limit does not restore deleted records.",
-                            "保存设置不会立即删除记录。下次实际新增历史记录时，仅保留最新 N 条（包含新记录），更早记录会被删除。正在进行的翻译完成后也可能按新条数修剪。提高条数不会恢复已删除记录。"))
+            Text(model.text("Older records are removed when the next translation is saved. Increasing this limit does not restore deleted records.",
+                            "保存下一条翻译记录时会移除超出条数的旧记录。提高条数不会恢复已删除的记录。"))
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let reduction = preference.confirmation {
@@ -979,11 +977,10 @@ struct HistoryLimitSettingsView: View {
         case .idle: return ""
         case .invalidInput: return model.text("Enter a whole number from 1 to 10000. Nothing was saved.",
                                               "请输入 1 到 10000 之间的整数，尚未保存。")
-        case .saving: return model.text("Saving history limit… The saved limit above is the last confirmed value.",
-                                       "正在保存条数… 上方显示的是上次确认的已保存值。")
-        case .readingBack: return model.text("Reading back the saved history limit…", "正在回读已保存的条数…")
-        case .saved: return model.text("History limit saved and read back. No history was deleted by this setting change.",
-                                      "条数已保存并回读确认。此次设置更改未删除历史记录。")
+        case .saving: return model.text("Saving history limit…", "正在保存条数…")
+        case .readingBack: return model.text("Confirming history limit…", "正在确认条数…")
+        case .saved: return model.text("History limit saved. Existing records are unchanged.",
+                                      "条数已保存，现有记录未删除。")
         case .differentReadback: return model.text("The saved limit differs from your entry. The actual saved value is shown above; your entry is retained. No write was retried.",
                                                   "已保存条数与你的输入不同。上方显示实际回读值，并保留你的输入，未重试写入。")
         case .failed(let code): return model.text("History limit could not be confirmed (\(code)). Reload the saved setting; no write was retried.",
@@ -1020,8 +1017,8 @@ struct AppUpdateSettingsView: View {
                 .disabled(!updates.canOpenDownloads)
                 .accessibilityIdentifier("open-verified-downloads")
         }
-        Text(model.text("Update checks are off by default. Updates do not run your translation CLI or change its account.",
-                        "默认不自动检查更新。软件更新不会运行翻译 CLI 或更改其账号。"))
+        Text(model.text("Updates are checked only when you choose to.",
+                        "只在你主动检查时查找更新。"))
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -1081,6 +1078,20 @@ struct AppUpdatePanelView: View {
     }
 }
 
+enum SettingsPane: String, CaseIterable {
+    case translation, shortcuts, appearance, more
+
+    @MainActor
+    func title(using model: ProbeModel) -> String {
+        switch self {
+        case .translation: return model.text("Translation", "翻译")
+        case .shortcuts: return model.text("Shortcuts", "快捷键")
+        case .appearance: return model.text("Appearance", "外观")
+        case .more: return model.text("More", "更多")
+        }
+    }
+}
+
 @MainActor
 struct TranslationSettingsView: View {
     @ObservedObject var model: ProbeModel
@@ -1088,12 +1099,53 @@ struct TranslationSettingsView: View {
     var showAbout: () -> Void
     var loginItems: LoginItemModel? = nil
     var updates: AppUpdateModel? = nil
+    @State var pane: SettingsPane = .translation
+    @State private var installationExpanded = false
+
+    init(model: ProbeModel, showDiagnostics: @escaping () -> Void, showAbout: @escaping () -> Void,
+         loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil,
+         pane: SettingsPane = .translation) {
+        self.model = model
+        self.showDiagnostics = showDiagnostics
+        self.showAbout = showAbout
+        self.loginItems = loginItems
+        self.updates = updates
+        _pane = State(initialValue: pane)
+        _installationExpanded = State(initialValue: model.selectedCLI.isEmpty)
+    }
 
     private var busy: Bool { model.active || model.preparing }
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker(model.text("Settings category", "设置分类"), selection: $pane) {
+                ForEach(SettingsPane.allCases, id: \.self) { category in
+                    Text(category.title(using: model)).tag(category)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("settings-category")
+            .padding(16)
+            Divider()
+            settingsForm
+        }
+        .disabled(model.defaultsPhase.busy)
+        .frame(minWidth: 530, minHeight: 460)
+        .preferredColorScheme(model.preferredColorScheme)
+        .onAppear {
+            model.refreshDictionary()
+            installationExpanded = model.selectedCLI.isEmpty
+        }
+        .onChange(of: model.interfaceLanguage) { _, _ in model.persistPresentation() }
+        .onChange(of: model.appearance) { _, _ in model.persistPresentation() }
+        .onChange(of: model.selectedCLI) { _, path in
+            if path.isEmpty { installationExpanded = true }
+        }
+    }
+
+    private var settingsForm: some View {
         Form {
-            generalSection
             if model.productPhase == .failed && !model.productMessage.isEmpty {
                 Section {
                     Label(model.productMessage, systemImage: "exclamationmark.circle")
@@ -1103,33 +1155,34 @@ struct TranslationSettingsView: View {
                     Text(model.text("Needs attention", "需要处理"))
                 }
             }
-            translationSection
-            Section {
-                InputLimitSettingsView(model: model)
-            } header: {
-                Text(model.text("Input length", "输入长度"))
-            }
-            Section {
-                HistoryLimitSettingsView(model: model)
-            } header: {
-                Text(model.text("History retention", "历史保留条数"))
-            }
-            DictionarySettingsSection(model: model, dictionary: model.dictionary)
-            providerSection
-            PlainPasteSettingsSection(model: model, paste: model.plainPaste)
-            CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
-            shortcutSection
-            aboutSection
-            Section {
-                SettingsDefaultsView(model: model)
-            } header: {
-                Text(model.text("Restore settings", "恢复设置"))
-            }
-            if let loginItems {
+            switch pane {
+            case .translation:
+                translationSection
+                providerSection
+                DictionarySettingsSection(model: model, dictionary: model.dictionary)
+            case .shortcuts:
+                shortcutSection
+                CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
+                PlainPasteSettingsSection(model: model, paste: model.plainPaste)
+            case .appearance:
+                generalSection
+                if let loginItems {
+                    Section {
+                        LoginItemSettingsView(model: model, loginItems: loginItems)
+                    } header: {
+                        Text(model.text("Startup", "启动"))
+                    }
+                }
+            case .more:
                 Section {
-                    LoginItemSettingsView(model: model, loginItems: loginItems)
+                    InputLimitSettingsView(model: model)
                 } header: {
-                    Text(model.text("Login item", "登录项"))
+                    Text(model.text("Input length", "输入长度"))
+                }
+                Section {
+                    HistoryLimitSettingsView(model: model)
+                } header: {
+                    Text(model.text("History retention", "历史保留条数"))
                 }
                 if let updates {
                     Section {
@@ -1138,15 +1191,15 @@ struct TranslationSettingsView: View {
                         Text(model.text("Software updates", "软件更新"))
                     }
                 }
+                aboutSection
+                Section {
+                    SettingsDefaultsView(model: model)
+                } header: {
+                    Text(model.text("Restore settings", "恢复设置"))
+                }
             }
         }
-        .disabled(model.defaultsPhase.busy)
         .formStyle(.grouped)
-        .frame(minWidth: 530, minHeight: 460)
-        .preferredColorScheme(model.preferredColorScheme)
-        .onAppear { model.refreshDictionary() }
-        .onChange(of: model.interfaceLanguage) { _, _ in model.persistPresentation() }
-        .onChange(of: model.appearance) { _, _ in model.persistPresentation() }
     }
 
     private var generalSection: some View {
@@ -1200,10 +1253,8 @@ struct TranslationSettingsView: View {
             .accessibilityValue(model.summaryEnabled.map {
                 $0 ? model.text("On", "已开启") : model.text("Off", "已关闭")
             } ?? model.text("Not confirmed", "尚未确认"))
-            Text(model.text("For eligible prose of 400 or more characters, include a brief summary before the full translation. Applies to future translations, not an in-progress request. Short text, pure code, and screenshots are unaffected. The result's Summarize action remains available.",
-                            "翻译符合条件的 400 字符及以上自然语言长文时，先给出简短摘要，再显示完整译文。仅影响后续翻译，不改变正在进行的请求；短文、纯代码和截图不受影响。结果中的“生成摘要”操作仍可使用。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .help(model.text("For long prose, show a brief summary before the full translation.",
+                             "翻译长文时，在完整译文前显示简短摘要。"))
             if !model.summaryPreferenceMessage.isEmpty {
                 Text(model.summaryPreferenceMessage)
                     .font(.caption).foregroundStyle(.secondary)
@@ -1241,8 +1292,8 @@ struct TranslationSettingsView: View {
                     Text(model.text("Saving settings…", "正在保存设置…")).font(.caption)
                 }
             }
-            Text(model.text("Direction and model changes also apply automatically on your next translation. History is stored on this Mac. Turning history off cancels any active translation, but keeps saved records.",
-                            "下次翻译时也会自动应用方向和模型更改。历史记录保存在此 Mac 上。关闭保存会取消正在进行的翻译，但会保留已有记录。"))
+            Text(model.text("History stays on this Mac. Turning it off stops an active translation and keeps saved records.",
+                            "历史记录仅保存在本机。关闭保存会停止正在进行的翻译，已有记录仍保留。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         } header: {
@@ -1252,7 +1303,17 @@ struct TranslationSettingsView: View {
 
     private var providerSection: some View {
         Section {
-            LabeledContent(model.text("Provider", "服务")) { Text("\(model.translationProvider.displayName) CLI") }
+            DisclosureGroup(model.text("\(model.translationProvider.displayName) installation",
+                                       "\(model.translationProvider.displayName) 安装位置"),
+                            isExpanded: $installationExpanded) {
+                providerControls
+            }
+            .accessibilityIdentifier("provider-installation-details")
+        }
+    }
+
+    private var providerControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
             if model.cliChangeDeferred {
                 Label(model.text("The selected service will apply after the dictionary operation finishes.",
                                  "词典操作完成后会应用所选服务。"),
@@ -1260,20 +1321,20 @@ struct TranslationSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.text("Current executable", "当前可执行文件")).font(.subheadline)
-                Text(model.selectedCLI.isEmpty ?
-                     model.text("Not found — choose your \(model.translationProvider.displayName) executable.",
-                                "未找到，请选择 \(model.translationProvider.displayName) 可执行文件。") :
-                     model.selectedCLI)
-                    .font(.caption.monospaced()).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(model.selectedCLI.isEmpty ?
+                 model.text("Choose your \(model.translationProvider.displayName) installation to use AI translation.",
+                            "选择已安装的 \(model.translationProvider.displayName)，即可使用 AI 翻译。") :
+                 model.text("\(model.translationProvider.displayName) installation selected",
+                            "已选择 \(model.translationProvider.displayName) 安装位置"))
+                .font(.callout)
             HStack {
                 Button(model.text("Detect automatically", "自动查找")) { model.locateCLI() }
                 Button(model.text("Choose…", "选择…")) { model.chooseCLI() }
             }
             .disabled(model.cliBusy || busy)
+            Text(model.selectedCLI.isEmpty ? model.text("Not selected", "尚未选择") : model.selectedCLI)
+                .font(.caption.monospaced()).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
             if !model.candidates.filter(\.executable).isEmpty {
                 Picker(model.text("Detected executables", "找到的可执行文件"), selection: $model.selectedCLI) {
                     ForEach(model.candidates.filter(\.executable)) { candidate in
@@ -1283,11 +1344,7 @@ struct TranslationSettingsView: View {
                 .disabled(model.cliBusy || busy)
                 .onChange(of: model.selectedCLI) { _, _ in model.persistPresentation() }
             }
-            Text(model.text("Each service's path is remembered on this Mac. Detection only checks paths; it does not install a CLI, sign in, or run a model. Use your existing installation and account.",
-                            "各服务的路径会分别保存在此 Mac 上。查找只检查路径，不会安装 CLI、登录或运行模型。请使用已有的安装和账号。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup(model.text("Optional version check", "可选的版本检查")) {
+            DisclosureGroup(model.text("Version check", "版本检查")) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Button(model.text("Check version", "检查版本")) { model.versionCLI() }
@@ -1297,16 +1354,13 @@ struct TranslationSettingsView: View {
                             Button(model.text("Cancel check", "取消检查")) { model.cancelCLI() }
                         }
                     }
-                    Text(model.text("Runs the selected executable with --version, with a 5-second limit. This is not an authentication test and is not required to translate.",
-                                    "使用 --version 运行所选程序，限时 5 秒。这不是认证测试，翻译前也无需执行。"))
+                    Text(model.text("Version checking is optional and does not check your account.",
+                                    "版本检查是可选操作，不检查账号。"))
                         .font(.caption).foregroundStyle(.secondary)
                     Text(model.cliStatus).font(.caption).foregroundStyle(.secondary)
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             }
-        } header: {
-            Text(model.text("\(model.translationProvider.displayName) connection",
-                            "\(model.translationProvider.displayName) 连接"))
         }
     }
 
@@ -1319,11 +1373,13 @@ struct TranslationSettingsView: View {
                     if enabled { model.startMonitor() } else { model.stopMonitor() }
                 }
             ))
-            Text(model.text("Off until you enable it. Accessibility is tried first. After an explicit double ⌘C, unsupported selections may use only a new plain-text copy correlated with the same foreground source and focus. Old or uncorrelated clipboard contents are not used; Copy is never simulated or blocked. Secure Input stops monitoring.",
-                            "主动开启后才会生效。优先通过辅助功能读取选区。明确双击 ⌘C 后，无法读取的选区仅可回退至与同一前台来源及焦点关联的新纯文本复制。不使用旧或无法关联的剪贴板内容，不模拟或阻止复制。安全输入模式会停止监听。"))
+            Text(model.text("Select text in another app, then press ⌘C twice to translate it.",
+                            "在其他应用中选中文字，连续按两次 ⌘C 即可翻译。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            CopyIntervalSettingsView(model: model)
+            DisclosureGroup(model.text("Double-copy timing", "双击间隔")) {
+                CopyIntervalSettingsView(model: model)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack {
                     permissionButtons
@@ -1336,8 +1392,8 @@ struct TranslationSettingsView: View {
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             Text(model.monitorStatus).font(.caption).foregroundStyle(.secondary)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text(model.text("Permissions are requested only when you choose a permission action. After changing system permissions, you may need to restart the app and enable the shortcut again.",
-                            "仅在你点击权限操作时请求授权。更改系统权限后，可能需要重启应用并重新开启快捷键。"))
+            Text(model.text("Allow Accessibility and Input Monitoring if prompted. Restart the app if a permission change hasn't taken effect.",
+                            "按提示允许辅助功能和输入监控。权限更改未生效时，请重启应用。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         } header: {
@@ -1356,17 +1412,7 @@ struct TranslationSettingsView: View {
         Section {
             Button(model.text("About CC Translate & third-party licenses…", "关于 CC Translate 与第三方许可…"),
                    action: showAbout)
-            Text(model.text("Native macOS edition · SwiftUI & AppKit", "原生 macOS 版本 · SwiftUI 与 AppKit"))
-                .font(.callout)
-            Text(model.text("Available: Codex and Claude translation, local screenshot OCR, explicit image translation, local dictionary, result actions, history, custom model settings, Codex model discovery, and macOS login-item settings. App updates are not yet implemented.",
-                            "已支持 Codex 和 Claude 翻译、本地截图文字识别、明确发送图片翻译、本地词典、结果操作、历史记录、自定义模型设置、Codex 模型发现及 macOS 登录项设置。应用更新尚未实现。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             Button(model.text("Open diagnostics…", "打开诊断…"), action: showDiagnostics)
-            Text(model.text("Optional technical checks are separate from translation. Screenshot translation does not require diagnostics: capture and text recognition run locally, and only reviewed text is sent when you choose Translate text.",
-                            "可选的技术检查独立于翻译，无需先运行诊断即可使用截图翻译。截图与文字识别在本机完成，只有点击“翻译文字”时才发送编辑后的文字。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         } header: {
             Text(model.text("About & diagnostics", "关于与诊断"))
         }
@@ -1448,6 +1494,12 @@ struct ModelPicker: View {
 @MainActor
 struct CodexModelSettingsView: View {
     @ObservedObject var model: ProbeModel
+    @State private var customExpanded = false
+
+    init(model: ProbeModel) {
+        self.model = model
+        _customExpanded = State(initialValue: model.modelSettings.draftEdited)
+    }
 
     private var validation: CodexModelSettings.Validation? {
         model.modelSettings.validateCustom(model.modelSettings.draft)
@@ -1458,6 +1510,28 @@ struct CodexModelSettingsView: View {
             ModelPicker(model: model, selection: Binding(
                 get: { model.modelProfile }, set: { model.applyModelProfile($0) }))
                 .disabled(!model.canApplyModelSetting)
+            status
+            if model.translationProvider == .codex {
+                ModelCatalogSettingsView(model: model)
+            }
+            DisclosureGroup(model.text("Custom model", "自定义模型"), isExpanded: $customExpanded) {
+                customEditor
+            }
+            .accessibilityIdentifier("custom-model-details")
+            if !model.ready && !model.modelCatalog.busy {
+                Text(model.text("Reopen Settings to reconnect. Your draft is kept.",
+                                "重新打开设置即可重新连接，草稿会保留。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { if model.modelSettings.draftEdited { customExpanded = true } }
+        .onChange(of: model.modelSettings.draftEdited) { _, edited in
+            if edited { customExpanded = true }
+        }
+    }
+
+    private var customEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(model.text("Custom model ID", "自定义模型 ID")).font(.subheadline)
             TextField(model.text("Enter the exact model ID", "输入完整的模型 ID"), text: Binding(
                 get: { model.modelSettings.draft }, set: { model.editCustomModelID($0) }),
@@ -1471,9 +1545,6 @@ struct CodexModelSettingsView: View {
                     .disabled(!model.canApplyModelSetting || validation != nil)
                 Button(model.text("Reset draft", "重置草稿")) { model.resetCustomModelDraft() }
                 Spacer(minLength: 8)
-                Text(model.text("\(model.modelSettings.draft.utf8.count)/256 UTF-8 bytes",
-                                "\(model.modelSettings.draft.utf8.count)/256 UTF-8 字节"))
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             if let validation, !model.modelSettings.draft.isEmpty {
                 Label(validationMessage(validation), systemImage: "exclamationmark.circle")
@@ -1484,9 +1555,8 @@ struct CodexModelSettingsView: View {
                                 "草稿尚未应用。输入不会更改翻译使用的模型。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            status
             HStack(alignment: .top) {
-                Text(model.text("Last read setting:", "上次读取的设置：")).foregroundStyle(.secondary)
+                Text(model.text("Saved model:", "已保存模型：")).foregroundStyle(.secondary)
                 Text(verbatim: model.modelSettings.savedProfile ?? model.text("Not loaded", "尚未加载"))
                     .textSelection(.enabled)
                 Spacer(minLength: 0)
@@ -1498,21 +1568,9 @@ struct CodexModelSettingsView: View {
             }
             Button(model.text("Reload saved setting", "重新读取已保存设置")) { model.reloadModelSetting() }
                 .disabled(!model.ready || model.settingsBusy || model.active || model.preparing || model.dictionary.committing)
-            if model.translationProvider == .codex {
-                ModelCatalogSettingsView(model: model)
-            } else {
-                Text(model.text("Choose a Claude alias or enter a model ID. Claude does not provide a model list here. Available models depend on your account.",
-                                "请选择 Claude 模型别名，或输入模型 ID。此处不提供 Claude 模型列表，可用模型取决于你的账号。"))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if !model.ready && !model.modelCatalog.busy {
-                Text(model.text("Open Settings again to reconnect before applying. Your draft stays editable.",
-                                "请再次打开设置以连接后应用。你仍可编辑草稿。"))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             Text(model.text(
-                "IDs are case-sensitive and are not trimmed. Apply saves and reads back settings, without requesting a model or checking account access.",
-                "ID 区分大小写，不会自动去除空格。“应用”会保存并重新读取设置，不请求模型，也不检查账号权限。"))
+                "Use the exact model ID from your provider. Available models depend on your account.",
+                "请填写服务提供方的完整模型 ID，可用模型取决于你的账号。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -1527,9 +1585,9 @@ struct CodexModelSettingsView: View {
         case .saving(let profile):
             ProgressView(model.text("Saving \(profile)…", "正在保存 \(profile)…")).controlSize(.small)
         case .reading:
-            ProgressView(model.text("Reading back saved setting…", "正在重新读取已保存设置…")).controlSize(.small)
+            ProgressView(model.text("Confirming model…", "正在确认模型…")).controlSize(.small)
         case .applied(let profile):
-            Label(model.text("Saved and read back: \(profile)", "已保存并重新读取：\(profile)"),
+            Label(model.text("Model saved: \(profile)", "模型已保存：\(profile)"),
                   systemImage: "checkmark.circle").font(.caption).textSelection(.enabled)
         case .failed(let failure):
             Label(failureMessage(failure), systemImage: "exclamationmark.triangle")

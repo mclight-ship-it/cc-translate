@@ -334,7 +334,7 @@ extension ProductRenderingTests {
                 let button = try InputLimitNativeViews.button(in: host, id: "translate-capture-text", label: "翻译文字")
                 XCTAssertFalse(button.isEnabled)
                 InputLimitNativeViews.assertVisible(button)
-                for (id, label) in [("input-code-point-count", "2731 / 5000 Unicode 码点"),
+                for (id, label) in [("input-code-point-count", "2731 / 5000 字符"),
                                     ("input-byte-count", "8193 / 8,192 UTF-8 字节")] {
                     let count = try NativeSettingsTestControls.caption(in: host, identifier: id, label: label)
                     InputLimitNativeViews.assertVisible(count)

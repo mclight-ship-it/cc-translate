@@ -30,7 +30,7 @@ extension ProductRenderingTests {
             XCTAssertTrue(words.contains("fixture model 2"))
             XCTAssertTrue(words.contains("fixture/model-b"))
             XCTAssertTrue(words.contains("2 models loaded"))
-            XCTAssertTrue(words.contains("saved and read back"))
+            XCTAssertTrue(words.contains("model saved"))
         }
         XCTAssertNotEqual(images[0], images[1])
         XCTAssertEqual(client.catalogRequests.count, 1)

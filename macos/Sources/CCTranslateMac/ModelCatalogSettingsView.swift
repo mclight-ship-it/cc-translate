@@ -15,6 +15,8 @@ struct ModelCatalogSettingsView: View {
                 Button(refreshTitle) { model.refreshModels() }
                     .disabled(model.modelCatalog.busy || model.catalogShutDown)
                     .accessibilityIdentifier("refresh-codex-models")
+                    .help(model.text("Load models from your Codex installation. You can also enter a custom model ID.",
+                                     "从已安装的 Codex 加载模型，也可以直接填写自定义模型 ID。"))
                 if model.modelCatalog.busy {
                     ProgressView().controlSize(.small)
                         .accessibilityLabel(model.text("Loading models", "正在加载模型"))
@@ -29,10 +31,6 @@ struct ModelCatalogSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(model.text("Refresh reads the selected Codex's model list. It does not verify account access. You can always enter an ID.",
-                            "刷新会读取所选 Codex 的模型列表，不验证账号权限。你仍可直接输入 ID。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -53,8 +51,8 @@ struct ModelCatalogSettingsView: View {
         case .loaded:
             Text(model.modelCatalog.models.isEmpty
                  ? model.text("No models returned. Enter an ID or refresh again.", "未返回模型。请直接输入 ID，或再次刷新。")
-                 : model.text("\(model.modelCatalog.models.count) models loaded. Choose a model above to apply it.",
-                              "已加载 \(model.modelCatalog.models.count) 个模型。请在上方选择并应用。"))
+                 : model.text("\(model.modelCatalog.models.count) models loaded.",
+                              "已加载 \(model.modelCatalog.models.count) 个模型。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         case .failed(let failure):
             Label(message(failure), systemImage: "exclamationmark.triangle")

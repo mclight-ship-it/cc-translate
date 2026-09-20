@@ -15,6 +15,7 @@ import plistlib
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -28,6 +29,8 @@ ROOT = HERE.parents[1]
 STAGING = HERE / ".staging"
 BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
+ICON_NAME = "CCTranslate.icns"
+ICON_SOURCE = ROOT / "assets/icon-dark.png"
 LOCK = HERE / "runtime-lock.json"
 SHARED_CORE_MODULES = ("cc_classify.py", "cc_direction.py", "cc_prompts.py", "cc_dictionary_store.py",
                        "cc_dictionary_lookup.py", "cc_dictionary_artifact_core.py", "cc_dictionary_presentation.py",
@@ -499,7 +502,8 @@ def validate_plist(info, lock):
     need(info.get("CFBundleIdentifier") == lock["bundle_identifier"], "unexpected bundle identifier")
     need(info.get("CFBundleExecutable") == "CCTranslateMac", "unexpected native executable")
     need(info.get("CFBundlePackageType") == "APPL", "invalid app package type")
-    need(info.get("LSUIElement") is True, "P0 must be an LSUIElement app")
+    need(info.get("LSUIElement") is True, "clipboard worker must start without Dock presence")
+    need(info.get("CFBundleIconFile") == ICON_NAME, "missing or unexpected application icon")
     need(info.get("LSMinimumSystemVersion") == lock["deployment_target"], "wrong bundle minimum OS")
     marketing = info.get("CFBundleShortVersionString")
     build_number = info.get("CFBundleVersion")
@@ -604,6 +608,7 @@ def audit_bundle(app, lock, environment=None):
     info = plistlib.loads((contents / "Info.plist").read_bytes())
     validate_plist(info, lock)
     required = [
+        "Resources/" + ICON_NAME,
         "MacOS/CCTranslateMac", "Resources/python/bin/python3",
         "Resources/python/lib/libCCProcessSupport.dylib",
         "Resources/Core/launch.py", "Resources/Core/cc_macos/__main__.py",
@@ -630,6 +635,7 @@ def audit_bundle(app, lock, environment=None):
     required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CORE_FILES]
     required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
+    validate_icon(contents / "Resources" / ICON_NAME)
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
          os.access(contents / "Resources/python/bin/python3", os.X_OK), "non-executable bundle entry")
     provenance = json.loads((contents / "Resources/source-manifest.json").read_bytes())
@@ -766,6 +772,35 @@ def copy_core_sources(core):
         shutil.copy2(path, core / "cc_providers" / path.name)
 
 
+def validate_icon(path):
+    need(path.is_file() and not path.is_symlink(), "application icon missing or linked")
+    data = path.read_bytes()
+    need(len(data) > 16 and data[:4] == b"icns" and
+         struct.unpack(">I", data[4:8])[0] == len(data), "invalid application icon container")
+
+
+def build_icon(contents, environment):
+    """Use Apple's native image tools; no runtime icon overrides or new dependencies."""
+    need(ICON_SOURCE.is_file() and not ICON_SOURCE.is_symlink(), "application logo missing or linked")
+    iconset = BUILD / "CCTranslate.iconset"
+    need(not iconset.exists() and not iconset.is_symlink(), "icon staging directory already exists")
+    iconset.mkdir(parents=True)
+    destination = contents / "Resources" / ICON_NAME
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        for points in (16, 32, 128, 256, 512):
+            for scale in (1, 2):
+                pixels = points * scale
+                name = f"icon_{points}x{points}" + ("@2x" if scale == 2 else "") + ".png"
+                run(["/usr/bin/sips", "--resampleHeightWidth", pixels, pixels, ICON_SOURCE,
+                     "--out", iconset / name], environment)
+        run(["/usr/bin/iconutil", "--convert", "icns", "--output", destination, iconset], environment)
+        need(destination.is_file() and not destination.is_symlink(), "application icon was not generated")
+        validate_icon(destination)
+    finally:
+        shutil.rmtree(iconset)
+
+
 def build(lock, offline=False, build_number=None):
     environment, toolchain = require_macos()
     info = package_info(plistlib.loads((ROOT / "macos/Resources/Info.plist").read_bytes()), lock, build_number)
@@ -786,6 +821,7 @@ def build(lock, offline=False, build_number=None):
     (contents / "MacOS").mkdir(parents=True)
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    build_icon(contents, environment)
     embed_sparkle(contents, sparkle, sparkle_license)
     # A Python installation includes non-bundle directories such as python3.12.
     # Keep that tree out of macOS's reserved nested-code directories.

@@ -41,6 +41,9 @@ final class ProductRenderingTests: XCTestCase {
                 .components(separatedBy: CharacterSet.letters.inverted)
             XCTAssertTrue(visibleWords.contains("translate"),
                           "The primary Translate action must stay readable in light and dark inactive windows.")
+            XCTAssertTrue(visibleWords.contains("characters"))
+            XCTAssertFalse(visibleWords.contains("unicode"), "Normal input should not explain encoding internals.")
+            XCTAssertFalse(visibleWords.contains("bytes"), "Byte limits remain visible when exceeded, not on every input.")
         }
         XCTAssertEqual(model.output, "用于原生布局验证的合成句子。")
         XCTAssertTrue(fixture.helpers.allSatisfy { $0.translations.isEmpty })
@@ -403,7 +406,8 @@ final class ProductRenderingTests: XCTestCase {
             let text = try LocalOCR.recognize(image).text.lowercased()
             XCTAssertTrue(text.contains("dictionary"))
             XCTAssertTrue(text.contains("delete"))
-            XCTAssertTrue(text.contains("license"))
+            XCTAssertTrue(text.contains("dictionary information"),
+                          "Sources and licenses are available on demand instead of filling the normal settings page.")
         }
         XCTAssertTrue(downloader.tickets.isEmpty)
         XCTAssertFalse(helper.dictionaryRequests.contains { $0.request == .delete || $0.request == .prepareInstall })
