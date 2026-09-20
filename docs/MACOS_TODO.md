@@ -55,7 +55,7 @@ P5固定样本和短时空闲测量已验证，设备交互、长稳和正式发
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[e6ab5dc：Mac 0.1.0/build165，包含完整原生功能和已核验性能报告](#native-performance-checkpoint)，
+最新推荐包现为[db4eef4：Mac 0.1.0/build174，增加 Dock 和轻量设置](#native-compact-settings)，
 已完成完整App同包三系统及六个临时签名升级场景；设备集中验收和正式发行仍另列。
 
 <a id="native-compact-settings"></a>
@@ -79,8 +79,29 @@ Windows 的主要可复用经验是短标签、紧凑分组和按需帮助，而
 - 新增正常尺寸/最小尺寸中英深浅色截图，以及原生分类操作、草稿保留、自定义模型展开回归；
   原有截图名称和行为断言保留，文案/分类断言跟随这次有意的产品变化更新。
 
-本轮仍待真实 Mac 编译及完整同包验证，不将 Windows 静态检查当成原生通过。
-未新增正式发布渠道或签名身份，推荐下载尚未切换。
+本轮已通过源码 `db4eef453981d8c2aca227a94327f7be2eafb428` 的完整验证，
+推荐包切换为 **Mac 0.1.0/build174**：
+[run35495115062](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062) /
+[完整 App](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062/artifacts/10600900514) /
+[原生内容视图截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062/artifacts/10600179108)。
+
+| 验证 | 结果 |
+|---|---|
+| 正常 Windows pre-push | 1978 tests，隐私扫描通过；未绕过 hook |
+| 原生完整套件 | 905 tests，23 构包前可选 skip，零失败；Dock 12 项、轻量设置 3 项逐项通过 |
+| 交互 | 原生隐藏/召回/最小化恢复保留窗口及草稿；切换分类保留草稿；实际点击展开后编辑器可聚焦、完整说明可见 |
+| 原生截图 | 162/162 PNG，CRC、尺寸、IDAT、hash 完整；包括四类设置及最小窗口的中英深浅色、展开说明 |
+| 完整工作流 | 3 jobs / 44 steps 全部成功；同一 App 在 15.7.9 / 14.8.9 / 26.6.2 各通过 253 process / 744 core / 21 Foundation，实际 About/worker/剪贴板等后置验证通过 |
+| 包与图标 | 实际 ICNS、bundle 版本和来源核验通过；789 清单项、85 资源 hash；仅下载完整 App 一次后独立核验 |
+| 更新与性能 | 六个临时签名升级场景通过；同包性能报告与空闲时间基/原始样本独立核验通过 |
+
+内层 ZIP 为 22,058,232 bytes，SHA-256：
+`6ef71eacb594d463dca88f8f9d4a9e7949f5fefb5b7a148b7603f7cd3de88223`。
+build167–173 的失败候选均未作为推荐包交付。修正过设置背景/密度、测试宿主焦点隔离、
+旧文案断言及原生 disclosure 自动化；最后一项保留实际指针事件与展开后断言，
+等待原生动画完成后再同步 OCR，不靠直接修改展开状态让测试通过。
+离屏图片采用 fixture 数据，不含系统标题栏、实体 Dock 或权限弹窗，不冒充真人 VoiceOver/TCC 验收。
+未新增正式发布渠道、签名身份或真实账号调用；设备集中验收及正式发行仍按原清单继续。
 
 <a id="native-result-copy-usability"></a>
 

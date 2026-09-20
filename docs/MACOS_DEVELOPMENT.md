@@ -1,11 +1,12 @@
 # macOS 原生客户端开发指南
 
-**2026-09-20 新一轮体验调整：**按用户反馈补齐 Dock 入口，并将设置改为简短、分组的原生界面。
-本轮源码尚待自己的 Mac 编译、交互与截图验证；在验证完成前，下载推荐仍为 build165，
-不将已有截图或旧包结果当成本轮通过。范围见[轻量体验检查点](MACOS_TODO.md#native-compact-settings)。
+**2026-09-20 体验调整已验证：**补齐 Dock / Cmd-Tab 入口、窗口找回，并将设置改为
+“翻译 / 快捷键 / 外观 / 更多”，技术详情按需展开。推荐包已切换为 **0.1.0/build174**，
+源码 `db4eef4`；905 原生测试（23 构包前可选 skip、零失败）、162 张原图及完整同包三系统验证通过。
+证据与边界见[轻量体验检查点](MACOS_TODO.md#native-compact-settings)，下载见[当前开发包](#native-translation-user-check)。
 
 **当前可下载检查点：原生界面、图片/OCR翻译、词典来源、复制隔离、字号/摘要/历史条数/输入上限、结果位置、双击复制间隔、截图全局快捷键及恢复默认设置；移植尚未完成。**
-最新批次8f898aa已通过[完整App与同包三系统验收](MACOS_TODO.md#native-restore-defaults-checkpoint)。
+前置批次8f898aa已通过[完整App与同包三系统验收](MACOS_TODO.md#native-restore-defaults-checkpoint)。
 下文保留更早失败与修复过程；完整Claude服务及后续移植项继续。
 最新已核验包见[下载与操作](#native-translation-user-check)；
 [模型目录](#native-model-catalog)已通过同包三系统验证，已包含在最新下载中。
@@ -1326,7 +1327,9 @@ fc089e6的早期原生日志已证实来源清空通过，但其余9方法仍失
 
 这是新的SwiftUI/AppKit产品界面包，保留用户已测通的Codex翻译链路，不再要求先跑诊断。
 当前补齐Claude完整后端与原生服务选择、两套CLI路径/模型草稿、切换与恢复默认；
-已加入系统管理的“登录时启动”及批准/关闭/刷新入口，本包另有独立Mac版本0.1.0/构建165；
+已加入系统管理的“登录时启动”及批准/关闭/刷新入口，本包另有独立Mac版本0.1.0/构建174；
+本轮增加运行时 Dock / Cmd-Tab 入口，保留菜单栏；隐藏、最小化或关闭窗口后可以找回，
+不自动提交翻译。设置分为“翻译 / 快捷键 / 外观 / 更多”，自定义模型、安装位置及技术说明按需展开；
 本轮修正结果浮窗过高/越界、纵向缩放及浏览器双击复制的正常文本兼容；
 关闭浮窗后新一次取词失败仍会给出提示，窄窗口的复制/重新翻译按钮保留完整文字；
 新增原生“检查更新”菜单/设置/独立窗口和Sparkle框架，无发布渠道时提供明确的手动下载入口；
@@ -1338,19 +1341,19 @@ fc089e6的早期原生日志已证实来源清空通过，但其余9方法仍失
 保留自定义模型设置、一次性模型迁移修复和中英混合OCR识别改进，
 保留原生关于/第三方许可、区域截图、可编辑预览和明确文字翻译、
 全库历史搜索、本地词典下载/开关/删除/来源许可与六种结果动作。
-producer执行890个原生测试（867通过、23构包前可选skip、零失败）并保留151张PNG，
+producer执行905个原生测试（882通过、23构包前可选skip、零失败）并保留162张PNG，
 同一个App在15.7.9/14.8.9/26.6.2各通过253进程/744核心/21后置Foundation及独立About1；
 三个系统的生产Vision4、主动粘贴46、关联复制读取9和实际App只读worker11也实际通过。
 完整App已独立字节核验；不将这些测试冒充全局快捷键或真实目标编辑器的人工验收。
 旧包的用户翻译正向反馈不是新GUI/TCC、所有CLI版本或账号模型的完整验收。
 
-- 源码：`e6ab5dc87799ef45a7b5ce774847167a8264f597`；版本0.1.0、构建165；
-  [run35466603008](https://github.com/mclight-ship-it/cc-translate/actions/runs/35466603008)；
-  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35466603008/artifacts/10591314230)；
-  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35466603008/artifacts/10591468167)。
-- 内层`CCTranslateMac-P0.zip`：20,691,349 bytes；
-  SHA-256 `e58eeb5882da6530ef819b90954add665e7a12ec0e31f88b55eb9998db9b29e6`。
-  artifact保留到2026-09-26T20:38:14Z；过期时只取新的经核验固定run，不使用未知镜像。
+- 源码：`db4eef453981d8c2aca227a94327f7be2eafb428`；版本0.1.0、构建174；
+  [run35495115062](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062)；
+  [完整App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062/artifacts/10600900514)；
+  [原生离屏截图](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062/artifacts/10600179108)。
+- 内层`CCTranslateMac-P0.zip`：22,058,232 bytes；
+  SHA-256 `6ef71eacb594d463dca88f8f9d4a9e7949f5fefb5b7a148b7603f7cd3de88223`。
+  artifact保留到2026-09-27T07:09:53Z；过期时只取新的经核验固定run，不使用未知镜像。
 - 下载在GitHub Actions页面的Artifacts，名字为`macos-arm64-p0-development-NOT-A-RELEASE`，
   不是另外两份runtime-evidence小报告；网页可能需要登录GitHub，不需要安装Git/gh。
 - Apple Silicon、macOS14+候选；Intel未支持承诺。用户不需要Xcode/Python/Git/付费开发者账号。
@@ -1360,8 +1363,11 @@ producer执行890个原生测试（867通过、23构包前可选skip、零失败
 
 **正常使用：**保留已经可用的CLI、路径和账号，不要求重装、降级、重新登录或重跑权限探针。
 
-**本轮优先复测：**新下载包的关于窗口应显示0.1.0/build165。
-若已装build161并且功能正常，不需要为了测量工具变更反复升级；配置/CLI/账号保持原样。
+**本轮优先复测：**退出旧版后解压替换 App；关于窗口应显示0.1.0/build174，配置/CLI/账号保持原样。
+运行时应出现 Dock 图标，也能用 Cmd-Tab 找回；输入未提交草稿后隐藏或最小化窗口，
+点击 Dock 应找回原窗口和草稿。关闭全部窗口后再次点击 Dock，应能打开翻译窗口，菜单栏入口仍保留。
+设置默认进入“翻译”；切换四类设置不丢草稿，自定义模型和安装详情在需要时展开。
+快捷翻译仍是主路径，不要求使用双栏窗口；此前窗口/浏览器问题可顺手复测：
 在出现“没有选中文字”等失败提示时，检查结果窗是否仍在屏幕内，能否拖上下边/角缩小；
 长结果应滚动而非撑高窗口，错误提示和底部操作应可见。
 关闭结果窗后，不选文字再尝试取词，仍应看到新的失败提示；把窗口缩窄时，
