@@ -461,14 +461,15 @@ final class DockApplicationTests: XCTestCase {
                 }
                 NSApp.hide(nil)
                 try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
-                    NSApp.isHidden
+                    NSApp.isHidden && !NSApp.isActive
                 }
                 f.ocr.gate?.signal()
                 try await CaptureProductFixture.waitFor {
                     f.capture.submitted && helper.translations.count == 1 && f.application.capturePanel == nil
                 }
                 XCTAssertNotEqual(f.application.resultPanel?.isVisible, true)
-                XCTAssertFalse(NSApp.isActive, "Finishing OCR must not undo the user's Hide action.")
+                XCTAssertFalse(NSApp.isActive,
+                    "Finishing OCR must not undo the user's Hide action. \(DockApplicationTestProcess.lifecycle)")
                 helper.event("completed", id: helper.translations[0].id,
                              payload: ["text": .string("Hidden screenshot result")])
                 try await Task.sleep(nanoseconds: 30_000_000)
