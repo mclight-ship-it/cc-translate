@@ -93,7 +93,7 @@ private enum RenderedLookupError: Error {
 }
 
 @MainActor
-private enum RenderedGeometry {
+enum RenderedGeometry {
     static func frame(_ view: NSView) -> NSRect {
         if let control = view as? NSControl, let parent = control.superview {
             // Native bezel/shadow outsets are not the control's layout content.

@@ -67,8 +67,11 @@ extension ProductRenderingTests {
                         $0.segmentCount == 2 && $0.label(forSegment: 1) == title
                     })
                     XCTAssertEqual(picker.selectedSegment, 1)
-                    XCTAssertGreaterThan(picker.visibleRect.height, 0)
-                    XCTAssertEqual(picker.visibleRect.height, picker.bounds.height, accuracy: 1)
+                    let frame = RenderedGeometry.frame(picker)
+                    let visible = RenderedGeometry.visibleRect(picker)
+                    XCTAssertGreaterThan(visible.height, 0)
+                    XCTAssertEqual(visible.height, frame.height, accuracy: 1)
+                    XCTAssertEqual(visible.width, frame.width, accuracy: 1)
                 })
             XCTAssertTrue(f.helpers.isEmpty)
         }
