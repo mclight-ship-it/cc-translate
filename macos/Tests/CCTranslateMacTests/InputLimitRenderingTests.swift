@@ -309,16 +309,29 @@ extension ProductRenderingTests {
         for expected in ["20001", "20000", "characters", "howtextlengthiscounted", "applyinputlimit"] {
             XCTAssertTrue(words.contains(expected), words)
         }
-        XCTAssertFalse(words.contains("codepoints"), "Encoding details are available on demand.")
+        XCTAssertFalse(words.contains("combiningmarks") || words.contains("nevershortenedautomatically"),
+                       "Encoding details are available on demand.")
         let surface = NativeSettingsTestHost(InputLimitSettingsSurface(model: f.model))
         defer { surface.close() }
         try await NativeSettingsTestControls.pressDisclosure(
             in: surface.host, identifier: "input-limit-counting-details", label: "How text length is counted")
-        try await Task.sleep(nanoseconds: 10_000_000)
-        for label in ["8,192 UTF-8 bytes", "combining marks", "never shortened automatically"] {
-            let detail = try NativeSettingsTestControls.caption(
-                in: surface.host, identifier: "input-limit-counting-details", label: label, authoredCaption: true)
-            InputLimitNativeViews.assertVisible(detail)
+        let expectedDetails = ["8,192utf-8bytes", "combiningmarks", "nevershortenedautomatically"]
+        let deadline = Date().addingTimeInterval(5)
+        var expandedWords = ""
+        repeat {
+            // Yield between native frames so the disclosure animation can finish. Read the
+            // visible paragraph together: a phrase can legitimately wrap between OCR lines.
+            try await Task.sleep(nanoseconds: 10_000_000)
+            surface.flush()
+            let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: surface.host.bounds.size)
+            surface.host.effectiveAppearance.performAsCurrentDrawingAppearance {
+                surface.host.cacheDisplay(in: surface.host.bounds, to: bitmap)
+            }
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            expandedWords = try NativeRenderEvidence.settingsWords(png).filter { !$0.isWhitespace }
+        } while !expectedDetails.allSatisfy(expandedWords.contains) && Date() < deadline
+        for detail in expectedDetails {
+            XCTAssertTrue(expandedWords.contains(detail), expandedWords)
         }
         XCTAssertTrue(helper.configurationSaves.isEmpty)
         XCTAssertTrue(helper.translations.isEmpty)
