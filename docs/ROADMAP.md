@@ -4,16 +4,16 @@
 
 ## 当前体验方向：快速、小巧、容易找回
 
-最新反馈正进入[快捷翻译减步骤](MACOS_TODO.md#native-quick-translation-feedback)：
+最新反馈已完成[快捷翻译减步骤](MACOS_TODO.md#native-quick-translation-feedback)：
 Dock 随打开的窗口显示/消失，截图直接出翻译，截图模式移入设置；
 同时修复浏览器/PDF 取词、准确的权限设置跳转、作者赞助入口及菜单对齐。
-本轮新源码尚待 Mac 验证，以下 build174 仍是当前已核验下载，不代表这些后续修改已经通过。
+本轮原生及同包三系统验证已通过，推荐下载为 build183。
 
 快速取词与结果浮窗是主路径；双栏翻译窗口保留为可选辅助入口。
 2026-09-20 用户要求补齐 Dock 图标和窗口召回，并参考 Windows 版简化设置：
 短标签和常用操作优先，自定义配置/技术说明按需展开，必要权限与失败恢复不隐藏。
-本轮已完成原生实现、交互回归与完整同包三系统验证，
-见[轻量体验检查点](MACOS_TODO.md#native-compact-settings)；推荐包已切换为 build174。
+前置 build174 的[轻量体验检查点](MACOS_TODO.md#native-compact-settings)保留原始证据；
+本轮沿用简洁分类，进一步修正窗口存在时才显示 Dock、截图直接翻译和权限设置跳转。
 
 ## 正在开发：原生产品及 P4 自动化已接通，继续 P5 性能与平台验收
 
@@ -23,17 +23,19 @@ Dock 随打开的窗口显示/消失，截图直接出翻译，截图模式移�
 首轮6ff2a7d真实编译并通过窗口/复制回归，但873原生项有两项渲染方法共3断言失败；
 其失败包未发布。后续2392c14修正状态区自然高度与错误文字可读性，已通过自己的完整验证。
 
-**当前推荐包：db4eef4，Mac 0.1.0/build174 / [run35495115062](https://github.com/mclight-ship-it/cc-translate/actions/runs/35495115062)。**
-新增 Dock / Cmd-Tab 与窗口找回，保留菜单栏及草稿；设置按四类常用任务分组、技术说明按需展开。
+**当前推荐包：2fa45ee，Mac 0.1.0/build183 / [run35520763932](https://github.com/mclight-ship-it/cc-translate/actions/runs/35520763932)。**
+Dock / Cmd-Tab 随打开的窗口出现，关闭最后一个窗口后回到菜单栏模式；隐藏/最小化保留窗口和草稿。
+设置按四类常用任务分组，缺权限直接进入“快捷键”；截图模式也在该页，选区后直接翻译，不再确认 OCR。
+同时补齐浏览器/PDF 延迟复制兼容、作者赞助入口、纯文字菜单，并移除翻译入口 Cmd+N。
 图片翻译、词典来源、关联复制、剪贴板隔离、字号/摘要/历史条数/输入上限/结果位置/双击间隔/截图快捷键/恢复默认已进入同一完整App，
 另已补齐Claude完整后端、原生选择、独立路径/模型草稿、切换与恢复默认。
 本轮新增Sparkle框架和原生检查更新菜单/设置/窗口，未发布渠道时提供明确手动下载入口。
 已进一步补齐关闭后新取词失败提示、旧回调不重新弹窗以及窄工具栏完整文字。
 已包含默认保留数据的可选卸载、排空交互和可签名运行时布局，不碰CLI/账号/Node。
-3jobs/44steps全通过；原生905项（23构包前可选skip、零失败）、162PNG已核验，
+3jobs/44steps全通过；原生961项（23构包前可选skip、零失败）、173PNG已核验，
 同App15/14/26各253process/744core/21Foundation及实际worker/剪贴板测试通过。
 [当前下载与步骤](MACOS_DEVELOPMENT.md#native-translation-user-check)已更新；
-[本轮完整审计](MACOS_TODO.md#native-compact-settings)已绑定本源码与实际版本，
+[本轮完整审计](MACOS_TODO.md#native-quick-translation-feedback)已绑定本源码与实际版本，
 [前置性能检查点](MACOS_TODO.md#native-performance-checkpoint)保留 build165 的原始测量；
 [登录项检查点](MACOS_TODO.md#native-login-item-checkpoint)保留原始失败历史，不将它们当作当前仍被阻断。
 六个真实临时签名升级场景也已通过；未发布feed/正式密钥，不冒充正式发行或真实TCC保持。
@@ -43,7 +45,7 @@ P4首项已接入SMAppService实际登录状态与原生设置，不自动注册
 系统批准、下一次登录启动和升级后保持仍待实机，不用合成服务冒充真实登录项更改。
 Mac独立版本/递增开发构建号与清单一致性已在4dfb04a自己的完整Mac包验证，
 保留已有bundle身份及数据位置；目标bundle/runtime80项、正常1933项hook通过，
-三系统实际About在该检查点核对0.1.0/build146；当前推荐build174已在本轮重新核对。
+三系统实际About在该检查点核对0.1.0/build146；当前推荐build183已在本轮重新核对。
 自有数据卸载基础实现aad2ec8/build154也已通过890原生项、13项新卸载回归及独立同包三系统，
 默认保留数据，勾选后只清理自身目录/偏好，不碰CLI/账号/外部词典。排空期间设置窗口交互
 已修正，并在build161完成同包三系统。临时签名升级fixture已完成六场景真实Mac验证，
