@@ -16,6 +16,18 @@ enum NativeRenderEvidence {
             to: folder.appendingPathComponent("native-render-diagnostics.txt"), atomically: true, encoding: .utf8)
     }
 
+    static func retainPNG(_ png: Data, named name: String) throws {
+        XCTAssertGreaterThan(png.count, 1_000)
+        XCTAssertEqual(Array(png.prefix(8)), [137, 80, 78, 71, 13, 10, 26, 10])
+        if let path = ProcessInfo.processInfo.environment["CC_TRANSLATE_UI_SCREENSHOTS_DIR"], !path.isEmpty {
+            let directory = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let destination = directory.appendingPathComponent(name).appendingPathExtension("png")
+            try png.write(to: destination, options: .atomic)
+            XCTAssertEqual(try Data(contentsOf: destination), png)
+        }
+    }
+
     static func recognitionImage(_ image: CGImage) throws -> CGImage {
         // Enlarge a recognition-only copy of small UI glyphs; keep the original review PNG unchanged.
         let context = try XCTUnwrap(CGContext(

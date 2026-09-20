@@ -738,17 +738,7 @@ final class ProductRenderingTests: XCTestCase {
         }
         XCTAssertGreaterThan(colors.count, 8, "A blank or solid-color bitmap is not a rendered product view.")
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        XCTAssertGreaterThan(png.count, 1_000)
-        XCTAssertEqual(Array(png.prefix(8)), [137, 80, 78, 71, 13, 10, 26, 10])
-
-        if let path = ProcessInfo.processInfo.environment["CC_TRANSLATE_UI_SCREENSHOTS_DIR"],
-           !path.isEmpty {
-            let directory = URL(fileURLWithPath: path, isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appendingPathComponent(name).appendingPathExtension("png")
-            try png.write(to: destination, options: .atomic)
-            XCTAssertEqual(try Data(contentsOf: destination), png)
-        }
+        try NativeRenderEvidence.retainPNG(png, named: name)
         return png
     }
 }

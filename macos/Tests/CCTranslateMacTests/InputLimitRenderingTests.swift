@@ -319,15 +319,17 @@ extension ProductRenderingTests {
         let deadline = Date().addingTimeInterval(5)
         var expandedWords = ""
         repeat {
-            // Yield between native frames so the disclosure animation can finish. Read the
-            // visible paragraph together: a phrase can legitimately wrap between OCR lines.
-            try await Task.sleep(nanoseconds: 10_000_000)
+            // OCR blocks the main actor; give the disclosure a full animation interval before
+            // each snapshot instead of spending the polling deadline in synchronous recognition.
+            try await Task.sleep(nanoseconds: 500_000_000)
             surface.flush()
             let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: surface.host.bounds.size)
             surface.host.effectiveAppearance.performAsCurrentDrawingAppearance {
                 surface.host.cacheDisplay(in: surface.host.bounds, to: bitmap)
             }
             let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try NativeRenderEvidence.retainPNG(png, named: "input-limit-settings-expanded")
+            // Read the paragraph together because a phrase may wrap between OCR lines.
             expandedWords = try NativeRenderEvidence.settingsWords(png).filter { !$0.isWhitespace }
         } while !expectedDetails.allSatisfy(expandedWords.contains) && Date() < deadline
         for detail in expectedDetails {
