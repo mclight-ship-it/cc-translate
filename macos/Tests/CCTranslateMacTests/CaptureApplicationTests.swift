@@ -25,51 +25,6 @@ final class CaptureApplicationTests: XCTestCase {
             f.cleanUp()
         }
 
-        extension ProductRenderingTests {
-            @MainActor
-            func testAutomaticCaptureProgressAndEmptyRecoveryFitCompactWindowsWithoutReviewEditor() async throws {
-                for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
-                    let f = try ProductTestHarness(savedCLI: false)
-                    defer { f.cleanUp() }
-                    f.model.loadPresentation()
-                    f.model.interfaceLanguage = language
-                    f.model.appearance = scheme == .light ? "light" : "dark"
-                    let source = CaptureTestSource(image: try CaptureProductFixture.image())
-                    let ocr = CaptureTestOCR(text: "", blocked: true)
-                    let capture = CaptureModel(screen: ScreenProbe(source: source, makeOCRJob: { ocr },
-                                                                   notificationCenter: NotificationCenter()))
-                    defer { ocr.gate?.signal(); capture.cancel() }
-                    capture.startTranslation(using: f.model, mode: .text)
-                    try await CaptureProductFixture.waitFor { capture.phase == .selecting }
-                    capture.select(source.layout[0].frame)
-                    try await CaptureProductFixture.waitFor { capture.phase == .recognizing && ocr.image != nil }
-                    let content = CaptureStatusView(capture: capture, model: f.model, captureAgain: {}, close: { capture.cancel() })
-                    _ = try render(content, named: "automatic-capture-progress-\(language)",
-                                   size: NSSize(width: 520, height: 190), scheme: scheme, inspect: { host in
-                        XCTAssertTrue(InputLimitNativeViews.views(NSTextView.self, in: host).allSatisfy { !$0.isEditable })
-                        let cancel = try NativeSettingsTestControls.resolve(in: host, identifier: "automatic-capture-close",
-                            label: f.model.text("Cancel", "取消"), kind: .button, authoredCaption: true)
-                        XCTAssertEqual(cancel.visibleRect.height, cancel.frame.height, accuracy: 1)
-                    })
-                    XCTAssertTrue(f.helpers.isEmpty)
-                    ocr.gate?.signal()
-                    try await CaptureProductFixture.waitFor { capture.phase == .empty }
-                    _ = try render(content, named: "automatic-capture-empty-\(language)",
-                                   size: NSSize(width: 420, height: 170), scheme: scheme, inspect: { host in
-                        XCTAssertTrue(InputLimitNativeViews.views(NSTextView.self, in: host).allSatisfy { !$0.isEditable })
-                        for (identifier, label) in [
-                            ("automatic-capture-retry", f.model.text("Capture again", "重新截图")),
-                            ("automatic-capture-close", f.model.text("Close", "关闭"))
-                        ] {
-                            let button = try NativeSettingsTestControls.resolve(in: host, identifier: identifier,
-                                label: label, kind: .button, authoredCaption: true)
-                            XCTAssertEqual(button.visibleRect.height, button.frame.height, accuracy: 1)
-                        }
-                    })
-                    XCTAssertTrue(f.helpers.isEmpty)
-                }
-            }
-        }
         app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         let item = try XCTUnwrap(app.statusItem?.menu?.items.first { $0.action == Selector("startCapture") })
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))

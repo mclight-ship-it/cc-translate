@@ -19,32 +19,6 @@ final class FeedbackSettingsTests: XCTestCase {
             f.cleanUp()
         }
 
-        extension ProductRenderingTests {
-            @MainActor
-            func testScreenshotImageModeSettingsRenderInBothLanguages() throws {
-                for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
-                    let f = try ProductTestHarness(savedCLI: false)
-                    defer { f.cleanUp() }
-                    f.model.loadPresentation()
-                    f.model.interfaceLanguage = language
-                    f.model.chooseCaptureTranslationMode(.image)
-                    _ = try render(Form {
-                        CaptureShortcutSettingsSection(model: f.model, shortcut: f.model.captureShortcut)
-                    }.formStyle(.grouped).background(Color(nsColor: .windowBackgroundColor)),
-                        named: "screenshot-image-mode-\(language)", size: NSSize(width: 760, height: 540),
-                        scheme: scheme, inspect: { host in
-                            let title = f.model.text("Send image", "发送图片")
-                            let picker = try XCTUnwrap(InputLimitNativeViews.views(NSPopUpButton.self, in: host).first {
-                                $0.itemTitles.contains(title)
-                            })
-                            XCTAssertEqual(picker.titleOfSelectedItem, title)
-                            XCTAssertGreaterThan(picker.visibleRect.height, 0)
-                            XCTAssertEqual(picker.visibleRect.height, picker.bounds.height, accuracy: 1)
-                        })
-                    XCTAssertTrue(f.helpers.isEmpty)
-                }
-            }
-        }
         app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         let menu = try XCTUnwrap(app.statusItem?.menu)
         for item in menu.items where !item.isSeparatorItem {
