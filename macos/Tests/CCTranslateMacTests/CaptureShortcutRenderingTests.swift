@@ -19,7 +19,8 @@ private enum CaptureShortcutControls {
     static func toggle(in host: NSView, model: ProbeModel) async throws -> NativeSettingsTestControl {
         let labels = CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
         return try await NativeSettingsTestControls.resolveWhenReady(
-            in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle)
+            in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle,
+            authoredCaption: true)
     }
 }
 
@@ -124,7 +125,8 @@ extension ProductRenderingTests {
             _ = try render(CaptureShortcutSurface(model: f.model), named: name,
                            size: NSSize(width: 760, height: 540), scheme: scheme, inspect: { host in
                 let toggle = try NativeSettingsTestControls.resolve(
-                    in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle)
+                    in: host, identifier: "screenshot-shortcut", label: labels.toggleTitle, kind: .toggle,
+                    authoredCaption: true)
                 XCTAssertTrue(toggle.isEnabled)
                 XCTAssertEqual(toggle.state, enabled ? .on : .off)
                 XCTAssertGreaterThan(toggle.visibleRect.height, 0)
@@ -132,7 +134,8 @@ extension ProductRenderingTests {
                 XCTAssertEqual(toggle.visibleRect.width, toggle.frame.width, accuracy: 1)
                 if conflict {
                     let retry = try NativeSettingsTestControls.resolve(
-                        in: host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle, kind: .button)
+                        in: host, identifier: "retry-screenshot-shortcut", label: labels.retryTitle, kind: .button,
+                        authoredCaption: true)
                     XCTAssertTrue(retry.isEnabled)
                     XCTAssertGreaterThan(retry.visibleRect.height, 0)
                     XCTAssertEqual(retry.visibleRect.height, retry.frame.height, accuracy: 1)

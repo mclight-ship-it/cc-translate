@@ -201,10 +201,11 @@ extension ProductRenderingTests {
             }, highResolution: true)
             let words = try summarySettingsWords(png, chinese: language == "zh")
             for expected in language == "zh"
-                ? ["长文自动摘要", "400", "后续翻译", "生成摘要"]
-                : ["automaticlong-textsummary", "400", "futuretranslations", "summarize"] {
+                ? ["长文自动摘要", "保存翻译历史记录"]
+                : ["automaticlong-textsummary", "savetranslationhistory"] {
                 XCTAssertTrue(words.contains(expected), words)
             }
+            XCTAssertFalse(words.contains("400"), "The implementation threshold belongs in help, not the normal form.")
         }
         XCTAssertTrue(helper.configurationSaves.isEmpty)
         XCTAssertTrue(helper.translations.isEmpty)

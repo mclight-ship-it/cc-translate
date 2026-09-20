@@ -184,6 +184,15 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         try NativeRenderEvidence.record("Rendered press \(identifier): state=\(backing.state.rawValue), " +
               "action=\(String(describing: control.action)), targetPresent=\(control.target != nil)")
         window.makeKeyAndOrderFront(nil)
+        let tracked = try Self.dispatchPointer(frame: frame, in: window, identifier: identifier,
+                                               button: kind == .toggle ? nil : control, file: file, line: line)
+        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
+            "enabled=\(isEnabled), trackingRelease=\(tracked), attached=\(control.window === window)")
+    }
+
+    fileprivate static func dispatchPointer(frame: NSRect, in window: NSWindow, identifier: String,
+                                           button: NSControl? = nil,
+                                           file: StaticString = #filePath, line: UInt = #line) throws -> Bool {
         let point = NSPoint(x: frame.midX, y: frame.midY)
         let number = Self.nextMouseEventNumber
         Self.nextMouseEventNumber += 2
@@ -220,10 +229,8 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer { timer.invalidate() }
         // Native buttons own cell tracking; SwiftUI checkboxes also need gesture dispatch.
-        switch kind {
-        case .button, .destructiveButton: control.mouseDown(with: press)
-        case .toggle: NSApp.sendEvent(press)
-        }
+        if let button { button.mouseDown(with: press) }
+        else { NSApp.sendEvent(press) }
         if !releasedDuringTracking {
             timer.invalidate()
             NSApp.postEvent(up, atStart: true)
@@ -234,13 +241,10 @@ struct NativeSettingsTestControl: NativeRenderedTestRegion {
             let release = try XCTUnwrap(NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast,
                                                        inMode: .default, dequeue: true))
             XCTAssertTrue(Self.samePointerEvent(release, up))
-            switch kind {
-            case .button, .destructiveButton: control.mouseUp(with: release)
-            case .toggle: NSApp.sendEvent(release)
-            }
+            if let button { button.mouseUp(with: release) }
+            else { NSApp.sendEvent(release) }
         }
-        try NativeRenderEvidence.record("Rendered pressed \(identifier): state=\(backing.state.rawValue), " +
-            "enabled=\(isEnabled), trackingRelease=\(releasedDuringTracking), attached=\(control.window === window)")
+        return releasedDuringTracking
     }
 }
 
@@ -346,8 +350,8 @@ enum NativeSettingsTestControls {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.minimumTextHeight = 0
-        request.recognitionLanguages = caption.unicodeScalars.allSatisfy { $0.isASCII }
-            ? ["en-US"] : ["zh-Hans", "en-US"]
+        let hasChinese = caption.range(of: "\\p{Han}", options: .regularExpression) != nil
+        request.recognitionLanguages = hasChinese ? ["zh-Hans", "en-US"] : ["en-US"]
         request.usesLanguageCorrection = authoredCaption
         try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         var matches: [CaptionMatch] = []
@@ -477,12 +481,15 @@ enum NativeSettingsTestControls {
     }
 
     static func resolve(in root: NSView, identifier: String, label: String,
-                        kind: NativeRenderedControlKind) throws -> NativeSettingsTestControl {
+                        kind: NativeRenderedControlKind,
+                        authoredCaption: Bool = false) throws -> NativeSettingsTestControl {
         let deadline = Date().addingTimeInterval(2)
-        var result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+        var result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
+                                authoredCaption: authoredCaption)
         while result.candidates.isEmpty && Date() < deadline {
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-            result = try lookup(in: root, identifier: identifier, label: label, kind: kind)
+            result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
+                                authoredCaption: authoredCaption)
         }
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
     }
@@ -528,12 +535,21 @@ enum NativeSettingsTestControls {
                             in: root, identifier: identifier, label: label, kind: .button)
     }
 
-    static func caption(in root: NSView, identifier: String, label: String) throws -> NativeRenderedTestCaption {
+    static func pressCaption(in root: NSView, identifier: String, label: String) throws {
+        let region = try caption(in: root, identifier: identifier, label: label, authoredCaption: true)
+        let window = try XCTUnwrap(root.window)
+        XCTAssertEqual(region.visibleRect, region.frame)
+        window.makeKeyAndOrderFront(nil)
+        _ = try NativeSettingsTestControl.dispatchPointer(frame: region.frame, in: window, identifier: identifier)
+    }
+
+    static func caption(in root: NSView, identifier: String, label: String,
+                        authoredCaption: Bool = false) throws -> NativeRenderedTestCaption {
         let deadline = Date().addingTimeInterval(2)
         var readback: Readback?
         repeat {
             try prepare(root)
-            let pixels = try readCaption(label, in: root)
+            let pixels = try readCaption(label, in: root, authoredCaption: authoredCaption)
             readback = pixels
             if !pixels.matches.isEmpty { break }
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))

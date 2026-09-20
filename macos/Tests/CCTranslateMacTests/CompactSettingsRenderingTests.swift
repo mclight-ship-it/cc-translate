@@ -92,16 +92,17 @@ extension ProductRenderingTests {
         defer { fixture.cleanUp() }
         let helper = try fixture.ready()
         fixture.model.interfaceLanguage = "en"
-        let surface = NativeSettingsTestHost(CodexModelSettingsView(model: fixture.model).padding(20))
+        let surface = NativeSettingsTestHost(
+            TranslationSettingsView(model: fixture.model, showDiagnostics: {}, showAbout: {}),
+            size: NSSize(width: 760, height: 900))
         defer { surface.close() }
         XCTAssertTrue(compactSettingsFields(surface.host).isEmpty)
-        let disclosure = try await surface.buttonWhenReady("custom-model-details", "Custom model")
-        try disclosure.focus(in: surface.window)
-        try await surface.waitFor { disclosure.isFocused }
-        try await disclosure.press()
+        try NativeSettingsTestControls.pressCaption(
+            in: surface.host, identifier: "custom-model-details", label: "Custom model")
         try await surface.waitFor { self.compactSettingsFields(surface.host).count == 1 }
-        let expandedDisclosure = try await surface.buttonWhenReady("custom-model-details", "Custom model")
-        XCTAssertTrue(expandedDisclosure.sameElement(as: disclosure))
+        let editor = try XCTUnwrap(compactSettingsFields(surface.host).first)
+        XCTAssertTrue(surface.window.makeFirstResponder(editor))
+        XCTAssertNotNil(editor.currentEditor(), "The newly disclosed native editor must accept focus.")
         XCTAssertTrue(helper.configurationSaves.isEmpty)
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertFalse(fixture.model.cliBusy)

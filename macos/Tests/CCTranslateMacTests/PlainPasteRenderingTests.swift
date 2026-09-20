@@ -203,7 +203,7 @@ extension ProductRenderingTests {
 
     @MainActor
     private func renderPasteSettings(_ fixture: PasteAppFixture, name: String, scheme: ColorScheme,
-                                     chinese: Bool = false, highResolution: Bool = false,
+                                     chinese: Bool = false, highResolution: Bool = true,
                                      pane: SettingsPane = .shortcuts,
                                      inspect: ((NSView) -> Void)? = nil) throws -> Data {
         fixture.model.loadPresentation()

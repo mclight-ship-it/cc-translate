@@ -874,8 +874,8 @@ struct InputLimitSettingsView: View {
         switch preference.phase {
         case .idle: return ""
         case .invalidInput:
-            return model.text("Enter a positive whole number within the range above. Nothing was saved.",
-                              "请输入上述范围内的正整数，尚未保存。")
+            return model.text("Enter a positive whole number no larger than \(ConfigurationDocument.maxNumber). Nothing was saved.",
+                              "请输入不超过 \(ConfigurationDocument.maxNumber) 的正整数，尚未保存。")
         case .saving:
             return model.text("Saving input limit…", "正在保存输入上限…")
         case .readingBack:
@@ -1132,6 +1132,7 @@ struct TranslationSettingsView: View {
         }
         .disabled(model.defaultsPhase.busy)
         .frame(minWidth: 530, minHeight: 460)
+        .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             model.refreshDictionary()

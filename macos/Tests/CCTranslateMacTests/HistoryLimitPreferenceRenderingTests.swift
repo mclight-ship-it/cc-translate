@@ -231,7 +231,7 @@ extension ProductRenderingTests {
             XCTAssertEqual(cancel.visibleRect.height, cancel.frame.height, accuracy: 1)
         })
         let words = try historyLimitWords(english, chinese: false)
-        for expected in ["600", "17", "newest", "includingthenewrecord", "alreadyinprogress", "doesnotrestore"] {
+        for expected in ["600", "17", "olderrecords", "nextactualhistoryaddition", "notwhenyouconfirm", "doesnotrestore"] {
             XCTAssertTrue(words.contains(expected), words)
         }
         f.model.cancelHistoryLimitReduction()
@@ -251,7 +251,7 @@ extension ProductRenderingTests {
             XCTAssertEqual(apply.visibleRect.height, apply.frame.height, accuracy: 1)
         })
         let chineseWords = try historyLimitWords(chinese, chinese: true)
-        for expected in ["10001", "尚未改动", "包含新记录", "正在进行", "不会恢复"] {
+        for expected in ["10001", "尚未改动", "保存下一条翻译记录", "移除超出条数", "不会恢复"] {
             XCTAssertTrue(chineseWords.contains(expected), chineseWords)
         }
         XCTAssertTrue(helper.configurationSaves.isEmpty)

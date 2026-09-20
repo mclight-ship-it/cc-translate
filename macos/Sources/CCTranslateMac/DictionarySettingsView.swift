@@ -9,6 +9,22 @@ struct DictionarySettingsSection: View {
 
     var body: some View {
         Section {
+            content
+        } header: {
+            Text(model.text("Offline dictionary", "离线词典"))
+        }
+        .confirmationDialog(model.text("Delete the local dictionary?", "删除本地词典？"),
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button(model.text("Delete dictionary", "删除词典"), role: .destructive) { dictionary.delete() }
+            Button(model.text("Cancel", "取消"), role: .cancel) {}
+        } message: {
+            Text(model.text("The dictionary will be disabled and its installed file removed. Saved translations stay intact. Using the dictionary again requires an explicit download.",
+                            "词典将被禁用，其安装文件会被移除。已保存的翻译不会删除。再次使用词典需要手动下载。"))
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label(model.text("Local dictionary", "本地词典"), systemImage: "books.vertical")
                     .font(.headline)
@@ -66,16 +82,6 @@ struct DictionarySettingsSection: View {
                     }
                 }
             }
-        } header: {
-            Text(model.text("Offline dictionary", "离线词典"))
-        }
-        .confirmationDialog(model.text("Delete the local dictionary?", "删除本地词典？"),
-                            isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button(model.text("Delete dictionary", "删除词典"), role: .destructive) { dictionary.delete() }
-            Button(model.text("Cancel", "取消"), role: .cancel) {}
-        } message: {
-            Text(model.text("The dictionary will be disabled and its installed file removed. Saved translations stay intact. Using the dictionary again requires an explicit download.",
-                            "词典将被禁用，其安装文件会被移除。已保存的翻译不会删除。再次使用词典需要手动下载。"))
         }
     }
 

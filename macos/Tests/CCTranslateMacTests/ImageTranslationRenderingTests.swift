@@ -48,12 +48,15 @@ extension ProductRenderingTests {
                 let compact = words.filter { !$0.isWhitespace }
                 XCTAssertTrue(compact.contains("发送图片翻译"), words)
                 XCTAssertTrue(compact.contains("翻译文字"), words)
-                XCTAssertTrue(compact.contains("账号"), words)
+                XCTAssertTrue(compact.contains("在本机完成"), words)
+                XCTAssertTrue(compact.contains("你可以选择向codex发送文字或这张图片"), words)
+                XCTAssertTrue(compact.contains("历史记录只保存译文"), words)
             } else {
                 XCTAssertTrue(words.contains("send image for translation"), words)
                 XCTAssertTrue(words.contains("translate text"), words)
-                XCTAssertTrue(words.contains("account"), words)
-                XCTAssertTrue(words.contains("temporary png"), words)
+                XCTAssertTrue(words.contains("text recognition stays on this mac"), words)
+                XCTAssertTrue(words.contains("choose whether to send the text or this image to codex"), words)
+                XCTAssertTrue(words.contains("temporary images are removed after use"), words)
             }
         }
         XCTAssertTrue(capture.canTranslateImage)
