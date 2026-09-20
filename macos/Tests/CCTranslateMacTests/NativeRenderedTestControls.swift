@@ -566,9 +566,9 @@ enum NativeSettingsTestControls {
         try await Task.sleep(nanoseconds: 10_000_000)
         try prepare(root)
         var visited = Set<ObjectIdentifier>()
-        var matches: [any NSAccessibility] = []
+        var matches: [any NSAccessibilityProtocol] = []
         var roles: [String] = []
-        func visit(_ element: any NSAccessibility) {
+        func visit(_ element: any NSAccessibilityProtocol) {
             guard visited.insert(ObjectIdentifier(element)).inserted else { return }
             let role = element.accessibilityRole()
             roles.append(role?.rawValue ?? "nil")
@@ -578,7 +578,7 @@ enum NativeSettingsTestControls {
                 matches.append(element)
             }
             for child in element.accessibilityChildren() ?? [] {
-                if let child = child as? any NSAccessibility { visit(child) }
+                if let child = child as? any NSAccessibilityProtocol { visit(child) }
             }
         }
         visit(root)
