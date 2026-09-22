@@ -24,16 +24,21 @@ extension ProductRenderingTests {
         window.contentView = host
         defer { focus.close(window) }
         window.makeKeyAndOrderFront(nil)
-        try await NativeSettingsTestControls.pressDisclosure(
-            in: host, identifier: "about-build-details", label: "Package information & recorded build source")
+        let expand = try await NativeSettingsTestControls.resolveWhenReady(
+            in: host, identifier: "about-build-details",
+            label: "Package information & recorded build source", kind: .button)
+        try expand.focus(in: window)
+        XCTAssertTrue(expand.isFocused)
+        try await expand.press()
         let labels = ["info.plist", "source commit", "signing declaration", "build toolchain", "not a live audit"]
         let deadline = Date().addingTimeInterval(3)
         var png = Data()
         var words = ""
-        // Wait for the native disclosure animation rather than recording its faded first frame.
+        // Wait for the content update after pressing the real native control.
         repeat {
             try await Task.sleep(nanoseconds: 50_000_000)
             host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
             let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: host.bounds.size)
             host.effectiveAppearance.performAsCurrentDrawingAppearance {
                 host.cacheDisplay(in: host.bounds, to: bitmap)

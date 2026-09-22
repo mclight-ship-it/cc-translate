@@ -319,7 +319,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             )
             panel.title = "CC Translate"
             configureProductChrome(panel)
-            panel.contentMinSize = NSSize(width: 717, height: 540)
+            let minimum = NSSize(width: 717, height: 540)
+            panel.contentMinSize = minimum
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.isExcludedFromWindowsMenu = false
@@ -330,9 +331,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                     showSettings: { [weak self] in self?.openSettings() },
                     showCapture: { [weak self] in self?.startCapture() },
                     embedded: true)
-            })
-            host.sizingOptions = []
+            }.frame(minWidth: minimum.width, minHeight: minimum.height))
+            host.sizingOptions = [.minSize]
             panel.contentView = host
+            panel.contentMinSize = minimum
             panel.center()
             inputPanel = panel
         }
@@ -651,9 +653,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         panel.hidesOnDeactivate = false
         panel.isExcludedFromWindowsMenu = false
         panel.delegate = self
-        let host = NSHostingView(rootView: root)
-        host.sizingOptions = []
+        // Keep the minimum outside the responsive workspace and any sheet presentation host.
+        let host = NSHostingView(rootView: root.frame(minWidth: minimum.width, minHeight: minimum.height))
+        host.sizingOptions = [.minSize]
         panel.contentView = host
+        panel.contentMinSize = minimum
         panel.center()
         return panel
     }

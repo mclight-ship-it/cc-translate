@@ -108,13 +108,29 @@ struct AboutView: View {
                 if model.phase == .loading {
                     ProgressView(presentation.text("Reading bundled resources…", "正在读取随包资源…"))
                 } else {
-                    DisclosureGroup(presentation.text("Package information & recorded build source", "包信息与构建来源"),
-                                    isExpanded: $showingBuildDetails) {
-                        buildDetails.padding(.top, 12)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button {
+                            showingBuildDetails.toggle()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: showingBuildDetails ? "chevron.down" : "chevron.right")
+                                    .font(.caption).accessibilityHidden(true)
+                                Text(presentation.text("Package information & recorded build source", "包信息与构建来源"))
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("about-build-details")
+                        .accessibilityValue(showingBuildDetails
+                            ? presentation.text("Expanded", "已展开")
+                            : presentation.text("Collapsed", "已折叠"))
+                        if showingBuildDetails { buildDetails }
                     }
                     .padding(PearlTheme.spacing)
                     .pearlCard(inset: true)
-                    .accessibilityIdentifier("about-build-details")
                 }
                 Text(presentation.text(
                     "The application's own license has not been confirmed. The bundled third-party notices and license texts apply to their respective components.",
