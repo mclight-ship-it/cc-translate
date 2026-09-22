@@ -31,7 +31,7 @@ final class AboutApplicationTests: XCTestCase {
         await about.loadTask?.value
         let firstWindow = try XCTUnwrap(application.aboutPanel)
         XCTAssertTrue(firstWindow.isVisible)
-        XCTAssertEqual(firstWindow.contentMinSize, NSSize(width: 660, height: 520))
+        XCTAssertEqual(firstWindow.contentMinSize, NSSize(width: 717, height: 520))
         XCTAssertEqual(about.overview.info?.version, "9.8.7")
         let settings = application.settingsContent()
         settings.showAbout()

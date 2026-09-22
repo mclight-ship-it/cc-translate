@@ -252,6 +252,23 @@ final class DictionaryProductIntegrationTests: XCTestCase {
             XCTAssertEqual(downloader.starts, 1)
             XCTAssertGreaterThan(downloader.receivedBytes, 0)
             XCTAssertEqual(downloader.receivedBytes, downloader.expectedBytes)
+            let translationOutput = model.output
+            model.input = "Keep this unfinished draft."
+            model.dictionarySearch.query = "\u{4f60}\u{597d}"
+            model.dictionarySearch.search(language: "en_US")
+            guard await eventually(timeout: 5, { !model.dictionarySearch.busy }),
+                  model.dictionarySearch.phase == .hit else {
+                XCTFail("Standalone lookup failed against the real installed dictionary: \(model.dictionarySearch.phase)")
+                throw DictionaryProductTestError.lookupFailed
+            }
+            XCTAssertFalse(model.dictionarySearch.output.isEmpty)
+            XCTAssertFalse(model.dictionarySearch.sources.isEmpty)
+            XCTAssertEqual(model.input, "Keep this unfinished draft.")
+            XCTAssertEqual(model.output, translationOutput)
+            XCTAssertEqual(notices.lastLookup?.result?["submitted"], .bool(false))
+            XCTAssertEqual(notices.lastLookup?.result?["history"], .string("disabled"))
+            XCTAssertTrue(notices.configurationOnly)
+            XCTAssertEqual(notices.connections.count, 1)
         } catch {
             do { try await cleanup(model, notices: notices, window: window, home: home) }
             catch { XCTFail("Dictionary product cleanup failed: \(error)") }

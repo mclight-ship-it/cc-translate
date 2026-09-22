@@ -97,6 +97,7 @@ final class ProbeModel: ObservableObject {
     @Published var appearance = "system"
     @Published var nativeTextScale: NativeTextScale = .standard
     @Published var resultPlacement: NativeResultPlacement = .remembered
+    @Published var resultPinned = true
     @Published private(set) var captureTranslationMode: CaptureTranslationMode = .text
     private(set) var rememberedResultFrame: NSRect?
     @Published var historySearch = "" {
@@ -154,6 +155,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var cliStatus = "Not located. Authentication: unknown."
     @Published private(set) var cliBusy = false
     let dictionary: DictionaryModel
+    let dictionarySearch = DictionarySearchModel()
     let plainPaste: PlainPasteModel
     let captureShortcut: CaptureShortcutModel
     private var captureShortcutObservation: AnyCancellable?
@@ -375,6 +377,13 @@ final class ProbeModel: ObservableObject {
             return true
         }
         dictionary.onConfigurationChanged = { [weak self] in self?.loadSettings() }
+        dictionarySearch.send = { [weak self] request, id in
+            guard let self, let connection = self.connection, self.error == nil,
+                  self.ready, self.settingsReady, !self.settingsBusy, !self.stopping,
+                  !self.dictionary.committing, self.connectionMode != .diagnostic else { return false }
+            _ = connection.dictionary(request, id: id, timeout: 25)
+            return true
+        }
         dictionary.canInstall = { [weak self] in
             guard let self else { return false }
             return self.ready && self.settingsReady && !self.settingsBusy && !self.stopping
@@ -1834,12 +1843,15 @@ final class ProbeModel: ObservableObject {
         productMessage = ""
     }
 
-    func copyText(_ text: String) {
-        guard !text.isEmpty else { return }
+    @discardableResult
+    func copyText(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
         if !writeClipboard(text) {
             status = "Could not copy the result."
             historyStatus = status
+            return false
         }
+        return true
     }
 
     private func request(_ payload: [String: JSONValue]) {
@@ -1934,6 +1946,7 @@ final class ProbeModel: ObservableObject {
             // Target terminals release resources even when their output is hidden or the helper is stopping.
             if event.isTerminal { imageTranslation.terminal(requestID: event.id) }
             if dictionary.handle(event) { return }
+            if dictionarySearch.handle(event) { return }
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
                 if case .array(let capabilities)? = event.payload["capabilities"] {
@@ -2095,6 +2108,7 @@ final class ProbeModel: ObservableObject {
                 invalidateHistory(retireActive: true)
             }
             dictionary.connectionLost()
+            dictionarySearch.connectionLost()
             status = "Helper failure: \(error.rawValue). Restart explicitly; requests are not replayed."
             if error == .translationOutcomeUnknown {
                 status = imageTranslation.owns(requestID: latest.id)
@@ -2180,6 +2194,7 @@ final class ProbeModel: ObservableObject {
             catalogPreservesPreparation = false
             dictionaryLookup = nil
             dictionary.connectionLost()
+            dictionarySearch.connectionLost()
             if !reopen, draft != nil {
                 failPreparation(text("Connection closed. Translate again when you are ready.",
                                      "连接已关闭，准备好后可重新翻译。"))

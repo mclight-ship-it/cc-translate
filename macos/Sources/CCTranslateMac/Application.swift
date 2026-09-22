@@ -45,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private(set) var statusItem: NSStatusItem?
     private(set) var inputPanel: NSPanel?
     private(set) var resultPanel: NSPanel?
-    private var historyPanel: NSPanel?
+    private(set) var historyPanel: NSPanel?
+    private(set) var dictionaryPanel: NSPanel?
     private(set) var settingsPanel: NSPanel?
     private(set) var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var terminating = false
     private var showTranslationResults = true
     private var announcement: AnyCancellable?
+    private var dictionaryAnnouncement: AnyCancellable?
     private var captureObservation: AnyCancellable?
     var imageCleanupQuitChoice: (@MainActor () -> Bool)?
     var terminationReply: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
@@ -108,6 +110,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.updates = updates ?? AppUpdateModel()
         self.uninstaller = uninstaller ?? AppUninstallService()
         super.init()
+        dictionaryAnnouncement = model.dictionarySearch.$phase
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] phase in
+                guard let self, self.model.dictionarySearch.phase == phase,
+                      let panel = self.dictionaryPanel, panel.isKeyWindow, panel.isVisible else { return }
+                NSAccessibility.post(element: panel, notification: .announcementRequested,
+                    userInfo: [.announcement: self.model.dictionarySearch.message(using: self.model),
+                               .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            }
         model.captureShortcut.canCapture = { [weak self] in
             guard let self, !self.terminating, self.selectionOverlay == nil else { return false }
             switch self.capture.phase {
@@ -281,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func applyAppearance() {
         historyPanel?.title = model.text("History", "历史记录")
+        dictionaryPanel?.title = model.text("Local dictionary", "本地词典")
         settingsPanel?.title = model.text("Settings", "设置")
         diagnosticsPanel?.title = model.text("Diagnostics", "诊断")
         capturePanel?.title = model.text("Screenshot translation", "截图翻译")
@@ -288,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         updatesPanel?.title = model.text("Software updates", "软件更新")
         let appearance: NSAppearance? = model.appearance == "dark" ? NSAppearance(named: .darkAqua) :
             model.appearance == "light" ? NSAppearance(named: .aqua) : nil
-        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, capturePanel, aboutPanel, updatesPanel] { panel?.appearance = appearance }
+        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, dictionaryPanel, capturePanel, aboutPanel, updatesPanel] { panel?.appearance = appearance }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -300,19 +314,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         guard canReopenProductWindow else { return }
         if inputPanel == nil {
             let panel = ProductPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 940, height: 660),
+                contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false
             )
             panel.title = "CC Translate"
-            panel.contentMinSize = NSSize(width: 660, height: 540)
+            configureProductChrome(panel)
+            panel.contentMinSize = NSSize(width: 717, height: 540)
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.isExcludedFromWindowsMenu = false
             panel.delegate = self
-            panel.contentView = NSHostingView(rootView: TranslatorView(model: model,
-                showHistory: { [weak self] in self?.openHistory() },
-                showSettings: { [weak self] in self?.openSettings() },
-                showCapture: { [weak self] in self?.startCapture() }))
+            panel.contentView = NSHostingView(rootView: workspace(.translator) {
+                TranslatorView(model: model,
+                    showHistory: { [weak self] in self?.openHistory() },
+                    showSettings: { [weak self] in self?.openSettings() },
+                    showCapture: { [weak self] in self?.startCapture() },
+                    embedded: true)
+            })
             panel.center()
             inputPanel = panel
         }
@@ -512,9 +530,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @objc private func openHistory() {
         if historyPanel == nil {
-            historyPanel = makePanel(title: model.text("History", "历史记录"), width: 900, height: 600,
-                minimum: NSSize(width: 640, height: 440),
-                root: TranslationHistoryView(model: model, useEntry: { [weak self] in self?.openInput() }))
+            historyPanel = makePanel(title: model.text("History", "历史记录"), width: 1040, height: 680,
+                minimum: NSSize(width: 697, height: 440),
+                root: workspace(.history) {
+                    TranslationHistoryView(model: model, useEntry: { [weak self] in self?.openInput() })
+                })
         }
         model.loadHistory()
         activate(historyPanel)
@@ -528,9 +548,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         guard !terminating else { return }
         if let pane { settingsNavigation.pane = pane }
         if settingsPanel == nil {
-            settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 660, height: 650,
-                minimum: NSSize(width: 530, height: 460),
-                root: settingsContent())
+            settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 960, height: 720,
+                minimum: NSSize(width: 587, height: 460),
+                root: workspace(.settings) { settingsContent() })
         }
         model.openProduct()
         loginItems.refresh()
@@ -559,6 +579,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             showDiagnostics: { [weak self] in self?.openDiagnostics() },
             showAbout: { [weak self] in self?.openAbout() }, loginItems: loginItems, updates: updates,
             navigation: settingsNavigation)
+    }
+
+    func navigate(to section: ProductSection) {
+        guard canReopenProductWindow else { return }
+        switch section {
+        case .translator: openInput()
+        case .capture: startCapture()
+        case .history: openHistory()
+        case .dictionary: openDictionary()
+        case .settings: openSettings()
+        case .about: openAbout()
+        }
+    }
+
+    private func workspace<Content: View>(_ section: ProductSection,
+                                         @ViewBuilder content: () -> Content) -> some View {
+        ProductWorkspace(model: model, selection: section,
+                         navigate: { [weak self] in self?.navigate(to: $0) }, content: content)
+    }
+
+    private func openDictionary() {
+        if dictionaryPanel == nil {
+            dictionaryPanel = makePanel(title: model.text("Local dictionary", "本地词典"),
+                width: 960, height: 740, minimum: NSSize(width: 637, height: 600),
+                root: workspace(.dictionary) {
+                    DictionaryLibraryView(model: model, search: model.dictionarySearch)
+                })
+        }
+        model.refreshDictionary()
+        activate(dictionaryPanel)
     }
 
     @objc private func checkForUpdates() {
@@ -594,6 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                             styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         panel.contentMinSize = minimum
         panel.title = title
+        configureProductChrome(panel)
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.isExcludedFromWindowsMenu = false
@@ -601,6 +652,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         panel.contentView = NSHostingView(rootView: root)
         panel.center()
         return panel
+    }
+
+    private func configureProductChrome(_ panel: NSPanel) {
+        panel.titlebarAppearsTransparent = true
+        panel.titlebarSeparatorStyle = .none
+        panel.backgroundColor = NSColor(PearlTheme.surface)
     }
 
     private func activate(_ panel: NSPanel?) {
@@ -639,9 +696,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc func openAbout() {
         if aboutPanel == nil {
             aboutPanel = makePanel(title: model.text("About CC Translate", "关于 CC Translate"),
-                width: 760, height: 660, minimum: NSSize(width: 660, height: 520),
-                root: AboutView(model: aboutModel, presentation: model,
-                                close: { [weak self] in self?.aboutPanel?.performClose(nil) }))
+                width: 1000, height: 720, minimum: NSSize(width: 717, height: 520),
+                root: workspace(.about) {
+                    AboutView(model: aboutModel, presentation: model,
+                              close: { [weak self] in self?.aboutPanel?.performClose(nil) })
+                })
             aboutModel.openResources()
         }
         activate(aboutPanel)
@@ -733,7 +792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func hideWindowsForUninstall() {
-        for panel in [inputPanel, resultPanel, historyPanel, settingsPanel, capturePanel,
+        for panel in [inputPanel, resultPanel, historyPanel, dictionaryPanel, settingsPanel, capturePanel,
                       diagnosticsPanel, aboutPanel, updatesPanel] {
             panel?.orderOut(nil)
         }
@@ -760,14 +819,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             )
             panel.title = "CC Translate"
             panel.contentMinSize = NSSize(width: 420, height: 300)
+            configureProductChrome(panel)
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
             panel.isExcludedFromWindowsMenu = false
             panel.isFloatingPanel = true
             panel.becomesKeyOnlyIfNeeded = true
-            panel.level = .floating
+            panel.level = model.resultPinned ? .floating : .normal
             panel.delegate = self
-            let host = NSHostingView(rootView: TranslationResultView(model: model, compact: true))
+            let host = NSHostingView(rootView: ResultWindowContent(
+                model: model, openInWindow: { [weak self] in self?.openInput() },
+                togglePinned: { [weak self] in self?.toggleResultPin() }))
             // The panel owns its viewport size, not SwiftUI's unbounded ideal size.
             host.sizingOptions = []
             panel.contentView = host
@@ -779,6 +841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 MainActor.assumeIsolated {
                     self?.fitResultPanel(reposition: false, screens: NSScreen.screens.map(\.visibleFrame))
                 }
+
             }
         }
         fitResultPanel(reposition: opening,
@@ -788,6 +851,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             rememberOpenWindow(resultPanel)
             resultPanel.orderFrontRegardless()
         }
+    }
+
+    func toggleResultPin() {
+        model.resultPinned.toggle()
+        resultPanel?.level = model.resultPinned ? .floating : .normal
     }
 
     func fitResultPanel(reposition: Bool, screens: [NSRect]) {

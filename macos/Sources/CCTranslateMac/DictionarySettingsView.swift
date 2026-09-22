@@ -24,16 +24,17 @@ struct DictionarySettingsSection: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: PearlTheme.spacing) {
             HStack {
                 Label(model.text("Local dictionary", "本地词典"), systemImage: "books.vertical")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text(stateLabel).font(.callout).foregroundStyle(.secondary)
+                Text(stateLabel).font(.callout).foregroundStyle(PearlTheme.secondary)
             }
-            Text(model.text("Look up words instantly on this Mac, without an AI request.",
-                            "在本机快速查词，无需请求 AI。"))
-                .font(.caption).foregroundStyle(.secondary)
+            Text(model.text("Dictionary lookups use the downloaded data on this Mac. They do not send an AI request.",
+                            "词典查询使用此 Mac 上已下载的数据，不会发送 AI 请求。"))
+                .font(.callout).foregroundStyle(PearlTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let status = dictionary.status {
                 if status.state == .ready {
@@ -45,7 +46,7 @@ struct DictionarySettingsSection: View {
                 if status.state != .ready {
                     Text(model.text("Download: \(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file))",
                                     "下载大小：\(ByteCountFormatter.string(fromByteCount: status.size, countStyle: .file))"))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(PearlTheme.secondary)
                 }
             }
             if dictionary.phase == .downloading {
@@ -53,7 +54,7 @@ struct DictionarySettingsSection: View {
                     .accessibilityLabel(model.text("Dictionary download", "词典下载"))
                 Text(model.text("\(ByteCountFormatter.string(fromByteCount: dictionary.received, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: dictionary.expected, countStyle: .file))",
                                 "\(ByteCountFormatter.string(fromByteCount: dictionary.received, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: dictionary.expected, countStyle: .file))"))
-                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .font(.callout).monospacedDigit().foregroundStyle(PearlTheme.secondary)
             } else if dictionary.busy {
                 ProgressView().controlSize(.small)
                     .accessibilityLabel(model.text("Dictionary operation in progress", "词典操作进行中"))
@@ -64,14 +65,14 @@ struct DictionarySettingsSection: View {
             }
             if !dictionary.messageEnglish.isEmpty {
                 Text(model.text(dictionary.messageEnglish, dictionary.messageChinese))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(PearlTheme.secondary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             DisclosureGroup(model.text("Dictionary information", "词库信息")) {
                 if let status = dictionary.status, status.state == .ready {
                     Text(model.text("\(status.entryCount.formatted()) entries · Data \(status.dataVersion)",
                                     "\(status.entryCount.formatted()) 条词条 · 数据版本 \(status.dataVersion)"))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(PearlTheme.secondary)
                 }
                 HStack {
                     Button(model.text("Sources & notices…", "来源与声明…")) {
@@ -81,6 +82,10 @@ struct DictionarySettingsSection: View {
                         openBundled("dictionary")
                     }
                 }
+                .padding(PearlTheme.spacing)
+                .foregroundStyle(PearlTheme.text)
+                .tint(PearlTheme.accent)
+                .pearlCard()
             }
         }
     }
@@ -93,6 +98,7 @@ struct DictionarySettingsSection: View {
             Button(model.text("Cancel download", "取消下载")) { dictionary.cancel() }
         } else if dictionary.status?.state != .ready {
             Button(model.text("Download dictionary", "下载词典")) { dictionary.download() }
+                .buttonStyle(.borderedProminent)
                 .disabled(!model.settingsReady || model.settingsBusy || dictionary.busy || dictionary.phase == .unknown)
         }
         if let status = dictionary.status, status.state != .notInstalled {

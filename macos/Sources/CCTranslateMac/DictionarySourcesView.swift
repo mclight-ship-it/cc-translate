@@ -21,6 +21,24 @@ struct DictionarySourcesLabels: Equatable {
 }
 
 @MainActor
+struct DictionarySourcesView: View {
+    let sources: [DictionarySource]
+    @ObservedObject var model: ProbeModel
+
+    var body: some View {
+        DictionarySourcesControl(sources: sources, labels: .init(
+            title: model.text("Sources & licenses", "来源与许可"),
+            explanation: model.text("Sources for the local dictionary entry only, not model-generated additions.",
+                                    "仅显示本地词典词条的来源，不包含模型生成的补充内容。"),
+            sourceID: model.text("Source ID", "来源标识"),
+            version: model.text("Version", "版本"),
+            license: model.text("License", "许可"),
+            missing: model.text("Not provided", "未提供"),
+            close: model.text("Close", "关闭")))
+    }
+}
+
+@MainActor
 struct DictionarySourcesControl: NSViewRepresentable {
     let sources: [DictionarySource]
     let labels: DictionarySourcesLabels
@@ -57,6 +75,7 @@ final class DictionarySourcesButton: NSButton, NSPopoverDelegate {
         setButtonType(.momentaryPushIn)
         target = self
         action = #selector(toggleSources(_:))
+        contentTintColor = NSColor(PearlTheme.accent)
         setAccessibilityExpanded(false)
         sourcesPopover.behavior = .transient
         sourcesPopover.animates = false
@@ -168,13 +187,16 @@ final class DictionarySourcesContent: NSViewController {
         root.onDismiss = { [weak self] in self?.onDismiss?() }
         view = root
         heading.font = .systemFont(ofSize: 15, weight: .semibold)
+        heading.textColor = NSColor(PearlTheme.text)
         heading.lineBreakMode = .byTruncatingTail
-        explanation.font = .systemFont(ofSize: 12)
-        explanation.textColor = .secondaryLabelColor
+        explanation.font = .preferredFont(forTextStyle: .callout)
+        explanation.textColor = NSColor(PearlTheme.secondary)
         closeButton.bezelStyle = .rounded
+        closeButton.contentTintColor = NSColor(PearlTheme.accent)
         closeButton.target = self
         closeButton.action = #selector(close(_:))
         let scroll = NSScrollView()
+        let card = DictionarySourcesCard()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
@@ -192,28 +214,34 @@ final class DictionarySourcesContent: NSViewController {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 348, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 2, height: 6)
-        textView.font = .systemFont(ofSize: 14)
-        textView.textColor = .labelColor
+        textView.font = .systemFont(ofSize: max(14, NSFont.preferredFont(forTextStyle: .body).pointSize))
+        textView.textColor = NSColor(PearlTheme.text)
         textView.onDismiss = { [weak self] in self?.onDismiss?() }
         scroll.documentView = textView
-        let children: [NSView] = [heading, explanation, closeButton, scroll]
+        let children: [NSView] = [heading, explanation, closeButton, card]
         for child in children {
             child.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(child)
         }
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(scroll)
         NSLayoutConstraint.activate([
-            heading.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
-            heading.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            heading.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: PearlTheme.spacing),
+            heading.topAnchor.constraint(equalTo: root.topAnchor, constant: PearlTheme.spacing),
             heading.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
-            closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -PearlTheme.spacing),
             closeButton.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
             explanation.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             explanation.trailingAnchor.constraint(equalTo: closeButton.trailingAnchor),
             explanation.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 12),
-            scroll.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: closeButton.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 12),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+            card.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: closeButton.trailingAnchor),
+            card.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 12),
+            card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -PearlTheme.spacing),
+            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            scroll.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
+            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
         ])
     }
 
@@ -245,4 +273,32 @@ final class DictionarySourcesTextView: NSTextView {
 private final class DictionarySourcesContainer: NSView {
     var onDismiss: (() -> Void)?
     override func cancelOperation(_ sender: Any?) { onDismiss?() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(PearlTheme.surface).setFill()
+        bounds.fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+@MainActor
+private final class DictionarySourcesCard: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                   xRadius: PearlTheme.cardRadius, yRadius: PearlTheme.cardRadius)
+        NSColor(PearlTheme.panel).setFill()
+        outline.fill()
+        NSColor(PearlTheme.border).setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }

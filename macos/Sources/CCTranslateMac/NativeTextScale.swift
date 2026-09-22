@@ -161,7 +161,7 @@ struct NativeTranslationEditor: NSViewRepresentable {
         view.minSize = .zero
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.font = .systemFont(ofSize: textScale.points(15))
-        view.textColor = .textColor
+        view.textColor = NSColor(PearlTheme.text)
         view.string = renderedText
         view.delegate = context.coordinator
         let coordinator = context.coordinator
@@ -187,8 +187,8 @@ struct NativeTranslationEditor: NSViewRepresentable {
         if view.isEditable != isEnabled { view.isEditable = isEnabled }
         view.drawsBackground = drawsBackground
         scroll.drawsBackground = drawsBackground
-        view.backgroundColor = .textBackgroundColor
-        scroll.backgroundColor = .textBackgroundColor
+        view.backgroundColor = NSColor(PearlTheme.panel)
+        scroll.backgroundColor = NSColor(PearlTheme.panel)
         view.setAccessibilityLabel(label)
         view.setAccessibilityHelp(hint)
         view.placeholder = placeholder
@@ -281,6 +281,11 @@ final class NativeTranslationTextView: NSTextView {
         if window != nil { onWindowAttachment?() }
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }
@@ -289,7 +294,7 @@ final class NativeTranslationTextView: NSTextView {
         (placeholder as NSString).draw(in: NSRect(
             x: inset.x + padding, y: inset.y,
             width: max(0, bounds.width - 2 * (inset.x + padding)), height: max(0, bounds.height - inset.y)
-        ), withAttributes: [.font: placeholderFont, .foregroundColor: NSColor.secondaryLabelColor])
+        ), withAttributes: [.font: placeholderFont, .foregroundColor: NSColor(PearlTheme.secondary)])
     }
 }
 

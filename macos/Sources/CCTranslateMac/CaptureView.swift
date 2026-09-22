@@ -37,7 +37,7 @@ struct CaptureStatusView: View {
             }
         }
         .padding(20)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .pearlSurface()
         .preferredColorScheme(model.preferredColorScheme)
     }
 }
@@ -54,18 +54,17 @@ struct CaptureView: View {
     private var statusText: String { capture.showsTranslationStatus ? model.productMessage : capture.message(using: model) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: PearlTheme.spacing) {
             HStack {
                 Label(model.text("Screenshot translation", "截图翻译"), systemImage: "viewfinder")
-                    .font(.title2).accessibilityAddTraits(.isHeader)
+                    .font(.title2.bold()).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button(model.text("Close", "关闭"), action: close)
             }
             Text(model.text("Text recognition stays on this Mac. Choose whether to send the text or this image to \(model.translationProvider.displayName).",
                             "文字识别在本机完成。你可以选择向 \(model.translationProvider.displayName) 发送文字或这张图片。"))
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(PearlTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Divider()
             HStack(alignment: .top) {
                 if capture.busy || capture.submitting {
                     ProgressView().controlSize(.small)
@@ -79,20 +78,22 @@ struct CaptureView: View {
                     Button(model.text("Cancel", "取消")) { capture.cancelCurrentAction() }
                 }
             }
+            .padding(12)
+            .pearlCard(inset: true)
             if let preview = capture.preview {
                 GeometryReader { viewport in
                     ScrollViewReader { scroll in
                         ScrollView {
                             if viewport.size.width >= 670 {
-                                HStack(alignment: .top, spacing: 16) {
+                                HStack(alignment: .top, spacing: PearlTheme.spacing) {
                                     previewImage(preview).frame(minWidth: 280, maxWidth: .infinity)
                                     editor.id("reviewed-capture-text").frame(minWidth: 350, maxWidth: .infinity)
                                 }
-                                .frame(height: 290)
+                                .frame(height: 320)
                             } else {
                                 VStack(spacing: 12) {
-                                    previewImage(preview).frame(height: 145)
-                                    editor.id("reviewed-capture-text").frame(height: 220)
+                                    previewImage(preview).frame(height: 170)
+                                    editor.id("reviewed-capture-text").frame(height: 260)
                                 }
                             }
                         }
@@ -108,14 +109,15 @@ struct CaptureView: View {
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: capture.phase == .failed ? "exclamationmark.rectangle" : "viewfinder")
-                        .font(.system(size: 36)).foregroundStyle(.secondary).accessibilityHidden(true)
+                        .font(.system(size: 36)).foregroundStyle(PearlTheme.secondary).accessibilityHidden(true)
                     Text(model.text("Select a region, review the text, then translate.", "选择区域、确认文字，然后翻译。"))
                         .font(.headline)
                     Text(model.text("Nothing is sent automatically. No clipboard access.",
                                     "不会自动发送内容，也不会读取剪贴板。"))
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(PearlTheme.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .pearlCard(inset: true)
             }
             HStack {
                 Button(model.text("Capture again", "重新截图"), action: captureAgain)
@@ -135,14 +137,14 @@ struct CaptureView: View {
             .disabled(model.active || model.preparing)
             Text(model.text("History saves translated text, not screenshots. Temporary images are removed after use.",
                             "历史记录只保存译文，不保存截图；临时图片会在使用后删除。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.caption).foregroundStyle(PearlTheme.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Button {
                     capture.translate(using: model)
                 } label: {
                     Label(model.text("Translate text", "翻译文字"), systemImage: "arrow.right")
                 }
-                .buttonStyle(.bordered).controlSize(.large)
+                .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(!capture.canTranslate(using: model) || model.active || model.preparing)
                 .accessibilityIdentifier("translate-capture-text")
                 Button {
@@ -157,9 +159,9 @@ struct CaptureView: View {
                 Spacer(minLength: 0)
             }
         }
-        .padding(18)
+        .padding(PearlTheme.pagePadding)
         .frame(minWidth: 620, minHeight: 600)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .pearlSurface()
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             if controlActiveState == .key && (capture.phase == .ready || capture.phase == .empty) {
@@ -174,13 +176,15 @@ struct CaptureView: View {
     private func previewImage(_ image: NSImage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(model.text("Retained region", "保留的截图区域")).font(.subheadline.bold())
+                .accessibilityAddTraits(.isHeader)
             Image(nsImage: image).resizable().scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
                 .accessibilityLabel(model.text("Selected screenshot region. Only this image is sent by Send image for translation.",
                                               "所选截图区域。“发送图片翻译”仅发送此图片。"))
                 .help(model.text("Multiple displays are captured one after another.", "多个屏幕会依次截图。"))
         }
+        .padding(12)
+        .pearlCard(inset: true)
     }
 
     private var editor: some View {
@@ -194,9 +198,12 @@ struct CaptureView: View {
             )
                 .disabled(capture.busy)
                 .frame(minHeight: 160, maxHeight: .infinity)
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(
-                    editorFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: PearlTheme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: PearlTheme.controlRadius).strokeBorder(
+                    editorFocused ? PearlTheme.accent : PearlTheme.border, lineWidth: editorFocused ? 2 : 1))
             TranslationInputBudgetView(model: model, text: capture.text)
         }
+        .padding(12)
+        .pearlCard()
     }
 }

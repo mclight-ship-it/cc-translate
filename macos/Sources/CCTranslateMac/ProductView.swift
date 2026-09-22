@@ -39,6 +39,7 @@ struct TranslatorView: View {
     var showHistory: () -> Void
     var showSettings: () -> Void
     var showCapture: () -> Void
+    var embedded: Bool = false
     @State private var editorFocused = false
 
     private var busy: Bool { model.preparing || model.active }
@@ -47,9 +48,8 @@ struct TranslatorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: PearlTheme.spacing) {
             header
-            Divider()
             options
             if model.needsCLI {
                 HStack(spacing: 10) {
@@ -61,17 +61,20 @@ struct TranslatorView: View {
                 }
                 .font(.callout)
                 .padding(12)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .pearlCard(inset: true)
             }
             HStack(spacing: 0) {
-                editor.frame(minWidth: 270, maxWidth: .infinity, maxHeight: .infinity)
+                editor.frame(minWidth: 250, maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
-                TranslationResultView(model: model)
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                TranslationResultView(model: model, embedded: true)
+                    .frame(minWidth: 290, maxWidth: .infinity, maxHeight: .infinity)
             }
+            .pearlCard()
+            .clipShape(RoundedRectangle(cornerRadius: PearlTheme.cardRadius))
         }
+        .padding(PearlTheme.pagePadding)
         .frame(minWidth: 660, minHeight: 540)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .pearlSurface()
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             model.openProduct()
@@ -81,52 +84,56 @@ struct TranslatorView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "character.bubble.fill")
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("CC Translate").font(.headline)
-                Text(model.text("Your words, clearly translated.", "让每一句话，清晰传达。"))
-                    .font(.caption).foregroundStyle(.secondary)
+            if !embedded {
+                PearlAppIcon(size: 28)
             }
+            Text(model.text("Translate", "翻译"))
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
             Spacer()
-            Button(action: showCapture) {
-                Label(model.text("Screenshot", "截图"), systemImage: "viewfinder")
+            if embedded {
+                Label(model.translationProvider.displayName, systemImage: "sparkle")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(PearlTheme.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(PearlTheme.inset, in: Capsule())
+            } else {
+                Button(action: showCapture) {
+                    Label(model.text("Screenshot", "截图"), systemImage: "viewfinder")
+                }
+                .help(model.text("Capture a region and recognize its text locally", "截取区域并在本机识别文字"))
+                Button(action: showHistory) {
+                    Label(model.text("History", "历史记录"), systemImage: "clock.arrow.circlepath")
+                }
+                .keyboardShortcut("y", modifiers: .command)
+                .help(model.text("Browse saved translations", "浏览已保存的翻译"))
+                Button(action: showSettings) {
+                    Label(model.text("Settings", "设置"), systemImage: "gearshape")
+                }
+                .keyboardShortcut(",", modifiers: .command)
             }
-            .help(model.text("Capture a region and recognize its text locally", "截取区域并在本机识别文字"))
-            Button(action: showHistory) {
-                Label(model.text("History", "历史记录"), systemImage: "clock.arrow.circlepath")
-            }
-            .keyboardShortcut("y", modifiers: .command)
-            .help(model.text("Browse saved translations", "浏览已保存的翻译"))
-            Button(action: showSettings) {
-                Label(model.text("Settings", "设置"), systemImage: "gearshape")
-            }
-            .keyboardShortcut(",", modifiers: .command)
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
+        .controlSize(.small)
     }
 
     private var options: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             DirectionPicker(model: model, selection: $model.direction)
                 .frame(maxWidth: 340)
             Spacer(minLength: 8)
-            Label(model.translationProvider.displayName, systemImage: "sparkle")
-                .foregroundStyle(.secondary)
             ModelPicker(model: model, selection: $model.modelProfile)
-                .labelsHidden().frame(minWidth: 180, idealWidth: 280, maxWidth: 340)
+                .labelsHidden().frame(minWidth: 170, idealWidth: 230, maxWidth: 300)
                 .layoutPriority(1)
         }
         .disabled(busy || model.settingsBusy)
-        .padding(.horizontal, 18).padding(.vertical, 12)
+        .controlSize(.regular)
     }
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(model.text("Original", "原文")).font(.headline)
+                Text(model.text("Original", "原文")).font(.subheadline.weight(.medium))
+                    .foregroundStyle(PearlTheme.secondary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button(model.text("Clear", "清空")) {
@@ -144,12 +151,9 @@ struct TranslatorView: View {
                 placeholder: model.text("Type or paste text here…", "在这里输入或粘贴文字…")
             )
             .padding(8)
-            .background(Color(nsColor: .textBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 10))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(editorFocused ? Color.accentColor :
-                                  Color(nsColor: .separatorColor), lineWidth: 1)
+                RoundedRectangle(cornerRadius: PearlTheme.controlRadius)
+                    .strokeBorder(editorFocused ? PearlTheme.accent : Color.clear, lineWidth: 1)
                     .allowsHitTesting(false)
             }
             .frame(minHeight: 180)
@@ -174,12 +178,13 @@ struct TranslatorView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .tint(PearlTheme.accent)
                     .disabled(!canTranslate)
                     .accessibilityIdentifier("translate-input-text")
                 }
             }
         }
-        .padding(18)
+        .padding(PearlTheme.spacing)
     }
 }
 
@@ -215,31 +220,30 @@ struct ContentSizedStatusScrollView<Content: View>: View {
 struct TranslationResultView: View {
     @ObservedObject var model: ProbeModel
     var compact = false
+    var embedded: Bool = false
+    var openInWindow: (() -> Void)? = nil
+    var togglePinned: (() -> Void)? = nil
+    var pinned: Bool = true
     @State private var formatted = true
 
     private var busy: Bool { model.preparing || model.active }
+    private var hasWindowActions: Bool { compact && (openInWindow != nil || togglePinned != nil) }
     private var canRetranslate: Bool {
         !busy && model.resultHasOriginalInput && !model.output.isEmpty && model.inputIssue(for: model.resultInput) == nil
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(model.text("Translation", "翻译结果")).font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                if !model.output.isEmpty {
-                    Text(resultKindName(model.resultKind, model: model))
-                        .font(.caption).foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    resultHeading
+                    Spacer(minLength: 4)
+                    formatPicker
                 }
-                Spacer(minLength: 8)
-                Picker(model.text("Result format", "结果格式"), selection: $formatted) {
-                    Text(model.text("Formatted", "格式化")).tag(true)
-                    Text(model.text("Plain", "纯文本")).tag(false)
+                VStack(alignment: .leading, spacing: 8) {
+                    resultHeading
+                    formatPicker
                 }
-                .labelsHidden().pickerStyle(.segmented)
-                .frame(width: compact ? 154 : 164)
-                .help(model.text("Formatting is applied when streaming finishes.",
-                                 "流式输出结束后应用格式。"))
             }
             NativeResultText(text: model.output, formatted: formatted, streaming: busy,
                              label: model.text("Translation result", "翻译结果"),
@@ -255,40 +259,110 @@ struct TranslationResultView: View {
                     }
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 10))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
+            .background(embedded ? PearlTheme.inset : PearlTheme.panel,
+                        in: RoundedRectangle(cornerRadius: PearlTheme.controlRadius))
+            .clipShape(RoundedRectangle(cornerRadius: PearlTheme.controlRadius))
             ContentSizedStatusScrollView(maximumHeight: compact ? 90 : 140) {
-                phaseStatus
-            }
-            ImageCleanupView(model: model)
-            if !model.resultHasOriginalInput && !model.output.isEmpty {
-                Text(model.resultKind == "ocr"
-                     ? model.text("Image result · No original text retained. To send the image again, use the capture preview.",
-                                  "图片结果 · 未保留原文。如需再次发送图片，请使用截图预览。")
-                     : model.text("No original text is stored for this result.", "此结果未保存原文。"))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    phaseStatus
+                    ImageCleanupView(model: model)
+                    if !model.resultHasOriginalInput && !model.output.isEmpty {
+                        Text(model.resultKind == "ocr"
+                             ? model.text("Image result · No original text retained. To send the image again, use the capture preview.",
+                                          "图片结果 · 未保留原文。如需再次发送图片，请使用截图预览。")
+                             : model.text("No original text is stored for this result.", "此结果未保存原文。"))
+                            .font(.caption).foregroundStyle(PearlTheme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
                     copyButtons
+                    if hasWindowActions { windowActions }
                     Spacer(minLength: 8)
                     resultActions
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) { copyButtons }
+                    HStack(spacing: 8) {
+                        copyButtons
+                        if hasWindowActions {
+                            Spacer(minLength: 8)
+                            windowActions
+                        }
+                    }
                     resultActions
                 }
             }
+            .padding(.top, 8)
+            .overlay(alignment: .top) {
+                Rectangle().fill(PearlTheme.border).frame(height: 1)
+                    .accessibilityHidden(true).allowsHitTesting(false)
+            }
         }
-        .padding(compact ? 14 : 18)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(compact ? 14 : PearlTheme.spacing)
+        .background(embedded ? PearlTheme.inset : PearlTheme.surface)
+        .foregroundStyle(PearlTheme.text)
+        .tint(PearlTheme.accent)
         .preferredColorScheme(model.preferredColorScheme)
+    }
+
+    private var resultHeading: some View {
+        HStack(spacing: 8) {
+            if compact { PearlAppIcon(size: 22) }
+            Text(compact ? "CC Translate" : model.text("Translation", "翻译结果"))
+                .font(.subheadline.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            if !model.output.isEmpty {
+                Text(resultKindName(model.resultKind, model: model))
+                    .font(.caption).foregroundStyle(PearlTheme.secondary)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var formatPicker: some View {
+        Picker(model.text("Result format", "结果格式"), selection: $formatted) {
+            Text(model.text("Formatted", "格式化")).tag(true)
+            Text(model.text("Plain", "纯文本")).tag(false)
+        }
+        .labelsHidden().pickerStyle(.segmented)
+        .frame(width: compact ? 154 : 164)
+        .help(model.text("Formatting is applied when streaming finishes.",
+                         "流式输出结束后应用格式。"))
+    }
+
+    private var windowActions: some View {
+        HStack(spacing: 4) {
+            if let openInWindow {
+                Button(action: openInWindow) {
+                    Label(model.text("Open in translation window", "在翻译窗口中打开"),
+                          systemImage: "arrow.up.right.square")
+                }
+                .labelStyle(.iconOnly)
+                .frame(width: 28, height: 28)
+                .accessibilityIdentifier("result-open-in-window")
+                .accessibilityLabel(model.text("Open in translation window", "在翻译窗口中打开"))
+                .help(model.text("Open in translation window", "在翻译窗口中打开"))
+            }
+            if let togglePinned {
+                Button(action: togglePinned) {
+                    Label(pinned ? model.text("Unpin result window", "取消固定结果窗口")
+                                 : model.text("Pin result window", "固定结果窗口"),
+                          systemImage: pinned ? "pin.fill" : "pin")
+                }
+                .labelStyle(.iconOnly)
+                .frame(width: 28, height: 28)
+                .foregroundStyle(pinned ? PearlTheme.accent : PearlTheme.secondary)
+                .accessibilityIdentifier("result-toggle-pinned")
+                .accessibilityLabel(pinned ? model.text("Unpin result window", "取消固定结果窗口")
+                                          : model.text("Pin result window", "固定结果窗口"))
+                .accessibilityValue(pinned ? model.text("Pinned", "已固定") : model.text("Not pinned", "未固定"))
+                .help(pinned ? model.text("Unpin result window", "取消固定结果窗口")
+                             : model.text("Keep result window on top", "将结果窗口置顶"))
+            }
+        }
+        .buttonStyle(.borderless)
     }
 
     private var sourcesLabels: DictionarySourcesLabels {
@@ -306,7 +380,7 @@ struct TranslationResultView: View {
         VStack(spacing: 10) {
             Image(systemName: emptySymbol)
                 .font(.system(size: 28, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(PearlTheme.accent)
                 .accessibilityHidden(true)
             Text(emptyTitle).font(.headline)
             Text(emptyDescription)
@@ -314,7 +388,7 @@ struct TranslationResultView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(24)
+        .padding(PearlTheme.pagePadding)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }
@@ -330,13 +404,13 @@ struct TranslationResultView: View {
 
     private var emptyTitle: String {
         if busy {
-            return model.translatingImage ? model.text("Working on your image", "正在处理你的图片") :
-                model.text("Working on your words", "正在处理你的文字")
+            return model.translatingImage ? model.text("Translating image", "正在翻译图片") :
+                model.text("Translating text", "正在翻译文字")
         }
         switch model.productPhase {
         case .failed: return model.text("Translation needs attention", "翻译遇到问题")
         case .cancelled: return model.text("Translation cancelled", "翻译已取消")
-        default: return model.text("A little more understanding", "让理解更进一步")
+        default: return model.text("Translation result", "翻译结果")
         }
     }
 
@@ -366,7 +440,7 @@ struct TranslationResultView: View {
                     .accessibilityHidden(true)
             }
             Text(model.productMessage.isEmpty ?
-                 model.text("Ready when you are.", "随时可以开始。") : model.productMessage)
+                 model.text("Ready to translate", "可以开始翻译") : model.productMessage)
                 .font(model.productPhase == .failed ? .callout : .caption)
                 .foregroundStyle(model.productPhase == .failed ? .primary : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -458,8 +532,8 @@ struct TranslationHistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label(model.text("History", "历史记录"), systemImage: "clock.arrow.circlepath")
-                    .font(.title2).accessibilityAddTraits(.isHeader)
+                Text(model.text("History", "历史记录"))
+                    .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button { model.loadHistory() } label: {
                     Label(model.text("Refresh", "刷新"), systemImage: "arrow.clockwise")
@@ -470,15 +544,21 @@ struct TranslationHistoryView: View {
                 }
                 .disabled(model.historyBusy || !model.settingsReady || model.settingsBusy)
             }
-            .padding(18)
-            Divider()
+            .padding(.horizontal, PearlTheme.pagePadding)
+            .padding(.top, PearlTheme.pagePadding)
+            .padding(.bottom, PearlTheme.spacing)
             HSplitView {
                 historyList.frame(minWidth: 255, idealWidth: 310, maxWidth: 390)
-                historyDetail.frame(minWidth: 310, maxWidth: .infinity, maxHeight: .infinity)
+                historyDetail
+                    .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+                    .pearlCard(inset: true)
+                    .padding(.leading, 12)
             }
+            .padding(.horizontal, PearlTheme.spacing)
+            .padding(.bottom, PearlTheme.spacing)
         }
         .frame(minWidth: 640, minHeight: 440)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .pearlSurface()
         .background {
             HistoryWindowCloseObserver(onClose: { model.closeHistorySearch() })
                 .frame(width: 0, height: 0).accessibilityHidden(true)
@@ -530,8 +610,13 @@ struct TranslationHistoryView: View {
                     .accessibilityLabel(model.text("Clear search", "清除搜索"))
                 }
             }
-            .padding(8).background(Color(nsColor: .textBackgroundColor),
-                                   in: RoundedRectangle(cornerRadius: 7))
+            .padding(10)
+            .background(PearlTheme.panel, in: RoundedRectangle(cornerRadius: PearlTheme.controlRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: PearlTheme.controlRadius)
+                    .strokeBorder(searchFocused ? PearlTheme.accent : PearlTheme.border, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
             Picker(model.text("Type", "类型"), selection: $model.historyFilter) {
                 Text(model.text("All types", "所有类型")).tag("all")
                 ForEach(ProbeModel.historyKinds, id: \.self) { kind in
@@ -552,21 +637,34 @@ struct TranslationHistoryView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(row.hasOriginalInput ? row.input : row.kind == "ocr"
                              ? model.text("Image translation", "图片翻译") : model.text("Translation", "翻译结果"))
-                            .font(model.nativeTextScale.bodyFont).lineLimit(2)
-                        Text(row.output).font(model.nativeTextScale.captionFont).foregroundStyle(.secondary).lineLimit(2)
+                            .font(model.nativeTextScale.bodyFont.weight(.medium)).lineLimit(2)
+                        Text(row.output).font(model.nativeTextScale.captionFont)
+                            .foregroundStyle(PearlTheme.secondary).lineLimit(2)
                         HStack {
                             Text(resultKindName(row.kind, model: model))
                             Spacer(minLength: 4)
                             Text(historyDate(row.timestamp))
                         }
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(PearlTheme.secondary)
                     }
-                    .padding(.vertical, 5)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(selectedID == row.id ? PearlTheme.inset : PearlTheme.panel,
+                                in: RoundedRectangle(cornerRadius: PearlTheme.controlRadius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: PearlTheme.controlRadius)
+                            .strokeBorder(selectedID == row.id ? PearlTheme.accent : PearlTheme.border,
+                                          lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                     .tag(row.id)
                     .accessibilityElement(children: .combine)
                 }
             }
             .listStyle(.inset)
+            .scrollContentBackground(.hidden)
             .overlay {
                 if model.historyPage.isEmpty {
                     Text(emptyHistoryTitle)
@@ -590,7 +688,7 @@ struct TranslationHistoryView: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .padding(14)
+        .padding(.trailing, 12)
     }
 
     private var emptyHistoryTitle: String {
@@ -616,13 +714,13 @@ struct TranslationHistoryView: View {
             HistoryTranslationDetail(model: model, row: row, useEntry: useEntry)
         } else {
             VStack(spacing: 10) {
-                Image(systemName: "clock").font(.largeTitle).foregroundStyle(.secondary)
+                Image(systemName: "clock").font(.largeTitle).foregroundStyle(PearlTheme.accent)
                     .accessibilityHidden(true)
                 Text(model.text("Select a translation", "选择一条翻译")).font(.headline)
                 Text(model.text("Read, copy, or reuse a saved original.", "阅读、复制或复用已保存的原文。"))
                     .font(.callout).foregroundStyle(.secondary)
             }
-            .padding(24)
+            .padding(PearlTheme.pagePadding)
         }
     }
 }
@@ -636,34 +734,44 @@ struct HistoryTranslationDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(resultKindName(row.kind, model: model)).font(.headline)
+                Text(resultKindName(row.kind, model: model))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(PearlTheme.accent)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(PearlTheme.panel, in: Capsule())
                 Spacer()
                 Text(historyDate(row.timestamp)).font(.caption).foregroundStyle(.secondary)
             }
-            Text(model.text("Original", "原文")).font(.subheadline.bold())
+            Text(model.text("Original", "原文")).font(.subheadline.weight(.medium))
+                .foregroundStyle(PearlTheme.secondary)
                 .accessibilityAddTraits(.isHeader)
             if row.hasOriginalInput {
                 NativeResultText(text: row.input, formatted: false, streaming: false,
                                  label: model.text("Saved original text", "已保存的原文"),
                                  textScale: model.nativeTextScale)
                     .frame(minHeight: 80, maxHeight: 150)
+                    .pearlCard()
             } else {
                 Text(model.text("Original text is not stored in this record.", "此记录未保存原文。"))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Divider()
-            Text(model.text("Translation", "翻译结果")).font(.subheadline.bold())
+            Text(model.text("Translation", "翻译结果")).font(.subheadline.weight(.medium))
+                .foregroundStyle(PearlTheme.secondary)
                 .accessibilityAddTraits(.isHeader)
             NativeResultText(text: row.output, formatted: !row.isLocalDictionary, streaming: false,
                              label: model.text("Saved translation", "已保存的翻译"),
                              textScale: model.nativeTextScale)
                 .frame(minHeight: 110)
+                .pearlCard()
             ViewThatFits(in: .horizontal) {
                 HStack { historyActions }
                 VStack(alignment: .leading, spacing: 8) { historyActions }
             }
         }
-        .padding(18)
+        .padding(PearlTheme.spacing)
+        .foregroundStyle(PearlTheme.text)
+        .tint(PearlTheme.accent)
     }
 
     @ViewBuilder
@@ -679,6 +787,8 @@ struct HistoryTranslationDetail: View {
             useEntry()
         }
         .buttonStyle(.bordered)
+        .tint(PearlTheme.accent)
+        .accessibilityIdentifier("reuse-history-entry")
         .help(model.text("Open this record in the translator without sending it.",
                          "在翻译窗口打开此记录，不会立即发送。"))
     }
@@ -1136,21 +1246,28 @@ struct TranslationSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker(model.text("Settings category", "设置分类"), selection: $navigation.pane) {
-                ForEach(SettingsPane.allCases, id: \.self) { category in
-                    Text(category.title(using: model)).tag(category)
+            HStack(spacing: PearlTheme.spacing) {
+                Text(model.text("Settings", "设置"))
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Picker(model.text("Settings category", "设置分类"), selection: $navigation.pane) {
+                    ForEach(SettingsPane.allCases, id: \.self) { category in
+                        Text(category.title(using: model)).tag(category)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(minWidth: 300, maxWidth: 420)
+                .accessibilityIdentifier("settings-category")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityIdentifier("settings-category")
-            .padding(16)
-            Divider()
+            .padding(.horizontal, PearlTheme.pagePadding)
+            .padding(.vertical, PearlTheme.spacing)
             settingsForm
         }
         .disabled(model.defaultsPhase.busy)
         .frame(minWidth: 530, minHeight: 460)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .pearlSurface()
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             model.refreshDictionary()
@@ -1219,6 +1336,8 @@ struct TranslationSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .backgroundStyle(PearlTheme.panel)
     }
 
     private var generalSection: some View {
@@ -1820,7 +1939,7 @@ struct NativeResultText: NSViewRepresentable {
         paragraph.lineSpacing = 4
         return NSAttributedString(string: source, attributes: [
             .font: NSFont.systemFont(ofSize: 15),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: NSColor(PearlTheme.text),
             .paragraphStyle: paragraph
         ])
     }
