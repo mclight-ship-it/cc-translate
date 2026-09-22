@@ -6,20 +6,7 @@ import XCTest
 
 extension ProductRenderingTests {
     @MainActor
-    private func usePackagedPearlIcon() throws -> NSImage? {
-        _ = NSApplication.shared
-        let previous = NSApp.applicationIconImage
-        if let app = ProcessInfo.processInfo.environment["CC_TRANSLATE_DOCK_TEST_APP"] {
-            let path = URL(fileURLWithPath: app).appendingPathComponent("Contents/Resources/CCTranslate.icns")
-            NSApp.applicationIconImage = try XCTUnwrap(NSImage(contentsOf: path))
-        }
-        return previous
-    }
-
-    @MainActor
     func testPearlWorkspaceRendersRealTranslatorAndOfflineDictionaryInBothThemes() throws {
-        let previousIcon = try usePackagedPearlIcon()
-        defer { NSApp.applicationIconImage = previousIcon }
         let fixture = try ProductTestHarness(savedCLI: false)
         defer { fixture.cleanUp() }
         let helper = try fixture.localReady()
@@ -54,8 +41,6 @@ extension ProductRenderingTests {
 
     @MainActor
     func testPearlWorkspaceCompactRailPreservesEditorWidthAndSettingsContent() throws {
-        let previousIcon = try usePackagedPearlIcon()
-        defer { NSApp.applicationIconImage = previousIcon }
         let fixture = try ProductTestHarness(savedCLI: false)
         defer { fixture.cleanUp() }
         _ = try fixture.localReady(automaticReplies: true)

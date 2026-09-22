@@ -690,6 +690,12 @@ final class ProductRenderingTests: XCTestCase {
                                       scheme: ColorScheme, inspect: ((NSView) throws -> Void)? = nil,
                                       highResolution: Bool = false) throws -> Data {
         _ = NSApplication.shared
+        let previousIcon = NSApp.applicationIconImage
+        if let app = ProcessInfo.processInfo.environment["CC_TRANSLATE_DOCK_TEST_APP"] {
+            let icon = URL(fileURLWithPath: app).appendingPathComponent("Contents/Resources/CCTranslate.icns")
+            NSApp.applicationIconImage = try XCTUnwrap(NSImage(contentsOf: icon))
+        }
+        defer { NSApp.applicationIconImage = previousIcon }
         let host = NSHostingView(rootView: content.environment(\.colorScheme, scheme))
         let appearance = try XCTUnwrap(NSAppearance(named: scheme == .dark ? .darkAqua : .aqua))
         // Native text/list controls get window backing, but the window is never ordered onscreen.
@@ -706,7 +712,10 @@ final class ProductRenderingTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
-        try inspect?(host)
+        // Retain the failing native view before propagating a control-inspection error.
+        var inspectionError: Error?
+        do { try inspect?(host) }
+        catch { inspectionError = error }
         XCTAssertEqual(host.bounds.size, size)
         let bitmap: NSBitmapImageRep
         if highResolution {
@@ -739,6 +748,7 @@ final class ProductRenderingTests: XCTestCase {
         XCTAssertGreaterThan(colors.count, 8, "A blank or solid-color bitmap is not a rendered product view.")
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         try NativeRenderEvidence.retainPNG(png, named: name)
+        if let inspectionError { throw inspectionError }
         return png
     }
 }

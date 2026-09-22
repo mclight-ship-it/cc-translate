@@ -143,18 +143,14 @@ struct AboutView: View {
                 .font(.callout).foregroundStyle(PearlTheme.secondary)
                 .textSelection(.enabled)
             supportButton
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .foregroundStyle(PearlTheme.onAccent)
+                .buttonStyle(.bordered).controlSize(.large)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
     }
 
     private var supportButton: some View {
-        Button(action: model.showSupport) {
-            Label(presentation.text("Buy the author a coffee", "请作者喝杯咖啡"),
-                  systemImage: "cup.and.saucer")
-        }
+        Button(presentation.text("Buy the author a coffee", "请作者喝杯咖啡"), action: model.showSupport)
         .accessibilityIdentifier("about-support-author")
         .disabled(model.phase != .loaded)
     }
