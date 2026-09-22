@@ -194,6 +194,12 @@ final class PearlWorkspaceTests: XCTestCase {
         XCTAssertEqual(fixture.model.dictionarySearch.query, "example")
         app.showSettings(pane: .shortcuts)
         XCTAssertTrue(app.settingsPanel === settings)
+        for (panel, minimum) in [(editor, NSSize(width: 717, height: 540)),
+                                  (dictionary, NSSize(width: 637, height: 600)),
+                                  (settings, NSSize(width: 587, height: 460))] {
+            panel.contentView?.layoutSubtreeIfNeeded()
+            XCTAssertEqual(panel.contentMinSize, minimum)
+        }
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertEqual(app.desiredActivationPolicy, .regular)
         app.showResult()

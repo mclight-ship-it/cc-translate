@@ -26,16 +26,23 @@ extension ProductRenderingTests {
         window.makeKeyAndOrderFront(nil)
         try await NativeSettingsTestControls.pressDisclosure(
             in: host, identifier: "about-build-details", label: "Package information & recorded build source")
-        try await Task.sleep(nanoseconds: 30_000_000)
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: host.bounds.size)
-        host.effectiveAppearance.performAsCurrentDrawingAppearance {
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-        }
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let labels = ["info.plist", "source commit", "signing declaration", "build toolchain", "not a live audit"]
+        let deadline = Date().addingTimeInterval(3)
+        var png = Data()
+        var words = ""
+        // Wait for the native disclosure animation rather than recording its faded first frame.
+        repeat {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: host.bounds.size)
+            host.effectiveAppearance.performAsCurrentDrawingAppearance {
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+            }
+            png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            words = try NativeRenderEvidence.settingsWords(png)
+        } while !labels.allSatisfy({ words.contains($0) }) && Date() < deadline
         try NativeRenderEvidence.retainPNG(png, named: "pearl-about-expanded-build-details")
-        let words = try NativeRenderEvidence.settingsWords(png)
-        for label in ["info.plist", "source commit", "signing declaration", "build toolchain", "not a live audit"] {
+        for label in labels {
             XCTAssertTrue(words.contains(label), words)
         }
         XCTAssertTrue(fixture.helpers.isEmpty)

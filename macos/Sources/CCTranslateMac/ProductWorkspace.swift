@@ -47,7 +47,7 @@ struct ProductWorkspace<Content: View>: View {
             let expanded = geometry.size.width >= 860
             HStack(spacing: 0) {
                 sidebar(expanded: expanded)
-                    .frame(width: expanded ? 176 : 56)
+                    .frame(width: expanded ? 196 : 56)
                     .frame(maxHeight: .infinity)
                     .background(PearlTheme.sidebar)
                 Rectangle().fill(PearlTheme.border).frame(width: 1).accessibilityHidden(true)

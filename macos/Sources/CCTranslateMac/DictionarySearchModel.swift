@@ -20,7 +20,7 @@ final class DictionarySearchModel: ObservableObject {
     func search(language: String) {
         guard !busy else { return }
         let word = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else {
+        guard !word.isEmpty, word.utf8.count <= TranslationDocument.maxInputBytes else {
             output = ""
             sources = []
             phase = .ineligible

@@ -324,13 +324,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             panel.hidesOnDeactivate = false
             panel.isExcludedFromWindowsMenu = false
             panel.delegate = self
-            panel.contentView = NSHostingView(rootView: workspace(.translator) {
+            let host = NSHostingView(rootView: workspace(.translator) {
                 TranslatorView(model: model,
                     showHistory: { [weak self] in self?.openHistory() },
                     showSettings: { [weak self] in self?.openSettings() },
                     showCapture: { [weak self] in self?.startCapture() },
                     embedded: true)
             })
+            host.sizingOptions = []
+            panel.contentView = host
             panel.center()
             inputPanel = panel
         }
@@ -649,7 +651,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         panel.hidesOnDeactivate = false
         panel.isExcludedFromWindowsMenu = false
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: root)
+        host.sizingOptions = []
+        panel.contentView = host
         panel.center()
         return panel
     }

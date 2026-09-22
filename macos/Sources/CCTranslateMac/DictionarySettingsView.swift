@@ -24,7 +24,7 @@ struct DictionarySettingsSection: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: PearlTheme.spacing) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label(model.text("Local dictionary", "本地词典"), systemImage: "books.vertical")
                     .font(.headline)
@@ -98,8 +98,7 @@ struct DictionarySettingsSection: View {
             Button(model.text("Cancel download", "取消下载")) { dictionary.cancel() }
         } else if dictionary.status?.state != .ready {
             Button(model.text("Download dictionary", "下载词典")) { dictionary.download() }
-                .buttonStyle(.borderedProminent)
-                .foregroundStyle(PearlTheme.onAccent)
+                .buttonStyle(.bordered)
                 .tint(PearlTheme.accent)
                 .disabled(!model.settingsReady || model.settingsBusy || dictionary.busy || dictionary.phase == .unknown)
         }

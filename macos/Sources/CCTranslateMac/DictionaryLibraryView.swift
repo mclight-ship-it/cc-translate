@@ -30,8 +30,7 @@ struct DictionaryLibraryView: View {
                     .onSubmit { if canSearch { lookUp() } }
                     .accessibilityIdentifier("dictionary-search-word")
                 Button(model.text("Look up", "查词"), action: lookUp)
-                    .buttonStyle(.borderedProminent).controlSize(.large)
-                    .foregroundStyle(PearlTheme.onAccent)
+                    .buttonStyle(.bordered).controlSize(.large)
                     .disabled(!canSearch)
                     .accessibilityIdentifier("dictionary-search-submit")
             }

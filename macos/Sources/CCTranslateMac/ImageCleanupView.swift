@@ -22,6 +22,8 @@ struct ImageCleanupView: View {
                         Button(model.text("Retry image cleanup", "重试清理图片")) {
                             model.imageTranslation.retryCleanup()
                         }
+                        .font(.body).controlSize(.large)
+                        .fixedSize(horizontal: true, vertical: false)
                         .disabled(model.imageTranslation.working)
                     }
                     Text(model.text("The image may remain on this Mac.", "图片可能仍保留在此 Mac 上。"))

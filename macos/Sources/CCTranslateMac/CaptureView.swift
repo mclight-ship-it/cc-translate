@@ -65,17 +65,19 @@ struct CaptureView: View {
                             "文字识别在本机完成。你可以选择向 \(model.translationProvider.displayName) 发送文字或这张图片。"))
                 .font(.callout).foregroundStyle(PearlTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .top) {
-                if capture.busy || capture.submitting {
-                    ProgressView().controlSize(.small)
-                        .accessibilityLabel(statusText)
-                }
+            VStack(alignment: .leading, spacing: 8) {
                 ImageCleanupView(model: model)
-                Text(statusText)
-                    .font(.callout).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                if capture.busy || capture.submitting {
-                    Button(model.text("Cancel", "取消")) { capture.cancelCurrentAction() }
+                HStack(alignment: .top) {
+                    if capture.busy || capture.submitting {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel(statusText)
+                    }
+                    Text(statusText)
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if capture.busy || capture.submitting {
+                        Button(model.text("Cancel", "取消")) { capture.cancelCurrentAction() }
+                    }
                 }
             }
             .padding(12)
@@ -144,8 +146,7 @@ struct CaptureView: View {
                 } label: {
                     Label(model.text("Translate text", "翻译文字"), systemImage: "arrow.right")
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .foregroundStyle(PearlTheme.onAccent)
+                .buttonStyle(.bordered).controlSize(.large)
                 .disabled(!capture.canTranslate(using: model) || model.active || model.preparing)
                 .accessibilityIdentifier("translate-capture-text")
                 Button {

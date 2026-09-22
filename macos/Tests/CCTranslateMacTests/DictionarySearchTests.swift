@@ -112,6 +112,44 @@ final class DictionarySearchTests: XCTestCase {
     }
 
     @MainActor
+    func testOversizedLookupStaysLocalAndAcceptsTheExactUTF8TransportBoundary() throws {
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let helper = try fixture.localReady()
+        let model = try XCTUnwrap(fixture.model)
+        model.reuseHistory(.init(id: "retained", input: "Retained draft.", output: "Retained result."))
+        let search = model.dictionarySearch
+        let limit = TranslationDocument.maxInputBytes
+        let originalRequestCount = helper.dictionaryRequests.count
+        let originalStopCount = helper.stopCount
+        for query in [String(repeating: "a", count: limit + 1),
+                      String(repeating: "你", count: limit / 3 + 1)] {
+            search.query = query
+            search.search(language: "en_US")
+            XCTAssertEqual(search.phase, .ineligible)
+            XCTAssertEqual(search.query, query, "Do not truncate the user's query.")
+            XCTAssertFalse(search.busy)
+            XCTAssertEqual(helper.dictionaryRequests.count, originalRequestCount)
+        }
+        for query in [String(repeating: "a", count: limit),
+                      String(repeating: "你", count: limit / 3) + "aa"] {
+            search.query = "  \(query) \n"
+            search.search(language: "zh_CN")
+            let request = try XCTUnwrap(helper.dictionaryRequests.last)
+            XCTAssertEqual(request.request, .lookup(text: query, appLanguage: "zh_CN", origin: "text",
+                                                   useCache: true, recordHistory: false))
+            helper.event("completed", id: request.id, payload: ["status": .string("ineligible"), "result": .null])
+            XCTAssertFalse(search.busy)
+        }
+        XCTAssertEqual(helper.stopCount, originalStopCount)
+        XCTAssertEqual(model.input, "Retained draft.")
+        XCTAssertEqual(model.output, "Retained result.")
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(model.ready)
+        XCTAssertTrue(model.settingsReady)
+    }
+
+    @MainActor
     func testSynchronousReplyAndBusyEditsKeepSubmittedQueryImmutable() throws {
         let fixture = try ProductTestHarness(savedCLI: false)
         defer { fixture.cleanUp() }
