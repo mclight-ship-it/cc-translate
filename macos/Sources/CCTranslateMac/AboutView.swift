@@ -104,21 +104,7 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PearlTheme.spacing) {
                 if !model.overview.issues.isEmpty { issues }
-                VStack(spacing: 12) {
-                    PearlAppIcon(size: 64)
-                    Text("CC Translate").font(.largeTitle.bold())
-                        .accessibilityAddTraits(.isHeader)
-                    Text(presentation.text("Version", "版本") + " " +
-                         (model.overview.info?.version ?? presentation.text("Not supplied in bundle", "包内未提供")) +
-                         " · " + presentation.text("Build", "构建号") + " " +
-                         (model.overview.info?.build ?? presentation.text("Not supplied in bundle", "包内未提供")))
-                        .font(.callout).foregroundStyle(PearlTheme.secondary)
-                        .textSelection(.enabled)
-                    supportButton
-                        .buttonStyle(.borderedProminent).controlSize(.large)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                identitySection
                 if model.phase == .loading {
                     ProgressView(presentation.text("Reading bundled resources…", "正在读取随包资源…"))
                 } else {
@@ -137,6 +123,30 @@ struct AboutView: View {
             }
             .padding(PearlTheme.spacing).frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var versionLabel: String {
+        let missing = presentation.text("Not supplied in bundle", "包内未提供")
+        let version = model.overview.info?.version ?? missing
+        let build = model.overview.info?.build ?? missing
+        let versionTitle = presentation.text("Version", "版本")
+        let buildTitle = presentation.text("Build", "构建号")
+        return "\(versionTitle) \(version) · \(buildTitle) \(build)"
+    }
+
+    private var identitySection: some View {
+        VStack(spacing: 12) {
+            PearlAppIcon(size: 64)
+            Text("CC Translate").font(.largeTitle.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text(versionLabel)
+                .font(.callout).foregroundStyle(PearlTheme.secondary)
+                .textSelection(.enabled)
+            supportButton
+                .buttonStyle(.borderedProminent).controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
     }
 
     private var supportButton: some View {
