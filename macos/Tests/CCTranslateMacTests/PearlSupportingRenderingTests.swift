@@ -56,8 +56,7 @@ extension ProductRenderingTests {
             f.model.interfaceLanguage = language
             f.model.appearance = scheme == .light ? "light" : "dark"
             let png = try render(
-                AboutView(model: about, presentation: f.model, close: {})
-                    .environment(\.accessibilityReduceTransparency, true),
+                AboutView(model: about, presentation: f.model, close: {}),
                 named: "pearl-about-landing-\(language)", size: NSSize(width: 660, height: 520),
                 scheme: scheme, inspect: { host in
                     let sponsor = try NativeSettingsTestControls.resolve(
@@ -100,8 +99,7 @@ extension ProductRenderingTests {
             f.model.interfaceLanguage = language
             f.model.appearance = scheme == .light ? "light" : "dark"
             let png = try render(
-                CaptureView(capture: capture, model: f.model, captureAgain: {}, reselect: {}, close: {})
-                    .environment(\.accessibilityReduceTransparency, true),
+                CaptureView(capture: capture, model: f.model, captureAgain: {}, reselect: {}, close: {}),
                 named: "pearl-capture-recovery-\(language)", size: NSSize(width: 620, height: 600),
                 scheme: scheme, inspect: { host in
                     let editor = try XCTUnwrap(InputLimitNativeViews.views(NSTextView.self, in: host)
