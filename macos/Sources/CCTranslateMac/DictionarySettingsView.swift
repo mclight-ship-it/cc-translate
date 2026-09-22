@@ -99,6 +99,8 @@ struct DictionarySettingsSection: View {
         } else if dictionary.status?.state != .ready {
             Button(model.text("Download dictionary", "下载词典")) { dictionary.download() }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(PearlTheme.onAccent)
+                .tint(PearlTheme.accent)
                 .disabled(!model.settingsReady || model.settingsBusy || dictionary.busy || dictionary.phase == .unknown)
         }
         if let status = dictionary.status, status.state != .notInstalled {

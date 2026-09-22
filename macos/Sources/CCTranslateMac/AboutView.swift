@@ -144,6 +144,7 @@ struct AboutView: View {
                 .textSelection(.enabled)
             supportButton
                 .buttonStyle(.borderedProminent).controlSize(.large)
+                .foregroundStyle(PearlTheme.onAccent)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)

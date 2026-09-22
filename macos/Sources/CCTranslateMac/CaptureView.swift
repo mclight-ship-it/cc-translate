@@ -145,6 +145,7 @@ struct CaptureView: View {
                     Label(model.text("Translate text", "翻译文字"), systemImage: "arrow.right")
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
+                .foregroundStyle(PearlTheme.onAccent)
                 .disabled(!capture.canTranslate(using: model) || model.active || model.preparing)
                 .accessibilityIdentifier("translate-capture-text")
                 Button {

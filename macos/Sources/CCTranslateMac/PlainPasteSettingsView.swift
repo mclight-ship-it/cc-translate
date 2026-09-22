@@ -15,7 +15,7 @@ struct PlainPasteSettingsSection: View {
             Text(model.text(
                 "In other apps, paste text without formatting using ⌥⇧⌘V. This also removes formatting from the clipboard.",
                 "在其他应用中按 ⌥⇧⌘V 粘贴纯文本，也会清除剪贴板中的文字格式。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.caption).foregroundStyle(PearlTheme.secondary).fixedSize(horizontal: false, vertical: true)
             preferenceStatus.font(.callout)
             registrationStatus.font(.callout)
             if paste.serviceState.busy {
@@ -34,12 +34,12 @@ struct PlainPasteSettingsSection: View {
             if paste.lastRoute == .externalApplication, paste.lastAdmission == .busy {
                 Text(model.text("Another action is still finishing. No additional paste was queued.",
                                 "上一次操作仍在结束中，未排队执行额外粘贴。"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(PearlTheme.secondary)
             } else if paste.lastRoute == .externalApplication,
                       paste.lastAdmission == .disabled || paste.lastAdmission == .shutDown {
                 Text(model.text("The shortcut request was not accepted; the paste service is off.",
                                 "未接受此次快捷键请求，粘贴服务已关闭。"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(PearlTheme.secondary)
             }
             if case .ownApplication(let dispatched)? = paste.lastRoute {
                 Text(dispatched
@@ -72,7 +72,7 @@ struct PlainPasteSettingsSection: View {
             Text(model.text(
                 "Files and image-only content are left unchanged. macOS may ask for Accessibility permission when you paste.",
                 "文件和仅含图片的内容保持不变。粘贴时可能需要允许辅助功能权限。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.callout).foregroundStyle(PearlTheme.secondary).fixedSize(horizontal: false, vertical: true)
         } header: {
             Text(model.text("Plain-text paste", "纯文本粘贴"))
         }
@@ -99,7 +99,7 @@ struct PlainPasteSettingsSection: View {
         switch paste.preference.phase {
         case .unloaded:
             Text(model.text("Off until an enabled preference has been confirmed.", "确认已保存的开启偏好前保持关闭。"))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(PearlTheme.secondary)
         case .waiting:
             Text(model.text("Preference change is waiting for the settings connection or current save.",
                             "偏好更改正在等待设置连接或当前保存操作完成。"))
@@ -118,7 +118,7 @@ struct PlainPasteSettingsSection: View {
     @ViewBuilder
     private var registrationStatus: some View {
         switch paste.registration {
-        case .off: Text(model.text("Shortcut not registered.", "快捷键未注册。")).foregroundStyle(.secondary)
+        case .off: Text(model.text("Shortcut not registered.", "快捷键未注册。")).foregroundStyle(PearlTheme.secondary)
         case .registering: ProgressView(model.text("Reserving shortcut…", "正在注册独占快捷键…")).controlSize(.small)
         case .registered:
             Label(model.text("Shortcut reserved · ⌥⇧⌘V", "快捷键已独占注册 · ⌥⇧⌘V"), systemImage: "keyboard")
