@@ -263,7 +263,11 @@ extension ProductRenderingTests {
             defer { surface.close() }
             let control = try await NativeSettingsTestControls.resolveWhenReady(
                 in: surface.host, identifier: "wrapped-details", label: title, kind: .button)
-            let button = try XCTUnwrap(control.nativeView as? NativeSettingsDisclosureButton)
+            let buttons = InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: surface.host)
+                .filter { $0.identifier?.rawValue == "wrapped-details" }
+            XCTAssertEqual(buttons.count, 1)
+            let button = try XCTUnwrap(buttons.first)
+            XCTAssertEqual(control.frame, RenderedGeometry.frame(button))
             try await NativeSettingsTestControls.pressDisclosure(
                 in: surface.host, identifier: "wrapped-details", label: title)
             try await surface.waitFor { button.isAccessibilityExpanded() }
