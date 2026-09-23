@@ -93,6 +93,17 @@ extension ProductRenderingTests {
                 TranslationResultView(model: model, compact: true, openInWindow: {}, togglePinned: {}),
                 named: "pearl-result-minimum-\(scheme)", size: NSSize(width: 420, height: 300),
                 scheme: scheme, inspect: { host in
+                    let iconButtons = ScaleTestSupport.views(NSButton.self, in: host).filter {
+                        ["result-open-in-window", "result-toggle-pinned"].contains($0.identifier?.rawValue ?? "")
+                    }
+                    XCTAssertEqual(iconButtons.count, 2)
+                    for button in iconButtons {
+                        XCTAssertTrue(button.title.isEmpty, "Compact result buttons must not draw clipped labels.")
+                        XCTAssertEqual(button.imagePosition, .imageOnly)
+                        XCTAssertNotNil(button.image)
+                        XCTAssertFalse(button.accessibilityLabel()?.isEmpty ?? true)
+                        XCTAssertFalse(button.toolTip?.isEmpty ?? true)
+                    }
                     let view = try XCTUnwrap(ScaleTestSupport.views(NSTextView.self, in: host).first)
                     let scroll = try XCTUnwrap(view.enclosingScrollView)
                     XCTAssertEqual(view.string, output)

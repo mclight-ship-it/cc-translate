@@ -33,9 +33,10 @@ struct NativeResultWindowButton: NSViewRepresentable {
 
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.action = action
-        button.title = title
+        button.title = ""
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
             .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        button.imagePosition = .imageOnly
         button.identifier = NSUserInterfaceItemIdentifier(identifier)
         button.setAccessibilityIdentifier(identifier)
         button.setAccessibilityLabel(title)

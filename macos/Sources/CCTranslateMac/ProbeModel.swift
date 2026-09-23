@@ -667,6 +667,8 @@ final class ProbeModel: ObservableObject {
     private func startConnection(mode: ConnectionMode, preserveProduct: Bool = false) {
         guard connection == nil else { return }
         let imageIntent = draft?.imageIntent
+        let startupFailure = text("Couldn't start CC Translate. Reopen the app or reinstall it.",
+                                  "无法启动 CC Translate。请重新打开应用，或重新安装。")
         do {
             let runtime = try runtimeProvider()
             if let imageIntent, draft?.imageIntent != imageIntent || imageTranslation.isShutDown { return }
@@ -725,7 +727,7 @@ final class ProbeModel: ObservableObject {
             plainPaste.connectionLost()
             self.error = error
             status = "Cannot start: \(error.rawValue). No host Python fallback."
-            if !preserveProduct { failPreparation(status) }
+            if !preserveProduct { failPreparation(startupFailure) }
             if queuedHistory != nil {
                 failHistory(text("History helper could not start (\(error.rawValue)). Refresh explicitly.",
                                  "历史记录助手无法启动（\(error.rawValue)），请手动刷新。"))
@@ -735,7 +737,7 @@ final class ProbeModel: ObservableObject {
             plainPaste.connectionLost()
             self.error = .launchFailed
             status = "Cannot start bundled helper. No host Python fallback."
-            if !preserveProduct { failPreparation(status) }
+            if !preserveProduct { failPreparation(startupFailure) }
             if queuedHistory != nil {
                 failHistory(text("History helper could not start. Refresh explicitly.",
                                  "历史记录助手无法启动，请手动刷新。"))

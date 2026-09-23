@@ -7,12 +7,12 @@ import XCTest
 extension ProductRenderingTests {
     @MainActor
     func testProductionShortcutsUseTypedPermissionsInsteadOfDiagnosticText() throws {
-        let fixture = try ProductTestHarness()
-        defer { fixture.cleanUp() }
         let snapshot = PermissionSnapshot(accessibility: .granted, inputMonitoring: .notGranted,
                                           screenCapture: .notGranted, secureInput: false)
-        let model = ProbeModel(preferences: fixture.preferences, readPermissions: { snapshot })
-        defer { model.prepareToQuit() }
+        let fixture = try ProductTestHarness(readPermissions: { snapshot })
+        defer { fixture.cleanUp() }
+        let helper = try fixture.ready()
+        let model = try XCTUnwrap(fixture.model)
         model.refreshPermissions()
         XCTAssertTrue(model.permissions.contains("Accessibility: granted"),
                       "The diagnostics still retain the raw state; settings must not render it.")
@@ -29,10 +29,38 @@ extension ProductRenderingTests {
             XCTAssertFalse(words.contains("accessibility:granted"), words)
             XCTAssertFalse(words.contains("notgranted/notyetrequested"), words)
             if language == "zh" {
-                for token in ["accessibility", "inputmonitoring", "granted", "secureinput"] {
+                for token in ["accessibility", "inputmonitoring", "granted", "secureinput", "python", "bundlemissing"] {
                     XCTAssertFalse(words.contains(token), words)
                 }
             }
+        }
+        XCTAssertNotEqual(model.productPhase, .failed)
+        XCTAssertTrue(helper.translations.isEmpty)
+    }
+
+    @MainActor
+    func testStartupFailureShowsLocalizedRecoveryInsteadOfInternalDiagnostics() throws {
+        for language in ["en", "zh"] {
+            let fixture = try ProductTestHarness(savedCLI: false)
+            defer { fixture.cleanUp() }
+            fixture.preferences.set(language, forKey: "interfaceLanguage")
+            let model = ProbeModel(preferences: fixture.preferences,
+                runtimeProvider: { throw ProbeError.bundleMissing }, locateCandidates: { _, _ in [] })
+            defer { model.prepareToQuit() }
+            model.openProduct()
+            XCTAssertEqual(model.productPhase, .failed)
+            XCTAssertTrue(model.status.contains("bundleMissing"), "Diagnostics retain the underlying cause.")
+            XCTAssertTrue(model.productMessage.contains(language == "zh" ? "重新打开" : "Reopen"))
+            let png = try render(
+                TranslationSettingsView(model: model, showDiagnostics: {}, showAbout: {}, pane: .appearance),
+                named: "settings-startup-failure-\(language)", size: NSSize(width: 660, height: 650),
+                scheme: language == "zh" ? .dark : .light, highResolution: true)
+            let words = try NativeRenderEvidence.settingsWords(png, chinese: language == "zh")
+                .filter { !$0.isWhitespace }
+            for token in ["bundlemissing", "python", "fallback", "cannotstart:"] {
+                XCTAssertFalse(words.contains(token), words)
+            }
+            if language == "zh" { XCTAssertFalse(words.contains("reopen"), words) }
         }
     }
 
