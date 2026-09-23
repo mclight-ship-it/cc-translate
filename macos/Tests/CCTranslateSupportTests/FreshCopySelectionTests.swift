@@ -22,7 +22,8 @@ private final class CopyContext {
             self.duringSource = nil
             action?()
             return self.source.map {
-                .init(target: $0.target, focusIdentity: requireFocus ? $0.focusIdentity : nil)
+                .init(target: $0.target, focusIdentity: requireFocus ? $0.focusIdentity : nil,
+                      launchDate: $0.launchDate)
             }
         }, securityFailure: {
             self.securityCalls += 1
@@ -128,6 +129,231 @@ final class FreshCopySelectionTests: XCTestCase {
     }
 
     @MainActor
+    func testUnreadableFreshCopyFallsBackToAXForSynchronousAndAsynchronousReaders() {
+        for deferred in [false, true] {
+            for failure in [SelectionResult.unknown(.clipboardUnsupported), .unknown(.clipboardUnavailable)] {
+                let f = CopyFixture()
+                f.context.ax = .present("accessible document selection")
+                f.press(10)
+                f.clipboard.count = 6
+                f.clipboard.result = failure
+                f.clipboard.deferred = deferred
+                f.context.duringAX = {
+                    f.context.time = 10.3
+                    f.selection.poll()
+                }
+                f.press(10.2)
+                if deferred {
+                    XCTAssertEqual(f.context.axCalls, 0)
+                    XCTAssertTrue(f.context.results.isEmpty)
+                    f.clipboard.completion?(failure)
+                }
+                XCTAssertEqual(f.context.results, [.present("accessible document selection")])
+                XCTAssertEqual(f.context.axCalls, 1)
+                XCTAssertEqual(f.clipboard.reads, [6], "Reentrant AX must not launch another clipboard reader.")
+                XCTAssertTrue(f.clipboard.cancellation?.isCancelled == true)
+                f.clipboard.completion?(.present("late reader callback"))
+                f.selection.poll()
+                XCTAssertEqual(f.context.results.count, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testValidAsynchronousBrowserCopyRetainsPriorityOverAccessibleText() {
+        let f = CopyFixture()
+        f.context.ax = .present("different accessible text")
+        f.press(10)
+        f.clipboard.count = 6
+        f.clipboard.deferred = true
+        f.press(10.2)
+        XCTAssertEqual(f.context.axCalls, 0)
+        f.clipboard.completion?(.present("actual browser copy"))
+        XCTAssertEqual(f.context.results, [.present("actual browser copy")])
+        XCTAssertEqual(f.context.axCalls, 0)
+    }
+
+    @MainActor
+    func testUnusableAXIsTriedOncePerRevisionAndDoesNotPreventPromisedCopyRetry() {
+        for ax in [SelectionResult.absent, .unknown(.unsupported), .unknown(.unavailable)] {
+            let f = CopyFixture()
+            f.context.ax = ax
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.result = .unknown(.clipboardUnavailable)
+            f.press(10.2)
+            XCTAssertEqual(f.context.axCalls, 1)
+            XCTAssertTrue(f.context.results.isEmpty)
+            f.context.time = 10.3
+            f.selection.poll()
+            XCTAssertEqual(f.clipboard.reads, [6, 6])
+            XCTAssertEqual(f.context.axCalls, 1, "Do not repeatedly block on AX while promised bytes are unavailable.")
+            f.clipboard.result = .present("promise fulfilled")
+            f.context.time = 10.4
+            f.selection.poll()
+            XCTAssertEqual(f.context.results, [.present("promise fulfilled")])
+            XCTAssertEqual(f.context.axCalls, 1)
+        }
+    }
+
+    @MainActor
+    func testClipboardHardFailuresAndRevisionCancellationNeverFallBackToAX() {
+        for deferred in [false, true] {
+            for failure in [SelectionResult.unknown(.tooLarge), .unknown(.focusChanged),
+                            .unknown(.secureInput), .unknown(.accessibility), .unknown(.inputMonitoring),
+                            .unknown(.clipboardChanged)] {
+                let f = CopyFixture()
+                f.context.ax = .present("must not bypass failed authorization or size budget")
+                f.press(10)
+                f.clipboard.count = 6
+                f.clipboard.result = failure
+                f.clipboard.deferred = deferred
+                f.press(10.2)
+                if deferred { f.clipboard.completion?(failure) }
+                XCTAssertEqual(f.context.axCalls, 0)
+                if failure == .unknown(.clipboardChanged) {
+                    XCTAssertTrue(f.context.results.isEmpty)
+                    f.context.time = 15.21
+                    f.selection.poll()
+                }
+                XCTAssertEqual(f.context.results, [failure])
+            }
+        }
+    }
+
+    @MainActor
+    func testAXFallbackPreservesHardAXFailuresEvenWhenPreflightStillAllowsReading() {
+        for failure in [SelectionResult.unknown(.secureInput), .unknown(.accessibility),
+                        .unknown(.inputMonitoring), .unknown(.focusChanged), .unknown(.tooLarge)] {
+            let f = CopyFixture()
+            f.context.ax = failure
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.deferred = true
+            f.press(10.2)
+            f.clipboard.completion?(.unknown(.clipboardUnsupported))
+            XCTAssertEqual(f.context.axCalls, 1)
+            XCTAssertEqual(f.context.results, [failure])
+            f.selection.poll()
+            XCTAssertEqual(f.clipboard.reads, [6])
+        }
+    }
+
+    @MainActor
+    func testAXFallbackRechecksSourceAndSecurityAfterClipboardRevisionLookup() {
+        for focusChanged in [false, true] {
+            let f = CopyFixture()
+            f.context.ax = .present("must not read from an invalidated context")
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.deferred = true
+            f.press(10.2)
+            f.clipboard.duringRevision = {
+                if focusChanged { f.context.source = nil }
+                else { f.context.failure = .secureInput }
+            }
+            f.clipboard.completion?(.unknown(.clipboardUnavailable))
+            XCTAssertEqual(f.context.axCalls, 0)
+            XCTAssertEqual(f.context.results, [.unknown(focusChanged ? .focusChanged : .secureInput)])
+        }
+    }
+
+    @MainActor
+    func testRevisionChangeBeforeOrDuringAXFallbackDiscardsObsoleteSelection() {
+        for duringAX in [false, true] {
+            let f = CopyFixture()
+            f.context.ax = .present("obsolete AX selection")
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.deferred = true
+            f.press(10.2)
+            if duringAX { f.context.duringAX = { f.clipboard.count = 7 } }
+            else { f.clipboard.count = 7 }
+            f.clipboard.completion?(.unknown(.clipboardUnsupported))
+            XCTAssertTrue(f.context.results.isEmpty)
+            XCTAssertEqual(f.context.axCalls, duringAX ? 1 : 0)
+            f.clipboard.deferred = false
+            f.clipboard.result = .unknown(.clipboardUnsupported)
+            f.context.ax = .present("current AX selection")
+            f.selection.poll()
+            XCTAssertEqual(f.clipboard.reads, [6, 7])
+            XCTAssertEqual(f.context.results, [.present("current AX selection")])
+            XCTAssertEqual(f.context.axCalls, duringAX ? 2 : 1)
+        }
+    }
+
+    @MainActor
+    func testCancelledOrInvalidAXFallbackCannotPublishOrReviveItsRequest() {
+        for duringAX in [false, true] {
+            for cause in ["focus", "secureInput", "accessibility", "inputMonitoring", "deadline", "cancel", "disable"] {
+                let f = CopyFixture()
+                f.context.ax = .present("obsolete selection")
+                f.press(10)
+                f.clipboard.count = 6
+                f.clipboard.deferred = true
+                f.press(10.2)
+                let invalidate = {
+                    switch cause {
+                    case "focus": f.context.source = nil
+                    case "secureInput": f.context.failure = .secureInput
+                    case "accessibility": f.context.failure = .accessibility
+                    case "inputMonitoring": f.context.failure = .inputMonitoring
+                    case "deadline": f.context.time = 16
+                    case "disable": f.selection.setFallbackEnabled(false)
+                    default: f.selection.cancel()
+                    }
+                }
+                if duringAX { f.context.duringAX = invalidate }
+                else { invalidate() }
+                f.clipboard.completion?(.unknown(.clipboardUnavailable))
+                XCTAssertEqual(f.context.axCalls, duringAX ? 1 : 0)
+                XCTAssertFalse(f.context.results.contains(.present("obsolete selection")))
+                XCTAssertTrue(f.clipboard.cancellation?.isCancelled == true)
+                let results = f.context.results
+                f.context.failure = nil
+                f.context.source = .init(target: .init(pid: 42), focusIdentity: nil)
+                f.clipboard.completion?(.present("late callback"))
+                f.selection.poll()
+                XCTAssertEqual(f.context.results, results)
+                XCTAssertEqual(results.count, cause == "cancel" || cause == "disable" ? 0 : 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testNewGestureDuringAXOrItsValidationOwnsPendingReadAndResult() {
+        for stage in ["ax", "sourceValidation"] {
+            let f = CopyFixture()
+            f.context.ax = .present("obsolete AX selection")
+            f.press(10)
+            f.clipboard.count = 6
+            f.clipboard.deferred = true
+            f.press(10.2)
+            let obsoleteCompletion = f.clipboard.completion
+            let replace = {
+                f.press(10.3)
+                f.clipboard.count = 7
+                f.press(10.4)
+            }
+            f.context.duringAX = {
+                if stage == "ax" { replace() }
+                else { f.context.duringSource = replace }
+            }
+            obsoleteCompletion?(.unknown(.clipboardUnavailable))
+            XCTAssertTrue(f.context.results.isEmpty)
+            XCTAssertEqual(f.clipboard.reads, [6, 7])
+            XCTAssertFalse(f.clipboard.cancellation?.isCancelled ?? true)
+            f.selection.poll()
+            XCTAssertEqual(f.clipboard.reads, [6, 7], "Old AX completion cannot clear the new reader's busy state.")
+            obsoleteCompletion?(.present("obsolete clipboard callback"))
+            XCTAssertTrue(f.context.results.isEmpty)
+            f.clipboard.completion?(.present("new explicit copy"))
+            XCTAssertEqual(f.context.results, [.present("new explicit copy")])
+            XCTAssertEqual(f.context.axCalls, 1)
+        }
+    }
+
+    @MainActor
     func testAsynchronousCopyAfterOldHalfSecondDeadlineStillUsesOneBoundedRequest() {
         let f = CopyFixture()
         f.context.duringAX = { f.context.time += 0.7 }
@@ -194,7 +420,7 @@ final class FreshCopySelectionTests: XCTestCase {
             f.clipboard.deferred = true
             f.press(10.2)
             switch reason {
-            case "deadline": f.context.time = 12.21
+            case "deadline": f.context.time = 15.71
             case "focus": f.context.source = nil
             case "permission": f.context.failure = .inputMonitoring
             default: f.selection.cancel()
@@ -204,6 +430,10 @@ final class FreshCopySelectionTests: XCTestCase {
             f.clipboard.completion?(.present("late worker text"))
             XCTAssertFalse(f.context.results.contains(.present("late worker text")))
             XCTAssertEqual(f.context.results.count, reason == "cancel" ? 0 : 1)
+            if reason == "deadline" {
+                XCTAssertEqual(f.context.results, [.unknown(.clipboardUnavailable)],
+                               "A timed-out published copy is not the no-selection path.")
+            }
         }
     }
 
@@ -247,13 +477,13 @@ final class FreshCopySelectionTests: XCTestCase {
         f.context.time = 13.21
         f.selection.poll()
         XCTAssertTrue(f.clipboard.reads.isEmpty)
-        XCTAssertEqual(FreshCopySelection.freshnessWindow, 0.5)
+        XCTAssertEqual(FreshCopySelection.freshnessWindow, 2)
         XCTAssertEqual(f.context.results, [.unknown(.copyNotObserved)])
 
         let stale = CopyFixture()
         stale.selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 1.5)))
         stale.press(10)
-        stale.context.time = 11.6
+        stale.context.time = 13.1
         stale.selection.observe(time: 11, isCopy: true, isRepeat: false)
         XCTAssertEqual(stale.context.axCalls, 0)
         XCTAssertEqual(stale.clipboard.revisionCalls, 1)
@@ -387,9 +617,10 @@ final class FreshCopySelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testFocusProcessAndMissingIdentityCannotAuthorizeCopyFallback() {
+    func testProcessChangeOrPIDReuseInvalidatesPendingCopy() {
         for changed in [PassiveCopySource(target: .init(pid: 43), focusIdentity: UUID()),
-                        PassiveCopySource(target: .init(pid: 42), focusIdentity: UUID())] {
+                        PassiveCopySource(target: .init(pid: 42), focusIdentity: nil,
+                                          launchDate: Date(timeIntervalSince1970: 1))] {
             let f = CopyFixture()
             f.pair()
             f.context.source = changed
@@ -398,11 +629,21 @@ final class FreshCopySelectionTests: XCTestCase {
             XCTAssertEqual(f.context.results, [.unknown(.focusChanged)])
             XCTAssertTrue(f.clipboard.reads.isEmpty)
         }
-        let f = CopyFixture()
-        f.context.source = .init(target: .init(pid: 42), focusIdentity: nil)
-        f.pair()
-        XCTAssertEqual(f.context.results, [.unknown(.unsupported)])
-        XCTAssertEqual(f.clipboard.revisionCalls, 2, "Only counters, never contents, may be observed without focus identity.")
+    }
+
+    @MainActor
+    func testMissingOrRecreatedAXFocusDoesNotVetoUsersActualCopy() {
+        for identity in [nil, UUID()] {
+            let f = CopyFixture()
+            f.context.source = .init(target: .init(pid: 42), focusIdentity: identity)
+            f.press(10)
+            f.context.source = .init(target: .init(pid: 42), focusIdentity: UUID())
+            f.clipboard.count += 1
+            f.press(10.2)
+            XCTAssertEqual(f.context.results, [.present("fresh copy")])
+            XCTAssertEqual(f.clipboard.reads, [6])
+            XCTAssertEqual(f.context.axCalls, 0, "Ordinary copy must not need AXSelectedText.")
+        }
     }
 
     @MainActor
@@ -456,11 +697,11 @@ final class FreshCopySelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testFocusChangeBetweenKeysCannotReuseFirstCopyBaseline() {
+    func testProcessChangeBetweenKeysCannotReuseFirstCopyBaseline() {
         let f = CopyFixture()
         f.press(10)
         f.clipboard.count += 1
-        f.context.source = .init(target: .init(pid: 42), focusIdentity: UUID())
+        f.context.source = .init(target: .init(pid: 43), focusIdentity: UUID())
         f.press(10.2)
         f.press(10.3)
         XCTAssertTrue(f.clipboard.reads.isEmpty)
@@ -531,7 +772,7 @@ final class FreshCopySelectionTests: XCTestCase {
             f.clipboard.duringRead = {
                 switch cause {
                 case "revision": f.clipboard.count += 1
-                case "time": f.context.time = 13
+                case "time": f.context.time = 16
                 case "focus": f.context.source = nil
                 default: f.selection.cancel()
                 }
@@ -585,7 +826,7 @@ final class FreshCopySelectionTests: XCTestCase {
         }
         let f = CopyFixture()
         f.press(10)
-        f.context.time = 11
+        f.context.time = 12.3
         f.selection.observe(time: 10.2, isCopy: true, isRepeat: false)
         XCTAssertEqual(f.context.axCalls, 0)
         let reversed = CopyFixture()
@@ -619,9 +860,69 @@ final class FreshCopySelectionTests: XCTestCase {
         }
         f.selection.poll()
         XCTAssertTrue(f.context.results.isEmpty, "A racing second copy is retried, not delivered incoherently.")
-        f.context.time = 12.21
+        f.context.time = 15.21
         f.selection.poll()
         XCTAssertEqual(f.context.results, [.unknown(.clipboardChanged)])
+    }
+
+    @MainActor
+    func testDelayedMainQueueDeliveryStillUsesEventTimesAndPreDispatchCounter() {
+        let f = CopyFixture()
+        f.clipboard.count = 6
+        f.context.time = 11
+        f.selection.observe(time: 10, isCopy: true, isRepeat: false, revisionBeforeCopy: 5)
+        f.selection.observe(time: 10.2, isCopy: true, isRepeat: false, revisionBeforeCopy: 6)
+        XCTAssertEqual(f.context.results, [.present("fresh copy")])
+        XCTAssertEqual(f.context.axCalls, 0)
+    }
+
+    @MainActor
+    func testPromisedReadSurvivesOldDeadlineAndSuccessfulWorkerCleanupGrace() {
+        let f = CopyFixture()
+        f.press(10)
+        f.clipboard.count = 6
+        f.clipboard.deferred = true
+        f.press(10.2)
+        f.context.time = 12.4
+        f.selection.poll()
+        XCTAssertTrue(f.context.results.isEmpty)
+        XCTAssertFalse(f.clipboard.cancellation?.isCancelled ?? true)
+        f.context.time = 15.3
+        f.selection.poll()
+        f.clipboard.completion?(.present("promise resolved before timeout; worker now reaped"))
+        XCTAssertEqual(f.context.results, [.present("promise resolved before timeout; worker now reaped")])
+    }
+
+    @MainActor
+    func testRepeatedIdenticalCopiesRequireFreshRevisionsNotDifferentContent() {
+        let f = CopyFixture()
+        for index in 0..<3 {
+            f.press(10 + Double(index))
+            f.clipboard.count += 1
+            f.press(10.2 + Double(index))
+        }
+        XCTAssertEqual(f.context.results, Array(repeating: .present("fresh copy"), count: 3))
+        XCTAssertEqual(f.clipboard.reads, [6, 7, 8])
+        f.press(13)
+        f.press(13.2)
+        f.context.time = 15.21
+        f.selection.poll()
+        XCTAssertEqual(f.context.results.last, .unknown(.copyNotObserved))
+        XCTAssertEqual(f.clipboard.reads, [6, 7, 8], "A later empty gesture cannot reuse an earlier successful copy.")
+    }
+
+    @MainActor
+    func testEmptyPublishedCopyWaitsForPromisesThenReportsAbsence() {
+        let f = CopyFixture()
+        f.press(10)
+        f.clipboard.count += 1
+        f.clipboard.result = .absent
+        f.press(10.2)
+        XCTAssertTrue(f.context.results.isEmpty)
+        f.context.time = 15.21
+        f.selection.poll()
+        XCTAssertEqual(f.context.results, [.absent])
+        XCTAssertEqual(f.clipboard.count, 6)
     }
 }
 

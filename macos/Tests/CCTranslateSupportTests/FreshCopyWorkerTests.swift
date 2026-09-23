@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import PDFKit
 import XCTest
 @testable import CCTranslateSupport
 
@@ -94,6 +95,99 @@ final class FreshCopyWorkerTests: XCTestCase {
         try await provider.verifyIdentity(board)
         XCTAssertEqual(provider.calls, 1)
         XCTAssertEqual(board.changeCount, revision)
+    }
+
+    @MainActor
+    func testGestureWaitsForExternalPromiseBeyondTwoSecondsWithoutAXFocusOrClipboardMutation() async throws {
+        let board = board()
+        board.clearContents()
+        XCTAssertTrue(board.setString("unrelated old clipboard", forType: .string))
+        let reader = SystemFreshCopyClipboard(pasteboard: { board },
+            readerExecutable: try ClipboardTestExecutables.product("CCTranslateMac"))
+        let selection = FreshCopySelection(environment: .init(
+            now: { ProcessInfo.processInfo.systemUptime },
+            source: { _ in .init(target: .init(pid: 42), focusIdentity: nil) },
+            securityFailure: { nil }, selection: { _ in .unknown(.unsupported) }), clipboard: reader)
+        selection.setFallbackEnabled(true)
+        // Producer launch is fixture setup between the native key events.
+        selection.setInterval(try XCTUnwrap(DoubleCopyInterval(seconds: 10)))
+        selection.observe(time: ProcessInfo.processInfo.systemUptime, isCopy: true, isRepeat: false)
+        let entered = expectation(description: "Gesture reader requests promised data")
+        let finished = expectation(description: "Gesture delivers exactly one fresh selection")
+        let release = DispatchSemaphore(value: 0)
+        let provider = try await PastePromiseFixture(board,
+            response: .blockedText(Data("delayed browser/PDF selection".utf8), entered: entered, release: release))
+        providers.append(provider)
+        let revision = board.changeCount
+        var results: [SelectionResult] = []
+        selection.onSelection = { results.append($0); finished.fulfill() }
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: true) { _ in
+            MainActor.assumeIsolated { selection.poll() }
+        }
+        defer { release.signal(); timer.invalidate(); selection.cancel() }
+        selection.observe(time: ProcessInfo.processInfo.systemUptime, isCopy: true, isRepeat: false)
+        await fulfillment(of: [entered], timeout: 5)
+        try await Task.sleep(nanoseconds: 2_200_000_000)
+        XCTAssertTrue(results.isEmpty, "The old two-second gesture deadline must not reject a published promise.")
+        release.signal()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertEqual(results, [.present("delayed browser/PDF selection")])
+        try await provider.waitForFulfillment()
+        try await provider.verifyIdentity(board)
+        XCTAssertEqual(provider.calls, 1)
+        XCTAssertEqual(board.changeCount, revision)
+    }
+
+    @MainActor
+    func testNativeTextViewRepeatedIdenticalSelectionsPublishReadableFreshRevisions() async throws {
+        let board = board()
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 180))
+        textView.string = "The same selected text"
+        textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
+        for _ in 0..<3 {
+            let before = board.changeCount
+            XCTAssertTrue(textView.writeSelection(to: board, types: [.string, .rtf]))
+            XCTAssertGreaterThan(board.changeCount, before)
+            let revision = board.changeCount
+            let result = try await read(board)
+            XCTAssertEqual(result, .present(textView.string))
+            XCTAssertEqual(board.changeCount, revision)
+        }
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertEqual(textView.selectedRange().length, 0)
+    }
+
+    @MainActor
+    func testActualPDFKitSelectionAndRTFCanBeReadFromAnIsolatedPasteboard() async throws {
+        let board = board()
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 180))
+        let phrase = "PDFKit native selection"
+        textView.string = phrase
+        textView.font = .systemFont(ofSize: 16)
+        textView.layoutManager?.ensureLayout(for: try XCTUnwrap(textView.textContainer))
+        let pdfData = textView.dataWithPDF(inside: textView.bounds)
+        let document = try XCTUnwrap(PDFDocument(data: pdfData))
+        let selected = try XCTUnwrap(document.findString(phrase, withOptions: []).first)
+        XCTAssertEqual(selected.string, phrase)
+        let rich = try XCTUnwrap(selected.attributedString)
+        let rtf = try rich.data(from: NSRange(location: 0, length: rich.length),
+                               documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        // PDFView's Copy targets the user's general board. Exercise PDFKit's
+        // actual selected text/RTF on a private board instead of touching it.
+        for plain in [true, false] {
+            let item = NSPasteboardItem()
+            if plain { XCTAssertTrue(item.setString(phrase, forType: .string)) }
+            XCTAssertTrue(item.setData(rtf, forType: .rtf))
+            XCTAssertTrue(item.setData(pdfData, forType: .pdf))
+            board.clearContents()
+            XCTAssertTrue(board.writeObjects([item]))
+            let revision = board.changeCount
+            let result = try await read(board)
+            XCTAssertEqual(result, .present(phrase))
+            XCTAssertEqual(board.changeCount, revision)
+            XCTAssertEqual(board.data(forType: .pdf), pdfData)
+            XCTAssertEqual(board.data(forType: .rtf), rtf)
+        }
     }
 
     @MainActor

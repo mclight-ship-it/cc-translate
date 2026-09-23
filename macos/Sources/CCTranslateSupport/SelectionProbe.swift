@@ -7,7 +7,7 @@ public enum PermissionState: String {
     case notGranted = "not granted / not yet requested"
 }
 
-public struct PermissionSnapshot {
+public struct PermissionSnapshot: Equatable {
     public let accessibility: PermissionState
     public let inputMonitoring: PermissionState
     public let screenCapture: PermissionState
@@ -261,7 +261,7 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
     private func stopForSecurity(_ failure: SelectionResult.Reason) {
         stop()
         onStop?(failure == .secureInput
-                ? "Secure Input enabled; monitoring stopped. Restart explicitly."
+                ? "Secure Input enabled; monitoring paused."
                 : "Accessibility or Input Monitoring permission lost; monitoring stopped.")
     }
 

@@ -16,6 +16,10 @@ enum SummaryPreferencePhase: Equatable {
     case failed(String)
 }
 
+enum SelectionMonitorState: Equatable {
+    case off, active, diagnostic, requiresPermissions, secureInput, temporarilyUnavailable
+}
+
 @MainActor
 final class ProbeModel: ObservableObject {
     private enum ConnectionMode { case diagnostic, configuration, translation }
@@ -110,6 +114,8 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var productMessage = ""
     @Published private(set) var needsCLI = false
     @Published private(set) var monitorEnabled = false
+    @Published private(set) var monitorRequestedEnabled = false
+    static let selectionMonitorPreferenceKey = "nativeSelectionShortcutEnabled"
     @Published private(set) var resultKind = "text"
     @Published private(set) var isLocalDictionaryResult = false
     @Published private(set) var resultSources: [DictionarySource] = []
@@ -124,6 +130,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var historyTotal: Int? = nil
     @Published private(set) var hasNextHistoryPage = false
     @Published private(set) var permissions = "Not checked."
+    @Published private(set) var permissionSnapshot: PermissionSnapshot?
     @Published private(set) var monitorStatus = "Passive double Cmd+C monitor is stopped."
     @Published var cliName = "codex" {
         didSet { if cliName != oldValue { invalidateModelCatalogScope() } }
@@ -166,7 +173,9 @@ final class ProbeModel: ObservableObject {
     let screen = ScreenProbe()
     let monitor: any PassiveSelectionMonitoring
     private var monitorAXOnly = false
+    private var monitorRecoveryTimer: Timer?
     var onSelection: ((SelectionResult) -> Void)?
+    var onQuickInputRequested: (() -> Void)?
     var onStopped: (() -> Void)?
     var onTranslationResult: ((String) -> Void)?
     var onTranslationStarted: (() -> Void)?
@@ -274,6 +283,7 @@ final class ProbeModel: ObservableObject {
     private var connectedProvider: TranslationProvider?
     private let preferences: UserDefaults?
     private var persistsPreferences: Bool
+    private let readPermissions: @MainActor () -> PermissionSnapshot
     private let makeConnection: (@escaping (HelperNotice) -> Void) -> AppHelperClient
     private let runtimeProvider: () throws -> BundleRuntime
     private let locateCandidates: (String, URL?) -> [CLICandidate]
@@ -345,7 +355,8 @@ final class ProbeModel: ObservableObject {
          writeClipboard: ((String) -> Bool)? = nil, homeDirectory: URL? = nil,
          plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil,
          selectionMonitor: (any PassiveSelectionMonitoring)? = nil,
-         captureShortcut: CaptureShortcutModel? = nil) {
+         captureShortcut: CaptureShortcutModel? = nil,
+         readPermissions: @escaping @MainActor () -> PermissionSnapshot = { Permissions.snapshot() }) {
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
         self.plainPaste = plainPaste ?? PlainPasteModel()
         self.captureShortcut = captureShortcut ?? CaptureShortcutModel(
@@ -359,6 +370,7 @@ final class ProbeModel: ObservableObject {
         }
         self.preferences = preferences
         self.persistsPreferences = persistsPreferences
+        self.readPermissions = readPermissions
         self.makeConnection = makeConnection
         self.runtimeProvider = runtimeProvider
         self.locateCandidates = locateCandidates
@@ -436,6 +448,8 @@ final class ProbeModel: ObservableObject {
         if !presentationLoaded {
             if persistsPreferences {
                 let defaults = preferences ?? .standard
+                monitorRequestedEnabled = defaults.bool(forKey: Self.selectionMonitorPreferenceKey)
+                if monitorRequestedEnabled { translatePassiveSelections = true }
                 interfaceLanguage = defaults.string(forKey: "interfaceLanguage") ?? "system"
                 appearance = defaults.string(forKey: "appearance") ?? "system"
                 nativeTextScale = NativeTextScale(
@@ -477,6 +491,7 @@ final class ProbeModel: ObservableObject {
             }
             presentationLoaded = true
             captureShortcut.restore()
+            if monitorRequestedEnabled { restoreSelectionMonitorIfNeeded() }
             onPresentationChanged?()
         }
     }
@@ -1018,14 +1033,18 @@ final class ProbeModel: ObservableObject {
     }
 
     func translateSelection(_ selection: SelectionResult) {
-        translationOrigin = "selection"
         switch selection {
         case .present(let text):
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                requestQuickInputForEmptySelection()
+                return
+            }
+            translationOrigin = "selection"
             input = text
             translate(origin: "selection")
-        case .absent:
-            status = "No selected text. Nothing submitted."
-            failPreparation(text("No text selected.", "没有选中文字。"))
+        case .absent, .unknown(.copyNotObserved):
+            requestQuickInputForEmptySelection()
+            return
         case .unknown(let reason):
             status = "Selection unavailable (\(reason.rawValue)). Nothing submitted."
             failPreparation(text("Could not read the selection. Open Translate to type or paste instead.",
@@ -1033,6 +1052,11 @@ final class ProbeModel: ObservableObject {
         }
         onTranslationResult?((productPhase == .failed ? productMessage : status) +
                              (output.isEmpty ? "" : "\n\n" + output))
+    }
+
+    private func requestQuickInputForEmptySelection() {
+        status = "No selected text. Nothing submitted."
+        onQuickInputRequested?()
     }
 
     func loadSettings(modelRead: Bool = false, afterModelSave: Bool = false, plainReconcile: Bool = false,
@@ -2171,10 +2195,6 @@ final class ProbeModel: ObservableObject {
             configLoadID = nil
             configSaveID = nil
             historyClearID = nil
-            if !reopen {
-                stopMonitor()
-                translatePassiveSelections = false
-            }
             historyPage = []
             historyTotal = nil
             loadedHistory = nil
@@ -2563,7 +2583,13 @@ final class ProbeModel: ObservableObject {
     }
 
     func refreshPermissions() {
-        let snapshot = Permissions.snapshot()
+        updatePermissionSnapshot()
+        restoreSelectionMonitorIfNeeded(refreshSnapshot: false)
+    }
+
+    private func updatePermissionSnapshot() {
+        let snapshot = readPermissions()
+        permissionSnapshot = snapshot
         permissions = """
         Accessibility: \(snapshot.accessibility.rawValue)
         Input Monitoring: \(snapshot.inputMonitoring.rawValue)
@@ -2579,19 +2605,31 @@ final class ProbeModel: ObservableObject {
 
     func requestInputMonitoring() {
         let granted = Permissions.requestInputMonitoring()
-        monitorStatus = granted ? "Input Monitoring granted; start monitoring explicitly."
+        monitorStatus = granted ? "Input Monitoring granted."
             : "Input Monitoring not granted. System Settings/restart may be required."
         refreshPermissions()
     }
 
     func startMonitor(accessibilityOnly: Bool = false) {
         loadPresentation()
+        guard !catalogShutDown else { return }
+        if !accessibilityOnly {
+            monitorRequestedEnabled = true
+            translatePassiveSelections = true
+            persistMonitorPreference()
+            scheduleMonitorRecovery()
+        }
+        updatePermissionSnapshot()
+        attemptMonitorStart(accessibilityOnly: accessibilityOnly)
+    }
+
+    private func attemptMonitorStart(accessibilityOnly: Bool) {
         do {
             monitor.setCopyInterval(activeCopyInterval)
             monitorAXOnly = accessibilityOnly
             monitor.setClipboardFallbackEnabled(translatePassiveSelections && !monitorAXOnly)
             try monitor.start()
-            monitorEnabled = true
+            monitorEnabled = monitor.running
             updateMonitorStatus()
         } catch let error as ProbeError {
             monitorEnabled = monitor.running
@@ -2600,13 +2638,85 @@ final class ProbeModel: ObservableObject {
             monitorEnabled = monitor.running
             monitorStatus = "Monitor not started."
         }
-        refreshPermissions()
     }
 
     func stopMonitor() {
+        monitorRequestedEnabled = false
+        persistMonitorPreference()
+        translatePassiveSelections = false
+        suspendMonitor()
+    }
+
+    func suspendMonitor() {
+        monitorRecoveryTimer?.invalidate()
+        monitorRecoveryTimer = nil
         monitor.stop()
         monitorEnabled = false
         monitorStatus = text("Passive monitor stopped.", "已停止选区快捷键监听。")
+    }
+
+    var selectionMonitorState: SelectionMonitorState {
+        if monitorEnabled, monitor.running {
+            return monitorAXOnly || !translatePassiveSelections ? .diagnostic : .active
+        }
+        guard monitorRequestedEnabled else { return .off }
+        guard let snapshot = permissionSnapshot else { return .requiresPermissions }
+        if snapshot.secureInput { return .secureInput }
+        if snapshot.accessibility != .granted || snapshot.inputMonitoring != .granted {
+            return .requiresPermissions
+        }
+        return .temporarilyUnavailable
+    }
+
+    var selectionShortcutActive: Bool { selectionMonitorState == .active }
+
+    var selectionMonitorStateMessage: String {
+        switch selectionMonitorState {
+        case .off:
+            return text("Double Cmd+C is off.", "双击 Cmd+C 已关闭。")
+        case .active:
+            return text("Double Cmd+C is ready. With no text selected, it opens quick input.",
+                        "双击 Cmd+C 已就绪。未选中文字时会打开快速输入。")
+        case .diagnostic:
+            return text("AX-only diagnostics are running. Clipboard reading is off.",
+                        "仅辅助功能选区诊断正在运行，剪贴板读取已关闭。")
+        case .requiresPermissions:
+            return text("Double Cmd+C is enabled and will start when Accessibility and Input Monitoring are allowed.",
+                        "双击 Cmd+C 已启用，允许辅助功能和输入监控后会自动开始监听。")
+        case .secureInput:
+            return text("Double Cmd+C is paused while Secure Input is active. It will resume automatically.",
+                        "安全输入开启期间，双击 Cmd+C 暂停监听，之后会自动恢复。")
+        case .temporarilyUnavailable:
+            return text("Double Cmd+C is temporarily unavailable. Your choice is saved and it will retry automatically.",
+                        "双击 Cmd+C 暂时不可用。已保存您的选择，将自动重试。")
+        }
+    }
+
+    func restoreSelectionMonitorIfNeeded(refreshSnapshot: Bool = true) {
+        loadPresentation()
+        guard monitorRequestedEnabled, !catalogShutDown, !monitorAXOnly else { return }
+        scheduleMonitorRecovery()
+        if refreshSnapshot { updatePermissionSnapshot() }
+        guard !monitor.running, let snapshot = permissionSnapshot,
+              snapshot.accessibility == .granted, snapshot.inputMonitoring == .granted,
+              !snapshot.secureInput else { return }
+        translatePassiveSelections = true
+        attemptMonitorStart(accessibilityOnly: false)
+    }
+
+    private func persistMonitorPreference() {
+        guard persistsPreferences else { return }
+        (preferences ?? .standard).set(monitorRequestedEnabled, forKey: Self.selectionMonitorPreferenceKey)
+    }
+
+    private func scheduleMonitorRecovery() {
+        guard monitorRecoveryTimer == nil, monitorRequestedEnabled, !catalogShutDown else { return }
+        monitorRecoveryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                self.refreshPermissions()
+            }
+        }
     }
 
     private func updateMonitorStatus() {
@@ -2720,7 +2830,7 @@ final class ProbeModel: ObservableObject {
         imageTranslation.shutdown()
         plainPasteConfigAfterStop = false
         plainPaste.shutdown()
-        stopMonitor()
+        suspendMonitor()
         closePanel()
     }
 

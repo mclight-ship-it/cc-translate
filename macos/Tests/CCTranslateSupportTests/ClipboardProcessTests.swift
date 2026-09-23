@@ -133,6 +133,19 @@ final class ClipboardProcessTests: XCTestCase {
         XCTAssertTrue(result.1.isEmpty, "Invalid mode must not start models or emit user data")
     }
 
+    func testExitedWorkerIsNotTimedOutDuringMandatoryGroupCleanup() async {
+        let began = ProcessInfo.processInfo.systemUptime
+        let result: ClipboardProcessResult = await withCheckedContinuation { continuation in
+            let process = ClipboardProcess(timeout: 0.15, receive: { _ in }, completion: {
+                continuation.resume(returning: $0)
+            })
+            process.start(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [])
+        }
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertNil(result.failure, "An already exited worker must not time out while waiting to reap.")
+        XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - began, 0.2)
+    }
+
     @MainActor
     private func board(_ data: Data = Data("synthetic".utf8)) -> NSPasteboard {
         let board = NSPasteboard.withUniqueName()

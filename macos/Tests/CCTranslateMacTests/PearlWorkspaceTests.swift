@@ -156,6 +156,7 @@ final class PearlWorkspaceTests: XCTestCase {
             for surface in [PearlTheme.surface, PearlTheme.panel, PearlTheme.sidebar, PearlTheme.inset] {
                 XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.text, surface), 4.5)
                 XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.secondary, surface), 4.5)
+                XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.error, surface), 4.5)
                 for section in ProductSection.allCases {
                     XCTAssertGreaterThanOrEqual(try ratio(section.accent, surface), 3.0,
                                                "\(section.rawValue) must remain distinct on neutral surfaces.")

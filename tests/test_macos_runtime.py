@@ -164,17 +164,17 @@ class FreshCopyEvidenceTests(unittest.TestCase):
         for method in runtime.FRESH_COPY_METHODS:
             case = "Test Case '-[CCTranslateSupportTests.FreshCopyClipboardTests " + method + "]' "
             cases.extend((case + "started.", case + "passed (0.1 seconds)."))
-        return "\n".join(cases) + "\nExecuted 9 tests, with 0 failures\n"
+        return "\n".join(cases) + "\nExecuted 12 tests, with 0 failures\n"
 
     def test_fresh_copy_requires_each_real_method_without_skip_failure_or_duplicate(self):
         text = self.log()
         self.assertEqual(runtime.fresh_copy_result(text), {
-            "tests_run": 9, "failures": 0, "skipped": 0, "methods": list(runtime.FRESH_COPY_METHODS),
+            "tests_run": 12, "failures": 0, "skipped": 0, "methods": list(runtime.FRESH_COPY_METHODS),
             "scope": "same_source_fresh_text_reader_private_pasteboards_not_global_events_or_TCC"})
         for invalid in ("", text + text, text.replace("passed", "skipped"),
                         text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
                         text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
-                        text.replace("Executed 9 tests", "Executed 8 tests"),
+                        text.replace("Executed 12 tests", "Executed 11 tests"),
                         text.replace("FreshCopyClipboardTests", "SomeOtherTests"),
                         text.replace(runtime.FRESH_COPY_METHODS[0], "testUnexpected")):
             with self.subTest(log=invalid), self.assertRaises(bundle.BundleError):
@@ -196,17 +196,17 @@ class ClipboardProcessEvidenceTests(unittest.TestCase):
         for method in runtime.CLIPBOARD_PROCESS_METHODS:
             case = "Test Case '-[CCTranslateSupportTests.ClipboardProcessTests " + method + "]' "
             cases.extend((case + "started.", case + "passed (0.1 seconds)."))
-        return "\n".join(cases) + "\nExecuted 11 tests, with 0 failures\n"
+        return "\n".join(cases) + "\nExecuted 12 tests, with 0 failures\n"
 
     def test_worker_requires_real_methods_without_skip_failure_duplicate_or_warning(self):
         text = self.log()
         self.assertEqual(runtime.clipboard_process_result(text), {
-            "tests_run": 11, "failures": 0, "skipped": 0, "methods": list(runtime.CLIPBOARD_PROCESS_METHODS),
+            "tests_run": 12, "failures": 0, "skipped": 0, "methods": list(runtime.CLIPBOARD_PROCESS_METHODS),
             "scope": "actual_app_worker_private_clipboard_external_producer_and_owned_process_cleanup"})
         for invalid in ("", text + text, text.replace("passed", "skipped"),
                         text.replace("started", "not-started"), text.replace("with 0 failures", "with 1 failure"),
                         text.replace("with 0 failures", "with 1 test skipped and 0 failures"),
-                        text.replace("Executed 11 tests", "Executed 10 tests"),
+                        text.replace("Executed 12 tests", "Executed 11 tests"),
                         text.replace("ClipboardProcessTests", "SomeOtherTests"),
                         text + "\nNSPasteboard: synchronous promise fulfillment requested from a background thread!",
                         text.replace(runtime.CLIPBOARD_PROCESS_METHODS[0], "testUnexpected")):

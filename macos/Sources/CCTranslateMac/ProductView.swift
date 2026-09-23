@@ -24,11 +24,11 @@ struct TranslationInputBudgetView: View {
             }
             if let issue = model.inputIssue(for: text), issue != .empty {
                 Label(issue.message(using: model), systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(PearlTheme.error)
                     .accessibilityIdentifier("input-length-error")
             }
         }
-        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        .font(.caption).monospacedDigit().foregroundStyle(PearlTheme.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -972,13 +972,13 @@ struct InputLimitSettingsView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
-            DisclosureGroup(model.text("How text length is counted", "字数如何计算")) {
+            NativeSettingsDisclosure(model.text("How text length is counted", "字数如何计算"),
+                                     model: model, identifier: "input-limit-counting-details") {
                 Text(model.text("Spaces, line breaks and combining marks count separately. Text must also fit 8,192 UTF-8 bytes and is never shortened automatically. The largest setting is \(ConfigurationDocument.maxNumber).",
                                 "空格、换行和组合标记均计入。文字还须满足 8,192 个 UTF-8 字节上限，不会自动截短。设置最大值为 \(ConfigurationDocument.maxNumber)。"))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .accessibilityIdentifier("input-limit-counting-details")
             if !message.isEmpty {
                 Text(message).font(.callout).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1441,12 +1441,12 @@ struct TranslationSettingsView: View {
 
     private var providerSection: some View {
         Section {
-            DisclosureGroup(model.text("\(model.translationProvider.displayName) installation",
-                                       "\(model.translationProvider.displayName) 安装位置"),
-                            isExpanded: $installationExpanded) {
+            NativeSettingsDisclosure(model.text("\(model.translationProvider.displayName) installation",
+                                                "\(model.translationProvider.displayName) 安装位置"),
+                                     model: model, identifier: "provider-installation-details",
+                                     isExpanded: $installationExpanded) {
                 providerControls
             }
-            .accessibilityIdentifier("provider-installation-details")
         }
     }
 
@@ -1482,7 +1482,8 @@ struct TranslationSettingsView: View {
                 .disabled(model.cliBusy || busy)
                 .onChange(of: model.selectedCLI) { _, _ in model.persistPresentation() }
             }
-            DisclosureGroup(model.text("Version check", "版本检查")) {
+            NativeSettingsDisclosure(model.text("Version check", "版本检查"),
+                                     model: model, identifier: "provider-version-details") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Button(model.text("Check version", "检查版本")) { model.versionCLI() }
@@ -1505,7 +1506,7 @@ struct TranslationSettingsView: View {
     private var shortcutSection: some View {
         Section {
             Toggle(model.text("Double ⌘C to translate selected text", "双击 ⌘C 翻译选中文字"), isOn: Binding(
-                get: { model.monitorEnabled && model.translatePassiveSelections },
+                get: { model.monitorRequestedEnabled },
                 set: { enabled in
                     model.translatePassiveSelections = enabled
                     if enabled { model.startMonitor() } else { model.stopMonitor() }
@@ -1515,35 +1516,19 @@ struct TranslationSettingsView: View {
                             "在其他应用中选中文字，连续按两次 ⌘C 即可翻译。"))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup(model.text("Double-copy timing", "双击间隔")) {
+            NativeSettingsDisclosure(model.text("Double-copy timing", "双击间隔"),
+                                     model: model, identifier: "copy-timing-details") {
                 CopyIntervalSettingsView(model: model)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    permissionButtons
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    permissionButtons
-                }
-            }
-            Text(model.permissions).font(.caption).foregroundStyle(.secondary)
-                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text(model.monitorStatus).font(.caption).foregroundStyle(.secondary)
-                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text(model.text("Allow Accessibility and Input Monitoring if prompted. Restart the app if a permission change hasn't taken effect.",
-                            "按提示允许辅助功能和输入监控。权限更改未生效时，请重启应用。"))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            ShortcutPermissionsSettingsView(
+                model: model, accessibility: model.permissionSnapshot?.accessibility,
+                inputMonitoring: model.permissionSnapshot?.inputMonitoring,
+                monitorState: model.selectionMonitorState,
+                allowAccessibility: model.requestAX, allowInputMonitoring: model.requestInputMonitoring,
+                refresh: model.refreshPermissions)
         } header: {
-            Text(model.text("Selection shortcut & permissions", "划词快捷键与权限"))
+            Text(model.text("Selection shortcut", "划词快捷键"))
         }
-    }
-
-    @ViewBuilder
-    private var permissionButtons: some View {
-        Button(model.text("Accessibility…", "辅助功能…")) { model.requestAX() }
-        Button(model.text("Input Monitoring…", "输入监控…")) { model.requestInputMonitoring() }
-        Button(model.text("Refresh permissions", "刷新权限")) { model.refreshPermissions() }
     }
 
     private var aboutSection: some View {
@@ -1652,10 +1637,11 @@ struct CodexModelSettingsView: View {
             if model.translationProvider == .codex {
                 ModelCatalogSettingsView(model: model)
             }
-            DisclosureGroup(model.text("Custom model", "自定义模型"), isExpanded: $customExpanded) {
+            NativeSettingsDisclosure(model.text("Custom model", "自定义模型"),
+                                     model: model, identifier: "custom-model-details",
+                                     isExpanded: $customExpanded) {
                 customEditor
             }
-            .accessibilityIdentifier("custom-model-details")
             if !model.ready && !model.modelCatalog.busy {
                 Text(model.text("Reopen Settings to reconnect. Your draft is kept.",
                                 "重新打开设置即可重新连接，草稿会保留。"))

@@ -393,11 +393,14 @@ FRESH_COPY_METHODS = (
     "testExactFreshUnicodeTextIsReadWithoutChangingAnyRepresentations",
     "testOldRevisionAndChangeImmediatelyBeforeDataReadAreRejected",
     "testCancellationAfterReadDiscardsTextWithoutClearingUserCopy",
-    "testFileImageConcealedGeneratedAndRichOnlyCopiesAreNotTextFallbacks",
+    "testFileImageConcealedAndHTMLOnlyCopiesAreNotTextFallbacks",
     "testBrowserPlainTextIgnoresRichSourceAndVendorMetadataWithoutMutatingCopy",
     "testBrowserMetadataAloneNeverBecomesTextAndDoesNotHideSensitiveMarkers",
-    "testMultipleItemsAndEmptyBoardAreNotCollapsedIntoOldOrFirstText",
+    "testMultipleTextItemsAreJoinedInOrderAndEmptyOrMixedBoardsAreNotTruncated",
     "testUTF8BudgetInvalidUnicodeEmptyAndNULAreNotInventedSelections",
+    "testEmptyFirstFlavorFallsThroughToValidCopiedTextWithoutReadingMetadata",
+    "testRTFTextUsesNativeConversionButMalformedDataIsNotASelection",
+    "testCombinedTextItemsHonorTotalBudgetWithoutTruncation",
 )
 
 
@@ -420,6 +423,7 @@ CLIPBOARD_PROCESS_METHODS = (
     "testDecoderRequiresMatchingSuccessfulProcessReceipt",
     "testUnrelatedLaunchDoesNotEnterClipboardWorker",
     "testActualAppRejectsMalformedWorkerInvocationWithoutUIBootstrap",
+    "testExitedWorkerIsNotTimedOutDuringMandatoryGroupCleanup",
     "testConstructionAndPrecancelledReadDoNotLaunchAWorker",
     "testMissingExecutableFailsWithoutChangingClipboard",
     "testActualAppTransfersLargeExactBytesAndReapsBeforeGrantingLease",

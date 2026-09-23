@@ -129,7 +129,11 @@ final class SettingsDefaultsTests: XCTestCase {
         f.model.nativeTextScale = .largest
         f.model.resultPlacement = .pointer
         f.model.captureShortcut.choose(true)
-        f.model.translatePassiveSelections = true
+        f.model.startMonitor()
+        XCTAssertTrue(f.model.monitorRequestedEnabled)
+        XCTAssertTrue(f.model.monitorEnabled)
+        XCTAssertTrue(f.preferences.bool(forKey: ProbeModel.selectionMonitorPreferenceKey))
+        let permissionsBeforeRestore = f.model.permissions
         f.model.editHistoryLimit("700")
         f.model.editInputLimit("8000")
         f.model.editCopyInterval("0.9")
@@ -148,10 +152,13 @@ final class SettingsDefaultsTests: XCTestCase {
         XCTAssertEqual(save.config, try XCTUnwrap(SettingsDefaults(canonical)).merging(into: original))
         XCTAssertEqual(f.model.appearance, "dark")
         XCTAssertTrue(f.model.captureShortcut.enabled)
+        XCTAssertTrue(f.model.monitorRequestedEnabled, "Saving defaults must not clear intent before verified readback.")
+        XCTAssertTrue(f.preferences.bool(forKey: ProbeModel.selectionMonitorPreferenceKey))
         helper.event("completed", id: save.id)
         XCTAssertEqual(f.model.defaultsPhase, .readingBack)
         XCTAssertEqual(f.model.appearance, "dark", "A save acknowledgement is not verified readback.")
         XCTAssertEqual(f.model.captureTranslationMode, .image)
+        XCTAssertTrue(f.model.monitorRequestedEnabled)
         try f.finishConfiguration(on: helper, configuration: save.config)
         XCTAssertEqual(f.model.defaultsPhase, .restored)
         XCTAssertEqual(f.model.appearance, "system")
@@ -162,6 +169,10 @@ final class SettingsDefaultsTests: XCTestCase {
         XCTAssertEqual(f.preferences.string(forKey: CaptureTranslationMode.preferenceKey), "text")
         XCTAssertFalse(f.model.captureShortcut.enabled)
         XCTAssertFalse(f.model.translatePassiveSelections)
+        XCTAssertFalse(f.model.monitorRequestedEnabled)
+        XCTAssertFalse(f.model.monitorEnabled)
+        XCTAssertFalse(f.preferences.bool(forKey: ProbeModel.selectionMonitorPreferenceKey))
+        XCTAssertFalse(monitor.running)
         XCTAssertFalse(monitor.fallback)
         XCTAssertEqual(f.model.historyLimit.draft, "37")
         XCTAssertEqual(f.model.inputLimit.draft, "3217")
@@ -180,7 +191,7 @@ final class SettingsDefaultsTests: XCTestCase {
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertTrue(helper.resultActions.isEmpty)
         XCTAssertTrue(helper.dictionaryRequests.allSatisfy { $0.request.operation == DictionaryRequest.status.operation })
-        XCTAssertEqual(f.model.permissions, "Not checked.")
+        XCTAssertEqual(f.model.permissions, permissionsBeforeRestore, "Restoring defaults must preserve the checked permission status.")
     }
 
     @MainActor

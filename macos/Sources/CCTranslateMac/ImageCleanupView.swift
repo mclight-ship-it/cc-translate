@@ -27,7 +27,7 @@ struct ImageCleanupView: View {
                         .disabled(model.imageTranslation.working)
                     }
                     Text(model.text("The image may remain on this Mac.", "图片可能仍保留在此 Mac 上。"))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(PearlTheme.secondary)
                 }
             }
             .textSelection(.enabled)

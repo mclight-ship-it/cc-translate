@@ -239,7 +239,9 @@ final class ClipboardProcess: @unchecked Sendable {
             return
         }
         if cancelled() { fail("cancelled") }
-        if DispatchTime.now() >= deadline { fail("timed_out") }
+        // The budget applies to the live reader, not to the mandatory group
+        // cleanup/reap after it has already exited with a complete response.
+        if exited == 0, stopTime == nil, DispatchTime.now() >= deadline { fail("timed_out") }
         if exited != 0 { beginStop() }
         if let began = stopTime, DispatchTime.now() >= began + .milliseconds(200) {
             if !killSent {

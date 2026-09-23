@@ -68,7 +68,8 @@ struct DictionarySettingsSection: View {
                     .font(.callout).foregroundStyle(PearlTheme.secondary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
-            DisclosureGroup(model.text("Dictionary information", "词库信息")) {
+            NativeSettingsDisclosure(model.text("Dictionary information", "词库信息"),
+                                     model: model, identifier: "dictionary-information-details") {
                 if let status = dictionary.status, status.state == .ready {
                     Text(model.text("\(status.entryCount.formatted()) entries · Data \(status.dataVersion)",
                                     "\(status.entryCount.formatted()) 条词条 · 数据版本 \(status.dataVersion)"))

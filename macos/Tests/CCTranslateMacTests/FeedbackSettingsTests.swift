@@ -56,6 +56,9 @@ final class FeedbackSettingsTests: XCTestCase {
         let item = try XCTUnwrap(app.statusItem?.menu?.item(withTag: 10))
         let action = try XCTUnwrap(item.action)
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        XCTAssertTrue(f.model.monitorRequestedEnabled)
+        app.menuWillOpen(try XCTUnwrap(app.statusItem?.menu))
+        XCTAssertEqual(item.state, .on, "A missing permission must not erase the saved choice.")
         let panel = try XCTUnwrap(app.settingsPanel)
         let content = try XCTUnwrap(panel.contentView)
         try await CaptureProductFixture.waitFor {
@@ -69,6 +72,11 @@ final class FeedbackSettingsTests: XCTestCase {
                 .first { $0.segmentCount == SettingsPane.allCases.count }?.selectedSegment == 3
         }
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        XCTAssertFalse(f.model.monitorRequestedEnabled, "The second click cancels the user's saved opt-in.")
+        app.menuWillOpen(try XCTUnwrap(app.statusItem?.menu))
+        XCTAssertEqual(item.state, .off)
+        XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        XCTAssertTrue(f.model.monitorRequestedEnabled)
         try await CaptureProductFixture.waitFor {
             InputLimitNativeViews.views(NSSegmentedControl.self, in: content)
                 .first { $0.segmentCount == SettingsPane.allCases.count }?.selectedSegment == 1

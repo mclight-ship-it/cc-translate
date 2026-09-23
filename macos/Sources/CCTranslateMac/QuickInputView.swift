@@ -38,7 +38,7 @@ struct QuickInputView: View {
             TranslationInputBudgetView(model: model, text: draft.text)
             if draft.attemptedSubmit, model.inputIssue(for: draft.text) == .empty {
                 Text(model.text("Enter text to translate.", "请输入要翻译的文字。"))
-                    .font(.caption).foregroundStyle(.red)
+                    .font(.caption).foregroundStyle(PearlTheme.error)
             }
             HStack {
                 Button(model.text("Cancel", "取消"), action: cancel)
@@ -48,7 +48,7 @@ struct QuickInputView: View {
                     .accessibilityHidden(true)
                 Button(model.text("Translate", "翻译"), action: submit)
                     .accessibilityIdentifier("quick-input-submit")
-                    .disabled(model.active || model.preparing || model.inputIssue(for: draft.text) != nil)
+                    .disabled(model.inputIssue(for: draft.text) != nil)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)

@@ -166,6 +166,7 @@ public enum ClipboardReadWorker {
         let reader = FreshCopyPasteboardReader(pasteboard: { NSPasteboard(name: name) })
         switch reader.read(revision: revision, whileValid: { true }) {
         case .present(let text): return .success(text)
+        case .absent: return .success("")
         case .unknown(.tooLarge): return .failure(.tooLarge)
         case .unknown(.clipboardChanged): return .failure(.clipboardChanged)
         case .unknown(.clipboardUnsupported): return .failure(.unsupportedRepresentation)
@@ -212,22 +213,29 @@ public enum ClipboardReadWorker {
                 guard let text = plain.decode(data) else { return .failure(.unavailableData) }
                 strings.append(text)
             } else {
-                guard data.starts(with: Array("{\\rtf".utf8)),
-                      let version = data.dropFirst(5).first, (0x30...0x39).contains(version),
-                      let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
-                    return .failure(.invalidRichText)
+                switch decodeRichText(data) {
+                case .success(let text): strings.append(text)
+                case .failure(let failure): return .failure(failure)
                 }
-                var attachment = false
-                rich.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rich.length), options: []) {
-                    value, _, stop in
-                    if value != nil { attachment = true; stop.pointee = true }
-                }
-                guard !attachment else { return .failure(.unsupportedRepresentation) }
-                strings.append(rich.string)
             }
         }
         guard board.changeCount == revision else { return .failure(.clipboardChanged) }
         return .success(strings.joined(separator: "\n"))
+    }
+
+    @MainActor
+    static func decodeRichText(_ data: Data) -> Result<String, ClipboardReadFailure> {
+        guard data.starts(with: Array("{\\rtf".utf8)),
+              let version = data.dropFirst(5).first, (0x30...0x39).contains(version),
+              let rich = NSAttributedString(rtf: data, documentAttributes: nil) else {
+            return .failure(.invalidRichText)
+        }
+        var attachment = false
+        rich.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rich.length), options: []) {
+            value, _, stop in
+            if value != nil { attachment = true; stop.pointee = true }
+        }
+        return attachment ? .failure(.unsupportedRepresentation) : .success(rich.string)
     }
 
     private static let legacyFileFlavors: Set<String> = [

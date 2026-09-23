@@ -198,7 +198,7 @@ final class NativeResultPlacementModelTests: XCTestCase {
     }
 
     @MainActor
-    func testNewFailedSelectionReopensClosedResultWithoutEnablingLateCallbacks() async throws {
+    func testMissingSelectionOpensQuickInputAndInvalidTextKeepsExplicitErrorWithoutLateReopening() async throws {
         _ = NSApplication.shared
         let focus = NativeTestWindowFocus()
         let previousMenu = NSApp.mainMenu
@@ -210,13 +210,27 @@ final class NativeResultPlacementModelTests: XCTestCase {
         defer {
             application.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
             if let panel = application.resultPanel { focus.close(panel) }
+            if let panel = application.quickInputPanel { focus.close(panel) }
             NSApp.mainMenu = previousMenu
         }
         f.model.onSelection?(.absent)
         XCTAssertNil(application.resultPanel, "Passive translation remains opt-in.")
+        XCTAssertNil(application.quickInputPanel)
         f.model.translatePassiveSelections = true
-        for selection in [SelectionResult.absent, .unknown(.copyNotObserved), .present(" \n "),
-                          .present(String(repeating: "x", count: 8193))] {
+        f.model.input = "Preserve the unfinished draft"
+        for selection in [SelectionResult.absent, .unknown(.copyNotObserved), .present(" \n ")] {
+            f.model.onSelection?(selection)
+            let panel = try XCTUnwrap(application.quickInputPanel)
+            try await settle(panel)
+            XCTAssertTrue(panel.isVisible)
+            XCTAssertNil(application.resultPanel, "Missing text is an input opportunity, not a result error.")
+            XCTAssertEqual(f.model.input, "Preserve the unfinished draft")
+            panel.performClose(nil)
+            f.model.onTranslationResult?("Late callback from a previous request")
+            XCTAssertFalse(panel.isVisible)
+            XCTAssertNil(application.resultPanel)
+        }
+        for selection in [SelectionResult.present(String(repeating: "x", count: 8193))] {
             f.model.onSelection?(selection)
             let panel = try XCTUnwrap(application.resultPanel)
             try await settle(panel)
@@ -229,13 +243,15 @@ final class NativeResultPlacementModelTests: XCTestCase {
             XCTAssertFalse(panel.isVisible)
         }
         application.handleSelection(.unknown(.unsupported))
-        XCTAssertTrue(application.resultPanel?.isVisible == true, "The menu uses the same new-intent presentation.")
-        application.resultPanel?.performClose(nil)
+        XCTAssertTrue(application.quickInputPanel?.isVisible == true, "The menu uses the same input fallback.")
+        XCTAssertFalse(application.resultPanel?.isVisible == true)
+        application.quickInputPanel?.performClose(nil)
         XCTAssertEqual(application.applicationShouldTerminate(NSApp), .terminateNow)
         f.model.onSelection?(.absent)
         f.model.onTranslationStarted?()
         f.model.onTranslationResult?("Late callback during termination")
         XCTAssertFalse(application.resultPanel?.isVisible == true)
+        XCTAssertFalse(application.quickInputPanel?.isVisible == true)
         XCTAssertTrue(f.helpers.isEmpty)
         XCTAssertEqual(f.runtimeRequests, 0)
         XCTAssertEqual(f.locatorRequests, 0)
@@ -255,6 +271,7 @@ final class NativeResultPlacementModelTests: XCTestCase {
         defer {
             application.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
             if let panel = application.resultPanel { focus.close(panel) }
+            if let panel = application.quickInputPanel { focus.close(panel) }
             NSApp.mainMenu = previousMenu
         }
         f.model.translatePassiveSelections = true
@@ -268,16 +285,19 @@ final class NativeResultPlacementModelTests: XCTestCase {
         try await CaptureProductFixture.waitFor { f.model.output == "Late partial" }
         XCTAssertFalse(panel.isVisible)
         f.model.onSelection?(.absent)
-        XCTAssertTrue(panel.isVisible)
-        XCTAssertEqual(f.model.productPhase, .failed)
-        XCTAssertEqual(f.model.output, "Late partial", "A read failure does not discard the previous result.")
-        panel.performClose(nil)
+        let quick = try XCTUnwrap(application.quickInputPanel)
+        XCTAssertTrue(quick.isVisible)
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertEqual(f.model.output, "Late partial", "Opening quick input does not discard the previous result.")
+        quick.performClose(nil)
         helper.event("completed", id: request.id, payload: ScaleTestSupport.result("Late partial"))
         try await CaptureProductFixture.waitFor { !f.model.active }
         XCTAssertFalse(panel.isVisible)
+        XCTAssertFalse(quick.isVisible, "Completion of an earlier request must not reopen quick input.")
         f.model.onSelection?(.unknown(.unsupported))
-        XCTAssertTrue(panel.isVisible)
-        XCTAssertEqual(f.model.productPhase, .failed)
+        XCTAssertTrue(quick.isVisible)
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertEqual(f.model.output, "Late partial")
         XCTAssertEqual(helper.translations.count, 1, "Failed selection never retries or submits a model request.")
     }
 

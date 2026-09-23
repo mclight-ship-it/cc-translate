@@ -13,7 +13,7 @@ jobs:
   p0:
     # The official macos-15 label is arm64; verify it again before any build.
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       archive_sha256: ${{ steps.seal.outputs.archive_sha256 }}
@@ -91,12 +91,12 @@ jobs:
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac 2>&1 | tee tools/macos/.build/native-unit-tests.log
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
           if ! /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
-            --filter 'ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl|ProductRenderingTests.testInputLimitSettingsRenderLargeSavedValueAndSeparateByteBudgetInEnglishLight|DockApplicationTests.testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded|DockApplicationTests.testAutomaticScreenshotCompletionDoesNotReopenWindowsAfterHide|FeedbackSettingsTests.testScreenshotModePickerChangesTheSavedPreferenceThroughNativeControl|InputLimitInteractionTests.testNativeInvalidSavedValueCorrectionFailureReloadAndMismatchKeepDraft|ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese|ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste|ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages' \
+            --filter 'ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl|ProductRenderingTests.testInputLimitSettingsRenderLargeSavedValueAndSeparateByteBudgetInEnglishLight|DockApplicationTests.testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded|DockApplicationTests.testAutomaticScreenshotCompletionDoesNotReopenWindowsAfterHide|FeedbackSettingsTests.testScreenshotModePickerChangesTheSavedPreferenceThroughNativeControl|InputLimitInteractionTests.testNativeInvalidSavedValueCorrectionFailureReloadAndMismatchKeepDraft|ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese|ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste|ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages|DockApplicationTests.testDockIdentityFollowsOpenWindowsAndReturnsWhenReopened|NativeResultPlacementModelTests.testMissingSelectionOpensQuickInputAndInvalidTextKeepsExplicitErrorWithoutLateReopening|NativeResultPlacementModelTests.testClosedResultStaysClosedForLateHelperEventsUntilANewSelection|ProductRenderingTests.testCaptureInputCountersRenderBothIndependentLimitsAndVisibleActionInChineseDark|ProductRenderingTests.testImageCreationRollbackFailureRendersRecoveryBeforeAnyHelperStarts' \
             > tools/macos/.build/native-disclosure-check.log 2>&1; then
             cat tools/macos/.build/native-disclosure-check.log | tee -a tools/macos/.build/native-unit-tests.log
             exit 1
           fi
-          grep -q 'Executed 9 tests' tools/macos/.build/native-disclosure-check.log
+          grep -q 'Executed 14 tests' tools/macos/.build/native-disclosure-check.log
           /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
       - name: Retain original native unit log before bundled lifecycle checks
         if: always()
@@ -112,8 +112,8 @@ jobs:
         with:
           name: cc-translate-native-ui-${{ github.sha }}
           path: |
-            tools/macos/.build/ui-screenshots/*.png
-            tools/macos/.build/ui-screenshots/*.txt
+            tools/macos/.build/ui-screenshots/**/*.png
+            tools/macos/.build/ui-screenshots/**/*.txt
           if-no-files-found: warn
           retention-days: 7
       - name: Explicit pinned dictionary test input (Python fixture acquisition, not product URLSession)

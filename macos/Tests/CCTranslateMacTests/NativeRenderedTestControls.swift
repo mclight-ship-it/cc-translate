@@ -494,16 +494,21 @@ enum NativeSettingsTestControls {
         let controls = views(in: root).compactMap { backing($0, kind: kind) }.filter {
             !RenderedGeometry.visibleRect($0.control).isEmpty
         }
+        let identified = controls.filter {
+            $0.control.identifier?.rawValue == identifier || $0.control.accessibilityIdentifier() == identifier
+        }
+        if !identified.isEmpty {
+            return Lookup(candidates: identified, readback: nil, route: "public native/accessibility identifier")
+        }
         if kind == .destructiveButton {
             // A unique visible native role identifies the confirmation without depending on OCR.
             return Lookup(candidates: controls, readback: nil, route: "public NSButton.hasDestructiveAction")
         }
         let named = controls.filter {
-            $0.control.identifier?.rawValue == identifier ||
-                ($0.control as? NSButton).map { normalize($0.title) == normalize(label) } == true
+            ($0.control as? NSButton).map { normalize($0.title) == normalize(label) } == true
         }
         if !named.isEmpty {
-            return Lookup(candidates: named, readback: nil, route: "public identifier/title")
+            return Lookup(candidates: named, readback: nil, route: "public native title")
         }
         let pixels = try readCaption(label, in: root, authoredCaption: authoredCaption)
         let candidates = controls.flatMap { backing in
@@ -588,71 +593,35 @@ enum NativeSettingsTestControls {
                             in: root, identifier: identifier, label: label, kind: .button)
     }
 
-    static func pressDisclosure(in root: NSView, identifier: String, label: String) async throws {
-        try await Task.sleep(nanoseconds: 10_000_000)
-        try prepare(root)
-        let title = try caption(in: root, identifier: identifier, label: label, authoredCaption: true)
-        let frame = root.convert(title.frame, from: nil)
-        // SwiftUI draws the chevron without an NSButton in this host. Locate its actual pixels,
-        // rather than clicking the inert title or assuming an absolute screen coordinate.
-        let gutter = NSRect(x: frame.minX - frame.height * 2, y: frame.minY - 2,
-                            width: frame.height * 2 - 2, height: frame.height + 4)
-        XCTAssertTrue(root.visibleRect.contains(gutter))
-        let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: gutter.size)
-        root.effectiveAppearance.performAsCurrentDrawingAppearance {
-            root.cacheDisplay(in: gutter, to: bitmap)
+    enum DisclosureTarget { case label, emptyRow }
+
+    static func pressDisclosure(in root: NSView, identifier: String, label: String,
+                                target: DisclosureTarget = .label) async throws {
+        let control = try await resolveWhenReady(in: root, identifier: identifier, label: label, kind: .button)
+        guard case .button(let button) = control.backing else {
+            XCTFail("A disclosure must be backed by a native NSButton.")
+            throw RenderedLookupError.missingOrAmbiguousControl
         }
-        let width = bitmap.pixelsWide, height = bitmap.pixelsHigh
-        let scale = CGFloat(width) / gutter.width
-        var luminance: [CGFloat] = []
-        for y in 0..<height {
-            for x in 0..<width {
-                let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
-                luminance.append((color.redComponent + color.greenComponent + color.blueComponent) / 3)
-            }
+        let cell = try XCTUnwrap(button.cell)
+        let titleRect = cell.titleRect(forBounds: button.bounds)
+        let labelWidth = min(titleRect.width, button.attributedTitle.size().width)
+        let point: NSPoint
+        switch target {
+        case .label:
+            point = NSPoint(x: titleRect.minX + labelWidth / 2, y: titleRect.midY)
+        case .emptyRow:
+            point = NSPoint(x: button.bounds.maxX - 8, y: button.bounds.midY)
+            XCTAssertGreaterThan(point.x, titleRect.minX + labelWidth,
+                                 "The row test must hit blank space beyond the label.")
         }
-        let background = luminance.sorted()[luminance.count / 2]
-        var foreground = Set(luminance.indices.filter { abs(luminance[$0] - background) > 0.12 })
-        var chevrons: [NSRect] = []
-        while let seed = foreground.first {
-            foreground.remove(seed)
-            var component = [seed]
-            var index = 0
-            while index < component.count {
-                let pixel = component[index]
-                index += 1
-                for y in max(0, pixel / width - 1)...min(height - 1, pixel / width + 1) {
-                    for x in max(0, pixel % width - 1)...min(width - 1, pixel % width + 1) {
-                        let adjacent = y * width + x
-                        if foreground.remove(adjacent) != nil { component.append(adjacent) }
-                    }
-                }
-            }
-            let xs = component.map { CGFloat($0 % width) }
-            let ys = component.map { CGFloat($0 / width) }
-            let bounds = NSRect(x: try XCTUnwrap(xs.min()), y: try XCTUnwrap(ys.min()),
-                                width: try XCTUnwrap(xs.max()) - XCTUnwrap(xs.min()) + 1,
-                                height: try XCTUnwrap(ys.max()) - XCTUnwrap(ys.min()) + 1)
-            guard bounds.width >= 2 * scale, bounds.width <= 10 * scale,
-                  bounds.height >= 4 * scale, bounds.height <= 14 * scale else { continue }
-            var thirds = [[CGFloat]](repeating: [], count: 3)
-            for pixel in component {
-                let third = min(2, Int((CGFloat(pixel / width) - bounds.minY) * 3 / bounds.height))
-                thirds[third].append(CGFloat(pixel % width))
-            }
-            guard thirds.allSatisfy({ !$0.isEmpty }) else { continue }
-            let centers = thirds.map { $0.reduce(0, +) / CGFloat($0.count) }
-            guard centers[1] > centers[0], centers[1] > centers[2] else { continue }
-            chevrons.append(bounds)
-        }
-        XCTAssertEqual(chevrons.count, 1, "Expected one rendered right chevron beside \(label): \(chevrons)")
-        let chevron = try XCTUnwrap(chevrons.count == 1 ? chevrons.first : nil)
-        let local = NSPoint(x: gutter.minX + chevron.midX / scale,
-                            y: root.isFlipped ? gutter.minY + chevron.midY / scale :
-                                gutter.maxY - chevron.midY / scale)
-        let point = root.convert(local, to: nil)
-        try NativeRenderEvidence.record("Rendered disclosure \(identifier): title=\(title.frame), chevronPoint=\(point)")
-        try NativeTestPointer.press(in: XCTUnwrap(root.window), at: point, identifier: identifier)
+        XCTAssertGreaterThanOrEqual(control.frame.height, 24)
+        XCTAssertTrue(control.isEnabled)
+        XCTAssertTrue(button.bounds.contains(point))
+        let windowPoint = button.convert(point, to: nil)
+        XCTAssertTrue(control.visibleRect.contains(windowPoint))
+        try NativeRenderEvidence.record("Rendered disclosure \(identifier): target=\(target), point=\(windowPoint)")
+        try NativeTestPointer.press(in: XCTUnwrap(root.window), at: windowPoint,
+                                    identifier: identifier, trackingControl: button)
     }
 
     static func caption(in root: NSView, identifier: String, label: String,

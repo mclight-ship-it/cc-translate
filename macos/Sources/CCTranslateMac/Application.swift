@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             }
         }
         model.captureShortcut.onCapture = { [weak self] in self?.startCapture() }
+        model.onQuickInputRequested = { [weak self] in self?.showQuickInput() }
         model.onStopped = { [weak self] in self?.finishTermination() }
         diagnostics.onStopped = { [weak self] in self?.finishTermination() }
     }
@@ -328,7 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func menuWillOpen(_ menu: NSMenu) {
         menuTarget = SelectionProbe.currentTarget()
-        menu.item(withTag: 10)?.state = model.monitorEnabled ? .on : .off
+        menu.item(withTag: 10)?.state = model.monitorRequestedEnabled ? .on : .off
     }
 
     @objc private func openInput() {
@@ -382,21 +383,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         if quickInputPanel == nil {
             quickInputPanel = makePanel(title: model.text("Quick translate", "快速翻译"),
-                width: 520, height: 310, minimum: NSSize(width: 420, height: 290),
+                width: 520, height: 360, minimum: NSSize(width: 420, height: 340),
                 root: QuickInputView(model: model, draft: quickInputDraft,
                     submit: { [weak self] in self?.submitQuickInput() },
                     cancel: { [weak self] in self?.quickInputPanel?.performClose(nil) }))
         }
         quickInputDraft.attemptedSubmit = false
         quickInputDraft.selectionUnavailable = selectionUnavailable
-        model.openProduct()
+        model.loadPresentation()
         activate(quickInputPanel)
     }
 
     func submitQuickInput() {
         quickInputDraft.attemptedSubmit = true
         guard model.inputIssue(for: quickInputDraft.text) == nil,
-              !model.active, !model.preparing,
               (quickInputPanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
         model.input = quickInputDraft.text
         submittingQuickInput = true
@@ -434,10 +434,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func handleSelection(_ selection: SelectionResult) {
         guard !terminating, !uninstallPreparing else { return }
         switch selection {
-        case .present:
+        case .present(let text):
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                showQuickInput()
+                return
+            }
             model.translateSelection(selection)
             if model.productPhase == .failed { showResult(reposition: true) }
-        case .absent:
+        case .absent, .unknown(.copyNotObserved):
             showQuickInput()
         case .unknown:
             presentQuickInput(selectionUnavailable: true)
@@ -454,8 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if menuItem.action == #selector(submitInput) {
             if quickInputPanel?.isKeyWindow == true {
                 let composing = (quickInputPanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
-                return !composing && !model.active && !model.preparing &&
-                    model.inputIssue(for: quickInputDraft.text) == nil
+                return !composing && model.inputIssue(for: quickInputDraft.text) == nil
             }
             if capturePanel?.isKeyWindow == true {
                 let composing = (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
@@ -601,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func toggleMonitor() {
-        if model.monitorEnabled {
+        if model.monitorRequestedEnabled {
             model.stopMonitor()
             return
         }
@@ -629,6 +632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        if model.monitorRequestedEnabled { model.refreshPermissions() }
         if settingsPanel?.isVisible == true { loginItems.refresh() }
     }
 
@@ -968,6 +972,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if window === inputPanel {
             aboutModel.close()
             if workspaceSection == .translator && !translationUsesResultPanel { model.cancel() }
+        }
+        if window === quickInputPanel {
+            quickInputDraft.text = ""
+            quickInputDraft.attemptedSubmit = false
+            quickInputDraft.selectionUnavailable = false
         }
         if window === resultPanel {
             model.rememberResultFrame(window.frame)

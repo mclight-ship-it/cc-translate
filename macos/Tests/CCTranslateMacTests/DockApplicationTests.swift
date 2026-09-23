@@ -204,6 +204,7 @@ final class DockApplicationTests: XCTestCase {
                 f.application.showSettings(pane: .shortcuts)
                 let settings = try XCTUnwrap(f.application.settingsPanel)
                 XCTAssertTrue(settings === input, "Settings replaces the main page, not the main window.")
+                try await CaptureProductFixture.waitFor { !settings.isMiniaturized && settings.isVisible }
                 XCTAssertFalse(settings.isMiniaturized)
                 XCTAssertEqual(NSApp.activationPolicy(), .regular)
                 settings.performClose(nil)

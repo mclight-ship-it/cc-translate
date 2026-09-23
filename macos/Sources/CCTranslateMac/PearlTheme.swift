@@ -16,6 +16,7 @@ enum PearlTheme {
     static let secondary = color(light: 0x53626D, dark: 0xB9C5CE, highContrast: .secondaryLabelColor)
     static let accent = color(light: 0x1C6374, dark: 0x8BD2DE, highContrast: .controlAccentColor)
     static let onAccent = color(light: 0xFFFFFF, dark: 0x18242A, highContrast: .selectedMenuItemTextColor)
+    static let error = color(light: 0xAF231D, dark: 0xFFB4AB, highContrast: .labelColor)
     static let captureAccent = color(light: 0x916617, dark: 0xEAC785, highContrast: .labelColor)
     static let historyAccent = color(light: 0x536A91, dark: 0xAEC5EC, highContrast: .labelColor)
     static let dictionaryAccent = color(light: 0x296B52, dark: 0x9BD6B8, highContrast: .labelColor)

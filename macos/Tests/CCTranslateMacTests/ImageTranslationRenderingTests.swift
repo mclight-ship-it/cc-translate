@@ -19,7 +19,7 @@ extension ProductRenderingTests {
         capture.translateImage(using: f.model)
         try await CaptureProductFixture.waitFor { f.resources.cleanupFailureCount == 1 }
         let png = try renderImageCapture(f, capture: capture, name: "image-create-cleanup-zh-dark",
-                                         scheme: .dark, chinese: true, narrow: true)
+                                         scheme: .dark, chinese: true, narrow: true, highResolution: true)
         let words = try imageWords(png, chinese: true).filter { !$0.isWhitespace }
         XCTAssertTrue(words.contains("重试清理图片"), words)
         XCTAssertTrue(words.contains("未发送任何内容"), words)
@@ -229,6 +229,7 @@ extension ProductRenderingTests {
     @MainActor
     private func renderImageCapture(_ f: ImageAppFixture, capture: CaptureModel, name: String,
                                     scheme: ColorScheme, chinese: Bool = false, narrow: Bool = false,
+                                    highResolution: Bool = false,
                                     inspect: ((NSView) -> Void)? = nil) throws -> Data {
         f.model.interfaceLanguage = chinese ? "zh" : "en"
         f.model.appearance = scheme == .dark ? "dark" : "light"
@@ -236,7 +237,7 @@ extension ProductRenderingTests {
                                       captureAgain: { capture.start() }, reselect: { capture.reselect() },
                                       close: { capture.cancel() }),
                           named: name, size: NSSize(width: narrow ? 620 : 860, height: narrow ? 600 : 780),
-                          scheme: scheme, inspect: inspect)
+                          scheme: scheme, inspect: inspect, highResolution: highResolution)
     }
 
     @MainActor
@@ -249,9 +250,10 @@ extension ProductRenderingTests {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
+        request.minimumTextHeight = 0
         request.usesLanguageCorrection = false
         request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             .joined(separator: " ").lowercased()
     }

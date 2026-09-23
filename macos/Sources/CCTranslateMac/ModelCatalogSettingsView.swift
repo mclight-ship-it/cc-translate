@@ -26,7 +26,8 @@ struct ModelCatalogSettingsView: View {
             }
             status
             if let row = model.discoveredModel(model.modelProfile), !row.description.isEmpty {
-                DisclosureGroup(model.text("Model details", "模型详情")) {
+                NativeSettingsDisclosure(model.text("Model details", "模型详情"),
+                                         model: model, identifier: "model-catalog-details") {
                     Text(verbatim: row.description).font(.caption).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }

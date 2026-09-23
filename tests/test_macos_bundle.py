@@ -1026,7 +1026,7 @@ class SmokeContractTests(unittest.TestCase):
         self.assertEqual(native_body.count(" | tee "), 4)
         self.assertEqual(native_body.count("tee -a tools/macos/.build/native-unit-tests.log"), 3)
         self.assertIn("cat tools/macos/.build/native-disclosure-check.log | tee -a", native_body)
-        self.assertIn("grep -q 'Executed 9 tests' tools/macos/.build/native-disclosure-check.log", native_body)
+        self.assertIn("grep -q 'Executed 14 tests' tools/macos/.build/native-disclosure-check.log", native_body)
         focused = native_body.split("--filter '", 1)[1].split("'", 1)[0].split("|")
         self.assertEqual(set(focused), {
             "ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl",
@@ -1038,12 +1038,19 @@ class SmokeContractTests(unittest.TestCase):
             "ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese",
             "ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste",
             "ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages",
+            "DockApplicationTests.testDockIdentityFollowsOpenWindowsAndReturnsWhenReopened",
+            "NativeResultPlacementModelTests.testMissingSelectionOpensQuickInputAndInvalidTextKeepsExplicitErrorWithoutLateReopening",
+            "NativeResultPlacementModelTests.testClosedResultStaysClosedForLateHelperEventsUntilANewSelection",
+            "ProductRenderingTests.testCaptureInputCountersRenderBothIndependentLimitsAndVisibleActionInChineseDark",
+            "ProductRenderingTests.testImageCreationRollbackFailureRendersRecoveryBeforeAnyHelperStarts",
         })
-        self.assertEqual(len(focused), 9)
+        self.assertEqual(len(focused), 14)
         log_upload = workflow[native_log:native_end]
         self.assertIn("        if: always()\n", log_upload)
         self.assertIn("name: cc-translate-native-unit-log-${{ github.sha }}", log_upload)
         self.assertIn("path: tools/macos/.build/native-unit-tests.log", log_upload)
+        self.assertIn("tools/macos/.build/ui-screenshots/**/*.png", workflow)
+        self.assertIn("tools/macos/.build/ui-screenshots/**/*.txt", workflow)
         for product in ("CCTranslateMac", "CCClipboardTestProducer"):
             build = "swift build --package-path macos --triple arm64-apple-macosx14.0 --product " + product
             self.assertLess(native_body.index(build), native_body.index("swift test --package-path macos"))
