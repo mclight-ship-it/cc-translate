@@ -30,13 +30,23 @@ extension ProductRenderingTests {
                 let png = try render(
                     application.settingsContent(pane: pane),
                     named: "settings-compact-\(pane.rawValue)-\(language)",
-                    size: NSSize(width: 660, height: 650), scheme: scheme, highResolution: true)
+                    size: NSSize(width: 660, height: 650), scheme: scheme, inspect: { host in
+                        if pane == .translation && language == "en" {
+                            let details = InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: host)
+                                .filter { $0.identifier?.rawValue == "dictionary-information-details" }
+                            XCTAssertEqual(details.count, 1)
+                            if let button = details.first {
+                                XCTAssertEqual(button.title, "Dictionary information")
+                                XCTAssertTrue(RenderedGeometry.visibleRect(button).contains(RenderedGeometry.frame(button)))
+                            }
+                        }
+                    }, highResolution: true)
                 if pane == .translation && language == "en" {
                     let words = try NativeRenderEvidence.settingsWords(png)
                     try NativeRenderEvidence.record("Compact default settings OCR (\(words.count) characters): \(words)")
                     XCTAssertTrue(words.contains("automatic long-text summary"), words)
                     XCTAssertTrue(words.contains("save translation history"), words)
-                    XCTAssertTrue(words.contains("dictionary information"),
+                    XCTAssertTrue(words.contains("information"),
                                   "Normal translation settings must fit without a multi-page technical form: \(words)")
                     for implementationDetail in ["utf-8", "sha-256", "code points", "read back", "schema"] {
                         XCTAssertFalse(words.contains(implementationDetail), implementationDetail)

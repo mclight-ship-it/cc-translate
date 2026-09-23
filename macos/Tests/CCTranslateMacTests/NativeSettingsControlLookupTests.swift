@@ -58,23 +58,26 @@ final class NativeSettingsControlLookupTests: XCTestCase {
     }
 
     @MainActor
-    func testSwiftUISemanticIdentifiersResolveDuplicateCaptionsToActualNativeButtons() async throws {
+    func testDuplicateSwiftUICaptionsRequireActualNativeContainerScoping() async throws {
         var sidebarPresses = 0
         var submitPresses = 0
+        let sidebarHost = NSHostingView(rootView:
+            Button("Translate") { sidebarPresses += 1 }
+                .buttonStyle(.bordered).padding(20).pearlSurface())
+        let submitHost = NSHostingView(rootView:
+            Button("Translate") { submitPresses += 1 }
+                .buttonStyle(.bordered).padding(20).pearlSurface())
         let surface = NativeSettingsTestHost(
-            HStack(spacing: 40) {
-                Button("Translate") { sidebarPresses += 1 }
-                    .accessibilityIdentifier("semantic-sidebar")
-                Button("Translate") { submitPresses += 1 }
-                    .accessibilityIdentifier("semantic-submit")
-            }
-            .buttonStyle(.bordered).padding(20).pearlSurface(),
+            ScopedNativeHosts(sidebar: sidebarHost, submit: submitHost).pearlSurface(),
             size: NSSize(width: 420, height: 120))
         defer { surface.close() }
         let sidebar = try await NativeSettingsTestControls.resolveWhenReady(
-            in: surface.host, identifier: "semantic-sidebar", label: "Translate", kind: .button)
+            in: sidebarHost, identifier: "scoped-sidebar", label: "Translate", kind: .button)
         let submit = try await NativeSettingsTestControls.resolveWhenReady(
-            in: surface.host, identifier: "semantic-submit", label: "Translate", kind: .button)
+            in: submitHost, identifier: "scoped-submit", label: "Translate", kind: .button)
+        XCTAssertEqual(try NativeSettingsTestControls.candidateCount(
+            in: surface.host, identifier: "unpublished-swiftui-id", label: "Translate", kind: .button), 2,
+                       "A repeated caption must stay ambiguous; never choose the first control.")
         XCTAssertFalse(sidebar.sameElement(as: submit))
         try await sidebar.press()
         try await surface.waitFor { sidebarPresses == 1 }
@@ -82,6 +85,23 @@ final class NativeSettingsControlLookupTests: XCTestCase {
         try await submit.press()
         try await surface.waitFor { submitPresses == 1 }
         XCTAssertEqual(sidebarPresses, 1)
+    }
+
+    @MainActor
+    private struct ScopedNativeHosts: NSViewRepresentable {
+        let sidebar: NSView
+        let submit: NSView
+
+        func makeNSView(context: Context) -> NSView {
+            let root = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
+            sidebar.frame = NSRect(x: 10, y: 20, width: 180, height: 80)
+            submit.frame = NSRect(x: 230, y: 20, width: 180, height: 80)
+            root.addSubview(sidebar)
+            root.addSubview(submit)
+            return root
+        }
+
+        func updateNSView(_ view: NSView, context: Context) {}
     }
 
     @MainActor

@@ -298,7 +298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func makeEditMenu() -> NSMenu {
         let edit = NSMenu(title: model.text("Edit", "编辑"))
         for (english, chinese, selector, key) in [
-            ("Undo", "撤销", "undo:", "z"), ("Cut", "剪切", "cut:", "x"),
+            ("Undo", "撤销", "undo:", "z"), ("Redo", "重做", "redo:", "z"),
+            ("Cut", "剪切", "cut:", "x"),
             ("Copy", "复制", "copy:", "c"), ("Paste", "粘贴", "paste:", "v"),
             ("Paste and Match Style", "粘贴并匹配样式", "pasteAsPlainText:", "v"),
             ("Select All", "全选", "selectAll:", "a")
@@ -307,6 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                   action: Selector(selector), keyEquivalent: key)
             if item.action == NativePlainPasteRouting.action {
                 item.keyEquivalentModifierMask = [.command, .option, .shift]
+            } else if selector == "redo:" {
+                item.keyEquivalentModifierMask = [.command, .shift]
             }
             edit.addItem(item)
         }

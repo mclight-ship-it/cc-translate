@@ -335,31 +335,23 @@ struct TranslationResultView: View {
     private var windowActions: some View {
         HStack(spacing: 4) {
             if let openInWindow {
-                Button(action: openInWindow) {
-                    Label(model.text("Open in translation window", "在翻译窗口中打开"),
-                          systemImage: "arrow.up.right.square")
-                }
-                .labelStyle(.iconOnly)
+                NativeResultWindowButton(
+                    title: model.text("Open in translation window", "在翻译窗口中打开"),
+                    symbol: "arrow.up.right.square", identifier: "result-open-in-window",
+                    help: model.text("Open in translation window", "在翻译窗口中打开"),
+                    action: openInWindow)
                 .frame(width: 28, height: 28)
-                .accessibilityIdentifier("result-open-in-window")
-                .accessibilityLabel(model.text("Open in translation window", "在翻译窗口中打开"))
-                .help(model.text("Open in translation window", "在翻译窗口中打开"))
             }
             if let togglePinned {
-                Button(action: togglePinned) {
-                    Label(pinned ? model.text("Unpin result window", "取消固定结果窗口")
-                                 : model.text("Pin result window", "固定结果窗口"),
-                          systemImage: pinned ? "pin.fill" : "pin")
-                }
-                .labelStyle(.iconOnly)
+                NativeResultWindowButton(
+                    title: pinned ? model.text("Unpin result window", "取消固定结果窗口")
+                                  : model.text("Pin result window", "固定结果窗口"),
+                    symbol: pinned ? "pin.fill" : "pin", identifier: "result-toggle-pinned",
+                    help: pinned ? model.text("Unpin result window", "取消固定结果窗口")
+                                 : model.text("Keep result window on top", "将结果窗口置顶"),
+                    value: pinned ? model.text("Pinned", "已固定") : model.text("Not pinned", "未固定"),
+                    highlighted: pinned, action: togglePinned)
                 .frame(width: 28, height: 28)
-                .foregroundStyle(pinned ? PearlTheme.accent : PearlTheme.secondary)
-                .accessibilityIdentifier("result-toggle-pinned")
-                .accessibilityLabel(pinned ? model.text("Unpin result window", "取消固定结果窗口")
-                                          : model.text("Pin result window", "固定结果窗口"))
-                .accessibilityValue(pinned ? model.text("Pinned", "已固定") : model.text("Not pinned", "未固定"))
-                .help(pinned ? model.text("Unpin result window", "取消固定结果窗口")
-                             : model.text("Keep result window on top", "将结果窗口置顶"))
             }
         }
         .buttonStyle(.borderless)

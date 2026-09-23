@@ -76,6 +76,7 @@ struct NativeTranslationEditor: NSViewRepresentable {
     var textScale: NativeTextScale
     @Binding var focused: Bool
     var label: String
+    var identifier: String
     var hint: String = ""
     var placeholder: String = ""
     var drawsBackground = false
@@ -85,11 +86,13 @@ struct NativeTranslationEditor: NSViewRepresentable {
     private var renderedText: String { String(decoding: originalBytes, as: UTF8.self) }
 
     init(text: Binding<String>, textScale: NativeTextScale, focused: Binding<Bool>,
-         label: String, hint: String = "", placeholder: String = "", drawsBackground: Bool = false) {
+         label: String, hint: String = "", placeholder: String = "", drawsBackground: Bool = false,
+         identifier: String = "translation-input-editor") {
         _text = text
         self.textScale = textScale
         _focused = focused
         self.label = label
+        self.identifier = identifier
         self.hint = hint
         self.placeholder = placeholder
         self.drawsBackground = drawsBackground
@@ -190,6 +193,8 @@ struct NativeTranslationEditor: NSViewRepresentable {
         view.backgroundColor = NSColor(PearlTheme.panel)
         scroll.backgroundColor = NSColor(PearlTheme.panel)
         view.setAccessibilityLabel(label)
+        view.identifier = NSUserInterfaceItemIdentifier(identifier)
+        view.setAccessibilityIdentifier(identifier)
         view.setAccessibilityHelp(hint)
         view.placeholder = placeholder
 

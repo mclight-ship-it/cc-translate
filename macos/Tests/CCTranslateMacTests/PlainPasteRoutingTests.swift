@@ -173,6 +173,11 @@ final class PlainPasteRoutingTests: XCTestCase {
             let ordinary = try XCTUnwrap(menu.items.first { $0.action == Selector("paste:") })
             XCTAssertEqual(ordinary.keyEquivalent, "v")
             XCTAssertEqual(ordinary.keyEquivalentModifierMask, .command)
+            let redo = try XCTUnwrap(menu.items.first { $0.action == Selector("redo:") })
+            XCTAssertEqual(redo.title, chinese ? "重做" : "Redo")
+            XCTAssertEqual(redo.keyEquivalent, "z")
+            XCTAssertEqual(redo.keyEquivalentModifierMask, [.command, .shift])
+            XCTAssertNil(redo.target)
             XCTAssertTrue(menu.items.contains { $0.action == Selector("selectAll:") })
             XCTAssertTrue(menu.items.contains { $0.action == Selector("copy:") })
         }

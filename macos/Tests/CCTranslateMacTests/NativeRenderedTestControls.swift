@@ -99,8 +99,8 @@ enum NativeSettingsTestAccessibility {
         func visit(_ value: Any) {
             guard let object = value as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return }
             let element = object as? any NSAccessibilityProtocol
-            // SwiftUI can expose virtual AX nodes through NSObject's public attribute API
-            // without declaring NSAccessibilityProtocol conformance.
+            // Inventory actual native views as well as public, untyped AX children.
+            // This does not reconstruct SwiftUI's out-of-process virtual AX tree.
             let attributes = object.accessibilityAttributeNames()
             func attribute(_ name: NSAccessibility.Attribute) -> Any? {
                 attributes.contains(name) ? object.accessibilityAttributeValue(name) : nil
@@ -112,6 +112,9 @@ enum NativeSettingsTestAccessibility {
                 frame = NSRect(origin: position.pointValue, size: size.sizeValue)
             }
             result.append(Element(identifier: identifier, frame: frame))
+            if let view = object as? NSView {
+                for child in view.subviews { visit(child) }
+            }
             for child in element?.accessibilityChildren() ?? [] { visit(child) }
             for child in attribute(.children) as? [Any] ?? [] { visit(child) }
             for child in element?.accessibilityContents() ?? [] { visit(child) }
@@ -542,14 +545,6 @@ enum NativeSettingsTestControls {
         if !identified.isEmpty {
             return Lookup(candidates: identified, readback: nil, route: "public native/accessibility identifier")
         }
-        let semantic = NativeSettingsTestAccessibility.elements(in: root).filter { $0.identifier == identifier }
-        if !semantic.isEmpty, let window = root.window {
-            let frames = semantic.compactMap(\.frame).map { window.convertFromScreen($0) }
-            let candidates = controls.filter { backing in
-                frames.contains { matches(backing.control, caption: $0, kind: kind, tolerance: 1) }
-            }
-            return Lookup(candidates: candidates, readback: nil, route: "public semantic AX identifier/frame")
-        }
         if kind == .destructiveButton {
             // A unique visible native role identifies the confirmation without depending on OCR.
             return Lookup(candidates: controls, readback: nil, route: "public NSButton.hasDestructiveAction")
@@ -585,6 +580,11 @@ enum NativeSettingsTestControls {
         try NativeRenderEvidence.record("Resolved rendered \(kind.rawValue) \(identifier) as \(type) via \(lookup.route); " +
               "frame=\(RenderedGeometry.frame(candidate.control)); fixture caption=\(label)")
         return NativeSettingsTestControl(backing: candidate, root: root, identifier: identifier, kind: kind)
+    }
+
+    static func candidateCount(in root: NSView, identifier: String, label: String,
+                               kind: NativeRenderedControlKind) throws -> Int {
+        try lookup(in: root, identifier: identifier, label: label, kind: kind).candidates.count
     }
 
     static func resolve(in root: NSView, identifier: String, label: String,
@@ -654,22 +654,38 @@ enum NativeSettingsTestControls {
         let cell = try XCTUnwrap(button.cell)
         let titleRect = cell.titleRect(forBounds: button.bounds)
         let labelWidth = min(titleRect.width, button.attributedTitle.size().width)
+        let font = button.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let lineHeight = min(titleRect.height, ceil(font.ascender - font.descender + font.leading))
         let point: NSPoint
         switch target {
         case .label:
-            point = NSPoint(x: titleRect.minX + labelWidth / 2, y: titleRect.midY)
+            point = NSPoint(x: titleRect.minX + min(labelWidth, 12) / 2,
+                            y: button.isFlipped ? titleRect.minY + lineHeight / 2 : titleRect.maxY - lineHeight / 2)
+            XCTAssertTrue(titleRect.contains(point), "The label test must stay inside the first text line.")
         case .emptyRow:
-            point = NSPoint(x: button.bounds.maxX - 8, y: button.bounds.midY)
-            XCTAssertGreaterThan(point.x, titleRect.minX + labelWidth,
-                                 "The row test must hit blank space beyond the label.")
+            let endOfTitle = titleRect.minX + labelWidth
+            guard endOfTitle < button.bounds.maxX else {
+                XCTFail("The disclosure fixture needs visible trailing space outside its title.")
+                throw RenderedLookupError.missingOrAmbiguousCaption
+            }
+            point = NSPoint(x: (endOfTitle + button.bounds.maxX) / 2, y: button.bounds.midY)
+            XCTAssertGreaterThan(point.x, endOfTitle, "The row test must hit blank space beyond the label.")
         }
         XCTAssertGreaterThanOrEqual(control.frame.height, 24)
         XCTAssertTrue(control.isEnabled)
         XCTAssertTrue(button.bounds.contains(point))
         let windowPoint = button.convert(point, to: nil)
         XCTAssertTrue(control.visibleRect.contains(windowPoint))
+        let window = try XCTUnwrap(root.window)
+        let contentView = try XCTUnwrap(window.contentView)
+        let hitPoint = contentView.superview.map { $0.convert(windowPoint, from: nil) } ?? windowPoint
+        let hit = try XCTUnwrap(contentView.hitTest(hitPoint))
+        guard hit === button || hit.isDescendant(of: button) else {
+            XCTFail("The actual window hit test must reach the disclosure, not \(type(of: hit)).")
+            throw RenderedLookupError.missingOrAmbiguousControl
+        }
         try NativeRenderEvidence.record("Rendered disclosure \(identifier): target=\(target), point=\(windowPoint)")
-        try NativeTestPointer.press(in: XCTUnwrap(root.window), at: windowPoint,
+        try NativeTestPointer.press(in: window, at: windowPoint,
                                     identifier: identifier, trackingControl: button)
     }
 
