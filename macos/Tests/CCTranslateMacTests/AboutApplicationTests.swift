@@ -56,7 +56,7 @@ final class AboutApplicationTests: XCTestCase {
     }
 
     @MainActor
-    func testAboutEscapeClosePreservesActiveTranslationCaptureAndOriginalEditorState() async throws {
+    func testAboutEscapeCancelsWorkspaceTranslationButPreservesCaptureAndExternalEditor() async throws {
         _ = NSApplication.shared
         let bundle = try AboutBundleFixture()
         defer { bundle.cleanUp() }
@@ -66,6 +66,7 @@ final class AboutApplicationTests: XCTestCase {
         product.model.input = "A synthetic translation remains in progress."
         product.model.translate()
         XCTAssertTrue(product.model.active)
+        let request = try XCTUnwrap(helper.translations.last)
         let operations = helper.operations
         let source = CaptureTestSource(image: try CaptureProductFixture.image())
         source.automatic = false
@@ -94,11 +95,17 @@ final class AboutApplicationTests: XCTestCase {
         application.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: original))
         XCTAssertTrue(application.aboutPanel === window)
         XCTAssertEqual(about.phase, .loaded)
+        XCTAssertEqual(helper.operations, operations, "An unrelated external window must not cancel translation.")
         window.cancelOperation(nil)
         XCTAssertNil(application.aboutPanel)
         XCTAssertEqual(about.phase, .idle)
-        XCTAssertTrue(product.model.active)
-        XCTAssertEqual(helper.operations, operations)
+        XCTAssertEqual(helper.operations, operations + ["cancel"])
+        XCTAssertTrue(helper.messages.contains {
+            $0.type == "cancel" && $0.payload["request_id"] == .string(request.id)
+        }, "About is a workspace page; closing it closes the translation's owning window.")
+        helper.event("cancelled", id: request.id)
+        try await CaptureProductFixture.waitFor { !product.model.active }
+        XCTAssertEqual(product.model.productPhase, .cancelled)
         XCTAssertEqual(capture.phase, .capturing)
         XCTAssertEqual(source.permissionCalls, 1)
         XCTAssertTrue(original.firstResponder === editor)
@@ -107,7 +114,7 @@ final class AboutApplicationTests: XCTestCase {
         await captureTask.value
         try await CaptureProductFixture.waitFor { capture.phase == .selecting }
         XCTAssertFalse(capture.frames.isEmpty)
-        XCTAssertEqual(helper.operations, operations)
+        XCTAssertEqual(helper.operations, operations + ["cancel"])
     }
 
     @MainActor
