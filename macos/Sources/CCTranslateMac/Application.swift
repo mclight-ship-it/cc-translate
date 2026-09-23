@@ -45,12 +45,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private(set) var statusItem: NSStatusItem?
     private(set) var inputPanel: NSPanel?
     private(set) var resultPanel: NSPanel?
-    private(set) var historyPanel: NSPanel?
-    private(set) var dictionaryPanel: NSPanel?
-    private(set) var settingsPanel: NSPanel?
+    private(set) var quickInputPanel: NSPanel?
+    var historyPanel: NSPanel? { activeWorkspacePanel(.history) }
+    var dictionaryPanel: NSPanel? { activeWorkspacePanel(.dictionary) }
+    var settingsPanel: NSPanel? { activeWorkspacePanel(.settings) }
     private(set) var capturePanel: NSPanel?
     private var diagnosticsPanel: NSPanel?
-    private(set) var aboutPanel: NSPanel?
+    var aboutPanel: NSPanel? { activeWorkspacePanel(.about) }
     private(set) var updatesPanel: NSPanel?
     private var selectionOverlay: RegionSelectionOverlay?
     private weak var captureReturnWindow: NSWindow?
@@ -84,11 +85,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var openProductWindows: [NSPanel] = []
     private weak var lastFocusedProductWindow: NSWindow?
     private let settingsNavigation = SettingsNavigation()
+    private let workspaceNavigation = WorkspaceNavigation()
+    private let quickInputDraft = QuickInputDraft()
+    private var quickInputIntent: UUID?
+    private var submittingQuickInput = false
     private var presentedCaptureIntent: UUID?
     private var announcedCaptureStatus: String?
 
     var desiredActivationPolicy: NSApplication.ActivationPolicy {
         openProductWindows.isEmpty ? .accessory : .regular
+    }
+
+    var workspaceSection: ProductSection { workspaceNavigation.section }
+
+    private var translationUsesResultPanel: Bool {
+        ["selection", "ocr"].contains(model.translationOrigin) ||
+            quickInputIntent == model.translationIntentID || submittingQuickInput
+    }
+
+    private func activeWorkspacePanel(_ section: ProductSection) -> NSPanel? {
+        guard workspaceSection == section,
+              openProductWindows.contains(where: { $0 === inputPanel }) else { return nil }
+        return inputPanel
     }
 
     deinit {
@@ -150,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         model.onTranslationStarted = { [weak self] in
             guard let self, !self.terminating,
-                  ["selection", "ocr"].contains(self.model.translationOrigin) else { return }
+                  self.translationUsesResultPanel else { return }
             if self.capture.automaticallyTranslates && self.model.translationOrigin == "ocr" {
                 self.presentedCaptureIntent = self.model.translationIntentID
                 if NSApp.isHidden {
@@ -163,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         model.onTranslationResult = { [weak self] _ in
             guard let self = self, !self.terminating, self.showTranslationResults else { return }
-            if ["selection", "ocr"].contains(self.model.translationOrigin) { self.showResult() }
+            if self.translationUsesResultPanel { self.showResult() }
         }
         model.onConfigurationRequired = { [weak self] in self?.openSettings() }
         model.onPresentationChanged = { [weak self] in
@@ -201,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func configureMenus() {
         let menu = NSMenu()
         menu.delegate = self
+        add(model.text("Quick translate…", "快速翻译…"), action: #selector(showQuickInput), to: menu)
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), to: menu)
         add(model.text("Translate selected text", "翻译选中文字"), action: #selector(translateSelection), to: menu)
         add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: menu)
@@ -244,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         appItem.submenu = application
         main.addItem(appItem)
         let file = NSMenu(title: model.text("File", "文件"))
+        add(model.text("Quick translate…", "快速翻译…"), action: #selector(showQuickInput), to: file)
         add(model.text("Translate…", "翻译…"), action: #selector(openInput), to: file)
         add(model.text("Translate text", "翻译当前文字"), action: #selector(submitInput), key: "\r", to: file)
         add(model.text("Screenshot translation…", "截图翻译…"), action: #selector(startCapture), to: file)
@@ -293,16 +313,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func applyAppearance() {
-        historyPanel?.title = model.text("History", "历史记录")
-        dictionaryPanel?.title = model.text("Local dictionary", "本地词典")
-        settingsPanel?.title = model.text("Settings", "设置")
+        inputPanel?.title = workspaceSection == .translator ? "CC Translate" :
+            "\(workspaceSection.title(using: model)) — CC Translate"
+        quickInputPanel?.title = model.text("Quick translate", "快速翻译")
         diagnosticsPanel?.title = model.text("Diagnostics", "诊断")
         capturePanel?.title = model.text("Screenshot translation", "截图翻译")
-        aboutPanel?.title = model.text("About CC Translate", "关于 CC Translate")
         updatesPanel?.title = model.text("Software updates", "软件更新")
         let appearance: NSAppearance? = model.appearance == "dark" ? NSAppearance(named: .darkAqua) :
             model.appearance == "light" ? NSAppearance(named: .aqua) : nil
-        for panel in [inputPanel, resultPanel, settingsPanel, historyPanel, dictionaryPanel, capturePanel, aboutPanel, updatesPanel] { panel?.appearance = appearance }
+        for panel in [inputPanel, resultPanel, quickInputPanel, capturePanel, updatesPanel] {
+            panel?.appearance = appearance
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -311,35 +332,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func openInput() {
+        presentWorkspace(.translator)
+    }
+
+    private func presentWorkspace(_ section: ProductSection) {
         guard canReopenProductWindow else { return }
+        if inputPanel?.attachedSheet != nil {
+            activate(inputPanel)
+            return
+        }
+        workspaceNavigation.section = section
         if inputPanel == nil {
-            let panel = ProductPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
-                styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false
-            )
-            panel.title = "CC Translate"
-            configureProductChrome(panel)
-            let minimum = NSSize(width: 717, height: 540)
-            panel.contentMinSize = minimum
-            panel.isReleasedWhenClosed = false
-            panel.hidesOnDeactivate = false
-            panel.isExcludedFromWindowsMenu = false
-            panel.delegate = self
-            let host = NSHostingView(rootView: workspace(.translator) {
-                TranslatorView(model: model,
-                    showHistory: { [weak self] in self?.openHistory() },
-                    showSettings: { [weak self] in self?.openSettings() },
-                    showCapture: { [weak self] in self?.startCapture() },
-                    embedded: true)
-            }.frame(minWidth: minimum.width, minHeight: minimum.height))
-            host.sizingOptions = [.minSize]
-            panel.contentView = host
-            panel.contentMinSize = minimum
-            panel.center()
+            let panel = makePanel(title: "CC Translate", width: 1120, height: 720,
+                minimum: NSSize(width: 717, height: 600),
+                root: MainWorkspaceView(model: model, navigation: workspaceNavigation,
+                    about: aboutModel, loginItems: loginItems, updates: updates,
+                    settingsNavigation: settingsNavigation,
+                    navigate: { [weak self] in self?.navigate(to: $0) },
+                    showDiagnostics: { [weak self] in self?.openDiagnostics() },
+                    close: { [weak self] in self?.inputPanel?.performClose(nil) }))
+            panel.isOpaque = false
             inputPanel = panel
         }
-        model.openProduct()
+        switch section {
+        case .translator: model.openProduct()
+        case .history: model.loadHistory()
+        case .dictionary: model.refreshDictionary()
+        case .settings:
+            model.openProduct()
+            model.refreshPermissions()
+            loginItems.refresh()
+        case .about:
+            if aboutModel.phase == .idle { aboutModel.openResources() }
+        case .capture:
+            preconditionFailure("Screenshot selection must not replace the workspace page.")
+        }
         activate(inputPanel)
+    }
+
+    @objc func showQuickInput() {
+        presentQuickInput(selectionUnavailable: false)
+    }
+
+    private func presentQuickInput(selectionUnavailable: Bool) {
+        guard canReopenProductWindow else { return }
+        if inputPanel?.attachedSheet != nil {
+            activate(inputPanel)
+            return
+        }
+        if quickInputPanel == nil {
+            quickInputPanel = makePanel(title: model.text("Quick translate", "快速翻译"),
+                width: 520, height: 310, minimum: NSSize(width: 420, height: 290),
+                root: QuickInputView(model: model, draft: quickInputDraft,
+                    submit: { [weak self] in self?.submitQuickInput() },
+                    cancel: { [weak self] in self?.quickInputPanel?.performClose(nil) }))
+        }
+        quickInputDraft.attemptedSubmit = false
+        quickInputDraft.selectionUnavailable = selectionUnavailable
+        model.openProduct()
+        activate(quickInputPanel)
+    }
+
+    func submitQuickInput() {
+        quickInputDraft.attemptedSubmit = true
+        guard model.inputIssue(for: quickInputDraft.text) == nil,
+              !model.active, !model.preparing,
+              (quickInputPanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
+        model.input = quickInputDraft.text
+        submittingQuickInput = true
+        model.translate()
+        quickInputIntent = model.translationIntentID
+        submittingQuickInput = false
+        showTranslationResults = true
+        showResult(reposition: true)
+        quickInputPanel?.performClose(nil)
     }
 
     private var canReopenProductWindow: Bool {
@@ -367,10 +433,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func handleSelection(_ selection: SelectionResult) {
         guard !terminating, !uninstallPreparing else { return }
-        model.translateSelection(selection)
-        if model.productPhase == .failed {
-            // A new gesture can reveal its error without letting old callbacks reopen a closed result.
-            showResult(reposition: true)
+        switch selection {
+        case .present:
+            model.translateSelection(selection)
+            if model.productPhase == .failed { showResult(reposition: true) }
+        case .absent:
+            showQuickInput()
+        case .unknown:
+            presentQuickInput(selectionUnavailable: true)
         }
     }
 
@@ -382,12 +452,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             return !terminating && (updates.channel != .configured || updates.canCheck)
         }
         if menuItem.action == #selector(submitInput) {
+            if quickInputPanel?.isKeyWindow == true {
+                let composing = (quickInputPanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+                return !composing && !model.active && !model.preparing &&
+                    model.inputIssue(for: quickInputDraft.text) == nil
+            }
             if capturePanel?.isKeyWindow == true {
                 let composing = (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
                 return !composing && capture.canTranslate && !model.active && !model.preparing
             }
             let composing = (inputPanel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
-            return inputPanel?.isKeyWindow == true && !composing && !model.active && !model.preparing &&
+            return workspaceSection == .translator && inputPanel?.isKeyWindow == true &&
+                !composing && !model.active && !model.preparing &&
                 !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 model.input.utf8.count <= 8192
         }
@@ -395,10 +471,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func submitInput() {
-        if capturePanel?.isKeyWindow == true {
+        if quickInputPanel?.isKeyWindow == true {
+            submitQuickInput()
+        } else if capturePanel?.isKeyWindow == true {
             guard (capturePanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
             capture.translate(using: model)
-        } else if inputPanel?.isKeyWindow == true {
+        } else if workspaceSection == .translator && inputPanel?.isKeyWindow == true {
             guard (inputPanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
             model.translate()
         }
@@ -533,15 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func openHistory() {
-        if historyPanel == nil {
-            historyPanel = makePanel(title: model.text("History", "历史记录"), width: 1040, height: 680,
-                minimum: NSSize(width: 697, height: 440),
-                root: workspace(.history) {
-                    TranslationHistoryView(model: model, useEntry: { [weak self] in self?.openInput() })
-                })
-        }
-        model.loadHistory()
-        activate(historyPanel)
+        presentWorkspace(.history)
     }
 
     @objc private func openSettings() {
@@ -549,16 +619,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     func showSettings(pane: SettingsPane? = nil) {
-        guard !terminating else { return }
-        if let pane { settingsNavigation.pane = pane }
-        if settingsPanel == nil {
-            settingsPanel = makePanel(title: model.text("Settings", "设置"), width: 960, height: 720,
-                minimum: NSSize(width: 587, height: 460),
-                root: workspace(.settings) { settingsContent() })
+        guard canReopenProductWindow else { return }
+        if inputPanel?.attachedSheet != nil {
+            activate(inputPanel)
+            return
         }
-        model.openProduct()
-        loginItems.refresh()
-        activate(settingsPanel)
+        if let pane { settingsNavigation.pane = pane }
+        presentWorkspace(.settings)
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -587,6 +654,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func navigate(to section: ProductSection) {
         guard canReopenProductWindow else { return }
+        if inputPanel?.attachedSheet != nil {
+            activate(inputPanel)
+            return
+        }
         switch section {
         case .translator: openInput()
         case .capture: startCapture()
@@ -597,22 +668,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
     }
 
-    private func workspace<Content: View>(_ section: ProductSection,
-                                         @ViewBuilder content: () -> Content) -> some View {
-        ProductWorkspace(model: model, selection: section,
-                         navigate: { [weak self] in self?.navigate(to: $0) }, content: content)
-    }
-
     private func openDictionary() {
-        if dictionaryPanel == nil {
-            dictionaryPanel = makePanel(title: model.text("Local dictionary", "本地词典"),
-                width: 960, height: 740, minimum: NSSize(width: 637, height: 600),
-                root: workspace(.dictionary) {
-                    DictionaryLibraryView(model: model, search: model.dictionarySearch)
-                })
-        }
-        model.refreshDictionary()
-        activate(dictionaryPanel)
+        presentWorkspace(.dictionary)
     }
 
     @objc private func checkForUpdates() {
@@ -702,16 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if model.output.isEmpty { openInput() } else { showResult(reposition: true) }
     }
     @objc func openAbout() {
-        if aboutPanel == nil {
-            aboutPanel = makePanel(title: model.text("About CC Translate", "关于 CC Translate"),
-                width: 1000, height: 720, minimum: NSSize(width: 717, height: 520),
-                root: workspace(.about) {
-                    AboutView(model: aboutModel, presentation: model,
-                              close: { [weak self] in self?.aboutPanel?.performClose(nil) })
-                })
-            aboutModel.openResources()
-        }
-        activate(aboutPanel)
+        presentWorkspace(.about)
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -800,8 +848,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func hideWindowsForUninstall() {
-        for panel in [inputPanel, resultPanel, historyPanel, dictionaryPanel, settingsPanel, capturePanel,
-                      diagnosticsPanel, aboutPanel, updatesPanel] {
+        for panel in [inputPanel, resultPanel, quickInputPanel, capturePanel, diagnosticsPanel, updatesPanel] {
             panel?.orderOut(nil)
         }
     }
@@ -918,18 +965,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         guard let window = notification.object as? NSWindow else { return }
         openProductWindows.removeAll { $0 === window }
         if lastFocusedProductWindow === window { lastFocusedProductWindow = nil }
-        if window === aboutPanel {
-            aboutModel.close()
-            aboutPanel?.contentView = nil
-            aboutPanel = nil
-        }
         if window === inputPanel {
-            if model.translationOrigin == "text" { model.cancel() }
+            aboutModel.close()
+            if workspaceSection == .translator && !translationUsesResultPanel { model.cancel() }
         }
         if window === resultPanel {
             model.rememberResultFrame(window.frame)
             showTranslationResults = false
-            if ["selection", "ocr"].contains(model.translationOrigin) { model.cancel() }
+            if translationUsesResultPanel { model.cancel() }
         }
         if window === capturePanel {
             selectionOverlay?.dismiss()

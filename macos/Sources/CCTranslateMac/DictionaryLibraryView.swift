@@ -15,7 +15,7 @@ struct DictionaryLibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "book.closed").foregroundStyle(PearlTheme.accent)
+                Image(systemName: "book.closed").foregroundStyle(PearlTheme.dictionaryAccent)
                     .accessibilityHidden(true)
                 Text(model.text("Local dictionary", "本地词典"))
                     .font(.system(size: 22, weight: .semibold))

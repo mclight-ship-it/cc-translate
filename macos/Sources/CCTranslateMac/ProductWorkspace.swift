@@ -3,6 +3,17 @@ import SwiftUI
 enum ProductSection: String, CaseIterable {
     case translator, capture, history, dictionary, settings, about
 
+    var accent: Color {
+        switch self {
+        case .translator: return PearlTheme.accent
+        case .capture: return PearlTheme.captureAccent
+        case .history: return PearlTheme.historyAccent
+        case .dictionary: return PearlTheme.dictionaryAccent
+        case .settings: return PearlTheme.settingsAccent
+        case .about: return PearlTheme.aboutAccent
+        }
+    }
+
     var symbol: String {
         switch self {
         case .translator: return "character.bubble"
@@ -49,7 +60,7 @@ struct ProductWorkspace<Content: View>: View {
                 sidebar(expanded: expanded)
                     .frame(width: expanded ? 196 : 56)
                     .frame(maxHeight: .infinity)
-                    .background(PearlTheme.sidebar)
+                    .background(PearlSidebarMaterial())
                 Rectangle().fill(PearlTheme.border).frame(width: 1).accessibilityHidden(true)
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -83,7 +94,8 @@ struct ProductWorkspace<Content: View>: View {
 
     private func navigationButton(_ section: ProductSection, expanded: Bool) -> some View {
         PearlNavigationButton(title: section.title(using: model), symbol: section.symbol,
-                              expanded: expanded, selected: section == selection) { navigate(section) }
+                              accent: section.accent, expanded: expanded,
+                              selected: section == selection) { navigate(section) }
             .accessibilityIdentifier("workspace-nav-\(section.rawValue)")
     }
 }
@@ -91,6 +103,7 @@ struct ProductWorkspace<Content: View>: View {
 private struct PearlNavigationButton: View {
     let title: String
     let symbol: String
+    let accent: Color
     let expanded: Bool
     let selected: Bool
     let action: () -> Void
@@ -101,6 +114,7 @@ private struct PearlNavigationButton: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.system(size: 16)).frame(width: 20)
+                    .foregroundStyle(accent)
                     .accessibilityHidden(true)
                 if expanded {
                     Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
@@ -116,7 +130,7 @@ private struct PearlNavigationButton: View {
                         in: RoundedRectangle(cornerRadius: 9))
             .overlay(alignment: .leading) {
                 if selected {
-                    Capsule().fill(PearlTheme.accent).frame(width: 3, height: 18)
+                    Capsule().fill(accent).frame(width: 3, height: 18)
                         .accessibilityHidden(true).allowsHitTesting(false)
                 }
             }

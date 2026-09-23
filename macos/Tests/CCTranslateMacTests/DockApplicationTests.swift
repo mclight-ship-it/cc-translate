@@ -203,8 +203,9 @@ final class DockApplicationTests: XCTestCase {
                 XCTAssertEqual(NSApp.activationPolicy(), .regular, "Minimizing does not close a window.")
                 f.application.showSettings(pane: .shortcuts)
                 let settings = try XCTUnwrap(f.application.settingsPanel)
-                input.performClose(nil)
-                XCTAssertEqual(NSApp.activationPolicy(), .regular, "The settings window is still open.")
+                XCTAssertTrue(settings === input, "Settings replaces the main page, not the main window.")
+                XCTAssertFalse(settings.isMiniaturized)
+                XCTAssertEqual(NSApp.activationPolicy(), .regular)
                 settings.performClose(nil)
                 try await CaptureProductFixture.waitFor { NSApp.activationPolicy() == .accessory }
                 XCTAssertFalse(f.application.applicationShouldTerminateAfterLastWindowClosed(NSApp))
@@ -345,7 +346,7 @@ final class DockApplicationTests: XCTestCase {
     }
 
     @MainActor
-    func testMostRecentlyFocusedExistingWindowWinsAndLastCloseLeavesAppReopenable() throws {
+    func testWorkspaceRestorationKeepsSelectedPageAndLastCloseLeavesAppReopenable() throws {
         let f = try DockApplicationFixture()
         defer { f.cleanUp() }
         f.launch()
@@ -355,12 +356,13 @@ final class DockApplicationTests: XCTestCase {
         f.product.model.input = "Retained after closing every window."
         XCTAssertTrue(NSApp.sendAction(Selector("openSettings"), to: f.application, from: nil))
         let settings = try XCTUnwrap(f.application.settingsPanel)
-        editor.orderOut(nil)
+        XCTAssertTrue(settings === editor)
         settings.orderOut(nil)
         let operations = helper.operations
         f.reopen()
         XCTAssertTrue(settings.isVisible)
-        XCTAssertFalse(editor.isVisible, "Dock restoration must not open an unrelated translator.")
+        XCTAssertEqual(f.application.workspaceSection, .settings,
+                       "Dock restoration must keep the selected page, not navigate back to Translate.")
         XCTAssertEqual(helper.operations, operations)
         settings.performClose(nil)
         f.reopen()
@@ -370,7 +372,8 @@ final class DockApplicationTests: XCTestCase {
         f.reopen()
         XCTAssertTrue(f.application.inputPanel === editor)
         XCTAssertTrue(editor.isVisible)
-        XCTAssertFalse(settings.isVisible)
+        XCTAssertNil(f.application.settingsPanel)
+        XCTAssertEqual(f.application.workspaceSection, .translator)
         XCTAssertEqual(f.product.model.input, "Retained after closing every window.")
         XCTAssertTrue(helper.translations.isEmpty)
     }

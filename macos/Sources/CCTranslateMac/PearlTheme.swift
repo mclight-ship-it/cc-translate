@@ -7,15 +7,20 @@ enum PearlTheme {
     static let cardRadius: CGFloat = 14
     static let controlRadius: CGFloat = 8
 
-    static let surface = color(light: 0xFBFAFC, dark: 0x27153F, highContrast: .windowBackgroundColor)
-    static let panel = color(light: 0xFFFFFF, dark: 0x352247, highContrast: .controlBackgroundColor)
-    static let sidebar = color(light: 0xEAE4F2, dark: 0x341D4D, highContrast: .windowBackgroundColor)
-    static let inset = color(light: 0xF1ECF8, dark: 0x36204F, highContrast: .textBackgroundColor)
-    static let border = color(light: 0xDDD6E5, dark: 0x604877, highContrast: .separatorColor)
-    static let text = color(light: 0x302B3B, dark: 0xF7F0FF, highContrast: .labelColor)
-    static let secondary = color(light: 0x62596E, dark: 0xC9B7DC, highContrast: .secondaryLabelColor)
-    static let accent = color(light: 0x7253A7, dark: 0xDDC4FF, highContrast: .controlAccentColor)
-    static let onAccent = color(light: 0xFFFFFF, dark: 0x35204D, highContrast: .selectedMenuItemTextColor)
+    static let surface = color(light: 0xF5F6F7, dark: 0x1D2024, highContrast: .windowBackgroundColor)
+    static let panel = color(light: 0xFFFFFF, dark: 0x282C31, highContrast: .controlBackgroundColor)
+    static let sidebar = color(light: 0xE8EDF0, dark: 0x23282D, highContrast: .windowBackgroundColor)
+    static let inset = color(light: 0xF0F3F4, dark: 0x22272B, highContrast: .textBackgroundColor)
+    static let border = color(light: 0xD1DADF, dark: 0x49525B, highContrast: .separatorColor)
+    static let text = color(light: 0x202B32, dark: 0xEFF3F5, highContrast: .labelColor)
+    static let secondary = color(light: 0x53626D, dark: 0xB9C5CE, highContrast: .secondaryLabelColor)
+    static let accent = color(light: 0x1C6374, dark: 0x8BD2DE, highContrast: .controlAccentColor)
+    static let onAccent = color(light: 0xFFFFFF, dark: 0x18242A, highContrast: .selectedMenuItemTextColor)
+    static let captureAccent = color(light: 0x916617, dark: 0xEAC785, highContrast: .labelColor)
+    static let historyAccent = color(light: 0x536A91, dark: 0xAEC5EC, highContrast: .labelColor)
+    static let dictionaryAccent = color(light: 0x296B52, dark: 0x9BD6B8, highContrast: .labelColor)
+    static let settingsAccent = color(light: 0x5B6570, dark: 0xC0CDD5, highContrast: .labelColor)
+    static let aboutAccent = color(light: 0x59659A, dark: 0xBAC8ED, highContrast: .labelColor)
 
     private static func color(light: UInt32, dark: UInt32, highContrast: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -34,27 +39,39 @@ enum PearlTheme {
 }
 
 struct PearlBackground: View {
-    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        PearlTheme.surface.accessibilityHidden(true).allowsHitTesting(false)
+    }
+}
+
+struct PearlSidebarMaterial: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topTrailing) {
-                PearlTheme.surface
-                if !reduceTransparency && contrast != .increased {
-                    Ellipse()
-                        .fill(PearlTheme.accent.opacity(scheme == .dark ? 0.11 : 0.06))
-                        .frame(width: min(geometry.size.width, 430), height: 240)
-                        .blur(radius: 70)
-                        .offset(x: 80, y: -100)
-                }
+        Group {
+            if reduceTransparency || contrast == .increased {
+                PearlTheme.sidebar
+            } else {
+                NativeSidebarMaterial()
+                    .overlay(PearlTheme.sidebar.opacity(0.16))
             }
         }
-        .clipped()
         .accessibilityHidden(true)
         .allowsHitTesting(false)
     }
+}
+
+private struct NativeSidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 private struct PearlSurfaceModifier: ViewModifier {

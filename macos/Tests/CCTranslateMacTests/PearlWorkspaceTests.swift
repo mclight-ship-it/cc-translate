@@ -156,14 +156,48 @@ final class PearlWorkspaceTests: XCTestCase {
             for surface in [PearlTheme.surface, PearlTheme.panel, PearlTheme.sidebar, PearlTheme.inset] {
                 XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.text, surface), 4.5)
                 XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.secondary, surface), 4.5)
-                XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.accent, surface), 3.0)
+                for section in ProductSection.allCases {
+                    XCTAssertGreaterThanOrEqual(try ratio(section.accent, surface), 3.0,
+                                               "\(section.rawValue) must remain distinct on neutral surfaces.")
+                }
             }
             XCTAssertGreaterThanOrEqual(try ratio(PearlTheme.onAccent, PearlTheme.accent), 4.5)
         }
     }
 
     @MainActor
-    func testNavigationReusesWindowsAndPreservesDraftAndDictionaryQuery() throws {
+    func testSidebarUsesNativeBehindWindowMaterialWhenSystemTransparencyAllowsIt() async throws {
+        _ = NSApplication.shared
+        let focus = NativeTestWindowFocus()
+        let fixture = try ProductTestHarness(savedCLI: false)
+        defer { fixture.cleanUp() }
+        let host = NSHostingView(rootView: ProductWorkspace(
+            model: fixture.model, selection: .dictionary, navigate: { _ in }) {
+                Text("Local dictionary").frame(maxWidth: .infinity, maxHeight: .infinity)
+            })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { focus.close(window) }
+        _ = try await NativeSettingsTestControls.resolveWhenReady(
+            in: host, identifier: "workspace-nav-dictionary",
+            label: ProductSection.dictionary.title(using: fixture.model), kind: .button)
+        let materials = InputLimitNativeViews.views(NSVisualEffectView.self, in: host)
+            .filter { $0.material == .sidebar && $0.blendingMode == .behindWindow }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ||
+            NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast {
+            XCTAssertTrue(materials.isEmpty, "System accessibility settings require the opaque fallback.")
+        } else {
+            XCTAssertFalse(materials.isEmpty, "A colored rectangle or blur gradient is not native material.")
+            XCTAssertTrue(materials.allSatisfy { $0.state == .followsWindowActiveState })
+        }
+        XCTAssertTrue(fixture.helpers.isEmpty)
+    }
+
+    @MainActor
+    func testNavigationReusesOneWindowAndPreservesDraftAndDictionaryQuery() throws {
         _ = NSApplication.shared
         let focus = NativeTestWindowFocus()
         let fixture = try ProductTestHarness(savedCLI: false)
@@ -183,9 +217,13 @@ final class PearlWorkspaceTests: XCTestCase {
         let helper = try fixture.ready()
         app.navigate(to: .dictionary)
         let dictionary = try XCTUnwrap(app.dictionaryPanel)
+        XCTAssertTrue(dictionary === editor)
+        XCTAssertEqual(app.workspaceSection, .dictionary)
         fixture.model.dictionarySearch.query = "example"
         app.navigate(to: .settings)
         let settings = try XCTUnwrap(app.settingsPanel)
+        XCTAssertTrue(settings === editor)
+        XCTAssertNil(app.dictionaryPanel)
         app.navigate(to: .translator)
         XCTAssertTrue(app.inputPanel === editor)
         XCTAssertEqual(fixture.model.input, "Unsaved translation draft")
@@ -194,12 +232,8 @@ final class PearlWorkspaceTests: XCTestCase {
         XCTAssertEqual(fixture.model.dictionarySearch.query, "example")
         app.showSettings(pane: .shortcuts)
         XCTAssertTrue(app.settingsPanel === settings)
-        for (panel, minimum) in [(editor, NSSize(width: 717, height: 540)),
-                                  (dictionary, NSSize(width: 637, height: 600)),
-                                  (settings, NSSize(width: 587, height: 460))] {
-            panel.contentView?.layoutSubtreeIfNeeded()
-            XCTAssertEqual(panel.contentMinSize, minimum)
-        }
+        editor.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(editor.contentMinSize, NSSize(width: 717, height: 600))
         XCTAssertTrue(helper.translations.isEmpty)
         XCTAssertEqual(app.desiredActivationPolicy, .regular)
         app.showResult()
@@ -216,8 +250,8 @@ final class PearlWorkspaceTests: XCTestCase {
         XCTAssertEqual(fixture.model.input, "Unsaved translation draft")
         result.performClose(nil)
         editor.performClose(nil)
-        settings.performClose(nil)
-        dictionary.performClose(nil)
+        XCTAssertNil(app.settingsPanel)
+        XCTAssertNil(app.dictionaryPanel)
         XCTAssertEqual(app.desiredActivationPolicy, .accessory)
     }
 }

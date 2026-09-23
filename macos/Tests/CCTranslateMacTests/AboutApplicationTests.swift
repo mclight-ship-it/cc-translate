@@ -5,7 +5,7 @@ import AppKit
 
 final class AboutApplicationTests: XCTestCase {
     @MainActor
-    func testNativeMenuAndProductionSettingsEntryReachSameIndependentWindowWithoutCLI() async throws {
+    func testNativeMenuAndProductionSettingsEntryReachSameWorkspacePageWithoutCLI() async throws {
         _ = NSApplication.shared
         let bundle = try AboutBundleFixture()
         defer { bundle.cleanUp() }
@@ -31,7 +31,9 @@ final class AboutApplicationTests: XCTestCase {
         await about.loadTask?.value
         let firstWindow = try XCTUnwrap(application.aboutPanel)
         XCTAssertTrue(firstWindow.isVisible)
-        XCTAssertEqual(firstWindow.contentMinSize, NSSize(width: 717, height: 520))
+        XCTAssertEqual(firstWindow.contentMinSize, NSSize(width: 717, height: 600))
+        XCTAssertTrue(application.inputPanel === firstWindow)
+        XCTAssertEqual(application.workspaceSection, .about)
         XCTAssertEqual(about.overview.info?.version, "9.8.7")
         let settings = application.settingsContent()
         settings.showAbout()
@@ -48,7 +50,7 @@ final class AboutApplicationTests: XCTestCase {
         XCTAssertEqual(about.phase, .idle)
         settings.showAbout()
         await about.loadTask?.value
-        XCTAssertFalse(application.aboutPanel === firstWindow)
+        XCTAssertTrue(application.aboutPanel === firstWindow)
         XCTAssertEqual(about.phase, .loaded)
         XCTAssertTrue(product.helpers.isEmpty)
     }
