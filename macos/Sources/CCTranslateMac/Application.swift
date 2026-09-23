@@ -87,8 +87,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let settingsNavigation = SettingsNavigation()
     private let workspaceNavigation = WorkspaceNavigation()
     private let quickInputDraft = QuickInputDraft()
-    private var quickInputIntent: UUID?
-    private var submittingQuickInput = false
     private var presentedCaptureIntent: UUID?
     private var announcedCaptureStatus: String?
 
@@ -99,8 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     var workspaceSection: ProductSection { workspaceNavigation.section }
 
     private var translationUsesResultPanel: Bool {
-        ["selection", "ocr"].contains(model.translationOrigin) ||
-            quickInputIntent == model.translationIntentID || submittingQuickInput
+        model.translationUsesResultPanel
     }
 
     private func activeWorkspacePanel(_ section: ProductSection) -> NSPanel? {
@@ -402,10 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         guard model.inputIssue(for: quickInputDraft.text) == nil,
               (quickInputPanel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return }
         model.input = quickInputDraft.text
-        submittingQuickInput = true
-        model.translate()
-        quickInputIntent = model.translationIntentID
-        submittingQuickInput = false
+        model.translate(inResultPanel: true)
         showTranslationResults = true
         showResult(reposition: true)
         quickInputPanel?.performClose(nil)
@@ -974,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if lastFocusedProductWindow === window { lastFocusedProductWindow = nil }
         if window === inputPanel {
             aboutModel.close()
-            if workspaceSection == .translator && !translationUsesResultPanel { model.cancel() }
+            if !translationUsesResultPanel { model.cancel() }
         }
         if window === quickInputPanel {
             quickInputDraft.text = ""

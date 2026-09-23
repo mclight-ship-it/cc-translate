@@ -123,6 +123,7 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var resultHasOriginalInput = true
     @Published private(set) var primaryResult = ""
     private(set) var translationOrigin = "text"
+    private(set) var translationUsesResultPanel = false
     @Published private(set) var historyPage: [HistoryRow] = []
     @Published private(set) var historyStatus = "History has not been read."
     @Published private(set) var historyBusy = false
@@ -756,7 +757,7 @@ final class ProbeModel: ObservableObject {
         request(["operation": .string("runtime_probe"), "https": .bool(https)])
     }
 
-    func translate(origin: String = "text", useCache: Bool = true) {
+    func translate(origin: String = "text", useCache: Bool = true, inResultPanel: Bool = false) {
         monitor.cancelPendingSelection()
         catalogWasLastRequest = false
         loadPresentation()
@@ -771,11 +772,17 @@ final class ProbeModel: ObservableObject {
                       useSavedModel: origin != "ocr" && !settingsReady && !modelEdited,
                       provider: translationProvider, useSavedProvider: !settingsReady)
         translationOrigin = origin
+        translationUsesResultPanel = inResultPanel || ["selection", "ocr"].contains(origin)
         productPhase = .preparing
         productMessage = text("Preparing translation…", "正在准备翻译…")
         openProduct()
         if active { requestCancellation() }
         resumeTranslation()
+    }
+
+    func retranslate() {
+        input = resultInput
+        translate(origin: translationOrigin, useCache: false, inResultPanel: translationUsesResultPanel)
     }
 
     @discardableResult
@@ -794,6 +801,7 @@ final class ProbeModel: ObservableObject {
                       useSavedModel: false, provider: translationProvider, useSavedProvider: !settingsReady,
                       imageIntent: intent)
         translationOrigin = "ocr"
+        translationUsesResultPanel = true
         productPhase = .preparing
         productMessage = text("Preparing the selected image…", "正在准备所选图片…")
         guard draft?.imageIntent == intent, translationIntentID == intent else { return nil }
@@ -1040,6 +1048,7 @@ final class ProbeModel: ObservableObject {
                 return
             }
             translationOrigin = "selection"
+            translationUsesResultPanel = true
             input = text
             translate(origin: "selection")
         case .absent, .unknown(.copyNotObserved):
@@ -1834,6 +1843,7 @@ final class ProbeModel: ObservableObject {
         translationIntentID = UUID()
         cancel()
         translationOrigin = "text"
+        translationUsesResultPanel = false
         discardBufferedDelta()
         if row.hasOriginalInput { input = row.input }
         resultInput = row.input
@@ -1853,6 +1863,7 @@ final class ProbeModel: ObservableObject {
         translationIntentID = UUID()
         cancel()
         translationOrigin = "text"
+        translationUsesResultPanel = false
         discardBufferedDelta()
         input = ""
         output = ""
@@ -2814,6 +2825,7 @@ final class ProbeModel: ObservableObject {
         resultGeneration = UUID()
         activeAction = nil
         translationOrigin = "text"
+        translationUsesResultPanel = false
         hideCurrentOutput = true
         openAfterStop = false
         historyRequested = false

@@ -496,8 +496,7 @@ struct TranslationResultView: View {
                 .keyboardShortcut(".", modifiers: .command)
         } else {
             Button {
-                model.input = model.resultInput
-                model.translate(origin: model.translationOrigin, useCache: false)
+                model.retranslate()
             } label: {
                 Label(model.text("Retranslate", "重新翻译"), systemImage: "arrow.clockwise")
             }
