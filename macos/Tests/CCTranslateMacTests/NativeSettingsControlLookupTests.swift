@@ -26,6 +26,30 @@ private struct NativeSettingsLookupFixture: NSViewRepresentable {
 
 final class NativeSettingsControlLookupTests: XCTestCase {
     @MainActor
+    func testTraversalHandlesNativeSegmentAndScrollerAccessibilityChildren() throws {
+        _ = NSApplication.shared
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 300))
+        let segmented = NSSegmentedControl(labels: ["First", "Second"], trackingMode: .selectOne,
+                                           target: nil, action: nil)
+        segmented.frame = NSRect(x: 10, y: 250, width: 240, height: 28)
+        segmented.setAccessibilityIdentifier("native-segments")
+        let scroll = NSScrollView(frame: NSRect(x: 10, y: 10, width: 240, height: 200))
+        scroll.hasVerticalScroller = true
+        scroll.setAccessibilityIdentifier("native-scroll")
+        scroll.documentView = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 1000))
+        root.addSubview(segmented)
+        root.addSubview(scroll)
+        root.layoutSubtreeIfNeeded()
+        XCTAssertFalse((segmented.accessibilityChildren() ?? []).isEmpty)
+        XCTAssertNotNil(scroll.verticalScroller)
+        // AppKit's navigation-order array can contain private segment/scroller
+        // objects that cannot bridge to its declared [NSAccessibilityElement].
+        let identifiers = Set(NativeSettingsTestAccessibility.elements(in: root).compactMap(\.identifier))
+        XCTAssertTrue(identifiers.contains("native-segments"))
+        XCTAssertTrue(identifiers.contains("native-scroll"))
+    }
+
+    @MainActor
     func testIdentifierTraversalIncludesPublicLegacyVirtualAccessibilityNodes() throws {
         let root = NativeLegacyAccessibilityFixture(frame: .zero)
         let virtualElement = try XCTUnwrap(NativeSettingsTestAccessibility.elements(in: root)

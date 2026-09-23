@@ -113,7 +113,6 @@ enum NativeSettingsTestAccessibility {
             }
             result.append(Element(identifier: identifier, frame: frame))
             for child in element?.accessibilityChildren() ?? [] { visit(child) }
-            for child in element?.accessibilityChildrenInNavigationOrder() ?? [] { visit(child) }
             for child in attribute(.children) as? [Any] ?? [] { visit(child) }
             for child in element?.accessibilityContents() ?? [] { visit(child) }
             for child in attribute(.contents) as? [Any] ?? [] { visit(child) }
