@@ -10,8 +10,6 @@ struct DictionarySettingsSection: View {
     var body: some View {
         Section {
             content
-        } header: {
-            Text(model.text("Offline dictionary", "离线词典"))
         }
         .confirmationDialog(model.text("Delete the local dictionary?", "删除本地词典？"),
                             isPresented: $confirmDelete, titleVisibility: .visible) {

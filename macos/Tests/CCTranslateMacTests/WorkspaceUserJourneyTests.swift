@@ -334,11 +334,12 @@ private final class WorkspaceJourneyFixture {
             isARepeat: false, keyCode: code))
     }
 
-    private func invokeMenu(_ title: String) throws {
+    private func invokeMenu(_ title: String, action: Selector? = nil) throws {
         func matches(_ menu: NSMenu) -> [(NSMenu, Int)] {
             menu.items.enumerated().flatMap { index, item -> [(NSMenu, Int)] in
                 if let submenu = item.submenu { return matches(submenu) }
-                return item.title == title ? [(menu, index)] : []
+                let isMatch = action.map { item.action == $0 } ?? (item.title == title)
+                return isMatch ? [(menu, index)] : []
             }
         }
         let candidates = matches(try XCTUnwrap(NSApp.mainMenu))
@@ -358,6 +359,10 @@ private final class WorkspaceJourneyFixture {
         editor.breakUndoCoalescing()
         let original = expectedDraft
         let undo = try XCTUnwrap(editor.undoManager)
+        // Isolate this edit from the synthetic typing performed by earlier
+        // operations; the undo stack must survive all subsequent navigation.
+        undo.removeAllActions()
+        XCTAssertFalse(undo.canUndo)
         undo.beginUndoGrouping()
         editor.insertText(" [edit \(step)]", replacementRange: editor.selectedRange())
         undo.endUndoGrouping()
@@ -372,12 +377,16 @@ private final class WorkspaceJourneyFixture {
         XCTAssertTrue(try nativeEditor(in: main) === editor)
         XCTAssertEqual(editor.selectedRanges, selection)
         XCTAssertTrue(main.makeFirstResponder(editor))
-        try invokeMenu("Undo")
+        XCTAssertTrue(undo.canUndo)
+        try invokeMenu("Undo", action: Selector("undo:"))
+        try await settle()
+        try NativeRenderEvidence.record("JOURNEY \(run) undo \(step): originalBytes=\(original.utf8.count), " +
+            "actualBytes=\(editor.string.utf8.count), canRedo=\(undo.canRedo), grouping=\(undo.groupingLevel)")
         expectedDraft = original
         try await CaptureProductFixture.waitFor { editor.string.utf8.elementsEqual(original.utf8) }
         XCTAssertEqual(Array(product.model.input.utf8), Array(original.utf8))
         XCTAssertTrue(undo.canRedo)
-        try invokeMenu("Redo")
+        try invokeMenu("Redo", action: Selector("redo:"))
         expectedDraft = original + " [edit \(step)]"
         try await CaptureProductFixture.waitFor { editor.string.utf8.elementsEqual(self.expectedDraft.utf8) }
         XCTAssertEqual(Array(product.model.input.utf8), Array(expectedDraft.utf8))
@@ -574,11 +583,12 @@ private final class WorkspaceJourneyFixture {
         let button = try await navigationControl(.settings)
         try button.focus(in: main)
         let before = main.firstResponder
-        main.sendEvent(try key("\t", code: 48, in: main))
+        main.selectNextKeyView(nil)
         try await settle()
-        XCTAssertFalse(main.firstResponder === before, "Tab must move native keyboard focus.")
+        XCTAssertFalse(main.firstResponder === before, "The native next-key-view action must move focus.")
         try assertVisibleFocus()
-        main.sendEvent(try key("\t", code: 48, flags: .shift, in: main))
+        // A literal Tab in a multiline NSTextView is text input, not traversal.
+        main.selectPreviousKeyView(nil)
         try await settle()
         try assertVisibleFocus()
         XCTAssertTrue(main.makeFirstResponder(editor))
@@ -950,6 +960,7 @@ private final class WorkspaceJourneyFixture {
             try assertHealthy()
         } catch {
             try NativeRenderEvidence.record("JOURNEY \(run) failed at \(entry); trace=\(trace.joined(separator: ","))")
+            try snapshot("failed-\(step)-\(operation.rawValue)")
             throw error
         }
         if step % 18 == 0 { try snapshot("step-\(step)") }
