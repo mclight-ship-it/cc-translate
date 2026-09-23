@@ -58,9 +58,11 @@ extension ProductRenderingTests {
                         allowInputMonitoring: { XCTFail("Rendering must not request access.") },
                         refresh: { XCTFail("Rendering must not inspect system permissions.") })
                     .padding(20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading),
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .pearlSurface(),
                     named: "settings-permissions-\(name)-\(language)",
                     size: NSSize(width: 530, height: 280), scheme: chinese ? .dark : .light, highResolution: true)
+                try assertPermissionSurfaceIsOpaque(png)
                 let words = try NativeRenderEvidence.settingsWords(png, chinese: chinese).filter { !$0.isWhitespace }
                 XCTAssertTrue(words.contains((chinese ? translated : english).lowercased().filter { !$0.isWhitespace }), words)
                 XCTAssertTrue(words.contains(chinese ? "检查权限" : "checkpermissions"), words)
@@ -109,15 +111,25 @@ extension ProductRenderingTests {
                         monitorState: state,
                         allowAccessibility: {}, allowInputMonitoring: {}, refresh: {})
                     .padding(20)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading),
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .pearlSurface(),
                     named: "settings-permissions-\(name)-\(language)",
                     size: NSSize(width: 530, height: 240), scheme: chinese ? .dark : .light, highResolution: true)
+                try assertPermissionSurfaceIsOpaque(png)
                 let words = try NativeRenderEvidence.settingsWords(png, chinese: chinese).filter { !$0.isWhitespace }
                 XCTAssertTrue(words.contains((chinese ? translated : english).lowercased().filter { !$0.isWhitespace }), words)
                 XCTAssertFalse(words.contains(chinese ? "快捷键已开启" : "shortcuton"), words)
                 if chinese { XCTAssertFalse(words.contains("secureinput"), words) }
             }
         }
+    }
+
+    @MainActor
+    private func assertPermissionSurfaceIsOpaque(_ png: Data) throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+        let background = try XCTUnwrap(bitmap.colorAt(x: 0, y: 0))
+        XCTAssertGreaterThan(background.alphaComponent, 0.99,
+                             "Permission screenshots must render the product surface, not transparent text.")
     }
 }
 
@@ -139,7 +151,8 @@ final class ShortcutPermissionsSettingsInteractionTests: XCTestCase {
                     allowAccessibility: { accessibilityRequests += 1 },
                     allowInputMonitoring: { monitoringRequests += 1 },
                     refresh: { refreshes += 1 })
-                .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading),
+                .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .pearlSurface(),
                 size: NSSize(width: 530, height: 280))
             defer { surface.close() }
             XCTAssertEqual(accessibilityRequests + monitoringRequests + refreshes, 0)

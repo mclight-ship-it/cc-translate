@@ -384,7 +384,7 @@ struct TranslationResultView: View {
                 .accessibilityHidden(true)
             Text(emptyTitle).font(.headline)
             Text(emptyDescription)
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(PearlTheme.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -433,16 +433,16 @@ struct TranslationResultView: View {
                 ProgressView().controlSize(.small)
                     .accessibilityLabel(model.text("Request in progress", "正在处理请求"))
             } else if model.productPhase == .failed {
-                Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                Image(systemName: "exclamationmark.circle").foregroundStyle(PearlTheme.error)
                     .accessibilityHidden(true)
             } else if model.productPhase == .completed {
-                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                Image(systemName: "checkmark.circle").foregroundStyle(PearlTheme.secondary)
                     .accessibilityHidden(true)
             }
             Text(model.productMessage.isEmpty ?
                  model.text("Ready to translate", "可以开始翻译") : model.productMessage)
                 .font(model.productPhase == .failed ? .callout : .caption)
-                .foregroundStyle(model.productPhase == .failed ? .primary : .secondary)
+                .foregroundStyle(model.productPhase == .failed ? PearlTheme.text : PearlTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 0)

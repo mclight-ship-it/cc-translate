@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import CCTranslateSupport
 
@@ -14,15 +15,17 @@ struct ShortcutPermissionsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(shortcutStatus, systemImage: monitorState == .active ? "checkmark.circle" : "keyboard")
-                .font(.callout)
+                .font(.body.weight(.medium))
+                .foregroundStyle(PearlTheme.text)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("selection-shortcut-status")
             permissionRow(model.text("Accessibility", "辅助功能"), state: accessibility,
                           identifier: "selection-accessibility", action: allowAccessibility)
             permissionRow(model.text("Input Monitoring", "输入监控"), state: inputMonitoring,
                           identifier: "selection-input-monitoring", action: allowInputMonitoring)
-            Button(model.text("Check permissions", "检查权限"), action: refresh)
-                .accessibilityIdentifier("check-selection-permissions")
+            NativePermissionAction(title: model.text("Check permissions", "检查权限"),
+                                   identifier: "check-selection-permissions", action: refresh)
+                .fixedSize()
             if accessibility != .granted || inputMonitoring != .granted {
                 Text(model.text(
                     "This shortcut needs both permissions. If access still isn't recognized after allowing it, restart CC Translate.",
@@ -31,6 +34,7 @@ struct ShortcutPermissionsSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .foregroundStyle(PearlTheme.text)
     }
 
     private var shortcutStatus: String {
@@ -59,8 +63,9 @@ struct ShortcutPermissionsSettingsView: View {
                 .foregroundStyle(PearlTheme.secondary)
                 .accessibilityIdentifier(identifier + "-status")
             if state != .granted {
-                Button(model.text("Allow \(title)…", "允许\(title)…"), action: action)
-                    .accessibilityIdentifier(identifier + "-allow")
+                NativePermissionAction(title: model.text("Allow \(title)…", "允许\(title)…"),
+                                       identifier: identifier + "-allow", action: action)
+                    .fixedSize()
             }
         }
         .font(.callout)
@@ -73,4 +78,47 @@ struct ShortcutPermissionsSettingsView: View {
         case nil: return model.text("Not checked", "未检查")
         }
     }
+}
+
+@MainActor
+private struct NativePermissionAction: NSViewRepresentable {
+    let title: String
+    let identifier: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeNSView(context: Context) -> NativePermissionButton {
+        let button = NativePermissionButton(title: title, target: nil, action: nil)
+        button.bezelStyle = .rounded
+        button.setButtonType(.momentaryPushIn)
+        button.target = button
+        button.action = #selector(NativePermissionButton.invoke)
+        updateNSView(button, context: context)
+        return button
+    }
+
+    func updateNSView(_ button: NativePermissionButton, context: Context) {
+        button.title = title
+        button.identifier = NSUserInterfaceItemIdentifier(identifier)
+        button.setAccessibilityIdentifier(identifier)
+        button.setAccessibilityLabel(title)
+        button.isEnabled = isEnabled
+        button.onPress = action
+    }
+
+    static func dismantleNSView(_ button: NativePermissionButton, coordinator: ()) {
+        button.onPress = nil
+    }
+}
+
+@MainActor
+private final class NativePermissionButton: NSButton {
+    var onPress: (() -> Void)?
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width, height: max(28, size.height))
+    }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func isAccessibilityElement() -> Bool { true }
+    @objc func invoke() { onPress?() }
 }

@@ -23,23 +23,78 @@ private enum WorkspaceJourneyOperation: String, CaseIterable {
 private struct WorkspaceJourneyAccessibility {
     let identifiers: Set<String>
     let labels: Set<String>
+    let values: Set<String>
     let objects: Set<ObjectIdentifier>
 
     init(in root: NSView) {
         var identifiers = Set<String>()
         var labels = Set<String>()
+        var values = Set<String>()
         var objects = Set<ObjectIdentifier>()
         func visit(_ object: Any) {
-            guard let element = object as? any NSAccessibilityProtocol,
-                  objects.insert(ObjectIdentifier(element as AnyObject)).inserted else { return }
-            if let identifier = element.accessibilityIdentifier() { identifiers.insert(identifier) }
-            if let label = element.accessibilityLabel() { labels.insert(label) }
-            for child in element.accessibilityChildren() ?? [] { visit(child) }
+            guard let object = object as? NSObject,
+                  objects.insert(ObjectIdentifier(object)).inserted else { return }
+            let element = object as? any NSAccessibilityProtocol
+            // SwiftUI virtual AX objects can use NSObject's public attribute API
+            // without adopting NSAccessibilityProtocol, like the shared control resolver.
+            let attributes = object.accessibilityAttributeNames()
+            func attribute(_ name: NSAccessibility.Attribute) -> Any? {
+                attributes.contains(name) ? object.accessibilityAttributeValue(name) : nil
+            }
+            if let identifier = element?.accessibilityIdentifier() ?? attribute(.identifier) as? String {
+                identifiers.insert(identifier)
+            }
+            if let label = element?.accessibilityLabel() ?? attribute(.description) as? String { labels.insert(label) }
+            if let value = element?.accessibilityValue() as? String ?? attribute(.value) as? String { values.insert(value) }
+            for child in element?.accessibilityChildren() ?? [] { visit(child) }
+            for child in attribute(.children) as? [Any] ?? [] { visit(child) }
+            for child in element?.accessibilityContents() ?? [] { visit(child) }
+            for child in attribute(.contents) as? [Any] ?? [] { visit(child) }
         }
+        if let window = root.window { visit(window) }
         visit(root)
+        for child in NSAccessibility.unignoredChildren(from: [root]) { visit(child) }
         self.identifiers = identifiers
         self.labels = labels
+        self.values = values
         self.objects = objects
+    }
+
+    func containsText(_ text: String) -> Bool { labels.contains(text) || values.contains(text) }
+}
+
+@MainActor
+private enum WorkspaceJourneyPixels {
+    static func png(in root: NSView, rectangle: NSRect? = nil) throws -> Data {
+        let rectangle = rectangle ?? root.bounds
+        XCTAssertTrue(root.bounds.insetBy(dx: -1, dy: -1).contains(rectangle))
+        root.layoutSubtreeIfNeeded()
+        root.displayIfNeeded()
+        let bitmap = try NativeRenderEvidence.doubleResolutionBitmap(size: rectangle.size)
+        root.effectiveAppearance.performAsCurrentDrawingAppearance {
+            root.cacheDisplay(in: rectangle, to: bitmap)
+        }
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    static func assertHint(_ hint: String, visible: Bool, in root: NSView, named name: String) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        var png: Data
+        var matches: [Range<String.Index>]
+        repeat {
+            try await Task.sleep(nanoseconds: 10_000_000)
+            png = try self.png(in: root)
+            let words = try NativeRenderEvidence.settingsWords(png)
+            matches = NativeSettingsTestControls.ranges(of: hint, in: words)
+        } while (!matches.isEmpty != visible) && Date() < deadline
+        try NativeRenderEvidence.retainPNG(png, named: name)
+        XCTAssertEqual(!matches.isEmpty, visible, "The actual quick-input pixels must match the requested hint state.")
+        let accessibility = WorkspaceJourneyAccessibility(in: root)
+        try NativeRenderEvidence.record(
+            "COLD QUICK INPUT HINT \(name): expectedVisible=\(visible), pixelsVisible=\(!matches.isEmpty), " +
+            "publicAXTextExposed=\(accessibility.containsText(hint)), publicGraphObjects=\(accessibility.objects.count).")
+        XCTAssertEqual(accessibility.containsText(hint), visible,
+                       "The hint must also be exposed as public AX label/value only when shown.")
     }
 }
 
@@ -58,6 +113,7 @@ private final class WorkspaceJourneyFixture {
     private let aboutBundle: AboutBundleFixture?
     private var servedHistory = Set<String>()
     private var visitedPages: [ProductSection: NSView] = [:]
+    private var navigationButtons: [ProductSection: NSButton] = [:]
     private(set) var editor: NativeTranslationTextView?
     private(set) var expectedDraft = ""
     private(set) var expectedQuery = ""
@@ -173,8 +229,80 @@ private final class WorkspaceJourneyFixture {
         try await settle()
     }
 
+    private func navigationControl(_ section: ProductSection) async throws -> NativeSettingsTestControl {
+        let container = try XCTUnwrap(
+            InputLimitNativeViews.views(RetainedWorkspaceContainer.self, in: mainContent).first)
+        let pageFrame = container.convert(container.bounds, to: nil)
+        let candidates = InputLimitNativeViews.views(NSButton.self, in: mainContent).filter {
+            !($0 is NSPopUpButton) && !$0.isDescendant(of: container) &&
+                !RenderedGeometry.visibleRect($0).isEmpty &&
+                RenderedGeometry.frame($0).intersection(pageFrame).isEmpty
+        }
+        XCTAssertEqual(candidates.count, ProductSection.allCases.count,
+                       "Only the six real sidebar buttons may sit outside the retained page viewport.")
+        let identifier = "workspace-nav-\(section.rawValue)"
+        let label = section.title(using: product.model)
+        if NativeSettingsTestAccessibility.elements(in: mainContent).contains(where: { $0.identifier == identifier }) {
+            let control = try await NativeSettingsTestControls.resolveWhenReady(
+                in: mainContent, identifier: identifier, label: label, kind: .button)
+            XCTAssertTrue(control.frame.intersection(pageFrame).isEmpty,
+                          "The semantic navigation ID must resolve outside the retained page.")
+            InputLimitNativeViews.assertVisible(control)
+            return control
+        }
+        let identified = candidates.filter {
+            $0.identifier?.rawValue == identifier || $0.accessibilityIdentifier() == identifier
+        }
+        XCTAssertLessThanOrEqual(identified.count, 1, "Duplicate public navigation IDs remain an error.")
+        let target: NSButton
+        if !identified.isEmpty {
+            target = try XCTUnwrap(identified.count == 1 ? identified.first : nil)
+        } else if let cached = navigationButtons[section], candidates.contains(where: { $0 === cached }) {
+            target = cached
+        } else {
+            // Identify the expanded sidebar from pixels inside each actual control,
+            // never from a global caption match or an assumed button order/coordinate.
+            var matches: [NSButton] = []
+            for button in candidates {
+                let rectangle = mainContent.convert(button.bounds, from: button)
+                let png = try WorkspaceJourneyPixels.png(in: mainContent, rectangle: rectangle)
+                let words = try NativeRenderEvidence.settingsWords(png)
+                let sections = ProductSection.allCases.filter {
+                    !NativeSettingsTestControls.ranges(of: $0.title(using: product.model), in: words).isEmpty
+                }
+                XCTAssertLessThanOrEqual(sections.count, 1, "One sidebar button must not name two destinations.")
+                if let recognized = sections.first {
+                    if let previous = navigationButtons[recognized],
+                       candidates.contains(where: { $0 === previous }) {
+                        XCTAssertTrue(previous === button, "Two live sidebar buttons must not name the same destination.")
+                    }
+                    navigationButtons[recognized] = button
+                    if recognized == section { matches.append(button) }
+                }
+            }
+            XCTAssertEqual(matches.count, 1,
+                           "Navigation needs a unique rendered label or a public ID; compact icons must retain their identified native button.")
+            if matches.count != 1 {
+                try NativeRenderEvidence.retainPNG(WorkspaceJourneyPixels.png(in: mainContent),
+                                                  named: "workspace-\(run)-navigation-\(section.rawValue)")
+            }
+            target = try XCTUnwrap(matches.count == 1 ? matches.first : nil)
+            try NativeRenderEvidence.record(
+                "JOURNEY \(run) identified native sidebar \(section.rawValue) using its own rendered label; " +
+                "other page controls were excluded by the actual retained-page frame.")
+        }
+        navigationButtons[section] = target
+        let control = try await NativeSettingsTestControls.remainingActionWhenReady(
+            in: target, identifier: identifier, label: label)
+        InputLimitNativeViews.assertVisible(control)
+        return control
+    }
+
     func navigate(_ section: ProductSection) async throws {
-        try await press("workspace-nav-\(section.rawValue)", section.title(using: product.model), in: main)
+        let control = try await navigationControl(section)
+        try control.focus(in: main)
+        try await control.press()
+        try await settle()
         try await CaptureProductFixture.waitFor { self.application.workspaceSection == section }
         _ = try page(section)
         XCTAssertTrue(application.inputPanel === main)
@@ -311,8 +439,8 @@ private final class WorkspaceJourneyFixture {
             XCTAssertEqual(accessibility.identifiers.contains(identifier), selected == section,
                            "Only the active page may publish its unique AX control: \(identifier).")
         }
-        XCTAssertEqual(accessibility.labels.contains("Text to translate"), selected == .translator)
-        XCTAssertEqual(accessibility.labels.contains("Search all history"), selected == .history)
+        XCTAssertEqual(accessibility.containsText("Text to translate"), selected == .translator)
+        XCTAssertEqual(accessibility.containsText("Search all history"), selected == .history)
         if selected != .translator {
             let editor = try XCTUnwrap(editor)
             XCTAssertNil(editor.window)
@@ -438,8 +566,7 @@ private final class WorkspaceJourneyFixture {
         XCTAssertTrue(main.makeFirstResponder(editor))
         let selection = NSRange(location: min(4, (editor.string as NSString).length), length: 0)
         editor.setSelectedRange(selection)
-        let button = try await NativeSettingsTestControls.resolveWhenReady(
-            in: mainContent, identifier: "workspace-nav-settings", label: "Settings", kind: .button)
+        let button = try await navigationControl(.settings)
         try button.focus(in: main)
         let before = main.firstResponder
         main.sendEvent(try key("\t", code: 48, in: main))
@@ -988,8 +1115,19 @@ final class WorkspaceUserJourneyTests: XCTestCase {
             let editors = InputLimitNativeViews.views(NativeTranslationTextView.self, in: root)
             XCTAssertEqual(editors.count, 1)
             let editor = try XCTUnwrap(editors.first)
-            XCTAssertTrue(WorkspaceJourneyAccessibility(in: root).identifiers.contains("quick-input-editor"),
-                          "The wrapper ID is the contract; the inner native editor need not use that ID.")
+            XCTAssertEqual(editor.accessibilityRole(), .textArea)
+            XCTAssertEqual(editor.accessibilityLabel(), "Text to translate")
+            XCTAssertTrue(editor.isEditable && editor.isSelectable)
+            XCTAssertFalse(RenderedGeometry.visibleRect(editor).isEmpty)
+            let quickAccessibility = WorkspaceJourneyAccessibility(in: root)
+            XCTAssertTrue(quickAccessibility.identifiers.contains("quick-input-editor"),
+                          "Find the SwiftUI wrapper through public AX children/contents, not the NSTextView's native ID.")
+            try NativeRenderEvidence.record(
+                "COLD QUICK INPUT AX: native editor role=\(editor.accessibilityRole()?.rawValue ?? "nil"), " +
+                "labelConfirmed=\(editor.accessibilityLabel() == "Text to translate"), " +
+                "wrapperIdentifierExposed=\(quickAccessibility.identifiers.contains("quick-input-editor")), " +
+                "publicGraphObjects=\(quickAccessibility.objects.count). " +
+                "Both SwiftUI wrapper identity and native editor semantics are asserted.")
             XCTAssertTrue(quick.makeFirstResponder(editor))
             editor.insertText("Synthetic unsent cold-start draft.",
                               replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -1054,22 +1192,18 @@ final class WorkspaceUserJourneyTests: XCTestCase {
                 XCTAssertEqual(editor.string, "", "Quick input must reopen blank after submission or cancellation.")
                 let cancel = try await NativeSettingsTestControls.resolveWhenReady(
                     in: root, identifier: "quick-input-cancel", label: "Cancel", kind: .button)
-                let ax = WorkspaceJourneyAccessibility(in: root)
                 let hint = "Couldn't read the selection. Press Command V to paste."
                 let suffix: String
+                let expectsHint: Bool
                 if case .unknown = selection {
-                    XCTAssertTrue(ax.labels.contains(hint))
                     suffix = "unknown"
+                    expectsHint = true
                 } else {
-                    XCTAssertFalse(ax.labels.contains(hint))
                     suffix = "absent"
+                    expectsHint = false
                 }
-                root.layoutSubtreeIfNeeded()
-                let bitmap = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: root.bounds))
-                root.cacheDisplay(in: root.bounds, to: bitmap)
-                try NativeRenderEvidence.retainPNG(
-                    XCTUnwrap(bitmap.representation(using: .png, properties: [:])),
-                    named: "workspace-cold-quick-\(suffix)")
+                try await WorkspaceJourneyPixels.assertHint(hint, visible: expectsHint, in: root,
+                                                           named: "workspace-cold-quick-\(suffix)")
                 if case .unknown = selection {
                     let items = try XCTUnwrap(NSApp.mainMenu).items.flatMap { $0.submenu?.items ?? [] }
                         .filter { $0.action == #selector(AppDelegate.showQuickInput) }
@@ -1077,10 +1211,8 @@ final class WorkspaceUserJourneyTests: XCTestCase {
                     let item = try XCTUnwrap(items.first)
                     let menu = try XCTUnwrap(item.menu)
                     menu.performActionForItem(at: menu.index(of: item))
-                    try await CaptureProductFixture.waitFor {
-                        root.layoutSubtreeIfNeeded()
-                        return !WorkspaceJourneyAccessibility(in: root).labels.contains(hint)
-                    }
+                    try await WorkspaceJourneyPixels.assertHint(hint, visible: false, in: root,
+                                                               named: "workspace-cold-quick-manual")
                     XCTAssertTrue(app.quickInputPanel === quick && quick.isVisible)
                     XCTAssertNil(app.inputPanel)
                     XCTAssertEqual(product.model.input, source)

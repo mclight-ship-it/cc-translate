@@ -175,7 +175,8 @@ extension ProductRenderingTests {
         f.model.interfaceLanguage = chinese ? "zh" : "en"
         f.model.appearance = scheme == .dark ? "dark" : "light"
         return try render(TranslationSettingsView(model: f.model, showDiagnostics: {}, showAbout: {}),
-                          named: name, size: NSSize(width: 820, height: 3200), scheme: scheme, inspect: inspect)
+                          named: name, size: NSSize(width: 820, height: 1000), scheme: scheme,
+                          inspect: inspect, highResolution: true)
     }
 
     @MainActor
@@ -185,19 +186,6 @@ extension ProductRenderingTests {
 
     @MainActor
     private func catalogWords(_ png: Data, chinese: Bool = false) throws -> String {
-        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
-        var words: [String] = []
-        let height = min(image.height, 2400)
-        for y in stride(from: 0, to: height, by: 1000) {
-            let tile = try XCTUnwrap(image.cropping(to: CGRect(
-                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(1100, height - y)))))
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = false
-            request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-            try VNImageRequestHandler(cgImage: tile).perform([request])
-            words += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-        }
-        return words.joined(separator: " ").lowercased()
+        try NativeRenderEvidence.settingsWords(png, chinese: chinese)
     }
 }

@@ -87,6 +87,44 @@ enum NativeRenderedControlKind: String {
 }
 
 @MainActor
+enum NativeSettingsTestAccessibility {
+    struct Element {
+        let identifier: String?
+        let frame: NSRect?
+    }
+
+    static func elements(in root: NSView) -> [Element] {
+        var visited = Set<ObjectIdentifier>()
+        var result: [Element] = []
+        func visit(_ value: Any) {
+            guard let object = value as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return }
+            let element = object as? any NSAccessibilityProtocol
+            // SwiftUI can expose virtual AX nodes through NSObject's public attribute API
+            // without declaring NSAccessibilityProtocol conformance.
+            let attributes = object.accessibilityAttributeNames()
+            func attribute(_ name: NSAccessibility.Attribute) -> Any? {
+                attributes.contains(name) ? object.accessibilityAttributeValue(name) : nil
+            }
+            let identifier = element?.accessibilityIdentifier() ?? attribute(.identifier) as? String
+            var frame = element?.accessibilityFrame()
+            if frame == nil, let position = attribute(.position) as? NSValue,
+               let size = attribute(.size) as? NSValue {
+                frame = NSRect(origin: position.pointValue, size: size.sizeValue)
+            }
+            result.append(Element(identifier: identifier, frame: frame))
+            for child in element?.accessibilityChildren() ?? [] { visit(child) }
+            for child in element?.accessibilityChildrenInNavigationOrder() ?? [] { visit(child) }
+            for child in attribute(.children) as? [Any] ?? [] { visit(child) }
+            for child in element?.accessibilityContents() ?? [] { visit(child) }
+            for child in attribute(.contents) as? [Any] ?? [] { visit(child) }
+        }
+        visit(root)
+        for child in NSAccessibility.unignoredChildren(from: [root]) { visit(child) }
+        return result
+    }
+}
+
+@MainActor
 protocol NativeRenderedTestRegion {
     var frame: NSRect { get }
     var visibleRect: NSRect { get }
@@ -471,7 +509,8 @@ enum NativeSettingsTestControls {
             else if control is NSSwitch { name = "NSSwitch" }
             else if control is NSTextField { name = "NSTextField" }
             else { name = "NSControl (unsupported public control type)" }
-            return "\(name) role=\(control.accessibilityRole()?.rawValue ?? "nil") layout=\(RenderedGeometry.frame(control)) " +
+            return "\(name) id=\(control.identifier?.rawValue ?? "nil") axID=\(control.accessibilityIdentifier() ?? "nil") " +
+                "role=\(control.accessibilityRole()?.rawValue ?? "nil") layout=\(RenderedGeometry.frame(control)) " +
                 "nativeBounds=\(control.convert(control.bounds, to: nil)) visible=\(RenderedGeometry.visibleRect(control))"
         }
         let excerpts = readback?.matches.map { "caption=\($0.excerpt) bounds=\($0.rectangle)" } ?? []
@@ -504,6 +543,14 @@ enum NativeSettingsTestControls {
         if !identified.isEmpty {
             return Lookup(candidates: identified, readback: nil, route: "public native/accessibility identifier")
         }
+        let semantic = NativeSettingsTestAccessibility.elements(in: root).filter { $0.identifier == identifier }
+        if !semantic.isEmpty, let window = root.window {
+            let frames = semantic.compactMap(\.frame).map { window.convertFromScreen($0) }
+            let candidates = controls.filter { backing in
+                frames.contains { matches(backing.control, caption: $0, kind: kind, tolerance: 1) }
+            }
+            return Lookup(candidates: candidates, readback: nil, route: "public semantic AX identifier/frame")
+        }
         if kind == .destructiveButton {
             // A unique visible native role identifies the confirmation without depending on OCR.
             return Lookup(candidates: controls, readback: nil, route: "public NSButton.hasDestructiveAction")
@@ -515,10 +562,9 @@ enum NativeSettingsTestControls {
             return Lookup(candidates: named, readback: nil, route: "public native title")
         }
         let pixels = try readCaption(label, in: root, authoredCaption: authoredCaption)
-        let candidates = controls.flatMap { backing in
-            pixels.matches.compactMap { match in
+        let candidates = controls.filter { backing in
+            pixels.matches.contains { match in
                 matches(backing.control, caption: match.rectangle, kind: kind, tolerance: pixels.tolerance)
-                    ? backing : nil
             }
         }
         return Lookup(candidates: candidates, readback: pixels, route: "native bitmap caption geometry")
@@ -527,8 +573,8 @@ enum NativeSettingsTestControls {
     private static func resolved(_ lookup: Lookup, in root: NSView, identifier: String, label: String,
                                  kind: NativeRenderedControlKind) throws -> NativeSettingsTestControl {
         guard lookup.candidates.count == 1, let candidate = lookup.candidates.first else {
-            XCTFail("Expected one rendered \(kind.rawValue), found \(lookup.candidates.count). " +
-                    "Only public NSButton/NSSwitch controls are actionable.\n" +
+            XCTFail("Expected one rendered \(kind.rawValue), found \(lookup.candidates.count) via \(lookup.route). " +
+                    "Only public NSButton/NSSwitch controls are actionable. Scope duplicate captions to their actual container.\n" +
                     diagnostics(root, identifier: identifier, caption: label, readback: lookup.readback))
             throw RenderedLookupError.missingOrAmbiguousControl
         }
@@ -548,7 +594,7 @@ enum NativeSettingsTestControls {
         let deadline = Date().addingTimeInterval(2)
         var result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
                                 authoredCaption: authoredCaption)
-        while result.candidates.isEmpty && Date() < deadline {
+        while result.candidates.count != 1 && Date() < deadline {
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
             result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
                                 authoredCaption: authoredCaption)
@@ -566,7 +612,7 @@ enum NativeSettingsTestControls {
             try await Task.sleep(nanoseconds: 10_000_000)
             result = try lookup(in: root, identifier: identifier, label: label, kind: kind,
                                 authoredCaption: authoredCaption)
-        } while result.candidates.isEmpty && Date() < deadline
+        } while result.candidates.count != 1 && Date() < deadline
         return try resolved(result, in: root, identifier: identifier, label: label, kind: kind)
     }
 

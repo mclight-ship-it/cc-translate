@@ -141,17 +141,40 @@ final class FreshCopyWorkerTests: XCTestCase {
     @MainActor
     func testNativeTextViewRepeatedIdenticalSelectionsPublishReadableFreshRevisions() async throws {
         let board = board()
+        _ = NSApplication.shared
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 180))
+        let window = NSWindow(contentRect: textView.frame, styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = textView
+        defer { window.close() }
+        textView.isSelectable = true
         textView.string = "The same selected text"
-        textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
+        XCTAssertTrue(window.makeFirstResponder(textView))
+        let selection = NSRange(location: 0, length: textView.string.utf16.count)
+        textView.setSelectedRange(selection)
         for _ in 0..<3 {
+            XCTAssertEqual(textView.selectedRange(), selection)
+            // Use the text system's advertised identifiers, including legacy
+            // aliases, rather than imposing NSPasteboard's modern read types.
+            let writableTypes = textView.writablePasteboardTypes
+            XCTAssertFalse(writableTypes.isEmpty, "A nonempty native selection must advertise copy formats.")
             let before = board.changeCount
-            XCTAssertTrue(textView.writeSelection(to: board, types: [.string, .rtf]))
+            XCTAssertTrue(textView.writeSelection(to: board, types: writableTypes),
+                          "Native copy failed for advertised formats: \(writableTypes.map(\.rawValue))")
             XCTAssertGreaterThan(board.changeCount, before)
             let revision = board.changeCount
+            XCTAssertEqual(board.string(forType: .string), textView.string,
+                           "The native writer must publish the selection before the worker reads it.")
+            let items = try XCTUnwrap(board.pasteboardItems)
+            XCTAssertEqual(items.count, 1)
+            let types = try XCTUnwrap(items.first).types
             let result = try await read(board)
             XCTAssertEqual(result, .present(textView.string))
             XCTAssertEqual(board.changeCount, revision)
+            XCTAssertEqual(board.pasteboardItems?.first?.types, types)
+            XCTAssertEqual(board.string(forType: .string), textView.string)
+            XCTAssertEqual(textView.selectedRange(), selection)
         }
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         XCTAssertEqual(textView.selectedRange().length, 0)

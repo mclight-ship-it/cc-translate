@@ -489,10 +489,12 @@ extension ProductRenderingTests {
         defer { f.cleanUp() }
         for (language, scheme) in [("en", ColorScheme.light), ("zh", ColorScheme.dark)] {
             f.model.interfaceLanguage = language
-            f.model.translateSelection(.absent)
+            f.model.translateSelection(.present(String(repeating: "x", count: 8193)))
+            XCTAssertEqual(f.model.productPhase, .failed)
+            XCTAssertEqual(f.model.productMessage, TextInputPreflight.Issue.bytes(8193).message(using: f.model))
             let bytes = try render(
                 TranslationResultView(model: f.model, compact: true),
-                named: "result-selection-empty-\(language)", size: NSSize(width: 440, height: 310),
+                named: "result-selection-limit-\(language)", size: NSSize(width: 440, height: 310),
                 scheme: scheme,
                 inspect: { host in
                     let buttons = ScaleTestSupport.views(NSButton.self, in: host)
@@ -503,9 +505,10 @@ extension ProductRenderingTests {
                                       "Bottom action clipped: \(button.title)")
                     }
                 }, highResolution: true)
-            let image = try XCTUnwrap(NSBitmapImageRep(data: bytes)?.cgImage)
-            let words = try LocalOCR.recognize(image).text.lowercased()
-            XCTAssertTrue(language == "en" ? words.contains("no text selected") : words.contains("没有选中文字"),
+            let words = try NativeRenderEvidence.settingsWords(bytes, chinese: language == "zh")
+                .filter { !$0.isWhitespace }
+            XCTAssertTrue(words.contains("8193") && words.contains("8192") &&
+                          (language == "en" ? words.contains("nothingwastruncatedorsent") : words.contains("未截断或发送")),
                           "The actual failure message must remain visible: \(words)")
             if language == "en" {
                 XCTAssertTrue(words.contains("retranslate"), "The disabled action must not truncate: \(words)")

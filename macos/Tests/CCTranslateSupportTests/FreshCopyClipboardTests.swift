@@ -315,7 +315,7 @@ final class FreshCopyClipboardTests: XCTestCase {
     }
 
     @MainActor
-    func testMultipleTextItemsAreJoinedInOrderAndEmptyOrMixedBoardsAreNotTruncated() {
+    func testMultipleTextItemsAreJoinedInOrderAndEmptyOrMixedBoardsAreNotTruncated() throws {
         let board = newPrivateBoard()
         board.clearContents()
         let reader = FreshCopyPasteboardReader(pasteboard: { board })
@@ -329,11 +329,19 @@ final class FreshCopyClipboardTests: XCTestCase {
         let revision = board.changeCount
         XCTAssertEqual(reader.read(revision: revision, whileValid: { true }), .present("first\nsecond"))
         XCTAssertEqual(board.changeCount, revision)
+        // Published items stay bound to their original pasteboard publication,
+        // even after clearContents; the next copy needs fresh item instances.
+        let mixedText = NSPasteboardItem()
         let image = NSPasteboardItem()
+        XCTAssertTrue(mixedText.setString("first", forType: .string))
         XCTAssertTrue(image.setData(Data([1, 2, 3]), forType: .png))
         board.clearContents()
-        XCTAssertTrue(board.writeObjects([first, image]))
+        XCTAssertTrue(board.writeObjects([mixedText, image]))
         let mixedRevision = board.changeCount
+        let mixedItems = try XCTUnwrap(board.pasteboardItems)
+        XCTAssertEqual(mixedItems.count, 2)
+        XCTAssertEqual(mixedItems.first?.string(forType: .string), "first")
+        XCTAssertEqual(mixedItems.last?.data(forType: .png), Data([1, 2, 3]))
         XCTAssertEqual(reader.read(revision: mixedRevision, whileValid: { true }), .unknown(.clipboardUnsupported))
         XCTAssertEqual(board.changeCount, mixedRevision)
     }

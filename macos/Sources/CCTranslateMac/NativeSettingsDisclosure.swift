@@ -56,6 +56,10 @@ private struct NativeSettingsDisclosureControl: NSViewRepresentable {
     func updateNSView(_ button: NativeSettingsDisclosureButton, context: Context) {
         let changed = button.isAccessibilityExpanded() != expanded
         button.title = title
+        button.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: button.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: isEnabled ? NSColor(PearlTheme.text) : NSColor.disabledControlTextColor
+        ])
         button.identifier = NSUserInterfaceItemIdentifier(identifier)
         button.setAccessibilityIdentifier(identifier)
         button.setAccessibilityLabel(title)
@@ -66,17 +70,14 @@ private struct NativeSettingsDisclosureControl: NSViewRepresentable {
             .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
         button.isEnabled = isEnabled
         button.toggle = toggle
+        button.invalidateIntrinsicContentSize()
         if changed { NSAccessibility.post(element: button, notification: .valueChanged) }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeSettingsDisclosureButton,
                      context: Context) -> CGSize? {
         let width = proposal.width ?? nsView.intrinsicContentSize.width
-        let textSize = (title as NSString).boundingRect(
-            with: NSSize(width: max(1, width - 32), height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: nsView.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)])
-        return NSSize(width: width, height: max(28, ceil(textSize.height) + 8))
+        return NSSize(width: width, height: nsView.requiredHeight(for: width))
     }
 
     static func dismantleNSView(_ button: NativeSettingsDisclosureButton, coordinator: ()) {
@@ -90,6 +91,7 @@ final class NativeSettingsDisclosureButton: NSButton {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        cell = NativeSettingsDisclosureCell()
         setButtonType(.momentaryPushIn)
         bezelStyle = .regularSquare
         isBordered = false
@@ -109,7 +111,16 @@ final class NativeSettingsDisclosureButton: NSButton {
     required init?(coder: NSCoder) { return nil }
 
     override var acceptsFirstResponder: Bool { isEnabled }
+    override var canBecomeKeyView: Bool {
+        isEnabled && !isHiddenOrHasHiddenAncestor && window != nil
+    }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func isAccessibilityElement() -> Bool { true }
     override var focusRingMaskBounds: NSRect { bounds.insetBy(dx: 2, dy: 2) }
+
+    func requiredHeight(for width: CGFloat) -> CGFloat {
+        max(28, ceil(NativeSettingsDisclosureCell.titleSize(attributedTitle, width: width - 28).height) + 8)
+    }
 
     override func drawFocusRingMask() {
         NSColor.black.setFill()
@@ -122,6 +133,28 @@ final class NativeSettingsDisclosureButton: NSButton {
             if !event.isARepeat { performClick(nil) }
         } else {
             super.keyDown(with: event)
+        }
+    }
+
+    private final class NativeSettingsDisclosureCell: NSButtonCell {
+        static func titleSize(_ title: NSAttributedString, width: CGFloat) -> NSSize {
+            title.boundingRect(with: NSSize(width: max(1, width), height: .greatestFiniteMagnitude),
+                               options: [.usesLineFragmentOrigin, .usesFontLeading]).size
+        }
+
+        override func titleRect(forBounds rect: NSRect) -> NSRect {
+            let width = max(1, rect.width - 28)
+            let height = ceil(Self.titleSize(attributedTitle, width: width).height)
+            return NSRect(x: rect.minX + 22, y: rect.midY - height / 2, width: width, height: height)
+        }
+
+        override func imageRect(forBounds rect: NSRect) -> NSRect {
+            NSRect(x: rect.minX + 4, y: rect.midY - 6, width: 12, height: 12)
+        }
+
+        override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
+            title.draw(with: frame, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            return frame
         }
     }
 

@@ -22,7 +22,8 @@ final class SettingsDisclosureInteractionTests: XCTestCase {
                     Button("Next control") {}
                 }
                 .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading),
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .pearlSurface(),
                 size: NSSize(width: 530, height: 300))
             defer { surface.close() }
             let button = try await disclosure(in: surface.host, id: "test-details", label: title)
@@ -37,7 +38,9 @@ final class SettingsDisclosureInteractionTests: XCTestCase {
             try await NativeSettingsTestControls.pressDisclosure(in: surface.host, identifier: "test-details", label: title)
             try await surface.waitFor { button.isAccessibilityExpanded() && self.editors(in: surface.host).count == 1 }
             XCTAssertEqual(button.accessibilityValue() as? String, fixture.model.text("Expanded", "已展开"))
-            XCTAssertTrue(accessibilityIdentifiers(in: surface.host).contains("disclosure-child-editor"))
+            try await surface.waitFor {
+                self.accessibilityIdentifiers(in: surface.host).contains("disclosure-child-editor")
+            }
             try await NativeSettingsTestControls.pressDisclosure(
                 in: surface.host, identifier: "test-details", label: title, target: .emptyRow)
             try await surface.waitFor { !button.isAccessibilityExpanded() && self.editors(in: surface.host).isEmpty }
@@ -61,13 +64,15 @@ final class SettingsDisclosureInteractionTests: XCTestCase {
                 }.disabled(true)
                 TextField("Next control", text: .constant("Next"))
             }
-            .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
+            .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .pearlSurface())
         defer { surface.close() }
         let control = try await NativeSettingsTestControls.resolveWhenReady(
             in: surface.host, identifier: "keyboard-details", label: "Details", kind: .button)
         let button = try await disclosure(in: surface.host, id: "keyboard-details", label: "Details")
         try control.focus(in: surface.window)
         XCTAssertTrue(control.isFocused)
+        XCTAssertTrue(button.canBecomeKeyView)
         XCTAssertEqual(button.focusRingType, .exterior)
         XCTAssertGreaterThan(button.focusRingMaskBounds.width, 24)
         XCTAssertGreaterThanOrEqual(button.focusRingMaskBounds.height, 24)
@@ -89,10 +94,12 @@ final class SettingsDisclosureInteractionTests: XCTestCase {
         surface.window.selectNextKeyView(button)
         XCTAssertNotNil(next.currentEditor(), "Tab order must reach the next control, skipping collapsed content.")
         surface.window.selectPreviousKeyView(next)
+        try await surface.waitFor { control.isFocused }
         XCTAssertTrue(control.isFocused, "Reverse Tab order must return to the disclosure.")
         let disabled = try await disclosure(in: surface.host, id: "disabled-details", label: "Unavailable")
         XCTAssertFalse(disabled.isEnabled)
         XCTAssertFalse(disabled.acceptsFirstResponder)
+        XCTAssertFalse(disabled.canBecomeKeyView)
         disabled.performClick(nil)
         XCTAssertFalse(disabled.isAccessibilityExpanded())
         XCTAssertEqual(editors(in: surface.host).map(\.stringValue), ["Next"])
@@ -210,15 +217,59 @@ final class SettingsDisclosureInteractionTests: XCTestCase {
 
     @MainActor
     private func accessibilityIdentifiers(in root: NSView) -> Set<String> {
-        var visited = Set<ObjectIdentifier>()
-        func visit(_ object: Any) -> Set<String> {
-            guard let element = object as? any NSAccessibilityProtocol,
-                  visited.insert(ObjectIdentifier(element as AnyObject)).inserted else { return [] }
-            var result = Set<String>()
-            if let identifier = element.accessibilityIdentifier() { result.insert(identifier) }
-            for child in element.accessibilityChildren() ?? [] { result.formUnion(visit(child)) }
-            return result
+        Set(NativeSettingsTestAccessibility.elements(in: root).compactMap(\.identifier))
+    }
+}
+
+extension ProductRenderingTests {
+    @MainActor
+    func testLongNativeDisclosureLabelsWrapWithoutClippingInBothLanguages() async throws {
+        let fixture = try ProductTestHarness()
+        defer { fixture.cleanUp() }
+        _ = try fixture.ready()
+        for language in ["en", "zh"] {
+            fixture.model.interfaceLanguage = language
+            let title = fixture.model.text("How text length is counted when using translation shortcuts",
+                                           "使用翻译快捷键时如何计算输入文字长度")
+            let png = try render(
+                NativeSettingsDisclosure(title, model: fixture.model, identifier: "wrapped-details") {
+                    Text("Hidden details")
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .pearlSurface(),
+                named: "settings-disclosure-wrapped-\(language)", size: NSSize(width: 300, height: 180),
+                scheme: language == "zh" ? .dark : .light,
+                inspect: { host in
+                    let button = try XCTUnwrap(InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: host).first)
+                    let titleRect = try XCTUnwrap(button.cell).titleRect(forBounds: button.bounds)
+                    XCTAssertGreaterThan(button.bounds.height, 28, "A multiline title must grow its native click target.")
+                    XCTAssertTrue(button.bounds.contains(titleRect), "The entire title must fit inside the native button.")
+                    XCTAssertEqual(button.bounds.height, button.requiredHeight(for: button.bounds.width), accuracy: 1)
+                    XCTAssertFalse(button.isAccessibilityExpanded())
+                    XCTAssertEqual(button.accessibilityLabel(), title)
+                }, highResolution: true)
+            let words = try NativeRenderEvidence.settingsWords(png, chinese: language == "zh")
+                .filter { !$0.isWhitespace }
+            XCTAssertTrue(words.contains(title.lowercased().filter { !$0.isWhitespace }), words)
+            XCTAssertFalse(words.contains("hiddendetails"), "Collapsed details must not be drawn.")
+            let surface = NativeSettingsTestHost(
+                NativeSettingsDisclosure(title, model: fixture.model, identifier: "wrapped-details") {
+                    Text("Hidden details")
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .pearlSurface(), size: NSSize(width: 300, height: 180))
+            defer { surface.close() }
+            let control = try await NativeSettingsTestControls.resolveWhenReady(
+                in: surface.host, identifier: "wrapped-details", label: title, kind: .button)
+            let button = try XCTUnwrap(control.nativeView as? NativeSettingsDisclosureButton)
+            try await NativeSettingsTestControls.pressDisclosure(
+                in: surface.host, identifier: "wrapped-details", label: title)
+            try await surface.waitFor { button.isAccessibilityExpanded() }
+            try await NativeSettingsTestControls.pressDisclosure(
+                in: surface.host, identifier: "wrapped-details", label: title, target: .emptyRow)
+            try await surface.waitFor { !button.isAccessibilityExpanded() }
         }
-        return visit(root)
     }
 }

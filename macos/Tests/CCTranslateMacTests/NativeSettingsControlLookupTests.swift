@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import CCTranslateMac
 
 @MainActor
 private struct NativeSettingsLookupFixture: NSViewRepresentable {
@@ -24,6 +25,63 @@ private struct NativeSettingsLookupFixture: NSViewRepresentable {
 }
 
 final class NativeSettingsControlLookupTests: XCTestCase {
+    @MainActor
+    func testIdentifierTraversalIncludesPublicLegacyVirtualAccessibilityNodes() throws {
+        let root = NativeLegacyAccessibilityFixture(frame: .zero)
+        let virtualElement = try XCTUnwrap(NativeSettingsTestAccessibility.elements(in: root)
+            .first { $0.identifier == "virtual-action" })
+        XCTAssertEqual(virtualElement.frame, NSRect(x: 100, y: 200, width: 80, height: 28))
+    }
+
+    @MainActor
+    func testSwiftUISemanticIdentifiersResolveDuplicateCaptionsToActualNativeButtons() async throws {
+        var sidebarPresses = 0
+        var submitPresses = 0
+        let surface = NativeSettingsTestHost(
+            HStack(spacing: 40) {
+                Button("Translate") { sidebarPresses += 1 }
+                    .accessibilityIdentifier("semantic-sidebar")
+                Button("Translate") { submitPresses += 1 }
+                    .accessibilityIdentifier("semantic-submit")
+            }
+            .buttonStyle(.bordered).padding(20).pearlSurface(),
+            size: NSSize(width: 420, height: 120))
+        defer { surface.close() }
+        let sidebar = try await NativeSettingsTestControls.resolveWhenReady(
+            in: surface.host, identifier: "semantic-sidebar", label: "Translate", kind: .button)
+        let submit = try await NativeSettingsTestControls.resolveWhenReady(
+            in: surface.host, identifier: "semantic-submit", label: "Translate", kind: .button)
+        XCTAssertFalse(sidebar.sameElement(as: submit))
+        try await sidebar.press()
+        try await surface.waitFor { sidebarPresses == 1 }
+        XCTAssertEqual(submitPresses, 0)
+        try await submit.press()
+        try await surface.waitFor { submitPresses == 1 }
+        XCTAssertEqual(sidebarPresses, 1)
+    }
+
+    @MainActor
+    private final class NativeLegacyAccessibilityFixture: NSView {
+        private let element = VirtualAction()
+
+        override func accessibilityChildren() -> [Any]? { [element] }
+
+        private final class VirtualAction: NSObject {
+            override func accessibilityAttributeNames() -> [NSAccessibility.Attribute] {
+                [.identifier, .position, .size]
+            }
+
+            override func accessibilityAttributeValue(_ attribute: NSAccessibility.Attribute) -> Any? {
+                switch attribute {
+                case .identifier: return "virtual-action"
+                case .position: return NSValue(point: NSPoint(x: 100, y: 200))
+                case .size: return NSValue(size: NSSize(width: 80, height: 28))
+                default: return super.accessibilityAttributeValue(attribute)
+                }
+            }
+        }
+    }
+
     @MainActor
     func testExactNativeAndAccessibilityIdentifiersTakePriorityOverDuplicateTitles() async throws {
         let surface = NativeSettingsTestHost(NativeSettingsLookupFixture().frame(width: 420, height: 120),

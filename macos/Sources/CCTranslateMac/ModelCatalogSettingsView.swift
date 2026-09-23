@@ -48,13 +48,13 @@ struct ModelCatalogSettingsView: View {
         case .cancelling:
             Text(model.text("Stopping refresh…", "正在停止刷新…")).font(.caption)
         case .cancelled:
-            Text(model.text("Refresh cancelled.", "刷新已取消。")).font(.caption).foregroundStyle(.secondary)
+            Text(model.text("Refresh cancelled.", "刷新已取消。")).font(.caption).foregroundStyle(PearlTheme.secondary)
         case .loaded:
             Text(model.modelCatalog.models.isEmpty
                  ? model.text("No models returned. Enter an ID or refresh again.", "未返回模型。请直接输入 ID，或再次刷新。")
                  : model.text("\(model.modelCatalog.models.count) models loaded.",
                               "已加载 \(model.modelCatalog.models.count) 个模型。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.caption).foregroundStyle(PearlTheme.secondary).fixedSize(horizontal: false, vertical: true)
         case .failed(let failure):
             Label(message(failure), systemImage: "exclamationmark.triangle")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
