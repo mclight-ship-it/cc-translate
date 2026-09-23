@@ -90,14 +90,16 @@ jobs:
           mkdir -p tools/macos/.build
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCTranslateMac 2>&1 | tee tools/macos/.build/native-unit-tests.log
           /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 --product CCClipboardTestProducer 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
+          focused_status=0
           if ! /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
             --filter 'ProductRenderingTests.testCustomModelDetailsAreCollapsedUntilOpenedThroughNativeControl|ProductRenderingTests.testInputLimitSettingsRenderLargeSavedValueAndSeparateByteBudgetInEnglishLight|DockApplicationTests.testNewerManualTranslationRetainsFocusWhenAutomaticOCRIsDiscarded|DockApplicationTests.testAutomaticScreenshotCompletionDoesNotReopenWindowsAfterHide|FeedbackSettingsTests.testScreenshotModePickerChangesTheSavedPreferenceThroughNativeControl|InputLimitInteractionTests.testNativeInvalidSavedValueCorrectionFailureReloadAndMismatchKeepDraft|ProductRenderingTests.testAboutSupportEntryRendersAtMinimumWidthInEnglishAndChinese|ProductRenderingTests.testPlainPasteFullSettingsRenderNativeOwnAppDispatchAndMissingEditorWithoutExternalPaste|ProductRenderingTests.testScreenshotImageModeSettingsRenderInBothLanguages|DockApplicationTests.testDockIdentityFollowsOpenWindowsAndReturnsWhenReopened|NativeResultPlacementModelTests.testMissingSelectionOpensQuickInputAndInvalidTextKeepsExplicitErrorWithoutLateReopening|NativeResultPlacementModelTests.testClosedResultStaysClosedForLateHelperEventsUntilANewSelection|ProductRenderingTests.testCaptureInputCountersRenderBothIndependentLimitsAndVisibleActionInChineseDark|ProductRenderingTests.testImageCreationRollbackFailureRendersRecoveryBeforeAnyHelperStarts' \
             > tools/macos/.build/native-disclosure-check.log 2>&1; then
             cat tools/macos/.build/native-disclosure-check.log | tee -a tools/macos/.build/native-unit-tests.log
-            exit 1
+            focused_status=1
           fi
-          grep -q 'Executed 14 tests' tools/macos/.build/native-disclosure-check.log
+          grep -q 'Executed 14 tests' tools/macos/.build/native-disclosure-check.log || focused_status=1
           /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 2>&1 | tee -a tools/macos/.build/native-unit-tests.log
+          exit "$focused_status"
       - name: Retain original native unit log before bundled lifecycle checks
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

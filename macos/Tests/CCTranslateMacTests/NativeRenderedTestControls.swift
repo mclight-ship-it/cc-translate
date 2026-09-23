@@ -50,23 +50,27 @@ enum NativeRenderEvidence {
     }
 
     static func settingsWords(_ png: Data, chinese: Bool = false,
-                              tileHeight: Int = 1000, tileStride: Int = 900) throws -> String {
+                              tileHeight: Int = 1000, tileStride: Int = 900,
+                              tileWidth: Int = .max, columnStride: Int? = nil) throws -> String {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
         var pieces: [String] = []
         // Tile native snapshots so Vision does not downsample small captions away.
         for y in stride(from: 0, to: image.height, by: tileStride) {
-            let tile = try XCTUnwrap(image.cropping(to: CGRect(
-                x: 0, y: CGFloat(y), width: CGFloat(image.width), height: CGFloat(min(tileHeight, image.height - y)))))
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.minimumTextHeight = 0
-            // These are authored UI sentences, not user text whose spelling must be preserved.
-            request.usesLanguageCorrection = true
-            request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-            try VNImageRequestHandler(cgImage: recognitionImage(tile)).perform([request])
-            // Keep actual ranked readings; never supply expected captions as recognition hints.
-            pieces += try XCTUnwrap(request.results).map {
-                $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
+            for x in stride(from: 0, to: image.width, by: columnStride ?? min(tileWidth, image.width)) {
+                let tile = try XCTUnwrap(image.cropping(to: CGRect(
+                    x: CGFloat(x), y: CGFloat(y), width: CGFloat(min(tileWidth, image.width - x)),
+                    height: CGFloat(min(tileHeight, image.height - y)))))
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.minimumTextHeight = 0
+                // These are authored UI sentences, not user text whose spelling must be preserved.
+                request.usesLanguageCorrection = true
+                request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
+                try VNImageRequestHandler(cgImage: recognitionImage(tile)).perform([request])
+                // Keep actual ranked readings; never supply expected captions as recognition hints.
+                pieces += try XCTUnwrap(request.results).map {
+                    $0.topCandidates(chinese ? 3 : 1).map(\.string).joined(separator: " | ")
+                }
             }
         }
         let words = pieces.joined(separator: " ").lowercased()

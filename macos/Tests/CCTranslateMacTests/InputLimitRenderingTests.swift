@@ -380,14 +380,9 @@ extension ProductRenderingTests {
 
     @MainActor
     private func inputLimitWords(_ png: Data, chinese: Bool) throws -> String {
-        let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.minimumTextHeight = 0
-        request.recognitionLanguages = chinese ? ["zh-Hans", "en-US"] : ["en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: NativeRenderEvidence.recognitionImage(image)).perform([request])
-        return try XCTUnwrap(request.results).compactMap { $0.topCandidates(1).first?.string }
-            .joined().lowercased().filter { !$0.isWhitespace && $0 != "," }
+        try NativeRenderEvidence.settingsWords(
+            png, chinese: chinese, tileHeight: 1000, tileStride: 600,
+            tileWidth: 1000, columnStride: 600)
+            .filter { !$0.isWhitespace && $0 != "," }
     }
 }
