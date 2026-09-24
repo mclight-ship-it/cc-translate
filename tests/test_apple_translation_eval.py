@@ -80,6 +80,13 @@ class CorpusTests(unittest.TestCase):
         self.assertIn("session.translate(item.source)", swift)
         self.assertNotIn("let reference:", swift)
 
+    def test_date_sample_has_explicit_future_tense_and_event_relative_deadline(self):
+        rows = {case["id"]: case for case in evaluation.corpus()}
+        self.assertIn("will take place", rows["en-zh-dates"]["source"])
+        self.assertIn("before the workshop starts", rows["en-zh-dates"]["source"])
+        self.assertIn("\u5c06\u4e8e", rows["zh-en-dates"]["source"])
+        self.assertIn("\u7814\u8ba8\u4f1a\u5f00\u59cb\u524d48\u5c0f\u65f6", rows["zh-en-dates"]["source"])
+
 
 class DownloadTextTests(unittest.TestCase):
     def inspection(self):

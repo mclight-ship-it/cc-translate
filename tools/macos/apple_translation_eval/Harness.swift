@@ -4,6 +4,9 @@ import Foundation
 import SwiftUI
 import Translation
 import Vision
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 private func inspectDownloadWindow() throws {
     let args = CommandLine.arguments
@@ -145,6 +148,15 @@ final class Evaluation: ObservableObject {
             "process_architecture": "arm64", "outputs": [], "pairs": [], "cancellations": [],
             "model_coldness": "unknown; no model unload or download state reset",
         ]
+#if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            state["apple_intelligence_availability"] = String(describing: SystemLanguageModel.default.availability)
+        } else {
+            state["apple_intelligence_availability"] = "requires_macos_26"
+        }
+#else
+        state["apple_intelligence_availability"] = "framework_unavailable_in_sdk"
+#endif
         persist()
     }
 
