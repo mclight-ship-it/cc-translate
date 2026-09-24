@@ -345,6 +345,8 @@ class WorkingDirectoryTests(unittest.TestCase):
         self.assertIn('"Download"', script)
         self.assertIn("entire contents of ownedWindow", script)
         self.assertIn("description of node", script)
+        self.assertIn("value of node", script)
+        self.assertIn("entire contents of node", script)
         self.assertIn("(count nodes) > 512", script)
         self.assertIn('textValue is "Download Languages to Translate"', script)
         self.assertIn("if languageSheet and doneButton is not missing value then", script)
@@ -363,6 +365,17 @@ class WorkingDirectoryTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
+    def test_only_known_automation_lifecycle_errors_are_retryable(self):
+        for code in ("(-1719)", "(-10000)"):
+            self.assertTrue(evaluation.retryable_automation_error(
+                evaluation.EvalError("command_failed:osascript:1"), code))
+        self.assertTrue(evaluation.retryable_automation_error(
+            evaluation.EvalError("command_timeout:osascript"), ""))
+        for output in ("Not authorized (-1743)", "AX access denied (-25211)", "unknown failure"):
+            self.assertFalse(evaluation.retryable_automation_error(
+                evaluation.EvalError("command_failed:osascript:1"), output))
+        self.assertFalse(evaluation.retryable_automation_error(OSError("missing executable"), ""))
+
     def test_direct_child_launch_owns_window_and_starts_from_app_delegate(self):
         swift = evaluation.SOURCE.read_text(encoding="utf-8")
         for required in ("NSApplicationDelegate", "applicationDidFinishLaunching",

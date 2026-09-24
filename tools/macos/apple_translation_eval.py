@@ -367,18 +367,23 @@ tell application "System Events"
                         if textValue is "Download Languages to Translate" then set languageSheet to true
                     end if
                     if nodeRole is "AXButton" then
-                        set labelText to name of node
-                        if labelText is missing value or labelText is "" then set labelText to description of node
-                        if labelText is not missing value then
-                            set seenButtons to seenButtons & {{labelText}}
-                            if targets contains labelText then
-                                if enabled of node then
-                                    click node
-                                    return "clicked_download"
+                        set labels to {{name of node, description of node, value of node}}
+                        repeat with labelNode in (entire contents of node)
+                            if role of labelNode is "AXStaticText" then set labels to labels & {{value of labelNode}}
+                        end repeat
+                        repeat with candidateLabel in labels
+                            set labelText to contents of candidateLabel
+                            if labelText is not missing value then
+                                set seenButtons to seenButtons & {{labelText as text}}
+                                if targets contains labelText then
+                                    if enabled of node then
+                                        click node
+                                        return "clicked_download"
+                                    end if
                                 end if
+                                if labelText is "Done" and enabled of node then set doneButton to contents of node
                             end if
-                            if labelText is "Done" and enabled of node then set doneButton to contents of node
-                        end if
+                        end repeat
                     end if
                 end repeat
                 if languageSheet and doneButton is not missing value then
@@ -390,6 +395,12 @@ tell application "System Events"
     end tell
 end tell
 '''
+
+
+def retryable_automation_error(error, output):
+    return (isinstance(error, EvalError) and (
+        str(error) == "command_timeout:osascript"
+        or any(code in output for code in ("(-1719)", "(-10000)"))))
 
 
 def capture_window(output, runtime, report):
@@ -434,6 +445,7 @@ def run_app(binary, output, args, report, env):
     runtime = None
     last_automation = -float("inf")
     automation_disabled = False
+    automation_failures = 0
     screenshots = set()
     previous_phase = None
     phase_started = 0
@@ -473,19 +485,24 @@ def run_app(binary, output, args, report, env):
                     break
                 if (args.accept_download and not automation_disabled and runtime
                         and runtime.get("phase") in ("preparing_languages", "waiting_language_install")
+                        and elapsed - phase_started >= 3
                         and elapsed - last_automation >= 3):
                     last_automation = elapsed
                     try:
                         answer = command(["/usr/bin/osascript", "-e", download_script(process.pid)],
-                                         min(3, max(0.1, args.run_timeout - elapsed)), report, env=env)
+                                         min(10, max(0.1, args.run_timeout - elapsed)), report, env=env)
                         report["diagnostics"].append({"download_ui": answer})
                         if answer != previous_automation:
                             previous_automation = answer
                             print(json.dumps({"download_ui": answer}, ensure_ascii=False), flush=True)
                     except (EvalError, OSError) as error:
-                        automation_disabled = True
+                        automation_failures += 1
+                        transient = (automation_failures < 3 and retryable_automation_error(
+                            error, report["commands"][-1].get("output", "")))
+                        automation_disabled = not transient
                         report["diagnostics"].append({
-                            "download_ui": "automation_unavailable; grant normal Accessibility/Automation permission or click manually",
+                            "download_ui": ("automation_transient_error; retrying_owned_ui" if transient else
+                                            "automation_unavailable; grant normal Accessibility/Automation permission or click manually"),
                             "error": str(error)})
                 time.sleep(0.2)
             item.setdefault("timed_out", False)
