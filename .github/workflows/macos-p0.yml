@@ -11,13 +11,18 @@ on:
         type: boolean
         required: false
         default: false
+      apple_translation_evaluation:
+        description: Evaluate real on-device Apple Translation with public synthetic text and no cloud account
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   p0:
-    if: ${{ inputs.translation_benchmark != true }}
+    if: ${{ inputs.translation_benchmark != true && inputs.apple_translation_evaluation != true }}
     # The official macos-15 label is arm64; verify it again before any build.
     runs-on: macos-15
     timeout-minutes: 40
@@ -225,7 +230,7 @@ jobs:
             tools/macos/.build/about-tests.json
 
   translation_benchmark:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_benchmark }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_benchmark && !inputs.apple_translation_evaluation }}
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
@@ -290,6 +295,62 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           path: tools/macos/.build/translation-benchmark/
+
+  apple_translation_evaluation:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.apple_translation_evaluation }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            xcode: "16.4"
+          - os: macos-26
+            xcode: "26.6"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+      OTHER_BENCHMARK_REQUESTED: ${{ inputs.translation_benchmark }}
+    steps:
+      - name: Check out the isolated Apple Translation evaluator
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Require an explicit independent evaluation and standard Apple Silicon host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$OTHER_BENCHMARK_REQUESTED" != true
+          test "$(uname -m)" = arm64
+          test -d "$DEVELOPER_DIR"
+          test "$(/usr/bin/xcodebuild -version | head -n 1)" = 'Xcode ${{ matrix.xcode }}'
+          /usr/bin/sw_vers
+          /usr/bin/xcodebuild -version
+          /usr/bin/xcrun --sdk macosx --show-sdk-version
+          python3 --version
+      - name: Validate public corpus and evidence contracts
+        run: python3 -B -m unittest -v tests.test_apple_translation_eval
+      - name: Evaluate real system translations without cloud accounts or paid models
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/macos/.build
+          python3 -B -m tools.macos.apple_translation_eval \
+            --output tools/macos/.build/apple-translation-evaluation \
+            --accept-download --screenshot-on-block \
+            2>&1 | tee tools/macos/.build/apple-translation-evaluation.log
+      - name: Retain actual outputs or explicit readiness blockers
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: apple-translation-evaluation-${{ matrix.os }}-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            tools/macos/.build/apple-translation-evaluation/*.json
+            tools/macos/.build/apple-translation-evaluation/*.log
+            tools/macos/.build/apple-translation-evaluation/*.png
+            tools/macos/.build/apple-translation-evaluation.log
 
   runtime:
     needs: p0

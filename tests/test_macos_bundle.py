@@ -1082,6 +1082,26 @@ class SmokeContractTests(unittest.TestCase):
         self.assertNotIn("path: ${{ runner.temp }}", uploads)
         self.assertNotIn("cc-translate-dictionary-fixture.sqlite3\n            tools/", uploads)
 
+    def test_apple_translation_evaluation_is_explicit_and_not_a_product_build(self):
+        workflow = (bundle.ROOT / ".github/workflows/macos-p0.yml").read_text(encoding="utf-8")
+        self.assertIn("      apple_translation_evaluation:\n", workflow)
+        self.assertIn("inputs.translation_benchmark != true && inputs.apple_translation_evaluation != true", workflow)
+        self.assertIn("inputs.translation_benchmark && !inputs.apple_translation_evaluation", workflow)
+        job = workflow.split("\n  apple_translation_evaluation:\n", 1)[1].split("\n  runtime:\n", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.apple_translation_evaluation", job)
+        self.assertIn('test "$OTHER_BENCHMARK_REQUESTED" != true', job)
+        self.assertIn("- os: macos-15", job)
+        self.assertIn("- os: macos-26", job)
+        self.assertIn("timeout-minutes: 25", job)
+        self.assertIn("-m unittest -v tests.test_apple_translation_eval", job)
+        self.assertIn("-m tools.macos.apple_translation_eval", job)
+        self.assertIn("--accept-download --screenshot-on-block", job)
+        self.assertIn("        if: always()\n", job)
+        self.assertIn("apple-translation-evaluation/*.json", job)
+        for forbidden in ("bundle.py build", "CCTranslateMac-P0.zip", "continue-on-error",
+                          "secrets.", "write-all", "tccutil", "login.keychain"):
+            self.assertNotIn(forbidden, job)
+
 
 class HelperBundleIntegrationTests(ProjectDirectory):
     def test_shared_core_is_packaged_without_windows_entry(self):
