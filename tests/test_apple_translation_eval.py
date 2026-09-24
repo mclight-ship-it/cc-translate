@@ -358,6 +358,16 @@ class WorkingDirectoryTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
+    def test_direct_child_launch_owns_window_and_starts_from_app_delegate(self):
+        swift = evaluation.SOURCE.read_text(encoding="utf-8")
+        for required in ("NSApplicationDelegate", "applicationDidFinishLaunching",
+                         "NSWindow(contentRect:", "NSHostingView(rootView:",
+                         "window.makeKeyAndOrderFront(nil)",
+                         "Task { @MainActor in await evaluation.begin() }",
+                         "withExtendedLifetime(delegate) { application.run() }"):
+            self.assertIn(required, swift)
+        self.assertNotIn("WindowGroup(", swift)
+
     def test_only_standard_library_imports_and_public_apple_translation(self):
         source = Path(evaluation.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)

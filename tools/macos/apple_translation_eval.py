@@ -426,7 +426,7 @@ def run_app(binary, output, args, report, env):
                     item["timed_out"] = True
                     report["summary"]["blocked_condition"] = (
                         "app_did_not_publish_initial_checkpoint:see_app_stderr_log" if runtime is None
-                        else "swiftui_view_task_not_started:gui_or_app_lifecycle_unavailable")
+                        else "app_launch_task_not_started:gui_or_app_lifecycle_unavailable")
                     break
                 if runtime and args.screenshot_on_block and runtime.get("phase") in (
                         "preparing_languages", "waiting_language_install", "blocked"):

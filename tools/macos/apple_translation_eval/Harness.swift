@@ -352,28 +352,56 @@ final class Evaluation: ObservableObject {
     }
 }
 
-@main
 @MainActor
-struct AppleTranslationEvaluationApp: App {
-    @StateObject private var evaluation = Evaluation()
+struct EvaluationView: View {
+    @ObservedObject var evaluation: Evaluation
 
-    var body: some Scene {
-        WindowGroup("Apple Translation Evaluation") {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Real Apple Translation · public synthetic corpus").font(.headline)
-                Text("This isolated test does not change the product. Summary remains first.")
-                Text("Faithful text translation only. Not a replacement for summary or code explanation.")
-                Text("If Apple asks, download English and Simplified Chinese to continue.")
-                Text(evaluation.message).monospaced()
-                Text("Outputs and elapsed times are saved after each request. Quality is assessed manually.")
-                    .font(.caption)
-            }
-            .padding(24)
-            .frame(width: 640, height: 300)
-            .task { await evaluation.begin() }
-            .translationTask(evaluation.configuration) { session in
-                await evaluation.translate(session)
-            }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Real Apple Translation · public synthetic corpus").font(.headline)
+            Text("This isolated test does not change the product. Summary remains first.")
+            Text("Faithful text translation only. Not a replacement for summary or code explanation.")
+            Text("If Apple asks, download English and Simplified Chinese to continue.")
+            Text(evaluation.message).monospaced()
+            Text("Outputs and elapsed times are saved after each request. Quality is assessed manually.")
+                .font(.caption)
         }
+        .padding(24)
+        .frame(width: 640, height: 300)
+        .translationTask(evaluation.configuration) { session in
+            await evaluation.translate(session)
+        }
+    }
+}
+
+@MainActor
+final class EvaluationDelegate: NSObject, NSApplicationDelegate {
+    private let evaluation = Evaluation()
+    private var window: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 688, height: 348),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Apple Translation Evaluation"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: EvaluationView(evaluation: evaluation))
+        window.center()
+        self.window = window
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        Task { @MainActor in await evaluation.begin() }
+    }
+}
+
+@main
+enum AppleTranslationEvaluationApp {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        application.setActivationPolicy(.regular)
+        let delegate = EvaluationDelegate()
+        application.delegate = delegate
+        // Like the product, own the window explicitly when launched as a child executable.
+        withExtendedLifetime(delegate) { application.run() }
     }
 }
