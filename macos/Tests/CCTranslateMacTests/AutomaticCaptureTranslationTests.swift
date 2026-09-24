@@ -570,19 +570,34 @@ final class AutomaticCaptureTranslationTests: XCTestCase {
     }
 
     @MainActor
-    func testSynchronousTextInputCancellationDoesNotStartHelperOrPublishSubmittedState() async throws {
-        let model = try ProductTestHarness()
-        defer { model.cleanUp() }
-        let f = try AutomaticCaptureFixture()
-        let observation = model.model.$input.dropFirst().sink { _ in f.capture.cancel() }
-        defer { observation.cancel(); f.capture.cancel() }
-        try await f.start(using: model.model)
-        f.select()
-        try await CaptureProductFixture.waitFor { f.capture.phase == .cancelled }
-        try await f.flushNotifications()
-        XCTAssertFalse(f.capture.submitted)
-        XCTAssertTrue(model.helpers.isEmpty)
-        f.assertReleased()
+    func testSynchronousTextInputCancellationNeverSubmitsEvenWhenPreparationFinishesLater() async throws {
+        for configured in [false, true] {
+            let model = try ProductTestHarness(savedCLI: configured)
+            defer { model.cleanUp() }
+            let f = try AutomaticCaptureFixture()
+            let observation = model.model.$input.dropFirst().sink { _ in f.capture.cancel() }
+            defer { observation.cancel(); f.capture.cancel() }
+            try await f.start(using: model.model)
+            XCTAssertEqual(model.helpers.count, configured ? 1 : 0)
+            f.select()
+            try await CaptureProductFixture.waitFor { f.capture.phase == .cancelled }
+            try await f.flushNotifications()
+            if configured {
+                let helper = try model.ready(capabilities: ["prewarm"])
+                for warm in helper.messages where warm.payload["operation"] == .string("prewarm") {
+                    helper.event("completed", id: warm.id, payload: ["warmed": .bool(true)])
+                }
+                XCTAssertTrue(helper.translations.isEmpty)
+                XCTAssertTrue(helper.resultActions.isEmpty)
+                XCTAssertFalse(helper.messages.contains { $0.payload["operation"] == .string("translate_image") })
+                XCTAssertFalse(helper.dictionaryRequests.contains { $0.request.operation == "dictionary_lookup" })
+            }
+            XCTAssertEqual(model.helpers.count, configured ? 1 : 0)
+            XCTAssertFalse(f.capture.submitted)
+            XCTAssertFalse(model.model.preparing)
+            XCTAssertFalse(model.model.active)
+            f.assertReleased()
+        }
     }
 
     @MainActor
