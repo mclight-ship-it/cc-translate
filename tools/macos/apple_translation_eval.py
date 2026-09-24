@@ -353,20 +353,22 @@ tell application "System Events"
         if not (exists window 1) then return "no_window"
         set targets to {{"Download", "Download Languages", "Download and Translate", "下载", "下载语言", "下载并翻译"}}
         set seenButtons to {{}}
+        set seenRoles to {{}}
         repeat with ownedWindow in windows
-            if exists sheet 1 of ownedWindow then
-                set nodes to entire contents of sheet 1 of ownedWindow
+                set nodes to entire contents of ownedWindow
                 if (count nodes) > 512 then return "download_sheet_too_large"
                 set doneButton to missing value
                 set languageSheet to false
                 repeat with node in nodes
                     set nodeRole to role of node
+                    set seenRoles to seenRoles & {{nodeRole}}
                     if nodeRole is "AXStaticText" then
                         set textValue to value of node
                         if textValue is "Download Languages to Translate" then set languageSheet to true
                     end if
                     if nodeRole is "AXButton" then
                         set labelText to name of node
+                        if labelText is missing value or labelText is "" then set labelText to description of node
                         if labelText is not missing value then
                             set seenButtons to seenButtons & {{labelText}}
                             if targets contains labelText then
@@ -383,9 +385,8 @@ tell application "System Events"
                     click doneButton
                     return "closed_language_download_sheet"
                 end if
-            end if
         end repeat
-        return "download_button_not_found; buttons=" & (seenButtons as text)
+        return "download_button_not_found; buttons=" & (seenButtons as text) & "; roles=" & (seenRoles as text)
     end tell
 end tell
 '''
@@ -434,6 +435,9 @@ def run_app(binary, output, args, report, env):
     last_automation = -float("inf")
     automation_disabled = False
     screenshots = set()
+    previous_phase = None
+    phase_started = 0
+    previous_automation = None
     try:
         with (output / "app.stdout.log").open("w", encoding="utf-8") as stdout, \
                 (output / "app.stderr.log").open("w", encoding="utf-8") as stderr:
@@ -442,6 +446,10 @@ def run_app(binary, output, args, report, env):
             while process.poll() is None:
                 runtime = load_runtime(state_path, report["run_id"])
                 elapsed = time.monotonic() - started
+                current_phase = ((runtime or {}).get("phase"), (runtime or {}).get("active_pair"))
+                if current_phase != previous_phase:
+                    previous_phase, phase_started = current_phase, elapsed
+                    print(json.dumps({"phase": current_phase, "elapsed_seconds": round(elapsed, 1)}), flush=True)
                 if elapsed >= args.availability_timeout and (
                         runtime is None or runtime.get("phase") == "initializing"):
                     item["timed_out"] = True
@@ -449,8 +457,9 @@ def run_app(binary, output, args, report, env):
                         "app_did_not_publish_initial_checkpoint:see_app_stderr_log" if runtime is None
                         else "app_launch_task_not_started:gui_or_app_lifecycle_unavailable")
                     break
-                if runtime and args.screenshot_on_block and runtime.get("phase") in (
-                        "preparing_languages", "waiting_language_install", "blocked"):
+                if (runtime and args.screenshot_on_block and runtime.get("phase") in (
+                        "preparing_languages", "waiting_language_install", "blocked")
+                        and (runtime.get("phase") == "blocked" or elapsed - phase_started >= 5)):
                     key = (runtime.get("phase"), runtime.get("active_pair"))
                     if key not in screenshots:
                         capture_window(output, runtime, report)
@@ -470,6 +479,9 @@ def run_app(binary, output, args, report, env):
                         answer = command(["/usr/bin/osascript", "-e", download_script(process.pid)],
                                          min(3, max(0.1, args.run_timeout - elapsed)), report, env=env)
                         report["diagnostics"].append({"download_ui": answer})
+                        if answer != previous_automation:
+                            previous_automation = answer
+                            print(json.dumps({"download_ui": answer}, ensure_ascii=False), flush=True)
                     except (EvalError, OSError) as error:
                         automation_disabled = True
                         report["diagnostics"].append({
