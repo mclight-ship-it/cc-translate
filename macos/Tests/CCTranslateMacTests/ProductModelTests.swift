@@ -434,7 +434,7 @@ final class ProductModelTests: XCTestCase {
         model.input = "Synthetic source attempted without a CLI"
         model.translate()
         let configuration = try fixture.ready()
-        XCTAssertEqual(configuration.operations, ["start.configuration", "config.load", "dictionary_lookup"])
+        XCTAssertEqual(configuration.operations, ["start.configuration", "config.load"])
         XCTAssertTrue(configuration.translations.isEmpty)
 
         fixture.canLocateCLI = true
@@ -959,7 +959,7 @@ final class ProductModelTests: XCTestCase {
         let replacement = try fixture.ready()
 
         XCTAssertEqual(fixture.helpers.count, 2)
-        XCTAssertEqual(replacement.operations, ["start.translation", "config.load", "dictionary_status", "dictionary_lookup", "translate"])
+        XCTAssertEqual(replacement.operations, ["start.translation", "config.load", "dictionary_status", "translate"])
         XCTAssertEqual(replacement.translations.first?.text, "Explicit synthetic product request")
     }
 

@@ -167,12 +167,21 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertTrue(warm.ok, warm.error_code)
         self.assertIs(dict(warm.metrics)["turn_submitted"], False)
         self.assertEqual(self.methods(), ["initialize", "initialized", "hooks/list"])
-        self.assertTrue(provider.warm_up("synthetic").ok)
+        reused_warm = provider.warm_up("synthetic")
+        self.assertTrue(reused_warm.ok, reused_warm.error_code)
         complete = provider.complete(self.request())
         deltas = []
         streamed = provider.stream(self.request(), deltas.append)
         self.assertTrue(complete.ok, complete.error_code)
         self.assertTrue(streamed.ok, streamed.error_code)
+        for index, result in enumerate((warm, reused_warm, complete, streamed)):
+            metrics = dict(result.metrics)
+            for name in ("version_cache_hit", "warm_process_hit", "version_check_ms"):
+                self.assertIs(type(metrics[name]), int)
+            self.assertEqual(metrics["version_cache_hit"], int(index > 0))
+            self.assertEqual(metrics["warm_process_hit"], int(index > 0))
+            self.assertGreaterEqual(metrics["version_check_ms"], 0)
+            self.assertIs(metrics["turn_submitted"], index >= 2)
         self.assertEqual((complete.text, streamed.text, deltas),
                          (native_provider_fixture.TEXT, native_provider_fixture.TEXT,
                           [native_provider_fixture.TEXT]))
@@ -188,7 +197,7 @@ class TestNativeProviderProcess(unittest.TestCase):
         self.assertEqual(catalog_calls[0]["args"][:1], ["--version"])
         self.assertEqual(catalog_calls[1]["args"][:2], ["debug", "models"])
         self.assertEqual(catalog_calls[2]["args"][:3], ["debug", "models", "-c"])
-        self.assertEqual(len(self.read_lines(self.root / "version.jsonl")), 4)
+        self.assertEqual(len(self.read_lines(self.root / "version.jsonl")), 1)
         self.assert_finished()
 
     def test_real_request_snapshot_prompt_safety_and_catalog_bytes(self):
@@ -343,18 +352,21 @@ class TestNativeProviderProcess(unittest.TestCase):
         provider = self.create("descendant")
         self.assertTrue(provider.warm_up("synthetic").ok)
         transport, proc = provider._transport, provider._transport._proc
+        self.assertEqual(transport.idle_timeout_seconds, 600)
         transport._cancel_idle_timer()
+        # Shorten refreshed idle expiry, not the owned process-group cleanup grace.
+        transport.idle_timeout_seconds = 0.05
         entered, release = threading.Event(), threading.Event()
         expired, closed = threading.Event(), threading.Event()
         results, errors, closes = [], [], []
         real_version, real_expire, real_close = (
             transport._version_supported, transport._expire_idle_process, proc.close)
 
-        def version_after_gate(cancel_event=None):
+        def version_after_gate(cancel_event=None, *, allow_resident=True):
             entered.set()
             if not release.wait(5):
                 raise AssertionError("Synthetic version synchronization was not released.")
-            return real_version(cancel_event)
+            return real_version(cancel_event, allow_resident=allow_resident)
 
         def expire(generation):
             try:
