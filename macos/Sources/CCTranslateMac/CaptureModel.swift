@@ -99,6 +99,7 @@ final class CaptureModel: ObservableObject {
                 _ = self?.discardSupersededAutomaticCapture()
             }
         }
+        model.prepareTranslation(onlyIfConfigured: true)
         beginCapture()
     }
 

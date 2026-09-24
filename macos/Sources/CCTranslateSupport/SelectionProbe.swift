@@ -150,6 +150,7 @@ public protocol PassiveSelectionMonitoring: AnyObject {
     var running: Bool { get }
     var copyInterval: DoubleCopyInterval { get }
     var onSelection: ((SelectionResult) -> Void)? { get set }
+    var onCopyIntent: (() -> Void)? { get set }
     var onTranslationGesture: ((TimeInterval) -> Void)? { get set }
     var onStop: ((String) -> Void)? { get set }
     func setClipboardFallbackEnabled(_ enabled: Bool)
@@ -168,6 +169,7 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
     private var registration = UUID()
     public private(set) var running = false
     public var onSelection: ((SelectionResult) -> Void)?
+    public var onCopyIntent: (() -> Void)?
     public var onTranslationGesture: ((TimeInterval) -> Void)?
     public var onStop: ((String) -> Void)?
 
@@ -190,6 +192,10 @@ public final class PassiveCopyMonitor: PassiveSelectionMonitoring {
         self.events = events
         self.securityFailure = securityFailure
         self.resetSource = resetSource
+        selection.onCopyIntent = { [weak self] in
+            guard let self, self.running else { return }
+            self.onCopyIntent?()
+        }
         selection.onTranslationGesture = { [weak self] time in
             guard let self, self.running else { return }
             self.onTranslationGesture?(time)

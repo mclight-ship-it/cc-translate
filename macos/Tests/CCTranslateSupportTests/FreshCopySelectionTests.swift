@@ -102,6 +102,57 @@ private final class CopyFixture {
 
 final class FreshCopySelectionTests: XCTestCase {
     @MainActor
+    func testFirstCopyIntentDoesNotReadSelectionOrClipboardContents() {
+        let f = CopyFixture()
+        var intents = 0
+        f.selection.onCopyIntent = {
+            intents += 1
+            XCTAssertEqual(f.context.axCalls, 0)
+            XCTAssertTrue(f.clipboard.reads.isEmpty)
+            XCTAssertTrue(f.context.results.isEmpty)
+        }
+        f.press(10)
+        XCTAssertEqual(intents, 1)
+        f.clipboard.count += 1
+        f.press(10.2)
+        XCTAssertEqual(intents, 1, "The paired gesture keeps its separate timing callback.")
+        XCTAssertEqual(f.clipboard.reads, [6])
+    }
+
+    @MainActor
+    func testInvalidOrInsecureFirstCopyCannotSignalPreparation() {
+        for failure in [SelectionResult.Reason.secureInput, .accessibility, .inputMonitoring] {
+            let f = CopyFixture()
+            f.context.failure = failure
+            var intents = 0
+            f.selection.onCopyIntent = { intents += 1 }
+            f.press(10)
+            XCTAssertEqual(intents, 0)
+        }
+        let f = CopyFixture()
+        var intents = 0
+        f.selection.onCopyIntent = { intents += 1 }
+        f.press(10, copy: false)
+        f.press(10.1, repeatKey: true)
+        f.selection.observe(time: 1, isCopy: true, isRepeat: false)
+        f.context.source = nil
+        f.press(10.2)
+        XCTAssertEqual(intents, 0)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        XCTAssertEqual(f.context.axCalls, 0)
+    }
+
+    @MainActor
+    func testPreparationCallbackCancellationCannotResurrectFirstCopy() {
+        let f = CopyFixture()
+        f.selection.onCopyIntent = { f.selection.cancel() }
+        f.pair()
+        XCTAssertEqual(f.context.axCalls, 0)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        XCTAssertTrue(f.context.results.isEmpty)
+    }
+
+    @MainActor
     func testTranslationGestureTimestampPrecedesReadsAndOnlyFiresForAValidPair() {
         let f = CopyFixture()
         var gestures: [TimeInterval] = []
@@ -965,6 +1016,29 @@ private final class CopyEvents: PassiveCopyEvents {
 }
 
 final class PassiveCopyMonitorTests: XCTestCase {
+    @MainActor
+    func testCopyIntentIsForwardedOnlyByTheCurrentRunningRegistration() throws {
+        let f = CopyFixture()
+        let events = CopyEvents()
+        let monitor = monitor(f, events)
+        var intents = 0
+        monitor.onCopyIntent = { intents += 1 }
+        try monitor.start()
+        let old = events.observe
+        old?(try key(10))
+        XCTAssertEqual(intents, 1)
+        XCTAssertTrue(f.clipboard.reads.isEmpty)
+        monitor.stop()
+        f.context.time = 11
+        old?(try key(11))
+        try monitor.start()
+        defer { monitor.stop() }
+        old?(try key(11))
+        XCTAssertEqual(intents, 1)
+        events.observe?(try key(11))
+        XCTAssertEqual(intents, 2)
+    }
+
     @MainActor
     func testNativeLocalObserverReturnsTheIdenticalCopyEventWithoutChangingModifiers() throws {
         let event = try key(10)

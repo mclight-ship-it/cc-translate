@@ -90,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var presentedCaptureIntent: UUID?
     private var announcedCaptureStatus: String?
     private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private let workspaceNotifications: NotificationCenter
 
     var desiredActivationPolicy: NSApplication.ActivationPolicy {
         openProductWindows.isEmpty ? .accessory : .regular
@@ -109,7 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     deinit {
         if let resultScreenObserver { NotificationCenter.default.removeObserver(resultScreenObserver) }
-        if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
+        if let sleepObserver { workspaceNotifications.removeObserver(sleepObserver) }
+        if let wakeObserver { workspaceNotifications.removeObserver(wakeObserver) }
     }
 
     override convenience init() {
@@ -118,7 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     init(model: ProbeModel, capture: CaptureModel, diagnostics: ProbeModel, about: AboutModel? = nil,
          loginItems: LoginItemModel? = nil, updates: AppUpdateModel? = nil,
-         uninstaller: (any AppUninstallServing)? = nil) {
+         uninstaller: (any AppUninstallServing)? = nil,
+         workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         self.model = model
         self.capture = capture
         self.diagnostics = diagnostics
@@ -126,11 +130,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.loginItems = loginItems ?? LoginItemModel()
         self.updates = updates ?? AppUpdateModel()
         self.uninstaller = uninstaller ?? AppUninstallService()
+        self.workspaceNotifications = workspaceNotifications
         super.init()
-        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        sleepObserver = workspaceNotifications.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.suspendTranslationPreparation() }
+        }
+        wakeObserver = workspaceNotifications.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.resumeTranslationPreparationAfterWake() }
         }
         dictionaryAnnouncement = model.dictionarySearch.$phase
             .removeDuplicates()

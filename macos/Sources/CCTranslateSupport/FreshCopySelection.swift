@@ -41,6 +41,7 @@ final class FreshCopySelection {
     private(set) var fallbackEnabled = false
     var interval: DoubleCopyInterval { pair.interval }
     var onSelection: ((SelectionResult) -> Void)?
+    var onCopyIntent: (() -> Void)?
     var onTranslationGesture: ((TimeInterval) -> Void)?
 
     private struct Request {
@@ -131,6 +132,7 @@ final class FreshCopySelection {
             pairSource = source
             pairTime = time
             pairBaseline = revisionAtPress
+            onCopyIntent?()
             return
         }
         pairSource = nil

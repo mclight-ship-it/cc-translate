@@ -6,6 +6,7 @@ import XCTest
 final class SelectionMonitorFixture: PassiveSelectionMonitoring {
     var running = false
     var onSelection: ((SelectionResult) -> Void)?
+    var onCopyIntent: (() -> Void)?
     var onTranslationGesture: ((TimeInterval) -> Void)?
     var onStop: ((String) -> Void)?
     var starts = 0
@@ -62,9 +63,9 @@ final class SelectionShortcutModelTests: XCTestCase {
     }
 
     @MainActor
-    func testExistingExplicitSwitchGatesFallbackWithoutImplicitRegistrationOrHelperSetup() throws {
+    func testUnconfiguredExplicitSwitchGatesFallbackWithoutImplicitRegistrationOrHelperSetup() throws {
         let monitor = SelectionMonitorFixture()
-        let f = try ProductTestHarness(selectionMonitor: monitor)
+        let f = try ProductTestHarness(savedCLI: false, selectionMonitor: monitor)
         defer { f.cleanUp(); f.model.stopMonitor() }
         f.model.interfaceLanguage = "en"
         f.model.translatePassiveSelections = true
@@ -87,7 +88,7 @@ final class SelectionShortcutModelTests: XCTestCase {
     @MainActor
     func testDiagnosticStartRemainsAXOnlyEvenWithExistingProductOptIn() throws {
         let monitor = SelectionMonitorFixture()
-        let f = try ProductTestHarness(selectionMonitor: monitor)
+        let f = try ProductTestHarness(savedCLI: false, selectionMonitor: monitor)
         defer { f.cleanUp(); f.model.stopMonitor() }
         f.model.translatePassiveSelections = true
         f.model.startMonitor(accessibilityOnly: true)
@@ -102,7 +103,7 @@ final class SelectionShortcutModelTests: XCTestCase {
     @MainActor
     func testExplicitStopAndFailedStartCannotDeliverQueuedSelection() throws {
         let monitor = SelectionMonitorFixture()
-        let f = try ProductTestHarness(selectionMonitor: monitor)
+        let f = try ProductTestHarness(savedCLI: false, selectionMonitor: monitor)
         defer { f.cleanUp() }
         var results: [SelectionResult] = []
         f.model.onSelection = { results.append($0) }
@@ -126,7 +127,7 @@ final class SelectionShortcutModelTests: XCTestCase {
     @MainActor
     func testNewExplicitIntentClearHistoryReuseCloseAndQuitCancelPendingSelection() throws {
         let monitor = SelectionMonitorFixture()
-        let f = try ProductTestHarness(selectionMonitor: monitor)
+        let f = try ProductTestHarness(savedCLI: false, selectionMonitor: monitor)
         defer { f.cleanUp() }
         var results: [SelectionResult] = []
         f.model.onSelection = { results.append($0) }
@@ -219,9 +220,9 @@ final class SelectionShortcutModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUserOptInSurvivesQuitAndRestoresAtLaunchWithoutHelperOrPermissionPrompt() throws {
+    func testUnconfiguredUserOptInSurvivesQuitAndRestoresWithoutHelperOrPermissionPrompt() throws {
         let first = SelectionMonitorFixture()
-        let f = try ProductTestHarness(selectionMonitor: first)
+        let f = try ProductTestHarness(savedCLI: false, selectionMonitor: first)
         defer { f.cleanUp() }
         f.model.startMonitor()
         XCTAssertTrue(f.model.monitorRequestedEnabled)
@@ -252,7 +253,7 @@ final class SelectionShortcutModelTests: XCTestCase {
 
     @MainActor
     func testMissingPermissionAndSecureInputPauseKeepChoiceAndRecoverWhenAllowed() throws {
-        let f = try ProductTestHarness()
+        let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
         f.preferences.set(true, forKey: ProbeModel.selectionMonitorPreferenceKey)
         let monitor = SelectionMonitorFixture()
@@ -341,7 +342,7 @@ final class SelectionShortcutModelTests: XCTestCase {
 
     @MainActor
     func testUserMonitorStateIsTypedAndRelocalizesWithoutParsingDiagnosticMessages() throws {
-        let f = try ProductTestHarness()
+        let f = try ProductTestHarness(savedCLI: false)
         defer { f.cleanUp() }
         let monitor = SelectionMonitorFixture()
         var permissions = PermissionSnapshot(accessibility: .notGranted, inputMonitoring: .notGranted,

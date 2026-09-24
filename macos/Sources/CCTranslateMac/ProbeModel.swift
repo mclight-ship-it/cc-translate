@@ -39,6 +39,9 @@ final class ProbeModel: ObservableObject {
     private var prewarmID: String?
     private var prewarmScope: [String]?
     private var prewarmTime: TimeInterval?
+    private var preparationSuspended = false
+    private var preparationAfterWake = false
+    private var preparationAfterStop = false
     private var selectionTriggerTime: TimeInterval?
     private var firstDeltaReceived = false
     private let latencyClock: () -> TimeInterval
@@ -391,11 +394,14 @@ final class ProbeModel: ObservableObject {
             guard let self, self.monitorEnabled, self.monitor.running else { return }
             self.onSelection?(result)
         }
+        monitor.onCopyIntent = { [weak self] in
+            guard let self, self.selectionShortcutActive else { return }
+            self.prepareTranslation(onlyIfConfigured: true)
+        }
         monitor.onTranslationGesture = { [weak self] time in
-            guard let self, self.monitorEnabled, self.translatePassiveSelections else { return }
+            guard let self, self.selectionShortcutActive else { return }
             self.selectionTriggerTime = time
-            self.prewarmRequested = true
-            self.resumePrewarm()
+            self.prepareTranslation(onlyIfConfigured: true)
         }
         monitor.onStop = { [weak self] reason in
             self?.monitorStatus = reason
@@ -547,16 +553,30 @@ final class ProbeModel: ObservableObject {
 
     func prepareTranslation(onlyIfConfigured: Bool = false) {
         loadPresentation()
+        guard !catalogShutDown, !preparationSuspended else { return }
         guard !onlyIfConfigured || connected || !selectedCLI.isEmpty ||
                 userCLI[translationProvider.cliName] != nil else { return }
+        if onlyIfConfigured {
+            // Background intent must not reconnect diagnostics/failures or interrupt foreground work.
+            guard (!connected || connectionMode != .diagnostic), error == nil, !cliBusy else { return }
+            prewarmRequested = true
+            if stopping {
+                preparationAfterStop = true
+                return
+            }
+            guard !active, draft == nil, !settingsBusy, !historyBusy,
+                  !dictionary.busy, !modelCatalog.busy, !cliChangeDeferred,
+                  !directionEdited, !modelEdited else { return }
+        }
         prewarmRequested = true
         openProduct()
         resumePrewarm()
     }
 
     private func resumePrewarm() {
-        guard prewarmRequested, prewarmSupported, nativeTranslation, ready, settingsReady,
-              !settingsBusy, !active, draft == nil, !stopping, error == nil,
+        guard prewarmRequested, !preparationSuspended, !catalogShutDown,
+              prewarmSupported, nativeTranslation, ready, settingsReady,
+              !settingsBusy, !historyBusy, !cliBusy, !active, draft == nil, !stopping, error == nil,
               !directionEdited, !modelEdited,
               !dictionary.busy, !modelCatalog.busy, !cliChangeDeferred,
               connectedProvider == translationProvider, let connection else { return }
@@ -581,12 +601,32 @@ final class ProbeModel: ObservableObject {
     }
 
     func suspendTranslationPreparation() {
+        guard !preparationSuspended else { return }
+        preparationAfterWake = prewarmRequested || selectionShortcutActive
+        preparationSuspended = true
+        preparationAfterStop = false
         prewarmRequested = false
         cancelPrewarm()
         if nativeTranslation, connected, !active, draft == nil, !settingsBusy, !historyBusy,
            !dictionary.busy, !modelCatalog.busy {
             stopHelper()
         }
+    }
+
+    func resumeTranslationPreparationAfterWake() {
+        guard preparationSuspended, !catalogShutDown else { return }
+        preparationSuspended = false
+        let requested = preparationAfterWake || selectionShortcutActive
+        preparationAfterWake = false
+        restoreSelectionMonitorIfNeeded()
+        if requested { prepareTranslation(onlyIfConfigured: true) }
+    }
+
+    private func cancelPreparationIntent() {
+        prewarmRequested = false
+        preparationAfterWake = false
+        preparationAfterStop = false
+        cancelPrewarm()
     }
 
     var canChangeProvider: Bool { canApplyModelSetting && !modelCatalog.busy && !cliBusy }
@@ -1985,8 +2025,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func cancel() {
-        prewarmRequested = false
-        cancelPrewarm()
+        cancelPreparationIntent()
         monitor.cancelPendingSelection()
         if draft != nil {
             latency.finish(.cancelled, now: latencyClock())
@@ -2224,6 +2263,7 @@ final class ProbeModel: ObservableObject {
                 resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            preparationAfterStop = false
             prewarmID = nil
             prewarmSupported = false
             latency.finish(.failed, now: latencyClock())
@@ -2286,6 +2326,8 @@ final class ProbeModel: ObservableObject {
                 onTranslationResult?(status + "\n\n" + output)
             }
         case .stopped:
+            let prepare = preparationAfterStop
+            preparationAfterStop = false
             prewarmID = nil
             prewarmSupported = false
             prewarmScope = nil
@@ -2364,6 +2406,7 @@ final class ProbeModel: ObservableObject {
             }
             else if reopen { openProduct() }
             else if restartPlainPaste { loadPlainPasteConfiguration(reconcile: true) }
+            if prepare { prepareTranslation(onlyIfConfigured: true) }
         }
     }
 
@@ -2752,6 +2795,7 @@ final class ProbeModel: ObservableObject {
     func startMonitor(accessibilityOnly: Bool = false) {
         loadPresentation()
         guard !catalogShutDown else { return }
+        let wasActive = selectionShortcutActive
         if !accessibilityOnly {
             monitorRequestedEnabled = true
             translatePassiveSelections = true
@@ -2759,10 +2803,10 @@ final class ProbeModel: ObservableObject {
             scheduleMonitorRecovery()
         }
         updatePermissionSnapshot()
-        attemptMonitorStart(accessibilityOnly: accessibilityOnly)
+        attemptMonitorStart(accessibilityOnly: accessibilityOnly, previouslyActive: wasActive)
     }
 
-    private func attemptMonitorStart(accessibilityOnly: Bool) {
+    private func attemptMonitorStart(accessibilityOnly: Bool, previouslyActive: Bool) {
         do {
             monitor.setCopyInterval(activeCopyInterval)
             monitorAXOnly = accessibilityOnly
@@ -2770,6 +2814,9 @@ final class ProbeModel: ObservableObject {
             try monitor.start()
             monitorEnabled = monitor.running
             updateMonitorStatus()
+            if !previouslyActive, selectionShortcutActive {
+                prepareTranslation(onlyIfConfigured: true)
+            }
         } catch let error as ProbeError {
             monitorEnabled = monitor.running
             monitorStatus = "Monitor not started: \(error.rawValue)."
@@ -2840,7 +2887,7 @@ final class ProbeModel: ObservableObject {
               snapshot.accessibility == .granted, snapshot.inputMonitoring == .granted,
               !snapshot.secureInput else { return }
         translatePassiveSelections = true
-        attemptMonitorStart(accessibilityOnly: false)
+        attemptMonitorStart(accessibilityOnly: false, previouslyActive: false)
     }
 
     private func persistMonitorPreference() {
@@ -2928,6 +2975,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func closePanel() {
+        cancelPreparationIntent()
         monitor.cancelPendingSelection()
         cancelModelCatalog()
         modelCatalog.disconnect()
@@ -2966,8 +3014,6 @@ final class ProbeModel: ObservableObject {
     }
 
     func prepareToQuit() {
-        prewarmRequested = false
-        cancelPrewarm()
         catalogShutDown = true
         imageTranslation.shutdown()
         plainPasteConfigAfterStop = false
