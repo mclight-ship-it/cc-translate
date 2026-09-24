@@ -3,6 +3,90 @@ import XCTest
 
 final class TranslationHelperConnectionTests: XCTestCase {
     @MainActor
+    func testPrewarmConvenienceIsExplicitContentFreeAndDoesNotSubmitTranslation() async throws {
+        let warmOperation: [String: JSONValue] = ["operation": .string("prewarm")]
+        let script = try connectedScript("""
+        \(readLine)
+        printf '%s\\n' "$line" > "$HOME/prewarm-request.json"
+        \(try emit("warm", 0, "accepted", warmOperation))
+        \(try emit("warm", 1, "started", warmOperation))
+        \(try emit("warm", 2, "completed", ["warmed": .bool(true)]))
+        \(shutdown)
+        """, prewarm: true)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: context.home.appendingPathComponent("prewarm-request.json").path))
+        let terminal = notices.terminal("warm")
+        XCTAssertEqual(notices.connection.prewarm(appLanguage: "zh_CN", id: "warm"), "warm")
+        await fulfillment(of: [terminal], timeout: 10)
+        let bytes = try Data(contentsOf: context.home.appendingPathComponent("prewarm-request.json"))
+        XCTAssertEqual(try JSONValue.parse(bytes).object?["payload"], .object([
+            "operation": .string("prewarm"), "app_language": .string("zh_CN")]))
+        XCTAssertEqual(notices.events.filter { $0.id == "warm" }.map(\.type), ["accepted", "started", "completed"])
+        XCTAssertEqual(notices.events.last { $0.id == "warm" }?.payload, ["warmed": .bool(true)])
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testStartedPrewarmCanBeCancelledWithoutTranslationOutcomeUnknown() async throws {
+        let warmOperation: [String: JSONValue] = ["operation": .string("prewarm")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("warm", 0, "accepted", warmOperation))
+        \(try emit("warm", 1, "started", warmOperation))
+        \(readLine)
+        \(try emit("cancel", 0, "completed", ["cancel_requested": .bool(true)]))
+        \(try emit("warm", 2, "cancelled"))
+        \(shutdown)
+        """, prewarm: true)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        let started = notices.started("warm"), terminal = notices.terminal("warm")
+        notices.connection.prewarm(appLanguage: "en_US", id: "warm")
+        await fulfillment(of: [started], timeout: 10)
+        notices.connection.send(ClientMessage(id: "cancel", type: "cancel", payload: ["request_id": .string("warm")]))
+        await fulfillment(of: [terminal], timeout: 10)
+        XCTAssertEqual(notices.events.last { $0.id == "warm" }?.type, "cancelled")
+        XCTAssertEqual(notices.events.last { $0.id == "warm" }?.payload, [:])
+        notices.connection.stop()
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertTrue(notices.failures.isEmpty)
+    }
+
+    @MainActor
+    func testPrewarmTimeoutIsBoundedAndNotReportedAsUnknownModelSubmission() async throws {
+        let warmOperation: [String: JSONValue] = ["operation": .string("prewarm")]
+        let script = try connectedScript("""
+        \(readLine)
+        \(try emit("warm", 0, "accepted", warmOperation))
+        \(try emit("warm", 1, "started", warmOperation))
+        \(readLine)
+        """, prewarm: true)
+        let context = try fixture(script: script)
+        defer { remove(context) }
+        let notices = Notices()
+        defer { notices.connection.forceStop() }
+        notices.connection.startTranslation(runtime: context.runtime, home: context.home, codexCommand: context.codex,
+                                           environment: context.environment)
+        await fulfillment(of: [notices.ready], timeout: 10)
+        notices.connection.prewarm(appLanguage: "en_US", id: "warm", timeout: 0.2)
+        await fulfillment(of: [notices.stopped], timeout: 10)
+        XCTAssertEqual(notices.failures, [.requestTimeout])
+    }
+
+    @MainActor
     func testImageConvenienceForwardsExactAttachmentMetadataAndStreamsOCRResult() async throws {
         let imageOperation: [String: JSONValue] = ["operation": .string("translate_image")]
         var imageCompletion = completion
@@ -302,10 +386,11 @@ final class TranslationHelperConnectionTests: XCTestCase {
     }
 
     private func connectedScript(_ body: String, mode: ProtocolState.Mode = .translation,
-                                 provider: TranslationProvider = .codex) throws -> String {
+                                 provider: TranslationProvider = .codex, prewarm: Bool = false) throws -> String {
         let operations = mode == .diagnostic ? ["fixture", "runtime_probe"] :
             ["config_load", "config_save", "history_load", "history_add", "history_clear"] +
-                DictionaryRequest.operations.sorted() + (mode == .translation ? ["translate", "result_action", "translate_image", "model_catalog"] : [])
+                DictionaryRequest.operations.sorted() + (mode == .translation ?
+                    ["translate", "result_action", "translate_image", "model_catalog"] + (prewarm ? ["prewarm"] : []) : [])
         var ready: [String: JSONValue] = [
             "protocol": .integer(1), "capabilities": .array(operations.map(JSONValue.string)),
             "max_frame_bytes": .integer(65_536), "fixture": .bool(mode == .diagnostic)

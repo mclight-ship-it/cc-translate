@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let quickInputDraft = QuickInputDraft()
     private var presentedCaptureIntent: UUID?
     private var announcedCaptureStatus: String?
+    private var sleepObserver: NSObjectProtocol?
 
     var desiredActivationPolicy: NSApplication.ActivationPolicy {
         openProductWindows.isEmpty ? .accessory : .regular
@@ -108,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     deinit {
         if let resultScreenObserver { NotificationCenter.default.removeObserver(resultScreenObserver) }
+        if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
     }
 
     override convenience init() {
@@ -125,6 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.updates = updates ?? AppUpdateModel()
         self.uninstaller = uninstaller ?? AppUninstallService()
         super.init()
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.suspendTranslationPreparation() }
+        }
         dictionaryAnnouncement = model.dictionarySearch.$phase
             .removeDuplicates()
             .dropFirst()
@@ -204,6 +211,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         // Default-off launch stays inert; an opt-in hint bootstraps only authoritative config loading.
         model.restorePlainPastePreferenceIfNeeded()
+        if model.monitorEnabled && model.translatePassiveSelections {
+            model.prepareTranslation(onlyIfConfigured: true)
+        }
     }
 
     @discardableResult
@@ -356,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             inputPanel = panel
         }
         switch section {
-        case .translator: model.openProduct()
+        case .translator: model.prepareTranslation()
         case .history: model.loadHistory()
         case .dictionary: model.refreshDictionary()
         case .settings:
@@ -391,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         quickInputDraft.attemptedSubmit = false
         quickInputDraft.selectionUnavailable = selectionUnavailable
         model.loadPresentation()
+        model.prepareTranslation(onlyIfConfigured: true)
         activate(quickInputPanel)
     }
 
@@ -694,7 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if diagnosticsPanel == nil {
             diagnosticsPanel = makePanel(title: model.text("Diagnostics", "诊断"), width: 760, height: 600,
                                          minimum: NSSize(width: 700, height: 560),
-                                         root: ProbeView(model: diagnostics))
+                                         root: ProbeView(model: diagnostics, translation: model))
         }
         diagnostics.refreshPermissions()
         activate(diagnosticsPanel)

@@ -41,6 +41,7 @@ class _Request:
     terminal: bool = False
     started: bool = False
     translating: bool = False
+    prewarming: bool = False
     catalog: bool = False
     dictionary: bool = False
     committing: bool = False
@@ -122,7 +123,7 @@ class Server:
             for request in self._tasks.values():
                 if request.dictionary and not request.committing:
                     request.cancel.set()
-                elif (request.translating or request.catalog) and request.started and not request.committing:
+                elif (request.translating or request.catalog or request.prewarming) and request.started and not request.committing:
                     request.cancel.set()
                 elif self._configuration is None or not request.started:
                     request.cancel.set()
@@ -296,6 +297,8 @@ class Server:
                 self._send(request, "started", {"operation": payload["operation"]})
             if request.catalog:
                 event, result = self._configuration.model_catalog(request.cancel, begin_finish)
+            elif request.prewarming:
+                event, result = self._configuration.prewarm(payload, request.cancel, begin_finish)
             else:
                 execute = (self._configuration.translate_image if payload["operation"] == "translate_image"
                            else self._configuration.result_action if payload["operation"] == "result_action"
@@ -333,6 +336,12 @@ class Server:
     def _payload_error(self, payload: dict) -> str | None:
         operation = payload.get("operation")
         if self._configuration is not None:
+            if operation == "prewarm" and self._translation_enabled:
+                try:
+                    self._configuration.validate_prewarm_request(payload)
+                except ProtocolError as error:
+                    return error.code
+                return None
             if operation == "model_catalog" and self._translation_enabled:
                 return None if set(payload) == {"operation"} else "invalid_payload"
             if operation in DICTIONARY_OPERATIONS and self._dictionary_enabled:
@@ -410,7 +419,7 @@ class Server:
             capabilities = (["fixture", "runtime_probe"] if self._configuration is None
                             else ["config_load", "config_save", *HISTORY_OPERATIONS])
             if self._translation_enabled:
-                capabilities.extend(("translate", "result_action", "model_catalog", "translate_image"))
+                capabilities.extend(("translate", "result_action", "model_catalog", "translate_image", "prewarm"))
             if self._dictionary_enabled:
                 capabilities.extend(DICTIONARY_OPERATIONS)
             self._send(control, "ready", {
@@ -436,7 +445,7 @@ class Server:
                 target = self._tasks.get(payload["request_id"])
                 active = (target is not None and not target.terminal
                           and (self._configuration is None or not target.started
-                               or (target.translating or target.catalog or target.dictionary)
+                               or (target.translating or target.catalog or target.dictionary or target.prewarming)
                                and not target.committing))
                 if active:
                     target.cancel.set()
@@ -449,11 +458,25 @@ class Server:
                 self._send(control, "failed", {"code": error})
                 return True
             with self._lock:
-                if len(self._tasks) >= MAX_WORKERS:
+                control.translating = payload["operation"] in ("translate", "result_action", "translate_image")
+                control.prewarming = payload["operation"] == "prewarm"
+                if control.translating:
+                    for target in self._tasks.values():
+                        if target.prewarming and not target.committing:
+                            target.cancel.set()
+                            if not target.started:
+                                self._send(target, "cancelled", {})
+                if control.prewarming and any(
+                        not task.terminal and (task.prewarming or task.translating)
+                        for task in self._tasks.values()):
+                    self._send(control, "failed", {"code": "busy"})
+                    return True
+                # A draining speculative warm must not consume foreground admission.
+                occupied = sum(not (control.translating and task.prewarming) for task in self._tasks.values())
+                if occupied >= MAX_WORKERS:
                     self._send(control, "failed", {"code": "busy"})
                     return True
                 self._tasks[id_] = control
-                control.translating = payload["operation"] in ("translate", "result_action", "translate_image")
                 control.catalog = payload["operation"] == "model_catalog"
                 control.dictionary = payload["operation"] in DICTIONARY_OPERATIONS
                 self._send(control, "accepted", {"operation": payload["operation"]})
@@ -461,7 +484,7 @@ class Server:
                     self._tasks.pop(id_, None)
                     return False
                 if self._configuration is not None:
-                    if control.translating or control.catalog:
+                    if control.translating or control.catalog or control.prewarming:
                         return self._start_translation(control, payload)
                     if control.dictionary:
                         return self._queue_dictionary(control, payload)

@@ -21,7 +21,7 @@ BINARY_NAME = "codex-aarch64-apple-darwin"
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_BINARY_BYTES = 512 * 1024 * 1024
 PROBE = r"""
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 core, command, home, expected = sys.argv[1:]
 sys.path.insert(0, core)
@@ -52,17 +52,32 @@ def preflight_send(proc, method, params=None, request_id=None):
     return send(proc, method, params, request_id)
 provider._transport._send = preflight_send
 try:
+    started = time.perf_counter()
     result = provider.warm_up(None)
+    cold_ms = (time.perf_counter() - started) * 1000
     if not result.ok:
         raise RuntimeError("official_preflight_failed:" + result.error_code)
     if (errors or dict(result.metrics).get("turn_submitted") is not False
             or methods != ["initialize", "initialized", "hooks/list"]):
         raise RuntimeError("official_preflight_contract_failed")
+    cold = dict(result.metrics)
+    started = time.perf_counter()
+    reused = provider.warm_up(None)
+    reused_ms = (time.perf_counter() - started) * 1000
+    warm = dict(reused.metrics)
+    if (not reused.ok or errors or warm.get("turn_submitted") is not False
+            or methods != ["initialize", "initialized", "hooks/list"]
+            or cold.get("version_cache_hit") != 0 or warm.get("version_cache_hit") != 1):
+        raise RuntimeError("official_preflight_reuse_failed")
+    timing = {"cold_prewarm_ms": cold_ms, "reused_prewarm_ms": reused_ms,
+              "cold_version_check_ms": cold["version_check_ms"],
+              "reused_version_check_ms": warm["version_check_ms"],
+              "reused_version_cache_hit": warm["version_cache_hit"]}
 finally:
     provider.shutdown()
 print(json.dumps({"version": version.text, "meets_minimum": version.supported,
                   "native_prewarm": "passed", "turn_submitted": False,
-                  "requests": methods}))
+                  "requests": methods, "timing": timing}))
 """
 
 
@@ -120,11 +135,19 @@ def verify(app):
             if completed.returncode or completed.stderr:
                 raise ValueError("official_version_smoke_process_failed")
             result = json.loads(completed.stdout)
+            timing = result.pop("timing", None)
+            expected_fields = {"cold_prewarm_ms", "reused_prewarm_ms", "cold_version_check_ms",
+                               "reused_version_check_ms", "reused_version_cache_hit"}
+            if (not isinstance(timing, dict) or set(timing) != expected_fields
+                    or any(type(value) not in (int, float) or not 0 <= value <= 45_000
+                           for value in timing.values())
+                    or timing["reused_version_cache_hit"] != 1):
+                raise ValueError("official_version_smoke_timing_invalid")
             if result != {"version": version, "meets_minimum": True,
                           "native_prewarm": "passed", "turn_submitted": False,
                           "requests": ["initialize", "initialized", "hooks/list"]}:
                 raise ValueError("official_version_smoke_report_invalid")
-            results.append(dict(result, archive_sha256=digest))
+            results.append(dict(result, timing=timing, archive_sha256=digest))
     return {"status": "passed", "operation": "--version and native prewarm",
             "account_or_model_called": False, "temporary_files_removed": True,
             "versions": results}

@@ -102,6 +102,25 @@ private final class CopyFixture {
 
 final class FreshCopySelectionTests: XCTestCase {
     @MainActor
+    func testTranslationGestureTimestampPrecedesReadsAndOnlyFiresForAValidPair() {
+        let f = CopyFixture()
+        var gestures: [TimeInterval] = []
+        f.selection.onTranslationGesture = { time in
+            XCTAssertTrue(f.clipboard.reads.isEmpty)
+            XCTAssertEqual(f.context.axCalls, 0)
+            gestures.append(time)
+        }
+        f.press(10)
+        XCTAssertTrue(gestures.isEmpty)
+        f.clipboard.count += 1
+        f.press(10.2)
+        XCTAssertEqual(gestures, [10.2])
+        XCTAssertEqual(f.clipboard.reads, [6])
+        f.press(10.3, repeatKey: true)
+        XCTAssertEqual(gestures, [10.2])
+    }
+
+    @MainActor
     func testPreDispatchBaselineSurvivesFastFirstCopyAndDeduplicatedSecondCopy() {
         let f = CopyFixture()
         // The first native copy finishes before the main-queue observer runs.

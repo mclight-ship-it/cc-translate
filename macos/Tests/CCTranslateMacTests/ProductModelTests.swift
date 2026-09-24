@@ -174,7 +174,8 @@ final class ProductTestHarness {
          dictionaryDownloader: DictionaryDownloading? = nil,
          selectionMonitor: (any PassiveSelectionMonitoring)? = nil,
          captureRegistrar: (any NativeShortcutRegistering)? = nil,
-         readPermissions: @escaping @MainActor () -> PermissionSnapshot = { Permissions.snapshot() }) throws {
+         readPermissions: @escaping @MainActor () -> PermissionSnapshot = { Permissions.snapshot() },
+         latencyClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) throws {
         let identifier = UUID().uuidString
         root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".fixtures-\(identifier)", isDirectory: true)
@@ -235,7 +236,7 @@ final class ProductTestHarness {
             writeClipboard: { calls.copiedText.append($0); return true },
             selectionMonitor: selectionMonitor,
             captureShortcut: captureRegistrar.map { CaptureShortcutModel(preferences: preferences, registrar: $0) },
-            readPermissions: readPermissions)
+            readPermissions: readPermissions, latencyClock: latencyClock)
     }
 
     func cleanUp() {
@@ -257,11 +258,12 @@ final class ProductTestHarness {
     }
 
     @discardableResult
-    func ready(configuration: [String: JSONValue] = ProductTestHarness.configuration()) throws
+    func ready(configuration: [String: JSONValue] = ProductTestHarness.configuration(),
+               capabilities: [String] = []) throws
         -> ProductTestHelper {
         if helpers.isEmpty { model.openProduct() }
         let helper = try XCTUnwrap(helpers.last)
-        helper.event("ready")
+        helper.event("ready", payload: ["capabilities": .array(capabilities.map(JSONValue.string))])
         try finishConfiguration(on: helper, configuration: configuration)
         if model.preparing && helper.stopCount > 0 {
             helper.stopped()

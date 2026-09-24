@@ -1,4 +1,4 @@
-"""Explicit one-shot Claude CLI provider; no discovery, version gate, or replay."""
+"""Explicit Claude print turns with one bounded, unused text-process prewarm."""
 
 import base64
 import json
@@ -14,11 +14,12 @@ from cc_macos.image import MAX_IMAGE_BYTES, PNG_SIGNATURE
 from .base import CLAUDE_PROVIDER, ProviderCapabilities, ProviderRequest, ProviderResult, ProviderStatus
 from .claude_jsonl import ClaudeOutput, ClaudeOutputError, MAX_OUTPUT_BYTES
 from .codex_catalog import CatalogProbeError
-from .darwin_print import stream_output
+from .darwin_print import IdlePrintProcess, stream_output
 from .darwin_process import ProcessError, ProviderOperation, absolute_path, check_cancel
 
 
 MAX_INPUT_BYTES = 128 * 1024 * 1024
+WARM_IDLE_SECONDS = 600
 
 
 def _input(request, operation):
@@ -65,7 +66,7 @@ def _input(request, operation):
 
 class DarwinClaudeProvider:
     provider_id = CLAUDE_PROVIDER
-    capabilities = ProviderCapabilities(text=True, images=True, streaming=True, warm_sessions=False)
+    capabilities = ProviderCapabilities(text=True, images=True, streaming=True, warm_sessions=True)
 
     def __init__(self, command, work_dir, *, environment, log_error):
         if sys.platform != "darwin":
@@ -82,8 +83,87 @@ class DarwinClaudeProvider:
         self.env = MappingProxyType(dict(environment))
         self._closing = threading.Event()
         self._operation_lock = threading.RLock()
+        self._priority_lock = threading.Lock()
+        self._foreground_count = 0
+        self._preempt_warm = threading.Event()
         self._active_thread = None
         self._fatal = None
+        self._warm = None
+        self._warm_key = None
+
+    def _warm_error(self, code):
+        if "cleanup_failed" in code:
+            self._fatal = "provider_cleanup_failed"
+
+    def _discard_warm(self):
+        warm, self._warm = self._warm, None
+        self._warm_key = None
+        if warm is not None:
+            try:
+                warm.close()
+            except ProcessError as error:
+                self._warm_error(str(error))
+                raise
+
+    def _key(self, request):
+        return request.task, tuple(self._command(request))
+
+    def warm_up(self, request, cancel_event=None):
+        """Start at most one unused text child; success is not model readiness."""
+        request = self._request(request)
+        metrics = (("turn_submitted", False), ("warm_process_start", 0), ("warm_process_hit", 0))
+        if request is None or request.task == "image":
+            return ProviderResult(False, error_code="unsupported_task", metrics=metrics)
+        operation = ProviderOperation(request.timeout_seconds, self._closing, cancel_event,
+                                      self._preempt_warm, closing_code="cancelled")
+        code = self._fatal or operation.code()
+        if code:
+            if (code == "cancelled" and self._preempt_warm.is_set() and not self._closing.is_set()
+                    and (cancel_event is None or not cancel_event.is_set())):
+                code = "warmup_busy"
+            return ProviderResult(False, error_code=code, metrics=metrics)
+        if not self._operation_lock.acquire(blocking=False):
+            return ProviderResult(False, error_code="warmup_busy", metrics=metrics)
+        started, warm_hit = 0, 0
+        try:
+            if self._active_thread is not None or self._preempt_warm.is_set():
+                return ProviderResult(False, error_code="warmup_busy", metrics=metrics)
+            try:
+                check_cancel(operation)
+                if self._fatal:
+                    raise ProcessError(self._fatal)
+                key = self._key(request)
+                if self._warm is not None and (
+                        self._warm_key != key or not self._warm.available):
+                    self._discard_warm()
+                if self._warm is None:
+                    os.makedirs(self.work_dir, exist_ok=True)
+                    check_cancel(operation)
+                    self._warm = IdlePrintProcess(
+                        self._command(request), self.env, self.work_dir,
+                        closing=self._closing, cancel_event=cancel_event,
+                        on_error=self._warm_error, idle_seconds=WARM_IDLE_SECONDS)
+                    self._warm_key = key
+                    started = 1
+                else:
+                    warm_hit = 1
+                check_cancel(operation)
+                self._warm.check_failure()
+                if self._warm.error:
+                    raise ProcessError(self._warm.error)
+            except (ProcessError, OSError, ValueError) as error:
+                code = str(error) if isinstance(error, ProcessError) else "provider_failed"
+                self._warm_error(code)
+                try:
+                    self._discard_warm()
+                except ProcessError:
+                    code = "provider_cleanup_failed"
+            code = self._fatal or operation.code() or code
+            return ProviderResult(not code, error_code=code or "", metrics=(
+                ("turn_submitted", False), ("warm_process_start", started),
+                ("warm_process_hit", warm_hit)))
+        finally:
+            self._operation_lock.release()
 
     def _command(self, request):
         # Keep OAuth/keychain auth: --bare deliberately does not load those credentials.
@@ -134,13 +214,28 @@ class DarwinClaudeProvider:
             raise TypeError("on_delta must be callable")
         request = self._request(request)
         if request is None:
-            return ProviderResult(False, error_code="unsupported_task", metrics=(("turn_submitted", False),))
+            return ProviderResult(False, error_code="unsupported_task", metrics=(
+                ("turn_submitted", False), ("warm_process_hit", 0), ("cold_process_start", 0)))
+        with self._priority_lock:
+            self._foreground_count += 1
+            self._preempt_warm.set()
+        try:
+            return self._stream(request, on_delta, cancel_event)
+        finally:
+            with self._priority_lock:
+                self._foreground_count -= 1
+                if not self._foreground_count:
+                    self._preempt_warm.clear()
+
+    def _stream(self, request, on_delta, cancel_event):
         operation = ProviderOperation(request.timeout_seconds, self._closing, cancel_event,
                                       closing_code="cancelled")
+        warm_hit, cold_start = 0, 0
         while True:
             code = self._fatal or operation.code()
             if code:
-                return ProviderResult(False, error_code=code, metrics=(("turn_submitted", False),))
+                return ProviderResult(False, error_code=code, metrics=(
+                    ("turn_submitted", False), ("warm_process_hit", 0), ("cold_process_start", 0)))
             if self._operation_lock.acquire(timeout=0.05):
                 break
         entered = False
@@ -158,11 +253,39 @@ class DarwinClaudeProvider:
                 data = _input(request, operation)
                 check_cancel(operation)
                 os.makedirs(self.work_dir, exist_ok=True)
-                stream_output(
-                    self._command(request), self.env, self.work_dir, data, output.line,
-                    cancel_event=operation, timeout=operation.deadline - time.monotonic(),
-                    max_bytes=MAX_OUTPUT_BYTES, max_input_bytes=MAX_INPUT_BYTES,
-                    on_write=operation.wrote_turn)
+                args = self._command(request)
+                prepared = None
+                if self._warm is not None:
+                    if self._warm_key == self._key(request) and request.task != "image":
+                        warm, self._warm = self._warm, None
+                        self._warm_key = None
+                        prepared = warm.take()
+                    else:
+                        self._discard_warm()
+                while True:
+                    injected = {}
+                    if prepared is not None:
+                        warm_hit = 1
+                        owner, stdout, received = prepared
+                        injected = dict(owned_process=owner, initial_stdout=stdout,
+                                        initial_received=received)
+                    else:
+                        cold_start = 1
+                    try:
+                        stream_output(
+                            args, self.env, self.work_dir, data, output.line,
+                            cancel_event=operation, timeout=operation.deadline - time.monotonic(),
+                            max_bytes=MAX_OUTPUT_BYTES, max_input_bytes=MAX_INPUT_BYTES,
+                            on_write=operation.wrote_turn, **injected)
+                        break
+                    except ProcessError as error:
+                        # The transport has already drained/closed this owner. Once
+                        # any byte was written there is never an automatic replay.
+                        if (prepared is None or operation.submitted or operation.code()
+                                or str(error) not in ("probe_failed", "probe_unavailable")):
+                            raise
+                        prepared = None
+                        output = ClaudeOutput(on_delta)
                 text = output.finish()
             except (ProcessError, ClaudeOutputError) as error:
                 code = str(error)
@@ -172,7 +295,9 @@ class DarwinClaudeProvider:
                 code = "provider_failed"
             code = self._fatal or operation.code() or code
             return ProviderResult(not code, text=text if not code else "", error_code=code,
-                                  metrics=(("turn_submitted", operation.submitted),))
+                                  metrics=(("turn_submitted", operation.submitted),
+                                           ("warm_process_hit", warm_hit),
+                                           ("cold_process_start", cold_start)))
         finally:
             if entered:
                 self._active_thread = None
@@ -190,5 +315,9 @@ class DarwinClaudeProvider:
     def shutdown(self, *, require_cleanup=False):
         self._closing.set()
         with self._operation_lock:
+            try:
+                self._discard_warm()
+            except ProcessError:
+                self._fatal = "provider_cleanup_failed"
             if require_cleanup and (self._fatal or self._active_thread is not None):
                 raise ProcessError(self._fatal or "provider_cleanup_failed")

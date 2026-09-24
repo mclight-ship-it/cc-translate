@@ -14,6 +14,7 @@ protocol AppHelperClient: AnyObject {
     func resultAction(_ action: ResultAction, text: String, appLanguage: String,
                       targetLanguage: String?, id: String, timeout: TimeInterval) -> String
     func modelCatalog(id: String, timeout: TimeInterval) -> String
+    func prewarm(appLanguage: String, id: String, timeout: TimeInterval) -> String
     func dictionary(_ request: DictionaryRequest, id: String, timeout: TimeInterval) -> String
     func loadConfiguration(id: String, timeout: TimeInterval) -> String
     func saveConfiguration(_ config: [String: JSONValue], id: String, timeout: TimeInterval) -> String
@@ -27,6 +28,13 @@ extension HelperConnection: AppHelperClient {}
 
 extension AppHelperClient {
     func send(_ message: ClientMessage) { send(message, timeout: 25) }
+    @discardableResult
+    func prewarm(appLanguage: String, id: String, timeout: TimeInterval = 15) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string(PrewarmDocument.operation), "app_language": .string(appLanguage)
+        ]), timeout: timeout)
+        return id
+    }
     @discardableResult
     func translateImage(imagePath: String, imageBytes: Int, imageSHA256: String,
                         appLanguage: String, recordHistory: Bool, id: String, timeout: TimeInterval) -> String {

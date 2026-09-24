@@ -443,6 +443,21 @@ public enum ResultAction: String, CaseIterable {
     }
 }
 
+public enum PrewarmDocument {
+    public static let operation = "prewarm"
+    static let failureCodes = TranslationDocument.storageFailureCodes.union([
+        "prewarm_failed", "provider_cleanup_failed", "unsupported_provider", "invalid_translation_settings"
+    ])
+
+    static func validateRequest(_ payload: [String: JSONValue]) throws {
+        guard Set(payload.keys) == ["operation", "app_language"],
+              payload["operation"] == .string(operation),
+              let language = payload["app_language"]?.string, ["zh_CN", "en_US"].contains(language) else {
+            throw ProbeError.invalidPayload
+        }
+    }
+}
+
 public enum TranslationDocument {
     static let modelOperations: Set<String> = ["translate", "result_action", "translate_image"]
     static let targetLanguages: Set<String> = ["zh", "en", "ja", "ko", "fr", "de", "es"]
@@ -465,6 +480,29 @@ public enum TranslationDocument {
         "history_too_large", "history_entry_too_large", "invalid_history_record",
         "invalid_history_cursor", "history_cursor_expired", "state_io_failed"
     ]
+    static let timingFields: Set<String> = [
+        "total_ms", "spawn_ms", "initialize_ms", "hook_preflight_ms", "thread_start_ms",
+        "turn_start_ms", "first_result_ms", "turn_first_result_ms", "turn_total_ms",
+        "version_check_ms", "helper_elapsed_ms"
+    ]
+    static let timingFlags: Set<String> = ["version_cache_hit", "warm_process_hit", "cache_hit"]
+    static let maxTimingMilliseconds: Double = 3_600_000
+
+    static func validateTimings(_ value: JSONValue, cached: Bool) throws {
+        guard let timings = value.object,
+              Set(timings.keys).isSubset(of: timingFields.union(timingFlags)) else {
+            throw ProbeError.invalidPayload
+        }
+        for (key, value) in timings {
+            if timingFlags.contains(key) {
+                guard let flag = value.integer, (0...1).contains(flag),
+                      key != "cache_hit" || flag == (cached ? 1 : 0) else { throw ProbeError.invalidPayload }
+            } else {
+                guard let number = value.number, number.isFinite,
+                      (0...maxTimingMilliseconds).contains(number) else { throw ProbeError.invalidPayload }
+            }
+        }
+    }
 
     static func validateRequest(_ payload: [String: JSONValue]) throws {
         if payload["operation"] == .string(ImageTranslationDocument.operation) {
@@ -497,8 +535,10 @@ public enum TranslationDocument {
 
     static func validateCompletion(_ payload: [String: JSONValue], streamed: Bool,
                                    resultAction: Bool = false) throws {
-        guard Set(payload.keys) == ["text", "submitted", "cached", "kind", "target_lang",
-                                    "summarize", "history", "history_error"],
+        let required: Set<String> = ["text", "submitted", "cached", "kind", "target_lang",
+                                     "summarize", "history", "history_error"]
+        guard required.isSubset(of: Set(payload.keys)),
+              Set(payload.keys).isSubset(of: required.union(["timings"])),
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
               let submitted = payload["submitted"]?.bool, !streamed || submitted,
               let cached = payload["cached"]?.bool,
@@ -511,6 +551,9 @@ public enum TranslationDocument {
               !cached || (!submitted && history == "unchanged"),
               try JSONValue.string(text).encoded().count <= maxTextBytes else {
             throw ProbeError.invalidPayload
+        }
+        if let timings = payload["timings"] {
+            try validateTimings(timings, cached: cached)
         }
         if history == "failed" {
             guard let code = payload["history_error"]?.string, storageFailureCodes.contains(code) else {
@@ -540,6 +583,9 @@ public struct ClientMessage {
     }
 
     public func encoded() throws -> Data {
+        if payload["operation"] == .string(PrewarmDocument.operation) {
+            try PrewarmDocument.validateRequest(payload)
+        }
         if DictionaryRequest.operations.contains(payload["operation"]?.string ?? "") {
             try DictionaryDocument.validateRequest(payload)
         }
@@ -643,6 +689,8 @@ private enum HelperFailureCode: String {
     case stateIOFailed = "state_io_failed"
     case invalidTranslation = "invalid_translation"
     case invalidResultAction = "invalid_result_action"
+    case invalidPrewarm = "invalid_prewarm"
+    case prewarmFailed = "prewarm_failed"
     case translationUnavailable = "translation_unavailable"
     case unsupportedProvider = "unsupported_provider"
     case invalidTranslationSettings = "invalid_translation_settings"
@@ -694,10 +742,14 @@ public struct ProtocolState {
         var isModelRequest: Bool { TranslationDocument.modelOperations.contains(operation ?? "") }
         var isDictionaryRequest: Bool { DictionaryRequest.operations.contains(operation ?? "") }
         var isModelCatalogRequest: Bool { operation == ModelCatalogDocument.operation }
-        var cancellableAfterStart: Bool { isModelRequest || isDictionaryRequest || isModelCatalogRequest }
+        var isPrewarmRequest: Bool { operation == PrewarmDocument.operation }
+        var cancellableAfterStart: Bool {
+            isModelRequest || isDictionaryRequest || isModelCatalogRequest || isPrewarmRequest
+        }
     }
     private var entries: [String: Entry] = [:]
     public private(set) var ready = false
+    public private(set) var supportsPrewarm = false
     public private(set) var closing = false
     public var registeredCount: Int { entries.count }
     public let mode: Mode
@@ -722,6 +774,9 @@ public struct ProtocolState {
     public var hasPendingModelCatalog: Bool {
         entries.values.contains { !$0.terminal && $0.isModelCatalogRequest }
     }
+    public var hasPendingPrewarm: Bool {
+        entries.values.contains { !$0.terminal && $0.isPrewarmRequest }
+    }
     var pendingOutcomeUnknown: ProbeError? {
         if hasPendingTranslation { return .translationOutcomeUnknown }
         if hasPendingDictionary { return .dictionaryOutcomeUnknown }
@@ -732,7 +787,7 @@ public struct ProtocolState {
     private static let businessOperations: Set<String> = [
         "config_load", "config_save", "history_load", "history_add", "history_clear"
     ]
-    private var operations: Set<String> {
+    private var requiredOperations: Set<String> {
         switch mode {
         case .diagnostic: return ["fixture", "runtime_probe"]
         case .configuration: return Self.businessOperations.union(DictionaryRequest.operations)
@@ -740,6 +795,9 @@ public struct ProtocolState {
             return Self.businessOperations.union(DictionaryRequest.operations).union(TranslationDocument.modelOperations)
                 .union([ModelCatalogDocument.operation])
         }
+    }
+    private var operations: Set<String> {
+        requiredOperations.union(supportsPrewarm ? [PrewarmDocument.operation] : [])
     }
     private let provider: TranslationProvider
 
@@ -780,6 +838,8 @@ public struct ProtocolState {
                 _ = try message.encoded()
             case "model_catalog":
                 try ModelCatalogDocument.validateRequest(payload)
+            case "prewarm":
+                try PrewarmDocument.validateRequest(payload)
             case let operation where DictionaryRequest.operations.contains(operation):
                 try DictionaryDocument.validateRequest(payload)
             case "config_load":
@@ -869,10 +929,13 @@ public struct ProtocolState {
                   payload["fixture"] == .bool(mode == .diagnostic),
                   mode != .translation || payload["backend"] == .string(provider.backend),
                   case let .array(capabilities)? = payload["capabilities"],
-                  capabilities.count == operations.count,
-                  Set(capabilities.compactMap(\.string)) == operations else {
+                  capabilities.count == Set(capabilities.compactMap(\.string)).count,
+                  requiredOperations.isSubset(of: Set(capabilities.compactMap(\.string))),
+                  Set(capabilities.compactMap(\.string)).isSubset(of: requiredOperations.union(
+                    mode == .translation ? [PrewarmDocument.operation] : [])) else {
                 throw ProbeError.invalidPayload
             }
+            supportsPrewarm = capabilities.contains(.string(PrewarmDocument.operation))
             ready = true
         case "accepted":
             guard entry.type == "request", !entry.accepted, seq == 0,
@@ -885,10 +948,10 @@ public struct ProtocolState {
                   payload["operation"]?.string == entry.operation else {
                 throw ProbeError.invalidTransition
             }
-            if !entry.isModelRequest && !entry.isModelCatalogRequest {
+            if !entry.isModelRequest && !entry.isModelCatalogRequest && !entry.isPrewarmRequest {
                 guard !entries.values.contains(where: {
                     $0.type == "request" && !$0.terminal && $0.order < entry.order &&
-                        !$0.isModelRequest && !$0.isModelCatalogRequest &&
+                        !$0.isModelRequest && !$0.isModelCatalogRequest && !$0.isPrewarmRequest &&
                         $0.isDictionaryRequest == entry.isDictionaryRequest
                 }) else { throw ProbeError.invalidTransition }
             }
@@ -929,6 +992,10 @@ public struct ProtocolState {
                 } else if entry.isModelCatalogRequest {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     _ = try CodexModelEntry.decode(payload: payload)
+                } else if entry.isPrewarmRequest {
+                    guard entry.started, seq == 2, payload == ["warmed": .bool(true)] else {
+                        throw ProbeError.invalidPayload
+                    }
                 } else if isBusiness {
                     guard entry.started, seq == 2 else { throw ProbeError.invalidTransition }
                     switch entry.operation {
@@ -979,7 +1046,7 @@ public struct ProtocolState {
             case "shutdown":
                 guard seq == 0, payload.isEmpty else { throw ProbeError.invalidPayload }
                 if isBusiness, hasPendingConfiguration || hasPendingHistory ||
-                    hasPendingTranslation || hasPendingDictionary || hasPendingModelCatalog {
+                    hasPendingTranslation || hasPendingDictionary || hasPendingModelCatalog || hasPendingPrewarm {
                     throw ProbeError.invalidTransition
                 }
             default: throw ProbeError.invalidTransition
@@ -992,7 +1059,7 @@ public struct ProtocolState {
                 guard seq >= 2, Set(payload.keys) == ["submitted"],
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
-            } else if entry.isDictionaryRequest || entry.isModelCatalogRequest, entry.started {
+            } else if entry.isDictionaryRequest || entry.isModelCatalogRequest || entry.isPrewarmRequest, entry.started {
                 guard seq == 2, payload.isEmpty else { throw ProbeError.invalidTransition }
             } else {
                 guard !entry.started, payload.isEmpty else { throw ProbeError.invalidTransition }
@@ -1006,6 +1073,10 @@ public struct ProtocolState {
                         .contains(code),
                       let submitted = payload["submitted"]?.bool,
                       entry.deltaText.isEmpty || submitted else { throw ProbeError.invalidPayload }
+            } else if entry.isPrewarmRequest, entry.started {
+                guard seq == 2, Set(payload.keys) == ["code", "submitted"],
+                      let code = payload["code"]?.string, PrewarmDocument.failureCodes.contains(code),
+                      payload["submitted"] == .bool(false) else { throw ProbeError.invalidPayload }
             } else if entry.isModelCatalogRequest, entry.started {
                 guard seq == 2, Set(payload.keys) == ["code"],
                       let code = payload["code"]?.string, ModelCatalogDocument.failureCodes.contains(code) else {
@@ -1014,7 +1085,7 @@ public struct ProtocolState {
             } else {
                 let imageFailure = entry.operation == ImageTranslationDocument.operation ||
                     (entry.type == "shutdown" && payload["code"] == .string("image_cleanup_failed"))
-                guard validFailure(payload, image: imageFailure) else {
+                guard validFailure(payload, image: imageFailure, prewarm: entry.isPrewarmRequest) else {
                     throw ProbeError.invalidPayload
                 }
             }
@@ -1112,8 +1183,9 @@ public struct ProtocolState {
         return Set(network.keys) == ["status"] && network["status"] == .string("not_run")
     }
 
-    private func validFailure(_ payload: [String: JSONValue], image: Bool = false) -> Bool {
+    private func validFailure(_ payload: [String: JSONValue], image: Bool = false, prewarm: Bool = false) -> Bool {
         guard Set(payload.keys) == ["code"], let code = payload["code"]?.string else { return false }
+        if ["invalid_prewarm", "prewarm_failed"].contains(code) { return mode == .translation && prewarm }
         if isBusiness {
             if ImageTranslationDocument.failureCodes.contains(code) { return mode == .translation && image }
             // Discovery-specific errors are legal only on the started native catalog operation.

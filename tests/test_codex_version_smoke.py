@@ -83,12 +83,22 @@ class TestOfficialVersionSmoke(unittest.TestCase):
 
     def test_prewarm_report_requires_exact_threadless_requests_and_shutdown(self):
         provider = Mock()
+        calls = []
         def warm(_model):
-            for method in ("initialize", "initialized", "hooks/list"):
-                provider._transport._send(None, method)
-            return ProviderResult(True, metrics=(("turn_submitted", False),))
+            if not calls:
+                for method in ("initialize", "initialized", "hooks/list"):
+                    provider._transport._send(None, method)
+            hit = int(bool(calls))
+            calls.append(True)
+            return ProviderResult(True, metrics=(("turn_submitted", False), ("version_cache_hit", hit),
+                                                 ("version_check_ms", 0 if hit else 200)))
         provider.warm_up.side_effect = warm
         result = self.run_probe(provider)
+        timing = result.pop("timing")
+        self.assertEqual(timing["reused_version_cache_hit"], 1)
+        self.assertEqual(timing["cold_version_check_ms"], 200)
+        self.assertEqual(timing["reused_version_check_ms"], 0)
+        self.assertEqual(provider.warm_up.call_count, 2)
         self.assertEqual(result, {
             "version": "0.154.0", "meets_minimum": True, "native_prewarm": "passed",
             "turn_submitted": False, "requests": ["initialize", "initialized", "hooks/list"],

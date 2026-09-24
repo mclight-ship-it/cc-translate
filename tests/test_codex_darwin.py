@@ -139,6 +139,19 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.providers.append(provider)
         return provider
 
+    def version_binary(self):
+        directory = tempfile.TemporaryDirectory(prefix=".cc-codex-version-", dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
+        command = Path(directory.name) / "codex"
+        command.write_bytes(b"\xcf\xfa\xed\xfeSynthetic native executable")
+        self.command = str(command)
+        return command
+
+    def version_wrapper(self):
+        command = self.version_binary()
+        command.write_bytes(b"#!/bin/sh\nexec other-codex \"$@\"\n")
+        return command
+
     @staticmethod
     def request(**kwargs):
         return replace(ProviderRequest("text", "synthetic", " Translate only 中🙂\n",
@@ -818,6 +831,481 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.assertEqual(self.capture.call_count, 2)
         self.assertEqual(sum(self.methods(process).count("turn/start") for process in self.processes), 1)
 
+    def test_supported_native_version_is_cached_across_complete_stream_and_prewarm(self):
+        self.version_binary()
+        provider, deltas = self.provider(), []
+        results = [provider.warm_up("synthetic"), provider.warm_up("synthetic"),
+                   provider.complete(self.request()), provider.stream(self.request(), deltas.append)]
+        self.assertTrue(all(result.ok for result in results))
+        self.capture.assert_called_once()
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(self.processes[0]).count("initialize"), 1)
+        self.assertEqual(self.methods(self.processes[0]).count("hooks/list"), 3)
+        self.assertEqual(self.methods(self.processes[0]).count("turn/start"), 2)
+        self.assertEqual(deltas, [TEXT])
+        for index, result in enumerate(results):
+            metrics = dict(result.metrics)
+            self.assertEqual(metrics["version_cache_hit"], int(index > 0))
+            self.assertIs(type(metrics["version_cache_hit"]), int)
+            self.assertEqual(metrics["warm_process_hit"], int(index > 0))
+            self.assertIs(type(metrics["warm_process_hit"]), int)
+            self.assertIs(type(metrics["version_check_ms"]), int)
+            self.assertGreaterEqual(metrics["version_check_ms"], 0)
+            self.assertIs(metrics["turn_submitted"], index >= 2)
+            self.assertNotIn(str(self.command), repr(metrics))
+
+    def test_version_cache_and_warm_process_hit_are_independent(self):
+        self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        changed_model = provider.complete(self.request(model="synthetic-small"))
+        self.assertTrue(changed_model.ok)
+        metrics = dict(changed_model.metrics)
+        self.assertEqual((metrics["version_cache_hit"], metrics["warm_process_hit"]), (1, 0))
+        self.capture.assert_called_once()
+        self.assertEqual(len(self.processes), 2)
+        self.assertEqual(self.processes[0].close_count, 1)
+        self.responses = lambda proc, request: [{"id": request["id"], "result": {}}]
+        failed_reuse = provider.complete(self.request(model="synthetic-small"))
+        self.assert_failure(failed_reuse, "invalid_appserver_message")
+        self.assertEqual(dict(failed_reuse.metrics)["warm_process_hit"], 1)
+        self.assertTrue(self.processes[1].closed)
+
+    def test_default_model_repeated_prewarm_reports_numeric_cold_and_ready_metrics(self):
+        self.version_binary()
+        provider = self.provider()
+        for expected_hit in (0, 1):
+            result = provider.warm_up(None)
+            self.assertTrue(result.ok)
+            metrics = dict(result.metrics)
+            for name in ("version_check_ms", "version_cache_hit", "warm_process_hit"):
+                self.assertIs(type(metrics[name]), int)
+                self.assertGreaterEqual(metrics[name], 0)
+            self.assertEqual(metrics["version_cache_hit"], expected_hit)
+            self.assertEqual(metrics["warm_process_hit"], expected_hit)
+            self.assertIs(metrics["turn_submitted"], False)
+        self.capture.assert_called_once()
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(self.processes[0]), [
+            "initialize", "initialized", "hooks/list"])
+
+    def test_wrapper_version_cache_is_bound_to_verified_resident_for_warm_and_foreground(self):
+        command = self.version_wrapper()
+        for content in (command.read_bytes(), b"#!/usr/bin/env node\nrequire('other-codex')\n"):
+            with self.subTest(content=content):
+                command.write_bytes(content)
+                provider, deltas = self.provider(), []
+                before = self.capture.call_count
+                results = [provider.warm_up("synthetic"), provider.warm_up("synthetic"),
+                           provider.complete(self.request()), provider.stream(self.request(), deltas.append)]
+                for index, result in enumerate(results):
+                    self.assertTrue(result.ok)
+                    metrics = dict(result.metrics)
+                    self.assertEqual((metrics["version_cache_hit"], metrics["warm_process_hit"]),
+                                     (int(index > 0), int(index > 0)))
+                    self.assertIs(type(metrics["version_check_ms"]), int)
+                self.assertEqual(self.capture.call_count, before + 1)
+                self.assertEqual(deltas, [TEXT])
+                transport = provider._transport
+                self.assertIsNone(transport._supported_version_identity)
+                self.assertIs(transport._verified_process[0], self.processes[-1])
+                self.assertEqual(self.methods(self.processes[-1]).count("initialize"), 1)
+                self.assertEqual(self.methods(self.processes[-1]).count("hooks/list"), 3)
+                self.assertEqual(self.methods(self.processes[-1]).count("turn/start"), 2)
+                provider.shutdown()
+                self.assertIsNone(transport._verified_process)
+
+    def test_wrapper_edits_and_replacement_invalidate_verified_resident(self):
+        command = self.version_wrapper()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        command.write_bytes(command.read_bytes() + b"# changed wrapper\n")
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        original = command.stat()
+        replacement = command.with_name("replacement")
+        replacement.write_bytes(command.read_bytes())
+        os.utime(replacement, ns=(original.st_atime_ns, original.st_mtime_ns))
+        os.replace(replacement, command)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 3)
+        self.assertEqual([proc.close_count for proc in self.processes], [1, 1, 0])
+        self.assertEqual(sum(not proc.closed for proc in self.processes), 1)
+
+    def test_wrapper_model_change_always_reprobes_before_starting_new_process(self):
+        self.version_wrapper()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        result = provider.complete(self.request(model="synthetic-small"))
+        self.assertTrue(result.ok)
+        metrics = dict(result.metrics)
+        self.assertEqual((metrics["version_cache_hit"], metrics["warm_process_hit"]), (0, 0))
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 2)
+        self.assertEqual(self.processes[0].close_count, 1)
+        self.assertTrue(provider.complete(self.request(model="synthetic-small")).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_unchanged_wrapper_target_updates_cannot_validate_a_new_process_from_resident_cache(self):
+        self.version_wrapper()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.capture.return_value = b"codex-cli 0.145.0"
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.capture.assert_called_once()
+        transport = provider._transport
+        transport._expire_idle_process(transport._idle_generation)
+        self.assertIsNone(transport._verified_process)
+        self.assert_failure(provider.warm_up("synthetic"), "appserver_version_unsupported")
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 1)
+        self.capture.return_value = b"codex-cli 0.146.0"
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.assertEqual(self.capture.call_count, 3)
+        self.assertEqual(len(self.processes), 2)
+
+    def test_wrapper_exit_between_cache_hit_and_reuse_requires_fresh_supported_version(self):
+        self.version_wrapper()
+        for output, code in (
+                (b"codex-cli 0.146.0", None),
+                (b"codex-cli 0.145.0", "appserver_version_unsupported"),
+                (b"codex-cli 0.147.0-rc.1", "appserver_version_prerelease"),
+                (ProcessError("probe_failed"), "probe_failed")):
+            with self.subTest(code=code):
+                self.capture.side_effect = None
+                self.capture.return_value = b"codex-cli 0.146.0"
+                provider = self.provider()
+                self.assertTrue(provider.warm_up("synthetic").ok)
+                proc = self.processes[-1]
+                before_probes, before_processes = self.capture.call_count, len(self.processes)
+                self.capture.side_effect = [output]
+                with patch.object(proc, "is_running", side_effect=[True, False]) as running:
+                    result = provider.complete(self.request())
+                self.assertEqual(running.call_count, 2)
+                self.assertEqual(self.capture.call_count, before_probes + 1)
+                self.assertEqual(dict(result.metrics)["version_cache_hit"], 0)
+                self.assertTrue(proc.closed)
+                if code is None:
+                    self.assertTrue(result.ok)
+                    self.assertEqual(len(self.processes), before_processes + 1)
+                else:
+                    self.assert_failure(result, code)
+                    self.assertEqual(len(self.processes), before_processes)
+                    self.assertIsNone(provider._transport._verified_process)
+                    self.capture.side_effect = None
+                    self.assertTrue(provider.complete(self.request()).ok)
+                    self.assertEqual(self.capture.call_count, before_probes + 2)
+                provider.shutdown()
+                self.assertIsNone(provider._transport._verified_process)
+
+    def test_cancelled_wrapper_initialization_cannot_publish_resident_verification(self):
+        self.version_wrapper()
+        provider, cancel = self.provider(), threading.Event()
+        self.block_method = "initialize"
+        warm = self.start(lambda: provider.warm_up("synthetic", cancel_event=cancel))
+        self.wait_for(lambda: self.processes and self.processes[0].waiting.is_set())
+        cancel.set()
+        self.assert_failure(self.finish(warm), "cancelled")
+        self.assertIsNone(provider._transport._verified_process)
+        self.assertTrue(self.processes[0].closed)
+        self.block_method = None
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 2)
+
+    def test_wrapper_exit_before_warm_ready_check_cannot_launch_without_revalidation(self):
+        self.version_wrapper()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        proc = self.processes[0]
+        self.capture.return_value = b"codex-cli 0.145.0"
+        with patch.object(proc, "is_running", side_effect=[True, False, False]):
+            result = provider.warm_up("synthetic")
+        self.assert_failure(result, "appserver_version_unsupported")
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 0)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 1)
+        self.assertTrue(proc.closed)
+        self.assertIsNone(provider._transport._verified_process)
+
+    def test_wrapper_change_after_probe_before_spawn_is_rejected(self):
+        command = self.version_wrapper()
+        provider = self.provider()
+        def changed_config(*args, **kwargs):
+            command.write_bytes(command.read_bytes() + b"# changed after version check\n")
+            return NATIVE_CONFIG
+        self.config.side_effect = changed_config
+        self.assert_failure(provider.warm_up("synthetic"), "appserver_executable_changed")
+        self.rpc.assert_not_called()
+        self.assertIsNone(provider._transport._verified_process)
+        self.config.side_effect = None
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_wrapper_resident_cache_respects_cancellation_and_deadline(self):
+        self.version_wrapper()
+        for code in ("cancelled", "timeout"):
+            with self.subTest(code=code):
+                provider, cancel = self.provider(), threading.Event()
+                self.assertTrue(provider.warm_up("synthetic").ok)
+                before = self.capture.call_count
+                transport = provider._transport
+                identity = transport._executable_identity
+                def invalidate_operation():
+                    if code == "cancelled":
+                        cancel.set()
+                    else:
+                        transport.operation.deadline = time.monotonic() - 1
+                    return identity()
+                with patch.object(transport, "_executable_identity", side_effect=invalidate_operation):
+                    self.assert_failure(provider.complete(self.request(), cancel), code)
+                self.assertEqual(self.capture.call_count, before)
+                self.assertNotIn("turn/start", self.methods(self.processes[-1]))
+                self.assertIsNone(transport._verified_process)
+                self.assertTrue(provider.complete(self.request()).ok)
+                self.assertEqual(self.capture.call_count, before + 1)
+                provider.shutdown()
+
+    def test_wrapper_failure_before_initialization_is_not_verified_or_cached(self):
+        self.version_wrapper()
+        provider = self.provider()
+        self.responses = lambda proc, request: [
+            {"id": request["id"], "result": {}}] if request["method"] == "hooks/list" else (
+                reply_messages(request, proc.cwd))
+        self.assert_failure(provider.warm_up("synthetic"), "invalid_appserver_message")
+        self.assertIsNone(provider._transport._verified_process)
+        self.assertTrue(self.processes[0].closed)
+        self.responses = lambda proc, request: reply_messages(request, proc.cwd)
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 2)
+
+    def test_wrapper_cache_does_not_bypass_hooks_and_is_discarded_after_protocol_failure(self):
+        self.version_wrapper()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.responses = lambda proc, request: [{"id": request["id"], "result": {}}]
+        result = provider.complete(self.request())
+        self.assert_failure(result, "invalid_appserver_message")
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 1)
+        self.capture.assert_called_once()
+        self.assertIsNone(provider._transport._verified_process)
+        self.assertEqual(self.methods(self.processes[0]), [
+            "initialize", "initialized", "hooks/list", "hooks/list"])
+        self.responses = lambda proc, request: reply_messages(request, proc.cwd)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_native_version_edits_and_replacement_reprobe_and_retire_old_process(self):
+        command = self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        original = command.stat()
+        command.write_bytes(command.read_bytes() + b"edited")
+        os.utime(command, ns=(original.st_atime_ns, original.st_mtime_ns))
+        self.assertTrue(provider.complete(self.request()).ok)
+        before_replacement = command.stat()
+        replacement = command.with_name("replacement")
+        replacement.write_bytes(command.read_bytes())
+        os.utime(replacement, ns=(before_replacement.st_atime_ns, before_replacement.st_mtime_ns))
+        os.replace(replacement, command)
+        result = provider.complete(self.request())
+        self.assertTrue(result.ok)
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 0)
+        self.assertEqual(self.capture.call_count, 3)
+        self.assertEqual(len(self.processes), 3)
+        self.assertEqual([proc.close_count for proc in self.processes], [1, 1, 0])
+        self.assertEqual(sum(not proc.closed for proc in self.processes), 1)
+
+    def test_native_same_size_timestamp_edit_invalidates_version_cache(self):
+        command = self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        original = command.stat()
+        command.write_bytes(command.read_bytes()[:-1] + b"!")
+        os.utime(command, ns=(original.st_atime_ns, original.st_mtime_ns + 1_000_000_000))
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_native_identity_tracks_ctime_mode_device_and_inode(self):
+        command = self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        original = command.stat()
+        for field in ("st_ctime_ns", "st_mode", "st_dev", "st_ino"):
+            with self.subTest(field=field):
+                changed = Mock(wraps=original)
+                for name in ("st_ctime_ns", "st_mtime_ns", "st_mode", "st_dev", "st_ino", "st_size"):
+                    setattr(changed, name, getattr(original, name))
+                setattr(changed, field, getattr(original, field) + 1)
+                with patch.object(native.os, "stat", return_value=changed):
+                    self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 5)
+
+    def test_resolved_native_symlink_target_change_reprobes(self):
+        command = self.version_binary()
+        target = command.with_name("other-codex")
+        target.write_bytes(command.read_bytes())
+        provider = self.provider()
+        with patch.object(native.os.path, "realpath", return_value=str(command)):
+            self.assertTrue(provider.complete(self.request()).ok)
+        with patch.object(native.os.path, "realpath", return_value=str(target)):
+            self.assertTrue(provider.complete(self.request()).ok)
+            self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(self.processes[0].close_count, 1)
+
+    def test_unidentifiable_commands_are_not_cached_even_with_a_resident(self):
+        command = self.version_binary()
+        command.write_bytes(b"")
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertIsNone(provider._transport._supported_version_identity)
+        self.assertIsNone(provider._transport._verified_process)
+        command.unlink()
+        provider = self.provider()
+        before = self.capture.call_count
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, before + 2)
+
+    def test_deleted_or_unreadable_native_identity_cannot_hit_a_previous_cache(self):
+        command = self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request()).ok)
+        with patch("builtins.open", side_effect=PermissionError("SYNTHETIC_PRIVATE")):
+            result = provider.complete(self.request())
+        self.assertTrue(result.ok)
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 0)
+        self.assertIsNone(provider._transport._supported_version_identity)
+        command.unlink()
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 3)
+
+    def test_unsupported_prerelease_and_transient_native_versions_are_never_cached(self):
+        self.version_binary()
+        for output, code in (
+                (b"codex-cli 0.145.0", "appserver_version_unsupported"),
+                (b"codex-cli 0.147.0-rc.1", "appserver_version_prerelease"),
+                (b"unreadable", "appserver_version_unreadable"),
+                (ProcessError("probe_failed"), "probe_failed"),
+                (ProcessError("probe_timeout"), "probe_timeout"),
+                (ProcessError("probe_cancelled"), "probe_cancelled")):
+            with self.subTest(code=code):
+                provider = self.provider()
+                before = self.capture.call_count
+                self.capture.side_effect = [output, output, b"codex-cli 0.146.0"]
+                for _ in range(2):
+                    result = provider.complete(self.request())
+                    self.assert_failure(result, code)
+                    self.assertEqual(dict(result.metrics)["version_cache_hit"], 0)
+                    self.assertIsNone(provider._transport._supported_version_identity)
+                self.assertTrue(provider.complete(self.request()).ok)
+                self.assertTrue(provider.complete(self.request()).ok)
+                self.assertEqual(self.capture.call_count, before + 3)
+
+    def test_native_version_cancelled_probe_does_not_publish_a_successful_cache(self):
+        self.version_binary()
+        provider, cancel = self.provider(), threading.Event()
+        def cancel_probe(*args, **kwargs):
+            self.assertIs(kwargs["cancel_event"].cancel, cancel)
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], 1)
+            cancel.set()
+            return b"codex-cli 0.146.0"
+        self.capture.side_effect = cancel_probe
+        self.assert_failure(provider.complete(self.request(), cancel), "cancelled")
+        self.assertIsNone(provider._transport._supported_version_identity)
+        self.rpc.assert_not_called()
+        self.capture.side_effect = None
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_native_version_timeout_after_probe_does_not_cache_or_submit(self):
+        self.version_binary()
+        provider = self.provider()
+        def expired_probe(*args, **kwargs):
+            provider._transport.operation.deadline = time.monotonic() - 1
+            return b"codex-cli 0.146.0"
+        self.capture.side_effect = expired_probe
+        self.assert_failure(provider.complete(self.request()), "timeout")
+        self.rpc.assert_not_called()
+        self.assertIsNone(provider._transport._supported_version_identity)
+        self.capture.side_effect = None
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_native_version_cache_hits_honor_cancellation_and_elapsed_deadline(self):
+        self.version_binary()
+        provider, cancel = self.provider(), threading.Event()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        transport = provider._transport
+        identity = transport._executable_identity
+        for code in ("cancelled", "timeout"):
+            with self.subTest(code=code):
+                def invalidate_operation():
+                    if code == "cancelled":
+                        cancel.set()
+                    else:
+                        transport.operation.deadline = time.monotonic() - 1
+                    return identity()
+                with patch.object(transport, "_executable_identity", side_effect=invalidate_operation):
+                    self.assert_failure(provider.complete(self.request(), cancel), code)
+                cancel.clear()
+        self.capture.assert_called_once()
+        self.assertNotIn("turn/start", self.methods(self.processes[0]))
+        result = provider.complete(self.request())
+        self.assertTrue(result.ok)
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 1)
+        self.capture.assert_called_once()
+
+    def test_executable_change_during_probe_is_not_cached_or_submitted(self):
+        command = self.version_binary()
+        provider = self.provider()
+        def changed_probe(*args, **kwargs):
+            command.write_bytes(command.read_bytes() + b"replacement")
+            return b"codex-cli 0.146.0"
+        self.capture.side_effect = changed_probe
+        self.assert_failure(provider.complete(self.request()), "appserver_executable_changed")
+        self.assertIsNone(provider._transport._supported_version_identity)
+        self.rpc.assert_not_called()
+        self.capture.side_effect = None
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.assertEqual(self.capture.call_count, 2)
+
+    def test_cached_version_never_skips_foreground_hook_or_protocol_validation(self):
+        self.version_binary()
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        self.responses = lambda proc, request: [{"id": request["id"], "result": {}}]
+        result = provider.complete(self.request())
+        self.assert_failure(result, "invalid_appserver_message")
+        self.assertEqual(dict(result.metrics)["version_cache_hit"], 1)
+        self.capture.assert_called_once()
+        self.assertEqual(self.methods(self.processes[0]).count("hooks/list"), 2)
+        self.assertNotIn("thread/start", self.methods(self.processes[0]))
+        self.assertTrue(self.processes[0].closed)
+
+    def test_shutdown_clears_native_version_identity_even_if_cleanup_fails(self):
+        self.version_binary()
+        for cleanup_error in (None, ProcessError("probe_cleanup_failed")):
+            with self.subTest(cleanup_error=cleanup_error):
+                provider = self.provider()
+                self.assertTrue(provider.complete(self.request()).ok)
+                self.assertIsNotNone(provider._transport._supported_version_identity)
+                self.processes[-1].close_error = cleanup_error
+                if cleanup_error is None:
+                    provider.shutdown()
+                else:
+                    with self.assertRaisesRegex(ProcessError, "^probe_cleanup_failed$"):
+                        provider.shutdown()
+                self.assertIsNone(provider._transport._supported_version_identity)
+                self.assertTrue(provider._transport._closed)
+
     def malformed_response(self, message, code="invalid_appserver_message"):
         self.responses = lambda proc, request: [message] if request["method"] == "initialize" else []
         start = len(self.processes)
@@ -1391,6 +1879,73 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.assertNotIn("thread/start", self.methods(self.processes[0]))
         self.assertEqual(self.methods(self.processes[1]).count("turn/start"), 1)
 
+    def test_prewarm_external_precancel_and_queued_cancel_have_no_probe_activity(self):
+        provider, cancel = self.provider(), threading.Event()
+        cancel.set()
+        self.assert_failure(provider.warm_up("synthetic", cancel_event=cancel), "cancelled")
+        self.assert_no_activity()
+        cancel.clear()
+        entered = threading.Event()
+        class ObservedCancel:
+            def is_set(self):
+                entered.set()
+                return cancel.is_set()
+        provider._operation_lock.acquire()
+        try:
+            warm = self.start(lambda: provider.warm_up("synthetic", ObservedCancel()))
+            self.assertTrue(entered.wait(1))
+            cancel.set()
+            self.assert_failure(self.finish(warm), "cancelled")
+            self.assert_no_activity()
+        finally:
+            provider._operation_lock.release()
+        self.assertTrue(provider.complete(self.request()).ok)
+
+    def test_external_cancel_of_active_prewarm_cleans_before_foreground_reuse(self):
+        self.version_binary()
+        provider, cancel = self.provider(), threading.Event()
+        self.block_method = "initialize"
+        warm = self.start(lambda: provider.warm_up("synthetic", cancel_event=cancel))
+        self.wait_for(lambda: self.processes and self.processes[0].waiting.is_set())
+        proc = self.processes[0]
+        proc.close_release.clear()
+        cancel.set()
+        try:
+            self.assertTrue(proc.close_entered.wait(1))
+            self.assertTrue(warm[0].is_alive())
+            self.assertNotIn("thread/start", self.methods(proc))
+        finally:
+            proc.close_release.set()
+        self.assert_failure(self.finish(warm), "cancelled")
+        self.block_method = None
+        self.assertTrue(provider.complete(self.request()).ok)
+        self.capture.assert_called_once()
+        self.assertEqual(len(self.processes), 2)
+        self.assertEqual(proc.close_count, 1)
+
+    def test_foreground_preempts_native_prewarm_version_probe_without_sticky_cache(self):
+        self.version_binary()
+        provider, entered = self.provider(), threading.Event()
+        def wait_for_preemption(*args, **kwargs):
+            entered.set()
+            operation = kwargs["cancel_event"]
+            deadline = time.monotonic() + 2
+            while not operation.is_set():
+                if time.monotonic() >= deadline:
+                    raise AssertionError("Foreground did not preempt the synthetic probe.")
+                time.sleep(0.002)
+            return b"codex-cli 0.146.0"
+        self.capture.side_effect = wait_for_preemption
+        warm = self.start(lambda: provider.warm_up("synthetic", cancel_event=threading.Event()))
+        self.assertTrue(entered.wait(1))
+        self.capture.side_effect = None
+        foreground = self.start(lambda: provider.complete(self.request()))
+        self.assert_failure(self.finish(warm), "cancelled")
+        self.assertTrue(self.finish(foreground).ok)
+        self.assertEqual(self.capture.call_count, 2)
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(self.processes[0]).count("turn/start"), 1)
+
     def test_queued_prewarm_cannot_jump_a_foreground_waiter(self):
         provider = self.provider()
         provider._operation_lock.acquire()
@@ -1474,6 +2029,33 @@ class TestDarwinCodexProvider(unittest.TestCase):
                             "provider_cleanup_failed")
         self.assertEqual(len(self.processes), 1)
 
+    def test_native_active_idle_retention_is_600_seconds_and_windows_default_is_unchanged(self):
+        provider = self.provider()
+        transport = provider._transport
+        self.assertEqual(transport.idle_timeout_seconds, 600)
+        with patch.object(codex_appserver.sys, "platform", "win32"):
+            windows = codex_appserver.CodexAppServerTransport(self.command, self.work, env={})
+            self.assertEqual(windows.idle_timeout_seconds, 300)
+            windows.shutdown()
+        with patch.object(transport, "_schedule_idle_shutdown", self.real_schedule.__get__(transport)), \
+                patch.object(codex_appserver.threading, "Timer") as timer:
+            self.assertTrue(provider.warm_up("synthetic").ok)
+            self.assertEqual(timer.call_args.args[0], 600)
+            cold_generation = transport._idle_generation
+            self.assertTrue(provider.warm_up("synthetic").ok)
+            self.assertEqual(timer.call_args.args[0], 600)
+            self.assertGreater(transport._idle_generation, cold_generation)
+            self.assertTrue(provider.complete(self.request()).ok)
+            self.assertEqual(timer.call_args.args[0], 600)
+            self.assertTrue(provider.complete(self.request()).ok)
+            self.assertEqual(timer.call_args.args[0], 600)
+            self.assertEqual([call.args[0] for call in timer.call_args_list],
+                             [30, 600, 600, 600, 600])
+            self.assertEqual(len(self.processes), 1)
+            transport._expire_idle_process(transport._idle_generation)
+            self.assertEqual(self.processes[0].close_count, 1)
+            self.assertIsNone(transport._proc)
+
     def test_idle_expiry_is_nonblocking_when_the_facade_operation_lock_is_owned(self):
         provider = self.provider()
         self.assertTrue(provider.complete(self.request()).ok)
@@ -1526,9 +2108,14 @@ class TestDarwinCodexProvider(unittest.TestCase):
                 release.set()
                 result = self.finish(warm)
             self.assertTrue(result.ok, result.error_code)
-            self.assertEqual(len(timers), 2, "Idle expiry lost its cleanup responsibility.")
+            self.assertEqual([timer.interval for timer in timers], [600, 0.05, 600])
             self.assertGreater(transport._idle_generation, expired.args[0])
             self.assertTrue(expired.cancelled)
+            self.assertTrue(timers[1].cancelled)
+            expired.fire()
+            timers[1].fire()
+            self.assertEqual(len(timers), 3, "Stale expiry overwrote refreshed retention.")
+            self.assertEqual(proc.close_count, 0)
             timers[-1].fire()
             self.assertEqual(proc.close_count, 1)
             self.assertIsNone(transport._proc)

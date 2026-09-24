@@ -55,6 +55,7 @@ CORE_TEST_MODULES = (
     "test_claude_darwin",
     "test_summary_rules",
     "test_macos_translation",
+    "test_macos_prewarm",
     "test_macos_claude_translation",
     "test_macos_image",
     "test_codex_version",
@@ -62,7 +63,7 @@ CORE_TEST_MODULES = (
 )
 SUITE_MODULES = {"process": PROCESS_TEST_MODULES, "core": CORE_TEST_MODULES}
 TEST_SUPPORT_MODULES = {"process": ("owner_process_support", "state_ipc_process_support"), "core": ()}
-MINIMUM_TEST_COUNTS = {"process": 253, "core": 744}
+MINIMUM_TEST_COUNTS = {"process": 260, "core": 851}
 PROCESS_BUNDLE_MODULES = (
     "cc_providers.codex_config",
     "cc_providers.codex_catalog",

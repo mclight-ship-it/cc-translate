@@ -4,6 +4,7 @@ from types import MappingProxyType
 import json
 import math
 import os
+import stat
 import sys
 import threading
 import time
@@ -70,7 +71,7 @@ class _NativeTransport(CodexAppServerTransport):
     """Keep the established RPC/tool policy; replace only process and I/O edges."""
 
     def __init__(self, command, work_dir, env, catalog, *, operation_lock=None, log_error=None):
-        super().__init__(command, work_dir, env=env, catalog=catalog)
+        super().__init__(command, work_dir, idle_timeout_seconds=600, env=env, catalog=catalog)
         self.operation = None
         self._bound_operation = None
         self._pending_rpc = {}
@@ -80,28 +81,143 @@ class _NativeTransport(CodexAppServerTransport):
         self.cleanup_failed = threading.Event()
         self._owner_operation_lock = operation_lock or threading.RLock()
         self._log_error = log_error
+        self._supported_version_identity = None
+        self._verified_process = None
+        self._process_version_identity = None
+        self._operation_version_identity = None
+        self._requested_profile = None
+        self.version_check_ms = None
+        self.version_cache_hit = 0
+        self.warm_process_hit = 0
 
-    def _version_supported(self, cancel_event=None):
-        output = capture_output(
-            [self.command, "--version"], self.env, self.work_dir,
-            cancel_event=self.operation, timeout=min(5, max(
-                0.001, self.operation.deadline - time.monotonic())), max_bytes=8192)
-        version = parse_codex_version(output)
-        if version is None:
-            raise ProcessError("appserver_version_unreadable")
-        if version.prerelease:
-            raise ProcessError("appserver_version_prerelease")
-        return version.supported
+    def ready_for(self, profile):
+        ready = super().ready_for(profile)
+        if ready:
+            self.warm_process_hit = 1
+        return ready
+
+    def warm_up(self, request):
+        result = super().warm_up(request)
+        if result.ok and not self.operation.is_set():
+            # The facade operation lock also owns expiry, including ready reuse.
+            self._schedule_idle_shutdown()
+        return result
+
+    def _executable_identity(self):
+        try:
+            path = os.path.realpath(self.command)
+            info = os.stat(path)
+            if not stat.S_ISREG(info.st_mode):
+                return None
+            with open(path, "rb") as executable:
+                magic = executable.read(4)
+        except OSError:
+            # An unidentifiable command may still be probed, but never cached.
+            return None
+        if not magic:
+            return None
+        # Wrapper verification is bound to one initialized process, never a launch.
+        native_binary = magic in (
+                b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+                b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+                b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca")
+        return (path, info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns, native_binary)
+
+    def _check_version_operation(self, cancel_event):
+        code = self.operation.code()
+        if code is None and cancel_event is not None and cancel_event.is_set():
+            code = "cancelled"
+        if code is not None:
+            raise ProcessError(code)
+
+    def _version_supported(self, cancel_event=None, *, allow_resident=True):
+        started_at = time.perf_counter()
+        self.version_cache_hit = 0
+        try:
+            self._check_version_operation(cancel_event)
+            identity = self._executable_identity()
+            self._check_version_operation(cancel_event)
+            if identity is not None and identity == self._supported_version_identity:
+                self._operation_version_identity = identity
+                self.version_cache_hit = 1
+                return True
+            with self._state_lock:
+                verified = self._verified_process
+                resident_hit = (
+                    allow_resident and identity is not None and not identity[-1]
+                    and verified is not None and verified[0] is self._proc
+                    and verified[1] == identity
+                    and self._profile == self._requested_profile and not self._closed
+                    and self._process_running(self._proc))
+            self._check_version_operation(cancel_event)
+            if resident_hit:
+                self._operation_version_identity = identity
+                self.version_cache_hit = 1
+                return True
+            previous_identity = self._supported_version_identity or (
+                verified[1] if verified is not None else None)
+            self._supported_version_identity = None
+            if previous_identity is not None:
+                # Do not validate a replacement but keep serving its old process.
+                self.stop_current()
+                self._check_version_operation(cancel_event)
+            output = capture_output(
+                [self.command, "--version"], self.env, self.work_dir,
+                cancel_event=self.operation, timeout=min(
+                    5, self.operation.deadline - time.monotonic()), max_bytes=8192)
+            self._check_version_operation(cancel_event)
+            version = parse_codex_version(output)
+            if version is None:
+                raise ProcessError("appserver_version_unreadable")
+            if version.prerelease:
+                raise ProcessError("appserver_version_prerelease")
+            if not version.supported:
+                return False
+            current_identity = self._executable_identity()
+            self._check_version_operation(cancel_event)
+            if current_identity != identity:
+                raise ProcessError("appserver_executable_changed")
+            self._operation_version_identity = identity
+            if identity is not None and identity[-1]:
+                self._supported_version_identity = identity
+            return True
+        finally:
+            elapsed = max(0, int((time.perf_counter() - started_at) * 1000))
+            self.version_check_ms = (self.version_check_ms or 0) + elapsed
+
+    def _remember_verified_process(self):
+        with self._state_lock:
+            identity = self._process_version_identity
+            if self._proc is not None and identity is not None and not identity[-1]:
+                self._verified_process = (self._proc, identity)
+
+    def shutdown(self):
+        try:
+            super().shutdown()
+        finally:
+            self._supported_version_identity = None
+            self._verified_process = None
 
     def _start_process(self, request, *, cancel_event=None):
+        identity = self._operation_version_identity
+        if self.version_cache_hit and identity is not None and not identity[-1]:
+            # The verified resident can exit between the reuse check and spawn.
+            if not self._version_supported(cancel_event, allow_resident=False):
+                raise ProcessError("appserver_version_unsupported")
         with self._state_lock:
             if self.cleanup_failed.is_set():
                 raise ProcessError("probe_cleanup_failed")
             if self._closed or self.operation.is_set():
                 raise RpcError("rpc_cancelled")
             command = self.build_command(request, cancel_event=self.operation)
+            identity = self._operation_version_identity
+            if identity is not None and self._executable_identity() != identity:
+                raise ProcessError("appserver_executable_changed")
             proc = RpcProcess(command, self.env, self.work_dir)
             self._proc = proc
+            self._process_version_identity = identity
             self._profile = request.model
             self._pending_rpc.clear()
             self._bound_operation = None
@@ -113,6 +229,8 @@ class _NativeTransport(CodexAppServerTransport):
                 self._proc = None
                 self._profile = None
                 self._bound_operation = None
+                self._process_version_identity = None
+                self._verified_process = None
         try:
             proc.close()
         except ProcessError:
@@ -121,7 +239,7 @@ class _NativeTransport(CodexAppServerTransport):
 
     def _expire_idle_process(self, generation):
         if not self._owner_operation_lock.acquire(blocking=False):
-            # A same-model warm fast path does not schedule a replacement timer.
+            # Retain cleanup responsibility until the facade operation finishes.
             self._schedule_idle_shutdown(max_seconds=0.05, expected_generation=generation)
             return
         try:
@@ -146,6 +264,7 @@ class _NativeTransport(CodexAppServerTransport):
 
     def _bind(self, proc):
         if self._bound_operation is not self.operation:
+            self.warm_process_hit = int(self._bound_operation is not None)
             proc.reset_budget()
             self._bound_operation = self.operation
             self._thread_id = None
@@ -361,9 +480,9 @@ class DarwinCodexProvider:
             with self._priority_lock:
                 self._foreground_waiters -= 1
 
-    def warm_up(self, model):
+    def warm_up(self, model, cancel_event=None):
         request = self._request(ProviderRequest("text", model, "", "", timeout_seconds=10))
-        return self._execute(request, None, None)
+        return self._execute(request, None, cancel_event)
 
     def model_catalog(self, cancel_event=None):
         operation = _Operation(8, self._closing, cancel_event)
@@ -437,6 +556,11 @@ class DarwinCodexProvider:
             self._active_thread = threading.get_ident()
             entered = True
             self._transport.operation = operation
+            self._transport._operation_version_identity = None
+            self._transport._requested_profile = request.model
+            self._transport.version_check_ms = None
+            self._transport.version_cache_hit = 0
+            self._transport.warm_process_hit = 0
             if on_delta is None:
                 with self._priority_lock:
                     if self._foreground_waiters:
@@ -462,8 +586,14 @@ class DarwinCodexProvider:
             if "cleanup_failed" in result.error_code:
                 self._fatal = "provider_cleanup_failed"
             values = dict(result.metrics)
+            if self._transport.version_check_ms is not None:
+                values["version_check_ms"] = self._transport.version_check_ms
+                values["version_cache_hit"] = self._transport.version_cache_hit
+            values["warm_process_hit"] = self._transport.warm_process_hit
             values["turn_submitted"] = bool(values.get("turn_submitted") or operation.submitted)
             code = self._failure_code(operation) or result.error_code
+            if result.ok and not code:
+                self._transport._remember_verified_process()
             return ProviderResult(
                 result.ok and not code,
                 text=result.text if result.ok and not code else "",
@@ -472,6 +602,8 @@ class DarwinCodexProvider:
             if entered:
                 self._active_thread = None
                 self._transport.operation = None
+                self._transport._operation_version_identity = None
+                self._transport._requested_profile = None
             self._operation_lock.release()
 
     def diagnose(self):

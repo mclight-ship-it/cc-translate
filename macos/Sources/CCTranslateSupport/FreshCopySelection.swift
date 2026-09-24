@@ -41,6 +41,7 @@ final class FreshCopySelection {
     private(set) var fallbackEnabled = false
     var interval: DoubleCopyInterval { pair.interval }
     var onSelection: ((SelectionResult) -> Void)?
+    var onTranslationGesture: ((TimeInterval) -> Void)?
 
     private struct Request {
         let id: UUID
@@ -138,6 +139,8 @@ final class FreshCopySelection {
         let id = UUID()
         pending = Request(id: id, source: source, startedAt: time,
                           deadline: time + Self.copyWaitWindow, baseline: baseline)
+        onTranslationGesture?(time)
+        guard pending?.id == id else { return }
         if fallbackEnabled, baseline != nil {
             // The user's fresh copy is sufficient; do not block on a browser's
             // missing/slow AXSelectedText when the copied text is already available.

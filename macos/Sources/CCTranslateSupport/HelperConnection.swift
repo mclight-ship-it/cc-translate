@@ -239,6 +239,15 @@ public final class HelperConnection {
     }
 
     @discardableResult
+    public func prewarm(appLanguage: String, id: String = UUID().uuidString,
+                        timeout: TimeInterval = 15) -> String {
+        send(ClientMessage(id: id, type: "request", payload: [
+            "operation": .string(PrewarmDocument.operation), "app_language": .string(appLanguage)
+        ]), timeout: timeout)
+        return id
+    }
+
+    @discardableResult
     public func modelCatalog(id: String = UUID().uuidString, timeout: TimeInterval = 40) -> String {
         send(ClientMessage(id: id, type: "request", payload: ["operation": .string(ModelCatalogDocument.operation)]),
              timeout: timeout)

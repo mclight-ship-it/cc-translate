@@ -6,6 +6,7 @@ import XCTest
 final class SelectionMonitorFixture: PassiveSelectionMonitoring {
     var running = false
     var onSelection: ((SelectionResult) -> Void)?
+    var onTranslationGesture: ((TimeInterval) -> Void)?
     var onStop: ((String) -> Void)?
     var starts = 0
     var stops = 0

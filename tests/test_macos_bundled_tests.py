@@ -140,7 +140,7 @@ class InventoryTests(unittest.TestCase):
             "test_config_rules", "test_config_store", "test_macos_configuration", "test_macos_history",
             "test_request_snapshot", "test_darwin_rpc_contract", "test_darwin_print_contract", "test_codex_darwin",
             "test_claude_jsonl", "test_claude_darwin",
-            "test_summary_rules", "test_macos_translation", "test_macos_claude_translation", "test_macos_image",
+            "test_summary_rules", "test_macos_translation", "test_macos_prewarm", "test_macos_claude_translation", "test_macos_image",
             "test_codex_version", "test_macos_dictionary"))
         self.assertNotIn("test_dictionary_portable", bundled_tests.CORE_TEST_MODULES,
                          "The Windows formatter test must not pull desktop facades into the bundle.")
@@ -148,14 +148,20 @@ class InventoryTests(unittest.TestCase):
             "process": bundled_tests.PROCESS_TEST_MODULES, "core": bundled_tests.CORE_TEST_MODULES})
         self.assertEqual(bundled_tests.TEST_SUPPORT_MODULES, {
             "process": ("owner_process_support", "state_ipc_process_support"), "core": ()})
-        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 253, "core": 744})
+        self.assertEqual(bundled_tests.MINIMUM_TEST_COUNTS, {"process": 260, "core": 851})
         for suite_name, names in bundled_tests.SUITE_MODULES.items():
-            count = 0
-            for name in names:
-                source = bundled_tests.test_directory(suite_name) / (name + ".py")
-                tree = ast.parse(source.read_text(encoding="utf-8"))
-                count += sum(isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
-                             for node in ast.walk(tree))
+            if suite_name == "core":
+                # Discovery includes contracts inherited by each provider's test class.
+                loader = unittest.TestLoader()
+                count = loader.loadTestsFromNames(["tests." + name for name in names]).countTestCases()
+                self.assertEqual(loader.errors, [])
+            else:
+                count = 0
+                for name in names:
+                    source = bundled_tests.test_directory(suite_name) / (name + ".py")
+                    tree = ast.parse(source.read_text(encoding="utf-8"))
+                    count += sum(isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+                                 for node in ast.walk(tree))
             self.assertGreaterEqual(count, bundled_tests.MINIMUM_TEST_COUNTS[suite_name])
 
     def test_original_explicit_core_origin_assertions_are_preserved(self):

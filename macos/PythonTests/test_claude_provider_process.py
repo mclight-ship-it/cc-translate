@@ -6,8 +6,11 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import sys
 import threading
+import time
+from unittest.mock import patch
 
 if sys.platform != "darwin":
     raise RuntimeError("Run with the selected app's isolated bundled macOS Python.")
@@ -43,13 +46,28 @@ assert args[args.index("--input-format") + 1] == "stream-json"
 assert args[args.index("--tools") + 1] == ""
 assert "--strict-mcp-config" in args and "--setting-sources=" in args
 assert "--bare" not in args and "--version" not in args
-raw = sys.stdin.buffer.read()
+if mode == "warm":
+    import select
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    # Leave a UTF-8 scalar incomplete across the idle-reader/foreground handoff.
+    os.write(1, b'{"type":"system","detail":"\xe4')
+    os.write(2, b"synthetic warm startup\n")
+    readable, _, _ = select.select([sys.stdin.buffer], [], [], 0.1)
+    if not readable:
+        (work / ("idle-no-input-" + str(os.getpid()))).write_text("ready")
+    first = sys.stdin.buffer.read(1)
+    (work / ("input-" + str(os.getpid()))).write_text("byte" if first else "eof")
+    raw = first + sys.stdin.buffer.read()
+    os.write(1, b'\xb8\xad"}\n')
+else:
+    raw = sys.stdin.buffer.read()
 assert raw.endswith(b"\n")
 message = json.loads(raw)
 assert message["type"] == "user" and message["message"]["role"] == "user"
 content = message["message"]["content"]
 assert content[0] == {"type": "text", "text": os.environ.get("SYNTHETIC_EXPECTED_TEXT", "translate this")}
-record = {"input_bytes": len(raw), "model": [arg for arg in args if arg.startswith("--model=")]}
+record = {"input_bytes": len(raw), "model": [arg for arg in args if arg.startswith("--model=")],
+          "pid": os.getpid()}
 if mode == "image":
     source = content[1]["source"]
     assert source["type"] == "base64" and source["media_type"] == "image/png"
@@ -225,3 +243,141 @@ class TestClaudeProviderProcess(OwnerProcessCase):
             self.assertFalse(dict(result.metrics)["turn_submitted"])
         self.assertEqual(self.owners, [])
         self.assertFalse((self.directory / "args.json").exists())
+
+    def ready_unused_child(self, provider, cancel_event=None):
+        result = provider.warm_up(self.request, cancel_event)
+        self.addCleanup(provider.shutdown, require_cleanup=True)
+        self.assertTrue(result.ok, result.error_code)
+        self.assertEqual(result.text, "")
+        self.assertFalse(dict(result.metrics)["turn_submitted"])
+        self.assertEqual(len(self.owners), 1)
+        warm = provider._warm
+        owner = self.owners[0][0]
+        marker = self.directory / ("idle-no-input-" + str(owner.process.pid))
+        prefix = b'{"type":"system","detail":"\xe4'
+        deadline = time.monotonic() + 5
+        while (not marker.exists() or marker.read_text() != "ready"
+               or bytes(warm.stdout) != prefix
+               or warm.received < len(prefix) + len(b"synthetic warm startup\n")):
+            self.assertLess(time.monotonic(), deadline, "Synthetic child did not remain input-idle.")
+            self.assertFalse(owner.closed)
+            time.sleep(0.01)
+        self.assertFalse((self.directory / ("input-" + str(owner.process.pid))).exists())
+        self.assertFalse((self.directory / "request.json").exists())
+        self.assertFalse(owner.process.stdin.closed)
+        self.assertIsNone(owner.process.returncode)
+        self.assertEqual(self.events, [])
+        return warm, owner
+
+    def assert_all_children_closed(self, count):
+        self.assertEqual(len(self.owners), count)
+        self.assertEqual(self.events, [signal.SIGTERM, signal.SIGKILL, "wait"] * count)
+        for owner, descriptors in self.owners:
+            self.assertTrue(owner.closed)
+            self.assertTrue(owner.finished)
+            self.assertIsNotNone(owner.process.returncode)
+            for stream in (owner.process.stdin, owner.process.stdout, owner.process.stderr):
+                self.assertTrue(stream.closed)
+            for fd in descriptors:
+                self.assert_fd_closed(fd)
+        self.assertFalse(list(self.directory.glob("fallback-*")))
+        self.assertLess(time.monotonic() - self.started, 15)
+
+    def test_real_prewarm_sends_neither_stdin_bytes_nor_eof_and_keeps_one_child(self):
+        provider = self.provider("warm")
+        warm, owner = self.ready_unused_child(provider)
+        repeated = provider.warm_up(replace(self.request, user_text="must never be sent"))
+        self.assertTrue(repeated.ok, repeated.error_code)
+        self.assertFalse(dict(repeated.metrics)["turn_submitted"])
+        self.assertEqual(dict(repeated.metrics)["warm_process_hit"], 1)
+        self.assertEqual(len(self.owners), 1)
+        self.assertIs(provider._warm, warm)
+        self.assertFalse((self.directory / ("input-" + str(owner.process.pid))).exists())
+        provider.shutdown(require_cleanup=True)
+        self.assertFalse(warm._thread.is_alive())
+        self.assertFalse((self.directory / "request.json").exists())
+        self.assert_closed()
+
+    def test_real_matching_warm_child_is_consumed_once_then_next_request_is_cold(self):
+        provider = self.provider("warm")
+        warm, first = self.ready_unused_child(provider)
+        result = provider.stream(self.request, self.lines.append)
+        self.assertTrue(result.ok, result.error_code)
+        self.assertEqual(result.text, "translated")
+        self.assertEqual(self.lines, ["translated"])
+        self.assertTrue(dict(result.metrics)["turn_submitted"])
+        self.assertEqual(dict(result.metrics)["warm_process_hit"], 1)
+        self.assertEqual(dict(result.metrics)["cold_process_start"], 0)
+        self.assertEqual(json.loads((self.directory / "request.json").read_text())["pid"], first.process.pid)
+        self.assertFalse(warm._thread.is_alive())
+        self.assertIsNone(provider._warm)
+        self.assert_closed()
+
+        following = provider.complete(self.request)
+        self.assertTrue(following.ok, following.error_code)
+        self.assertEqual(dict(following.metrics)["warm_process_hit"], 0)
+        self.assertEqual(dict(following.metrics)["cold_process_start"], 1)
+        self.assertIsNot(self.owners[1][0], first)
+        self.assertEqual(json.loads((self.directory / "request.json").read_text())["pid"],
+                         self.owners[1][0].process.pid)
+        self.assertEqual(len((self.directory / "calls.jsonl").read_text().splitlines()), 2)
+        self.assert_all_children_closed(2)
+
+    def assert_warm_mismatch(self, provider, request):
+        warm, first = self.ready_unused_child(provider)
+        def create_after_cleanup(*args, **kwargs):
+            self.assertTrue(first.closed)
+            self.assertTrue(first.finished)
+            self.assertFalse(warm._thread.is_alive())
+            self.assertEqual(self.events, [signal.SIGTERM, signal.SIGKILL, "wait"])
+            return self.create_owner(*args, **kwargs)
+        with patch.object(darwin_print, "OwnedProcess", side_effect=create_after_cleanup):
+            result = provider.complete(request)
+        self.assertTrue(result.ok, result.error_code)
+        self.assertEqual(dict(result.metrics)["warm_process_hit"], 0)
+        self.assertEqual(dict(result.metrics)["cold_process_start"], 1)
+        self.assertFalse((self.directory / ("input-" + str(first.process.pid))).exists())
+        args = json.loads((self.directory / "args.json").read_text())
+        self.assertEqual(args[args.index("--system-prompt") + 1], request.system_prompt)
+        self.assertIn("--model=" + request.model, args)
+        self.assert_all_children_closed(2)
+
+    def test_real_warm_model_mismatch_closes_unused_child_before_cold_spawn(self):
+        provider = self.provider("warm")
+        self.assert_warm_mismatch(provider, replace(self.request, model="different-synthetic-model"))
+
+    def test_real_warm_prompt_mismatch_closes_unused_child_before_cold_spawn(self):
+        provider = self.provider("warm")
+        self.assert_warm_mismatch(provider, replace(self.request, system_prompt="Different instructions."))
+
+    def test_real_unused_warm_child_expires_without_foreground_or_stdin_submission(self):
+        provider = self.provider("warm")
+        warm, owner = self.ready_unused_child(provider)
+        # Shorten only idle retention after startup; supervision's TERM/KILL grace stays real.
+        warm._deadline = time.monotonic() + 0.05
+        warm._thread.join(timeout=5)
+        self.assertFalse(warm._thread.is_alive())
+        self.assertEqual(warm.error, "probe_timeout")
+        self.assertFalse(warm.available)
+        self.assertFalse((self.directory / ("input-" + str(owner.process.pid))).exists())
+        self.assert_closed()
+
+    def test_real_warm_cancellation_drains_unused_child_and_open_stdin(self):
+        provider = self.provider("warm")
+        cancel = threading.Event()
+        warm, owner = self.ready_unused_child(provider, cancel)
+        cancel.set()
+        warm._thread.join(timeout=5)
+        self.assertFalse(warm._thread.is_alive())
+        self.assertEqual(warm.error, "probe_cancelled")
+        self.assertFalse((self.directory / ("input-" + str(owner.process.pid))).exists())
+        self.assert_closed()
+
+    def test_real_shutdown_drains_unused_warm_child_before_returning(self):
+        provider = self.provider("warm")
+        warm, owner = self.ready_unused_child(provider)
+        provider.shutdown(require_cleanup=True)
+        self.assertFalse(warm._thread.is_alive())
+        self.assertIsNone(provider._warm)
+        self.assertFalse((self.directory / ("input-" + str(owner.process.pid))).exists())
+        self.assert_closed()

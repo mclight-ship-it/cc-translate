@@ -1169,6 +1169,7 @@ class OCRTranslationServiceTests(_TranslationDirectory):
                         "text": OUTPUT, "submitted": True, "cached": False, "kind": "ocr",
                         "target_lang": None if is_dict or is_code else "zh", "summarize": False,
                         "history": "recorded", "history_error": None,
+                        "timings": payload["timings"],
                     })
                     entry = self.history()[0]
                     self.assertEqual((entry["input"], entry["output"], entry["kind"], entry["is_dict"], entry["is_code"]),
@@ -1445,7 +1446,8 @@ class TranslationServiceTests(_TranslationDirectory):
     def test_ready_is_native_and_first_request_streams_records_then_hits_cache(self):
         ready = self.stdout.events[0]["payload"]
         self.assertEqual((ready["backend"], ready["fixture"]), ("native_appserver", False))
-        self.assertEqual(len(ready["capabilities"]), 15)
+        self.assertEqual(len(ready["capabilities"]), 16)
+        self.assertIn("prewarm", ready["capabilities"])
         self.assertIn("result_action", ready["capabilities"])
         self.assertEqual(ready["capabilities"][-6:], [
             "dictionary_status", "dictionary_lookup", "dictionary_prepare_install",
@@ -1654,6 +1656,7 @@ class ResultActionServiceTests(_TranslationDirectory):
                     "text": OUTPUT, "submitted": True, "cached": False, "kind": "text",
                     "target_lang": "ja" if action == "retranslate" else "zh" if action == "as_text" else None,
                     "summarize": False, "history": "disabled", "history_error": None,
+                    "timings": events[-1]["payload"]["timings"],
                 })
         self.assertEqual(len(self.provider.requests), 12)
         self.assertEqual(self.history(), [])

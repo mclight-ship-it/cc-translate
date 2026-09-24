@@ -32,6 +32,16 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var nativeTranslation = false
     @Published private(set) var settingsReady = false
     @Published private(set) var settingsBusy = false
+    @Published private(set) var latency = TranslationLatency()
+    @Published private(set) var prewarmFailure: String?
+    private var prewarmSupported = false
+    private var prewarmRequested = false
+    private var prewarmID: String?
+    private var prewarmScope: [String]?
+    private var prewarmTime: TimeInterval?
+    private var selectionTriggerTime: TimeInterval?
+    private var firstDeltaReceived = false
+    private let latencyClock: () -> TimeInterval
     @Published private(set) var defaultsPhase: SettingsDefaultsPhase = .idle
     private var settingsDefaults: SettingsDefaults?
     private var defaultsRequestID: String?
@@ -357,7 +367,9 @@ final class ProbeModel: ObservableObject {
          plainPaste: PlainPasteModel? = nil, imageTranslation: ImageTranslationState? = nil,
          selectionMonitor: (any PassiveSelectionMonitoring)? = nil,
          captureShortcut: CaptureShortcutModel? = nil,
-         readPermissions: @escaping @MainActor () -> PermissionSnapshot = { Permissions.snapshot() }) {
+         readPermissions: @escaping @MainActor () -> PermissionSnapshot = { Permissions.snapshot() },
+         latencyClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.latencyClock = latencyClock
         dictionary = DictionaryModel(downloader: dictionaryDownloader ?? DictionaryDownloader())
         self.plainPaste = plainPaste ?? PlainPasteModel()
         self.captureShortcut = captureShortcut ?? CaptureShortcutModel(
@@ -378,6 +390,12 @@ final class ProbeModel: ObservableObject {
         monitor.onSelection = { [weak self] result in
             guard let self, self.monitorEnabled, self.monitor.running else { return }
             self.onSelection?(result)
+        }
+        monitor.onTranslationGesture = { [weak self] time in
+            guard let self, self.monitorEnabled, self.translatePassiveSelections else { return }
+            self.selectionTriggerTime = time
+            self.prewarmRequested = true
+            self.resumePrewarm()
         }
         monitor.onStop = { [weak self] reason in
             self?.monitorStatus = reason
@@ -525,6 +543,50 @@ final class ProbeModel: ObservableObject {
         persistPresentation()
         if needsCLI { startConnection(mode: .configuration) }
         else { startNativeTranslation() }
+    }
+
+    func prepareTranslation(onlyIfConfigured: Bool = false) {
+        loadPresentation()
+        guard !onlyIfConfigured || connected || !selectedCLI.isEmpty ||
+                userCLI[translationProvider.cliName] != nil else { return }
+        prewarmRequested = true
+        openProduct()
+        resumePrewarm()
+    }
+
+    private func resumePrewarm() {
+        guard prewarmRequested, prewarmSupported, nativeTranslation, ready, settingsReady,
+              !settingsBusy, !active, draft == nil, !stopping, error == nil,
+              !directionEdited, !modelEdited,
+              !dictionary.busy, !modelCatalog.busy, !cliChangeDeferred,
+              connectedProvider == translationProvider, let connection else { return }
+        let scope = [translationProvider.rawValue, modelProfile, direction, usesChinese ? "zh_CN" : "en_US"]
+        if prewarmScope == scope, let time = prewarmTime, latencyClock() - time < 540 { return }
+        guard prewarmID == nil else { return }
+        let id = UUID().uuidString
+        prewarmID = id
+        prewarmScope = scope
+        prewarmTime = latencyClock()
+        prewarmFailure = nil
+        connection.prewarm(appLanguage: usesChinese ? "zh_CN" : "en_US", id: id, timeout: 15)
+    }
+
+    private func cancelPrewarm() {
+        if let id = prewarmID, let connection, !stopping {
+            connection.send(ClientMessage(id: UUID().uuidString, type: "cancel",
+                                          payload: ["request_id": .string(id)]))
+        }
+        prewarmScope = nil
+        prewarmTime = nil
+    }
+
+    func suspendTranslationPreparation() {
+        prewarmRequested = false
+        cancelPrewarm()
+        if nativeTranslation, connected, !active, draft == nil, !settingsBusy, !historyBusy,
+           !dictionary.busy, !modelCatalog.busy {
+            stopHelper()
+        }
     }
 
     var canChangeProvider: Bool { canApplyModelSetting && !modelCatalog.busy && !cliBusy }
@@ -760,6 +822,8 @@ final class ProbeModel: ObservableObject {
     }
 
     func translate(origin: String = "text", useCache: Bool = true, inResultPanel: Bool = false) {
+        let trigger = origin == "selection" ? selectionTriggerTime : nil
+        selectionTriggerTime = nil
         monitor.cancelPendingSelection()
         catalogWasLastRequest = false
         loadPresentation()
@@ -768,6 +832,11 @@ final class ProbeModel: ObservableObject {
             return
         }
         translationIntentID = UUID()
+        latency.begin(intent: translationIntentID, source: origin == "selection" ? .selection :
+                        origin == "ocr" ? .ocr : .text, provider: translationProvider,
+                      trigger: trigger, now: latencyClock())
+        cancelPrewarm()
+        prewarmRequested = true
         draft = Draft(text: input, origin: origin, useCache: origin == "ocr" ? false : useCache,
                       direction: direction, model: modelProfile, language: usesChinese ? "zh_CN" : "en_US",
                       useSavedDirection: origin != "ocr" && !settingsReady && !directionEdited,
@@ -798,6 +867,9 @@ final class ProbeModel: ObservableObject {
         loadPresentation()
         let intent = UUID()
         translationIntentID = intent
+        latency.begin(intent: intent, source: .ocr, provider: translationProvider, trigger: nil, now: latencyClock())
+        cancelPrewarm()
+        prewarmRequested = true
         draft = Draft(text: "", origin: "ocr", useCache: false, direction: direction, model: modelProfile,
                       language: usesChinese ? "zh_CN" : "en_US", useSavedDirection: false,
                       useSavedModel: false, provider: translationProvider, useSavedProvider: !settingsReady,
@@ -840,6 +912,10 @@ final class ProbeModel: ObservableObject {
         }
         let title = resultActionTitle(action, targetLanguage: targetLanguage)
         translationIntentID = UUID()
+        latency.begin(intent: translationIntentID, source: .action, provider: translationProvider,
+                      trigger: nil, now: latencyClock())
+        cancelPrewarm()
+        prewarmRequested = true
         draft = Draft(text: source, origin: translationOrigin, useCache: false,
                       direction: direction, model: modelProfile, language: language,
                       useSavedDirection: !settingsReady && !directionEdited,
@@ -871,7 +947,8 @@ final class ProbeModel: ObservableObject {
             onTranslationResult?(productMessage)
             return
         }
-        if requested.action == nil, requested.origin != "ocr", requested.useCache, !requested.lookupFinished {
+        if requested.action == nil, requested.origin != "ocr", requested.useCache, !requested.lookupFinished,
+           LocalDictionaryPreflight.mayBeTerm(requested.text) {
             let id = UUID().uuidString
             draft = nil
             dictionaryLookup = (id, requested, false)
@@ -880,6 +957,8 @@ final class ProbeModel: ObservableObject {
             active = true
             hideCurrentOutput = false
             productPhase = .preparing
+            latency.bind(id: id)
+            latency.mark("lookup_started_ms", now: latencyClock())
             productMessage = text("Checking the local dictionary…", "正在查询本地词典…")
             onTranslationStarted?()
             _ = connection.dictionary(.lookup(text: requested.text, appLanguage: requested.language,
@@ -974,6 +1053,8 @@ final class ProbeModel: ObservableObject {
         latest.select(id)
         pending.insert(id)
         active = true
+        firstDeltaReceived = false
+        latency.dispatch(id: id, provider: requested.provider, now: latencyClock())
         discardBufferedDelta()
         hideCurrentOutput = false
         productPhase = .translating
@@ -1027,6 +1108,7 @@ final class ProbeModel: ObservableObject {
     }
 
     private func failPreparation(_ message: String) {
+        if latency.current?.requestID == nil || !active { latency.finish(.failed, now: latencyClock()) }
         draft = nil
         productPhase = .failed
         productMessage = message
@@ -1903,14 +1985,18 @@ final class ProbeModel: ObservableObject {
     }
 
     func cancel() {
+        prewarmRequested = false
+        cancelPrewarm()
         monitor.cancelPendingSelection()
         if draft != nil {
+            latency.finish(.cancelled, now: latencyClock())
             cancelledPreparation = (translationIntentID, connectionID)
             draft = nil
             productPhase = .cancelled
             productMessage = text("Cancelled", "已取消")
         }
         requestCancellation()
+        if !active { latency.finish(.cancelled, now: latencyClock()) }
         resumeDeferredCLIConnection()
     }
 
@@ -1976,7 +2062,7 @@ final class ProbeModel: ObservableObject {
     }
 
     private func receive(_ notice: HelperNotice) {
-        defer { resumeModelCatalog() }
+        defer { resumeModelCatalog(); resumePrewarm() }
         switch notice {
         case .event(let event):
             let imageRequest = imageTranslation.owns(requestID: event.id)
@@ -1987,9 +2073,11 @@ final class ProbeModel: ObservableObject {
             guard error == nil, !stopping else { return }
             if event.type == "ready" {
                 if case .array(let capabilities)? = event.payload["capabilities"] {
+                    prewarmSupported = nativeTranslation && capabilities.contains(.string("prewarm"))
                     catalogSupported = nativeTranslation && capabilities.contains(.string("model_catalog"))
                     imageTranslationSupported = nativeTranslation && capabilities.contains(.string("translate_image"))
                 } else {
+                    prewarmSupported = false
                     catalogSupported = false
                     imageTranslationSupported = false
                 }
@@ -1999,6 +2087,13 @@ final class ProbeModel: ObservableObject {
                     : connectionMode == .configuration ? "Local dictionary, settings, and history connection ready."
                     : "Ready: fixture + runtime_probe. Fixture is NOT translation."
                 if connectionMode != .diagnostic { loadSettings() }
+                return
+            }
+            if event.id == prewarmID {
+                if event.isTerminal {
+                    prewarmID = nil
+                    if event.type == "failed" { prewarmFailure = event.safeFailureCode }
+                }
                 return
             }
             if handleModelCatalog(event) { return }
@@ -2011,6 +2106,9 @@ final class ProbeModel: ObservableObject {
             if event.isTerminal { pending.remove(event.id) }
             // The transport validated seq/terminal rules even for events hidden here.
             guard latest.accepts(event) else { return }
+            if let metrics = event.payload["timings"]?.object {
+                latency.providerMetrics(metrics, id: event.id)
+            }
             active = pending.contains(event.id)
             switch event.type {
             case "accepted": status = nativeTranslation ? "Translation accepted." : "Accepted (P0 probe)."
@@ -2023,7 +2121,11 @@ final class ProbeModel: ObservableObject {
                     status = "Probe output limit exceeded; stopping helper."
                     stopHelper()
                 }
-                if renderUpdate == nil && !hideCurrentOutput {
+                if !firstDeltaReceived && !bufferedDelta.isEmpty && !hideCurrentOutput {
+                    firstDeltaReceived = true
+                    flushBufferedDelta()
+                    if latency.current?.requestID == event.id { latency.mark("first_output_ms", now: latencyClock()) }
+                } else if renderUpdate == nil && !hideCurrentOutput {
                     let requestID = event.id
                     let update = DispatchWorkItem { [weak self] in
                         guard let self, self.latest.id == requestID else { return }
@@ -2109,11 +2211,22 @@ final class ProbeModel: ObservableObject {
             }
             if nativeTranslation { onTranslationResult?(status + "\n\n" + output) }
             if event.isTerminal {
+                if latency.current?.requestID == event.id {
+                    if event.type == "completed", !hideCurrentOutput,
+                       event.payload["text"]?.string?.isEmpty == false {
+                        latency.mark("first_output_ms", now: latencyClock())
+                    }
+                    latency.finish(event.type == "completed" ? .completed :
+                                    event.type == "cancelled" ? .cancelled : .failed, now: latencyClock())
+                }
                 activeAction = nil
                 resumeTranslation()
                 resumeDeferredCLIConnection()
             }
         case .failure(let error):
+            prewarmID = nil
+            prewarmSupported = false
+            latency.finish(.failed, now: latencyClock())
             let isolatedCatalog = (modelCatalog.busy || catalogWasLastRequest) && !active && draft == nil
             let hiddenImageResult = imageTranslation.owns(requestID: latest.id) && hideCurrentOutput && draft == nil
             modelCatalog.disconnect()
@@ -2173,6 +2286,10 @@ final class ProbeModel: ObservableObject {
                 onTranslationResult?(status + "\n\n" + output)
             }
         case .stopped:
+            prewarmID = nil
+            prewarmSupported = false
+            prewarmScope = nil
+            prewarmTime = nil
             imageTranslation.drained(connectionID: connectionID)
             let restartCatalog = catalogReconnectIntent == modelCatalog.intent && modelCatalog.pending &&
                 (modelCatalog.matches(scope: selectedCLI) ||
@@ -2266,6 +2383,7 @@ final class ProbeModel: ObservableObject {
     private func handleDictionaryLookup(_ event: ServerEvent) -> Bool {
         guard let lookup = dictionaryLookup, event.id == lookup.id else { return false }
         guard event.isTerminal else { return true }
+        if latency.current?.requestID == event.id { latency.mark("lookup_finished_ms", now: latencyClock()) }
         dictionaryLookup = nil
         pending.remove(event.id)
         if latest.id == event.id { latest.select(nil) }
@@ -2274,6 +2392,7 @@ final class ProbeModel: ObservableObject {
             markHistorySnapshotStale()
         }
         if lookup.cancelled || hideCurrentOutput {
+            if latency.current?.requestID == event.id { latency.finish(.cancelled, now: latencyClock()) }
             if draft == nil && !hideCurrentOutput {
                 productPhase = .cancelled
                 productMessage = text("Local lookup cancelled. No model request was sent.",
@@ -2284,6 +2403,9 @@ final class ProbeModel: ObservableObject {
             return true
         }
         guard event.type == "completed" else {
+            if latency.current?.requestID == event.id {
+                latency.finish(event.type == "cancelled" ? .cancelled : .failed, now: latencyClock())
+            }
             draft = nil
             productPhase = event.type == "cancelled" ? .cancelled : .failed
             productMessage = event.type == "cancelled"
@@ -2305,6 +2427,10 @@ final class ProbeModel: ObservableObject {
                 resultSources = result.sources
                 resultGeneration = UUID()
                 output = resultText
+                if latency.current?.requestID == event.id {
+                    latency.mark("first_output_ms", now: latencyClock())
+                    latency.finish(.completed, now: latencyClock())
+                }
                 primaryResult = resultText
                 activeAction = nil
                 productPhase = .completed
@@ -2840,6 +2966,8 @@ final class ProbeModel: ObservableObject {
     }
 
     func prepareToQuit() {
+        prewarmRequested = false
+        cancelPrewarm()
         catalogShutDown = true
         imageTranslation.shutdown()
         plainPasteConfigAfterStop = false

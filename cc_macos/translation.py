@@ -1,7 +1,9 @@
 """Explicit native translation service; no account, CLI or user-home discovery."""
 
 import json
+import math
 import sys
+import time
 
 from cc_classify import classify_selection, is_single_word
 from cc_config import CFG
@@ -35,6 +37,12 @@ MAX_CLI_ENVIRONMENT_BYTES = 32_768
 MAX_OUTPUT_BYTES = 24_000
 MAX_DELTA_BYTES = 4_096
 RESULT_ACTIONS = ("concise", "formal", "summary", "explain_code", "as_text", "retranslate")
+MAX_TIMING_MS = 3_600_000
+PROVIDER_TIMING_FIELDS = frozenset({
+    "total_ms", "spawn_ms", "initialize_ms", "hook_preflight_ms", "thread_start_ms",
+    "turn_start_ms", "first_result_ms", "turn_first_result_ms", "turn_total_ms", "version_check_ms",
+})
+PROVIDER_TIMING_FLAGS = frozenset({"version_cache_hit", "warm_process_hit"})
 TRANSLATION_FAILURE_CODES = {
     "invalid_translation", "invalid_result_action", "translation_unavailable", "unsupported_provider",
     "invalid_translation_settings", "translation_timeout", "translation_output_limit",
@@ -49,6 +57,34 @@ class TranslationError(ConfigurationError):
     def __init__(self, code, submitted=False):
         super().__init__(code)
         self.code, self.submitted = code, submitted
+
+
+def validate_prewarm_request(payload):
+    if (set(payload) != {"operation", "app_language"} or payload["operation"] != "prewarm"
+            or payload["app_language"] not in ("zh_CN", "en_US")):
+        raise ProtocolError("invalid_prewarm")
+
+
+def provider_timings(metrics):
+    values = dict(metrics)
+    timings = {}
+    for key in PROVIDER_TIMING_FIELDS:
+        value = values.get(key)
+        if type(value) in (int, float) and 0 <= value <= MAX_TIMING_MS and math.isfinite(value):
+            timings[key] = value
+    for key in PROVIDER_TIMING_FLAGS:
+        value = values.get(key)
+        if type(value) in (bool, int, float) and value in (0, 1):
+            timings[key] = int(value)
+    return timings
+
+
+def _with_elapsed(outcome, started):
+    event, result = outcome
+    if event == "completed":
+        result["timings"]["helper_elapsed_ms"] = min(
+            MAX_TIMING_MS, max(0, int((time.monotonic() - started) * 1000)))
+    return event, result
 
 
 def parse_cli_environment(environment, home, provider_id=CODEX_PROVIDER):
@@ -127,6 +163,10 @@ def _snapshot_settings(config, payload, *, result_action=False, image=False):
 
 def _stream_enabled(config):
     return config[CFG.MODEL_PROVIDER] == CLAUDE_PROVIDER or bool(config[CFG.CODEX_STREAMING_EXPERIMENTAL])
+
+
+def _warm_settings_key(config, model, direction, language):
+    return (config[CFG.MODEL_PROVIDER], model, direction, language, bool(config[CFG.SUMMARY_ENABLED]))
 
 
 def snapshot_for_image(config, payload, owned_path):
@@ -228,6 +268,7 @@ class TranslationSession(ConfigurationSession):
     validate_translation_request = staticmethod(validate_translation_request)
     validate_result_action_request = staticmethod(validate_result_action_request)
     validate_image_request = staticmethod(validate_image_request)
+    validate_prewarm_request = staticmethod(validate_prewarm_request)
 
     @property
     def translation_backend(self):
@@ -242,6 +283,7 @@ class TranslationSession(ConfigurationSession):
         self._provider = None
         self._images = set()
         self._undrained_images = False
+        self._warm_profile = None
 
     def open(self):
         opened = False
@@ -306,8 +348,54 @@ class TranslationSession(ConfigurationSession):
             return "recorded", None
 
     def translate(self, payload, cancel, on_delta, begin_finish):
+        started = time.monotonic()
         snapshot, cached = self._capture(payload)
-        return self._execute(snapshot, cached, payload["record_history"], cancel, on_delta, begin_finish)
+        outcome = self._execute(snapshot, cached, payload["record_history"], cancel, on_delta, begin_finish)
+        if outcome[0] == "completed" and self.provider_id == CLAUDE_PROVIDER:
+            with self._operations_lock:
+                self._warm_profile = (
+                    _warm_settings_key(snapshot.config, snapshot.request.model,
+                                       snapshot.direction, snapshot.app_language),
+                    snapshot.request.task, snapshot.request.model, snapshot.request.system_prompt)
+        return _with_elapsed(outcome, started)
+
+    def prewarm(self, payload, cancel, begin_finish):
+        validate_prewarm_request(payload)
+        if cancel.is_set():
+            return "cancelled", {}
+        with self._operations_lock:
+            config = self._translation_config()
+            model, direction, language = _snapshot_settings(config, payload, result_action=True)
+            key = _warm_settings_key(config, model, direction, language)
+            task, prompt = "text", direction_prompt(direction, language) + SYSTEM_SUFFIX
+            if self._warm_profile is not None:
+                if self._warm_profile[0] == key:
+                    _, task, model, prompt = self._warm_profile
+                else:
+                    self._warm_profile = None
+            request = ProviderRequest(
+                task, model, prompt, "",
+                timeout_seconds=90 if _stream_enabled(config) else 60)
+        if cancel.is_set():
+            return "cancelled", {}
+        try:
+            result = self._provider.warm_up(
+                request if self.provider_id == CLAUDE_PROVIDER else model, cancel_event=cancel)
+        except (ProcessError, OSError) as error:
+            if "cleanup_failed" in str(error):
+                raise TranslationError("provider_cleanup_failed") from None
+            if cancel.is_set() or str(error) in ("cancelled", "appserver_shutdown"):
+                return "cancelled", {}
+            raise TranslationError("prewarm_failed") from None
+        if "cleanup_failed" in result.error_code:
+            raise TranslationError("provider_cleanup_failed")
+        if cancel.is_set() or result.error_code in ("cancelled", "appserver_shutdown"):
+            return "cancelled", {}
+        if not result.ok:
+            raise TranslationError("prewarm_failed")
+        if not begin_finish():
+            return "cancelled", {}
+        return "completed", {"warmed": True}
 
     def _release_image(self, image, submitted):
         try:
@@ -318,6 +406,7 @@ class TranslationSession(ConfigurationSession):
             self._images.discard(image)
 
     def translate_image(self, payload, cancel, on_delta, begin_finish):
+        started = time.monotonic()
         validate_image_request(payload)
         if cancel.is_set():
             return "cancelled", {"submitted": False}
@@ -353,13 +442,14 @@ class TranslationSession(ConfigurationSession):
                 return "cancelled", {"submitted": result["submitted"]}
             result["history"], result["history_error"] = self._record(
                 snapshot, result["text"], payload["record_history"])
-        return event, result
+        return _with_elapsed((event, result), started)
 
     def result_action(self, payload, cancel, on_delta, begin_finish):
+        started = time.monotonic()
         with self._operations_lock:
             config = self._translation_config()
             snapshot = snapshot_for_result_action(config, payload)
-        return self._execute(snapshot, None, False, cancel, on_delta, begin_finish)
+        return _with_elapsed(self._execute(snapshot, None, False, cancel, on_delta, begin_finish), started)
 
     def model_catalog(self, cancel, begin_finish):
         try:
@@ -382,6 +472,7 @@ class TranslationSession(ConfigurationSession):
         if snapshot.selection.provider_id != self.provider_id:
             raise TranslationError("unsupported_provider")
         submitted, output, used_cache = False, cached, cached is not None
+        timings = {}
         if cached is None:
             output_size = 2
             def emit(text):
@@ -424,6 +515,7 @@ class TranslationSession(ConfigurationSession):
                 return "cancelled", {"submitted": bool(submitted)}
             if not result.ok:
                 raise TranslationError(provider_failure(result.error_code), bool(submitted))
+            timings = provider_timings(result.metrics)
             output = result.text
         try:
             output_size = text_bytes(output) if type(output) is str else MAX_OUTPUT_BYTES + 1
@@ -442,6 +534,7 @@ class TranslationSession(ConfigurationSession):
             "text": output, "submitted": bool(submitted), "cached": used_cache,
             "kind": snapshot.kind, "target_lang": snapshot.target_lang, "summarize": snapshot.summarize,
             "history": status, "history_error": error,
+            "timings": {**timings, "cache_hit": int(used_cache)},
         }
 
     def close(self):
@@ -464,4 +557,5 @@ class TranslationSession(ConfigurationSession):
             if cleanup_failed:
                 raise ConfigurationError("image_cleanup_failed")
         finally:
+            self._warm_profile = None
             super().close()

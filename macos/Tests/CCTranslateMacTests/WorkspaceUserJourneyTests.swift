@@ -1131,9 +1131,10 @@ final class WorkspaceUserJourneyTests: XCTestCase {
             XCTAssertNil(app.resultPanel)
             XCTAssertEqual(product.model.input, "")
             XCTAssertEqual(product.model.output, "")
-            XCTAssertTrue(product.helpers.isEmpty, "Opening quick input must not construct even a synthetic helper.")
-            XCTAssertEqual(product.runtimeRequests, 0)
-            XCTAssertEqual(product.locatorRequests, 0)
+            XCTAssertEqual(product.helpers.count, 1, "The explicit quick-input window may prepare its helper.")
+            XCTAssertTrue(product.helpers.allSatisfy { $0.translations.isEmpty && $0.resultActions.isEmpty })
+            XCTAssertEqual(product.runtimeRequests, 1)
+            XCTAssertEqual(product.locatorRequests, 1)
             let editors = InputLimitNativeViews.views(NativeTranslationTextView.self, in: root)
             XCTAssertEqual(editors.count, 1)
             let editor = try XCTUnwrap(editors.first)
@@ -1157,9 +1158,10 @@ final class WorkspaceUserJourneyTests: XCTestCase {
                 in: root, identifier: "quick-input-cancel", label: "Cancel", kind: .button)
             try await initialCancel.press()
             XCTAssertFalse(quick.isVisible)
-            XCTAssertTrue(product.helpers.isEmpty)
-            XCTAssertEqual(product.runtimeRequests, 0)
-            XCTAssertEqual(product.locatorRequests, 0)
+            XCTAssertEqual(product.helpers.count, 1)
+            XCTAssertTrue(product.helpers.allSatisfy { $0.translations.isEmpty && $0.resultActions.isEmpty })
+            XCTAssertEqual(product.runtimeRequests, 1)
+            XCTAssertEqual(product.locatorRequests, 1)
             XCTAssertEqual(product.model.input, "")
             app.handleSelection(.absent)
             try await CaptureProductFixture.waitFor {
@@ -1167,7 +1169,7 @@ final class WorkspaceUserJourneyTests: XCTestCase {
                 return quick.isVisible && quick.isKeyWindow && editor.string.isEmpty
             }
             XCTAssertTrue(app.quickInputPanel === quick)
-            XCTAssertTrue(product.helpers.isEmpty)
+            XCTAssertTrue(product.helpers.allSatisfy { $0.translations.isEmpty && $0.resultActions.isEmpty })
             XCTAssertNil(app.inputPanel)
             XCTAssertTrue(quick.makeFirstResponder(editor))
             let source = "Synthetic quick startup source."
@@ -1177,7 +1179,7 @@ final class WorkspaceUserJourneyTests: XCTestCase {
             InputLimitNativeViews.assertVisible(submit)
             captureSubmissionClose = true
             try await submit.press()
-            XCTAssertFalse(product.helpers.isEmpty, "Only explicit submission may initialize the helper.")
+            XCTAssertFalse(product.helpers.isEmpty, "Only explicit submission may start a model request.")
             let helper = try product.ready()
             try await CaptureProductFixture.waitFor { helper.translations.count == 1 }
             let request = try XCTUnwrap(helper.translations.first)

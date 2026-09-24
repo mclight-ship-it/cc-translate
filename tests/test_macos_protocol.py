@@ -342,7 +342,7 @@ class TestMacResultActionProtocol(unittest.TestCase):
         self.assertEqual(ready["capabilities"], [
             "config_load", "config_save", "history_load", "history_add", "history_clear", "translate", "result_action",
             "model_catalog",
-            "translate_image",
+            "translate_image", "prewarm",
         ])
         self.assertEqual((ready["backend"], ready["fixture"], ready["protocol"]), ("native_appserver", False, 1))
         config.translate.assert_not_called()

@@ -252,6 +252,29 @@ class ImageServiceTests(_TranslationDirectory):
     def copies(self):
         return list((self.directory / "NativeWorkspace").glob(".cc-image-*"))
 
+    def test_image_helper_timing_includes_owned_copy_cleanup_and_final_history(self):
+        clock = [10]
+        release, record, stream = self.session._release_image, self.session._record, self.provider.stream
+        def model(*args):
+            clock[0] += 2
+            return stream(*args)
+        def cleanup(*args):
+            clock[0] += 4
+            return release(*args)
+        def history(*args):
+            clock[0] += 8
+            return record(*args)
+        with patch.object(translation.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(self.provider, "stream", side_effect=model), \
+                patch.object(self.session, "_release_image", side_effect=cleanup), \
+                patch.object(self.session, "_record", side_effect=history):
+            event, result = self.session.translate_image(
+                request(self.source), threading.Event(), lambda text: None, lambda: True)
+        self.assertEqual(event, "completed")
+        self.assertEqual(result["timings"], {"cache_hit": 0, "helper_elapsed_ms": 14_000})
+        self.assertEqual(self.copies(), [])
+        self.assertEqual(len(self.history()), 1)
+
     def test_loaded_nonpositive_text_limits_do_not_block_genuine_image_service_requests(self):
         for limit in (0, -7):
             with self.subTest(limit=limit):
@@ -292,7 +315,8 @@ class ImageServiceTests(_TranslationDirectory):
         result = self.stdout.result("image")
         self.assertEqual(result["payload"], {
             "text": OUTPUT, "submitted": True, "cached": False, "kind": "ocr",
-            "target_lang": None, "summarize": False, "history": "recorded", "history_error": None})
+            "target_lang": None, "summarize": False, "history": "recorded", "history_error": None,
+            "timings": result["payload"]["timings"]})
         entries = self.history()
         self.assertIsNone(entries[0]["input"])
         self.assertEqual((entries[0]["kind"], entries[0]["output"]), ("ocr", OUTPUT))

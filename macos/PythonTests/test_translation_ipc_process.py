@@ -220,7 +220,16 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
     def assert_completed(self, event, *, cached=False, history="recorded"):
         expected = self.fixture["expected"]
         self.assertEqual(event["type"], "completed")
-        self.assertEqual(event["payload"], {
+        payload = dict(event["payload"])
+        timings = payload.pop("timings")
+        self.assertTrue(set(timings) <= translation.PROVIDER_TIMING_FIELDS |
+                        translation.PROVIDER_TIMING_FLAGS | {"helper_elapsed_ms", "cache_hit"})
+        self.assertEqual(timings["cache_hit"], int(cached))
+        self.assertIn("helper_elapsed_ms", timings)
+        for value in timings.values():
+            self.assertIn(type(value), (int, float))
+            self.assertTrue(0 <= value <= translation.MAX_TIMING_MS)
+        self.assertEqual(payload, {
             "text": expected["output"], "submitted": not cached, "cached": cached,
             "kind": expected["kind"], "target_lang": expected["target_lang"],
             "summarize": expected["summarize"], "history": history, "history_error": None,
