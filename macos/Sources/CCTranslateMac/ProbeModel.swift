@@ -2827,6 +2827,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func stopMonitor() {
+        cancelPreparationIntent()
         monitorRequestedEnabled = false
         persistMonitorPreference()
         translatePassiveSelections = false

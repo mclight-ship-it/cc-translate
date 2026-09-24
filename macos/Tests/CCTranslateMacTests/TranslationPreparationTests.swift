@@ -82,6 +82,40 @@ final class TranslationPreparationTests: XCTestCase {
         XCTAssertTrue(helper.translations.isEmpty)
     }
 
+    func testDisablingShortcutDuringWakeDrainDoesNotReopenBackgroundHelper() throws {
+        let monitor = SelectionMonitorFixture()
+        let f = try ProductTestHarness(selectionMonitor: monitor, readPermissions: { Self.granted })
+        defer { f.cleanUp() }
+        f.model.startMonitor()
+        let helper = try f.ready(capabilities: ["prewarm"])
+        f.model.suspendTranslationPreparation()
+        f.model.resumeTranslationPreparationAfterWake()
+        f.model.stopMonitor()
+        helper.stopped()
+        monitor.onCopyIntent?()
+        XCTAssertEqual(f.helpers.count, 1)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertFalse(f.model.monitorRequestedEnabled)
+    }
+
+    func testConfiguredLaunchRestoresOnceAndCancelledWarmCannotRaceWithReenable() throws {
+        let monitor = SelectionMonitorFixture()
+        let f = try ProductTestHarness(selectionMonitor: monitor, readPermissions: { Self.granted })
+        defer { f.model.stopMonitor(); f.cleanUp() }
+        f.preferences.set(true, forKey: ProbeModel.selectionMonitorPreferenceKey)
+        f.model.loadPresentation()
+        XCTAssertEqual(f.helpers.count, 1)
+        let helper = try f.ready(capabilities: ["prewarm"])
+        let first = try XCTUnwrap(prewarms(helper).last)
+        f.model.stopMonitor()
+        f.model.startMonitor()
+        XCTAssertEqual(prewarms(helper).count, 1, "Wait for the cancelled warm request to drain.")
+        helper.event("cancelled", id: first.id)
+        XCTAssertEqual(prewarms(helper).count, 2)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertEqual(f.helpers.count, 1)
+    }
+
     func testSleepWakeNotificationRestoresIntentBeforeOrAfterHelperDrain() throws {
         _ = NSApplication.shared
         for drainFirst in [false, true] {
@@ -138,6 +172,29 @@ final class TranslationPreparationTests: XCTestCase {
                 XCTAssertEqual(f.locatorRequests, 0)
             }
         }
+    }
+
+    func testSleepDoesNotStopForegroundOrRefillUntilWake() throws {
+        let f = try ProductTestHarness()
+        defer { f.cleanUp() }
+        let helper = try f.ready(capabilities: ["prewarm"])
+        f.model.input = "Keep the active request intact."
+        f.model.translate()
+        let request = try XCTUnwrap(helper.translations.last)
+        f.model.suspendTranslationPreparation()
+        XCTAssertEqual(helper.stopCount, 0)
+        XCTAssertFalse(helper.messages.contains {
+            $0.type == "cancel" && $0.payload["request_id"] == .string(request.id)
+        })
+        helper.event("completed", id: request.id, payload: [
+            "text": .string("Preserved result."), "cached": .bool(false),
+            "kind": .string("text"), "history": .string("disabled")
+        ])
+        XCTAssertTrue(prewarms(helper).isEmpty)
+        f.model.resumeTranslationPreparationAfterWake()
+        XCTAssertEqual(prewarms(helper).count, 1)
+        XCTAssertEqual(f.model.output, "Preserved result.")
+        XCTAssertEqual(helper.translations.count, 1)
     }
 
     func testCancellationCloseQuitAndFailureDiscardDeferredWakePreparation() throws {
