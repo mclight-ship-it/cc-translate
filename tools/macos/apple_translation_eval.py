@@ -458,19 +458,11 @@ def click_observed_download(binary, output, runtime, pid, attempt, report, env):
     target = download_text_target(inspection, pid, window_id)
     if target is None:
         return "no_unambiguous_download_text_in_owned_window"
-    label, (px, py), (x, y, width, height) = target
-    return command(["/usr/bin/osascript", "-e", f'''
-tell application "System Events"
-    tell (first application process whose unix id is {pid})
-        if not frontmost then return "refused_background_window"
-        set ownedWindow to first window whose name is "Apple Translation Evaluation"
-        if position of ownedWindow is not {{{x}, {y}}} then return "refused_moved_window"
-        if size of ownedWindow is not {{{width}, {height}}} then return "refused_resized_window"
-        click at {{{px}, {py}}}
-        return "clicked_observed_{label.lower()}"
-    end tell
-end tell
-'''], 5, report, env=env)
+    label, point, _ = target
+    return command([str(binary), "--click-download-window", json.dumps({
+        "pid": pid, "window_id": window_id, "bounds": inspection["bounds"],
+        "point": point, "label": label,
+    })], 5, report, env=env)
 
 
 def capture_window(output, runtime, report):

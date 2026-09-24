@@ -30,10 +30,62 @@ private func inspectDownloadWindow() throws {
     }
     let result: [String: Any] = [
         "pid": pid, "window_id": windowID, "bounds": bounds,
+        "can_post_events": CGPreflightPostEventAccess(),
         "image_width": bitmap.pixelsWide, "image_height": bitmap.pixelsHigh, "texts": texts,
     ]
     let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
     FileHandle.standardOutput.write(data)
+}
+
+private struct DownloadClick: Decodable {
+    let pid: Int32
+    let window_id: UInt32
+    let bounds: [String: Double]
+    let point: [Double]
+    let label: String
+}
+
+@MainActor
+private func postDownloadClick() throws {
+    guard CommandLine.arguments.count == 3 else {
+        throw NSError(domain: "DownloadWindowClick", code: 1)
+    }
+    let target = try JSONDecoder().decode(
+        DownloadClick.self, from: Data(CommandLine.arguments[2].utf8))
+    guard ["Download", "Done"].contains(target.label),
+          CGPreflightPostEventAccess(),
+          NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid,
+          NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier == "org.cctranslate.AppleTranslationEval",
+          let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, target.window_id) as? [[String: Any]],
+          let window = windows.first,
+          window[kCGWindowOwnerPID as String] as? Int32 == target.pid,
+          window[kCGWindowIsOnscreen as String] as? Bool == true,
+          let bounds = window[kCGWindowBounds as String] as? [String: Double],
+          bounds == target.bounds,
+          let x = bounds["X"], let y = bounds["Y"],
+          let width = bounds["Width"], let height = bounds["Height"],
+          target.point.count == 2, target.point.allSatisfy({ $0.isFinite }),
+          CGRect(x: x, y: y, width: width, height: height).contains(
+            CGPoint(x: target.point[0], y: target.point[1]))
+    else {
+        throw NSError(domain: "DownloadWindowClick", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "Event permission, foreground owner, or observed bounds changed"])
+    }
+    let point = CGPoint(x: target.point[0], y: target.point[1])
+    guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                             mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                           mouseCursorPosition: point, mouseButton: .left) else {
+        throw NSError(domain: "DownloadWindowClick", code: 3)
+    }
+    down.setIntegerValueField(.mouseEventClickState, value: 1)
+    up.setIntegerValueField(.mouseEventClickState, value: 1)
+    // Accessibility's click-at succeeded without activating this remote system sheet.
+    // Use the observed control in the verified foreground window; readiness is checked separately.
+    down.post(tap: .cghidEventTap)
+    usleep(50_000)
+    up.post(tap: .cghidEventTap)
+    print("posted_observed_\(target.label.lowercased())")
 }
 
 struct EvaluationCase: Decodable {
@@ -439,6 +491,15 @@ final class EvaluationDelegate: NSObject, NSApplicationDelegate {
 enum AppleTranslationEvaluationApp {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst().first == "--click-download-window" {
+            do {
+                try postDownloadClick()
+            } catch {
+                fputs("Cannot click download window: \(error)\n", stderr)
+                exit(2)
+            }
+            return
+        }
         if CommandLine.arguments.dropFirst().first == "--inspect-download-window" {
             do {
                 try inspectDownloadWindow()

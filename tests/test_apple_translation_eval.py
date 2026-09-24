@@ -125,20 +125,26 @@ class DownloadTextTests(unittest.TestCase):
                 evaluation.download_text_target(data, 4321, 71)
 
     def test_visual_click_rechecks_foreground_owner_and_window_geometry(self):
-        replies = ["", "", json.dumps(self.inspection()), "clicked_observed_download"]
+        replies = ["", "", json.dumps(self.inspection()), "posted_observed_download"]
         with patch.object(evaluation, "command", side_effect=replies) as execute:
             result = evaluation.click_observed_download(
                 Path("app"), Path("public-output"), {"window_id": 71},
                 4321, 1, evaluation.new_report("unit-test"), {})
-        self.assertEqual(result, "clicked_observed_download")
+        self.assertEqual(result, "posted_observed_download")
         self.assertEqual(execute.call_args_list[1].args[0][1:6], ["-x", "-o", "-l", "71",
                          str(Path("public-output") / "download-ui-01.png")])
-        script = execute.call_args_list[-1].args[0][-1]
-        self.assertIn("unix id is 4321", script)
-        self.assertIn("if not frontmost", script)
-        self.assertIn('whose name is "Apple Translation Evaluation"', script)
-        self.assertIn("if position of ownedWindow is not {100, 200}", script)
-        self.assertIn("if size of ownedWindow is not {640, 332}", script)
+        argv = execute.call_args_list[-1].args[0]
+        self.assertEqual(argv[:2], ["app", "--click-download-window"])
+        self.assertEqual(json.loads(argv[2]), {
+            "pid": 4321, "window_id": 71, "bounds": self.inspection()["bounds"],
+            "point": [580, 366], "label": "Download",
+        })
+        swift = evaluation.SOURCE.read_text(encoding="utf-8")
+        self.assertIn("CGPreflightPostEventAccess()", swift)
+        self.assertIn("NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid", swift)
+        self.assertIn("bounds == target.bounds", swift)
+        self.assertIn("down.post(tap: .cghidEventTap)", swift)
+        self.assertIn("up.post(tap: .cghidEventTap)", swift)
         data = self.inspection()
         data["texts"][3]["confidence"] = 0.2
         self.assertIsNone(evaluation.download_text_target(data, 4321, 71))
