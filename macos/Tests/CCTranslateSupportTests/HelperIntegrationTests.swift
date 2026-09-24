@@ -414,7 +414,17 @@ extension HelperIntegrationTests {
                                    history: String = "recorded",
                                    file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(session.result(id)?.type, "completed", file: file, line: line)
-        XCTAssertEqual(session.result(id)?.payload, [
+        var payload = session.result(id)?.payload ?? [:]
+        let timingValue = payload.removeValue(forKey: "timings")
+        XCTAssertNotNil(timingValue, file: file, line: line)
+        if let timingValue {
+            XCTAssertNoThrow(try TranslationDocument.validateTimings(timingValue, cached: cached),
+                             file: file, line: line)
+            XCTAssertEqual(timingValue.object?["cache_hit"], .integer(cached ? 1 : 0),
+                           file: file, line: line)
+            XCTAssertNotNil(timingValue.object?["helper_elapsed_ms"]?.number, file: file, line: line)
+        }
+        XCTAssertEqual(payload, [
             "text": context.expected["output"]!,
             "submitted": .bool(!cached), "cached": .bool(cached),
             "kind": context.expected["kind"]!, "target_lang": context.expected["target_lang"]!,
