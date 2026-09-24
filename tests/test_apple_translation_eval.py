@@ -347,6 +347,8 @@ class WorkingDirectoryTests(unittest.TestCase):
         self.assertIn("description of node", script)
         self.assertIn("value of node", script)
         self.assertIn("entire contents of node", script)
+        self.assertIn("set childNodes to get entire contents of node", script)
+        self.assertNotIn("repeat with labelNode in (entire contents", script)
         self.assertIn("(count nodes) > 512", script)
         self.assertIn('textValue is "Download Languages to Translate"', script)
         self.assertIn("if languageSheet and doneButton is not missing value then", script)

@@ -368,9 +368,12 @@ tell application "System Events"
                     end if
                     if nodeRole is "AXButton" then
                         set labels to {{name of node, description of node, value of node}}
-                        repeat with labelNode in (entire contents of node)
-                            if role of labelNode is "AXStaticText" then set labels to labels & {{value of labelNode}}
-                        end repeat
+                        if description of node is "button" then
+                            set childNodes to get entire contents of node
+                            repeat with labelNode in childNodes
+                                if role of labelNode is "AXStaticText" then set labels to labels & {{value of labelNode}}
+                            end repeat
+                        end if
                         repeat with candidateLabel in labels
                             set labelText to contents of candidateLabel
                             if labelText is not missing value then
