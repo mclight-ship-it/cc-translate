@@ -81,6 +81,69 @@ class CorpusTests(unittest.TestCase):
         self.assertNotIn("let reference:", swift)
 
 
+class DownloadTextTests(unittest.TestCase):
+    def inspection(self):
+        return {
+            "pid": 4321, "window_id": 71,
+            "bounds": {"X": 100, "Y": 200, "Width": 640, "Height": 332},
+            "image_width": 1280, "image_height": 664,
+            "texts": [{"text": text, "confidence": 1, "x": 0.75, "y": 0.5}
+                      for text in ("Download Languages to Translate", "English (US)",
+                                   "Chinese (Mandarin, Simplified)", "Download", "Done")],
+        }
+
+    def test_observed_exact_download_in_scoped_language_sheet(self):
+        result = evaluation.download_text_target(self.inspection(), 4321, 71)
+        self.assertEqual(result, ("Download", (580, 366), (100, 200, 640, 332)))
+        data = self.inspection()
+        data["texts"] = [row for row in data["texts"] if row["text"] != "Download"]
+        self.assertEqual(evaluation.download_text_target(data, 4321, 71)[0], "Done")
+
+    def test_unrelated_low_confidence_or_ambiguous_text_never_clicks(self):
+        for change in (
+            lambda d: d["texts"].pop(0),
+            lambda d: d["texts"].pop(1),
+            lambda d: d["texts"][3].update(confidence=0.2),
+        ):
+            data = self.inspection()
+            data["texts"] = [row for row in data["texts"] if row["text"] != "Done"]
+            change(data)
+            self.assertIsNone(evaluation.download_text_target(data, 4321, 71))
+
+    def test_wrong_owner_shadow_or_invalid_geometry_is_rejected(self):
+        for change in (
+            lambda d: d.update(pid=1),
+            lambda d: d.update(window_id=1),
+            lambda d: d.update(image_height=1000),
+            lambda d: d["bounds"].update(Width=0),
+            lambda d: d["texts"][3].update(x=math.nan),
+            lambda d: d["texts"][3].update(y=2),
+        ):
+            data = self.inspection()
+            change(data)
+            with self.assertRaises(evaluation.EvalError):
+                evaluation.download_text_target(data, 4321, 71)
+
+    def test_visual_click_rechecks_foreground_owner_and_window_geometry(self):
+        replies = ["", "", json.dumps(self.inspection()), "clicked_observed_download"]
+        with patch.object(evaluation, "command", side_effect=replies) as execute:
+            result = evaluation.click_observed_download(
+                Path("app"), Path("public-output"), {"window_id": 71},
+                4321, 1, evaluation.new_report("unit-test"), {})
+        self.assertEqual(result, "clicked_observed_download")
+        self.assertEqual(execute.call_args_list[1].args[0][1:6], ["-x", "-o", "-l", "71",
+                         str(Path("public-output") / "download-ui-01.png")])
+        script = execute.call_args_list[-1].args[0][-1]
+        self.assertIn("unix id is 4321", script)
+        self.assertIn("if not frontmost", script)
+        self.assertIn('whose name is "Apple Translation Evaluation"', script)
+        self.assertIn("if position of ownedWindow is not {100, 200}", script)
+        self.assertIn("if size of ownedWindow is not {640, 332}", script)
+        data = self.inspection()
+        data["texts"][3]["confidence"] = 0.2
+        self.assertIsNone(evaluation.download_text_target(data, 4321, 71))
+
+
 class ReportTests(unittest.TestCase):
     def test_complete_schema_does_not_assign_quality(self):
         report = report_fixture()

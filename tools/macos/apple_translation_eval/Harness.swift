@@ -3,6 +3,38 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 import Translation
+import Vision
+
+private func inspectDownloadWindow() throws {
+    let args = CommandLine.arguments
+    guard args.count == 5, let pid = Int(args[3]), let windowID = UInt32(args[4]),
+          let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]],
+          let window = windows.first,
+          window[kCGWindowOwnerPID as String] as? Int == pid,
+          window[kCGWindowIsOnscreen as String] as? Bool == true,
+          let bounds = window[kCGWindowBounds as String] as? [String: Double],
+          let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: args[2])))
+    else {
+        throw NSError(domain: "DownloadWindowInspection", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Owned visible window or capture unavailable"])
+    }
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["en-US"]
+    request.usesLanguageCorrection = false
+    try VNImageRequestHandler(url: URL(fileURLWithPath: args[2])).perform([request])
+    let texts: [[String: Any]] = (request.results ?? []).compactMap { observation in
+        guard let candidate = observation.topCandidates(1).first else { return nil }
+        return ["text": candidate.string, "confidence": candidate.confidence,
+                "x": observation.boundingBox.midX, "y": observation.boundingBox.midY]
+    }
+    let result: [String: Any] = [
+        "pid": pid, "window_id": windowID, "bounds": bounds,
+        "image_width": bitmap.pixelsWide, "image_height": bitmap.pixelsHigh, "texts": texts,
+    ]
+    let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    FileHandle.standardOutput.write(data)
+}
 
 struct EvaluationCase: Decodable {
     let id: String
@@ -407,6 +439,15 @@ final class EvaluationDelegate: NSObject, NSApplicationDelegate {
 enum AppleTranslationEvaluationApp {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst().first == "--inspect-download-window" {
+            do {
+                try inspectDownloadWindow()
+            } catch {
+                fputs("Cannot inspect download window: \(error)\n", stderr)
+                exit(2)
+            }
+            return
+        }
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
         let delegate = EvaluationDelegate()

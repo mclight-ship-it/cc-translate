@@ -304,7 +304,7 @@ def build_commands(output, sdk):
          "-swift-version", "5", "-target", "arm64-apple-macos15.0", "-sdk", sdk,
          "-module-cache-path", str(output / "module-cache"), str(SOURCE),
          "-framework", "SwiftUI", "-framework", "AppKit", "-framework", "Translation",
-         "-framework", "CoreGraphics", "-o", str(binary)],
+         "-framework", "CoreGraphics", "-framework", "Vision", "-o", str(binary)],
         ["/usr/bin/codesign", "--force", "--sign", "-", str(app)],
     ]
 
@@ -406,6 +406,73 @@ def retryable_automation_error(error, output):
         or any(code in output for code in ("(-1719)", "(-10000)"))))
 
 
+def download_text_target(inspection, pid, window_id):
+    """Resolve observed button text, never a guessed coordinate or generic consent."""
+    need(inspection.get("pid") == pid and inspection.get("window_id") == window_id,
+         "download_capture_owner_mismatch")
+    bounds = inspection["bounds"]
+    x, y, width, height = (bounds[key] for key in ("X", "Y", "Width", "Height"))
+    image_width, image_height = inspection["image_width"], inspection["image_height"]
+    need(all(type(value) in (int, float) and math.isfinite(value)
+             for value in (x, y, width, height, image_width, image_height))
+         and min(width, height, image_width, image_height) > 0, "invalid_download_window_geometry")
+    scale = image_width / width
+    # A sheet can extend slightly below its parent. A shadow or a different crop is not accepted.
+    need(0.99 <= scale <= 3.01 and height - 2 <= image_height / scale <= height + 32,
+         "unexpected_download_capture_framing")
+    texts = [row for row in inspection["texts"] if row["confidence"] >= 0.9]
+    if any(row["text"] in ("Download", "Done") and row["confidence"] < 0.9
+           for row in inspection["texts"]):
+        return None
+    joined = " ".join(row["text"] for row in texts)
+    if ("Download Languages to Translate" not in joined
+            or not any(row["text"].startswith("English") for row in texts)
+            or not any(row["text"].startswith("Chinese") for row in texts)):
+        return None
+    downloads = [row for row in texts if row["text"] == "Download"]
+    done = [row for row in texts if row["text"] == "Done"]
+    candidates = downloads or done
+    if not candidates or len(downloads) > 2 or (not downloads and len(done) != 1):
+        return None
+    target = candidates[0]
+    need(all(type(target[key]) in (int, float) and math.isfinite(target[key])
+             and 0 <= target[key] <= 1 for key in ("x", "y")), "invalid_download_text_geometry")
+    point = (x + target["x"] * image_width / scale,
+             y + (1 - target["y"]) * image_height / scale)
+    need(x < point[0] < x + width and y < point[1] < y + height, "download_text_outside_parent")
+    return target["text"], tuple(round(value) for value in point), tuple(
+        round(value) for value in (x, y, width, height))
+
+
+def click_observed_download(binary, output, runtime, pid, attempt, report, env):
+    window_id = runtime.get("window_id")
+    need(type(window_id) is int and window_id > 0, "no_owned_download_window")
+    image = output / f"download-ui-{attempt:02d}.png"
+    command(["/usr/bin/osascript", "-e",
+             f'tell application "System Events" to set frontmost of '
+             f'(first application process whose unix id is {pid}) to true'], 5, report, env=env)
+    command(["/usr/sbin/screencapture", "-x", "-o", "-l", str(window_id), str(image)], 5, report, env=env)
+    inspection = json.loads(command(
+        [str(binary), "--inspect-download-window", str(image), str(pid), str(window_id)],
+        10, report, env=env))
+    target = download_text_target(inspection, pid, window_id)
+    if target is None:
+        return "no_unambiguous_download_text_in_owned_window"
+    label, (px, py), (x, y, width, height) = target
+    return command(["/usr/bin/osascript", "-e", f'''
+tell application "System Events"
+    tell (first application process whose unix id is {pid})
+        if not frontmost then return "refused_background_window"
+        set ownedWindow to first window whose name is "Apple Translation Evaluation"
+        if position of ownedWindow is not {{{x}, {y}}} then return "refused_moved_window"
+        if size of ownedWindow is not {{{width}, {height}}} then return "refused_resized_window"
+        click at {{{px}, {py}}}
+        return "clicked_observed_{label.lower()}"
+    end tell
+end tell
+'''], 5, report, env=env)
+
+
 def capture_window(output, runtime, report):
     window = (runtime or {}).get("window_id")
     if type(window) is not int or window <= 0:
@@ -449,6 +516,7 @@ def run_app(binary, output, args, report, env):
     last_automation = -float("inf")
     automation_disabled = False
     automation_failures = 0
+    visual_attempts = 0
     screenshots = set()
     previous_phase = None
     phase_started = 0
@@ -498,6 +566,12 @@ def run_app(binary, output, args, report, env):
                         if answer != previous_automation:
                             previous_automation = answer
                             print(json.dumps({"download_ui": answer}, ensure_ascii=False), flush=True)
+                        if answer.startswith("download_button_not_found") and visual_attempts < 8:
+                            visual_attempts += 1
+                            observed = click_observed_download(
+                                binary, output, runtime, process.pid, visual_attempts, report, env)
+                            report["diagnostics"].append({"download_ocr_ui": observed})
+                            print(json.dumps({"download_ocr_ui": observed}), flush=True)
                     except (EvalError, OSError) as error:
                         automation_failures += 1
                         transient = (automation_failures < 3 and retryable_automation_error(
