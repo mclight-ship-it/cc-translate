@@ -24,33 +24,34 @@ struct ProbeView: View {
                 cli.tabItem { Text("CLI locator") }
             }
 
-            private var timings: some View {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(translation.text("Recent translations", "最近的翻译")).font(.headline)
-                    Text(translation.text(
-                        "Up to 20 requests, kept only in memory. No original text, results, or account information.",
-                        "仅在内存中保留最近 20 次请求，不包含原文、译文或账号信息。"))
-                        .foregroundStyle(.secondary)
-                    Text(translation.text(
-                        "Times are milliseconds; hit flags are 0 or 1. First output measures the view-model update, not screen painting.",
-                        "时间单位为毫秒，命中标记为 0 或 1。首字耗时记录界面数据更新，不代表屏幕绘制完成。"))
-                        .font(.callout).foregroundStyle(.secondary)
-                    if let failure = translation.prewarmFailure {
-                        Text(translation.text("Engine preparation did not finish: ", "翻译引擎预备未完成：") + failure)
-                            .font(.callout)
-                    }
-                    ScrollView([.horizontal, .vertical]) {
-                        Text(translation.latency.report.isEmpty
-                             ? translation.text("No translation measurements yet.", "尚无翻译耗时记录。")
-                             : translation.latency.report)
-                            .font(.body.monospaced()).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }.padding()
-            }
         }
         .padding(16)
         .frame(minWidth: 700, minHeight: 560)
+    }
+
+    private var timings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(translation.text("Recent translations", "最近的翻译")).font(.headline)
+            Text(translation.text(
+                "Up to 20 requests, kept only in memory. No original text, results, or account information.",
+                "仅在内存中保留最近 20 次请求，不包含原文、译文或账号信息。"))
+                .foregroundStyle(.secondary)
+            Text(translation.text(
+                "Times are milliseconds; hit flags are 0 or 1. First output measures the view-model update, not screen painting.",
+                "时间单位为毫秒，命中标记为 0 或 1。首字耗时记录界面数据更新，不代表屏幕绘制完成。"))
+                .font(.callout).foregroundStyle(.secondary)
+            if let failure = translation.prewarmFailure {
+                Text(translation.text("Engine preparation did not finish: ", "翻译引擎预备未完成：") + failure)
+                    .font(.callout)
+            }
+            ScrollView([.horizontal, .vertical]) {
+                Text(translation.latency.report.isEmpty
+                     ? translation.text("No translation measurements yet.", "尚无翻译耗时记录。")
+                     : translation.latency.report)
+                    .font(.body.monospaced()).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.padding()
     }
 
     private var core: some View {
