@@ -5,12 +5,19 @@ on:
     branches:
       - agents/cc-translate-macos-native
   workflow_dispatch:
+    inputs:
+      translation_benchmark:
+        description: Compare immutable build202 and build206 using synthetic translation only
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   p0:
+    if: ${{ inputs.translation_benchmark != true }}
     # The official macos-15 label is arm64; verify it again before any build.
     runs-on: macos-15
     timeout-minutes: 40
@@ -216,6 +223,73 @@ jobs:
             tools/macos/.build/dictionary-product-tests.json
             tools/macos/.build/performance.json
             tools/macos/.build/about-tests.json
+
+  translation_benchmark:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_benchmark }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the benchmark harness
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Require the same standard Apple Silicon test host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          /usr/bin/sw_vers
+          python3 --version
+      - name: Download the verified build202 baseline
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: 35904916359
+          artifact-ids: 10772217886
+          path: tools/macos/.build/translation-baseline
+          merge-multiple: true
+      - name: Download the verified build206 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: 35961227537
+          artifact-ids: 10793790676
+          path: tools/macos/.build/translation-candidate
+          merge-multiple: true
+      - name: Verify exact archive identities before preserving executable modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/macos/.build
+          printf '%s  translation-baseline/CCTranslateMac-P0.zip\n' \
+            '938e61317a8d7c8fc83d95eb8e5fb7c12ce9489199250592a71552ebdcce3e66' | /usr/bin/shasum -a 256 -c -
+          printf '%s  translation-candidate/CCTranslateMac-P0.zip\n' \
+            '21976b007e33ca1eae995867daf4acab3547ccc504afe5442851c3efe5b9f9dc' | /usr/bin/shasum -a 256 -c -
+          /usr/bin/ditto -x -k translation-baseline/CCTranslateMac-P0.zip translation-baseline
+          /usr/bin/ditto -x -k translation-candidate/CCTranslateMac-P0.zip translation-candidate
+      - name: Validate benchmark measurement contracts
+        run: python3 -B -m unittest -v tests.test_macos_translation_benchmark
+      - name: Measure paired synthetic translation requests with no user account or model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/macos/.build/translation-benchmark
+          python3 -B tools/macos/translation_benchmark.py \
+            --baseline-app tools/macos/.build/translation-baseline/CCTranslateMac-P0.app \
+            --candidate-app tools/macos/.build/translation-candidate/CCTranslateMac-P0.app \
+            --report tools/macos/.build/translation-benchmark/report.json \
+            2>&1 | tee tools/macos/.build/translation-benchmark/benchmark.log
+      - name: Retain raw paired timings, provenance and measurement limitations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: translation-speed-build202-vs-build206-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: tools/macos/.build/translation-benchmark/
 
   runtime:
     needs: p0
