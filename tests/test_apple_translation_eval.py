@@ -343,6 +343,10 @@ class WorkingDirectoryTests(unittest.TestCase):
         script = evaluation.download_script(4321)
         self.assertIn("unix id is 4321", script)
         self.assertIn('"Download"', script)
+        self.assertIn("entire contents of sheet 1 of ownedWindow", script)
+        self.assertIn("(count nodes) > 512", script)
+        self.assertIn('textValue is "Download Languages to Translate"', script)
+        self.assertIn("if languageSheet and doneButton is not missing value then", script)
         for forbidden in ('"Allow"', '"OK"', "TCC.db", "sudo", "keystroke"):
             self.assertNotIn(forbidden, script)
         with self.assertRaises(evaluation.EvalError):
@@ -367,6 +371,8 @@ class IsolationTests(unittest.TestCase):
                          "withExtendedLifetime(delegate) { application.run() }"):
             self.assertIn(required, swift)
         self.assertNotIn("WindowGroup(", swift)
+        self.assertIn("guard !terminal else { return }", swift)
+        self.assertIn('phase("blocked")\n            terminal = true', swift)
 
     def test_only_standard_library_imports_and_public_apple_translation(self):
         source = Path(evaluation.__file__).read_text(encoding="utf-8")

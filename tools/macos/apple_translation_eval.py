@@ -344,7 +344,7 @@ def load_runtime(path, run_id):
 
 
 def download_script(pid):
-    """Only exact Download buttons in this owned process's first window/sheet."""
+    """Follow only this owned app's language-download sheet, including table rows."""
     need(type(pid) is int and pid > 1, "invalid owned pid")
     return f'''
 tell application "System Events"
@@ -352,19 +352,40 @@ tell application "System Events"
     tell owned
         if not (exists window 1) then return "no_window"
         set targets to {{"Download", "Download Languages", "Download and Translate", "下载", "下载语言", "下载并翻译"}}
-        repeat with titleText in targets
-            if exists sheet 1 of window 1 then
-                if exists button (contents of titleText) of sheet 1 of window 1 then
-                    click button (contents of titleText) of sheet 1 of window 1
-                    return "clicked_download"
+        set seenButtons to {{}}
+        repeat with ownedWindow in windows
+            if exists sheet 1 of ownedWindow then
+                set nodes to entire contents of sheet 1 of ownedWindow
+                if (count nodes) > 512 then return "download_sheet_too_large"
+                set doneButton to missing value
+                set languageSheet to false
+                repeat with node in nodes
+                    set nodeRole to role of node
+                    if nodeRole is "AXStaticText" then
+                        set textValue to value of node
+                        if textValue is "Download Languages to Translate" then set languageSheet to true
+                    end if
+                    if nodeRole is "AXButton" then
+                        set labelText to name of node
+                        if labelText is not missing value then
+                            set seenButtons to seenButtons & {{labelText}}
+                            if targets contains labelText then
+                                if enabled of node then
+                                    click node
+                                    return "clicked_download"
+                                end if
+                            end if
+                            if labelText is "Done" and enabled of node then set doneButton to contents of node
+                        end if
+                    end if
+                end repeat
+                if languageSheet and doneButton is not missing value then
+                    click doneButton
+                    return "closed_language_download_sheet"
                 end if
             end if
-            if exists button (contents of titleText) of window 1 then
-                click button (contents of titleText) of window 1
-                return "clicked_download"
-            end if
         end repeat
-        return "download_button_not_found"
+        return "download_button_not_found; buttons=" & (seenButtons as text)
     end tell
 end tell
 '''

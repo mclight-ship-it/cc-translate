@@ -31,6 +31,7 @@ final class Evaluation: ObservableObject {
     private var state: [String: Any]
     private var watchdog: Task<Void, Never>?
     private var started = false
+    private var terminal = false
     private var pairIndex = 0
     private var handledPairs = Set<String>()
     private var pairs: [[String: Any]] = []
@@ -85,6 +86,7 @@ final class Evaluation: ObservableObject {
     }
 
     private func phase(_ name: String) {
+        guard !terminal else { return }
         state["phase"] = name
         message = name.replacingOccurrences(of: "_", with: " ")
         persist()
@@ -100,10 +102,12 @@ final class Evaluation: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             } catch { return }
+            guard !terminal else { return }
             state["status"] = "blocked"
             state["blocked_condition"] = condition
             state["timed_out_operation_ms"] = elapsed(operationStart)
             phase("blocked")
+            terminal = true
             // Leave a brief window for the supervisor's owned-window screenshot.
             try? await Task.sleep(nanoseconds: 750_000_000)
             exit(2)
@@ -137,10 +141,12 @@ final class Evaluation: ObservableObject {
     }
 
     private func finish(_ status: String, condition: String? = nil) {
+        guard !terminal else { return }
         disarm()
         state["status"] = status
         if let condition { state["blocked_condition"] = condition }
         phase(status)
+        terminal = true
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 750_000_000)
             exit(["completed", "availability_only", "prepared"].contains(status) ? 0 : 2)
@@ -186,6 +192,7 @@ final class Evaluation: ObservableObject {
     }
 
     private func advance() {
+        guard !terminal else { return }
         if pairIndex >= pairIDs.count {
             if input.mode == "prepare_only" {
                 finish("prepared")
@@ -210,6 +217,7 @@ final class Evaluation: ObservableObject {
     }
 
     func translate(_ session: TranslationSession) async {
+        guard !terminal else { return }
         let index = pairIndex
         guard index < pairIDs.count else { return }
         let id = pairIDs[index]
@@ -222,6 +230,7 @@ final class Evaluation: ObservableObject {
         do {
             // This is Apple's onscreen permission/download flow, not a private prewarm API.
             try await session.prepareTranslation()
+            guard !terminal else { return }
             pairs[index]["prepare_api_ms"] = elapsed(preparing)
             var readiness = await languages.status(from: source, to: target)
             pairs[index]["after_prepare_api"] = statusName(readiness)
@@ -261,6 +270,7 @@ final class Evaluation: ObservableObject {
         var requestIndex = 0
         for pass in 0..<2 {
             for item in input.cases.filter({ $0.pair == id }) {
+                guard !terminal else { return }
                 phase("translating")
                 state["active_case"] = item.id
                 state["active_pass"] = pass
