@@ -275,7 +275,7 @@ final class NativeSummaryReadingTests: XCTestCase {
         XCTAssertEqual(view.selectedRange(), selected)
         XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
         state.streaming = false
-        surface.flush()
+        try await surface.waitFor { !view.string.contains("## ") }
         XCTAssertEqual(view.selectedRange(), selected)
         XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
     }

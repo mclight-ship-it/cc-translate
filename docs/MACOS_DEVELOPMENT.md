@@ -520,12 +520,28 @@ target_lang仅as_text/retranslate具体化。Swift将其作为模型请求处理
 helper捕获完整不可变RequestSnapshot，复用分类、方向、prompt及原cache签名字节。
 翻译worker可与原storage FIFO并行，native执行本身串行且不占状态操作锁；
 完成时在锁内重读**已提交的当前**history开关/limit。显式record_history=false不写，
-history关闭时也不查询cache；命中只读且不重复追加。执行输入冻结，不冻结取消/UI状态。
+history关闭时不查询磁盘历史cache；命中只读且不重复追加。执行输入冻结，不冻结取消/UI状态。
 原子replace不等于单writer，协作flock也不是恶意目录的沙箱；输入快照期间调用者不能并发修改输入容器。
+
+build219 后续分支另有独立内存cache：最多20项、合计512KiB的UTF-8输出及摘要key、300秒TTL，
+读命中不续TTL、不续CLI驻留时间，不写盘，不跨helper或CLI进程复用。
+仅原始text/selection且Codex返回解析模型和推理档位、同一驻留进程与文件身份均可确认时启用；
+OCR/图片/结果动作/Claude不走此cache。自定义服务、外部认证、keyring/auto凭据存储、
+profiles/自定义模型目录及无法跟踪的配置层不复用，不能把这项优化当作所有配置都会命中。
+CLI、账号文件、配置、HOME或执行输出契约变化即miss；仅stat账号文件，不读其内容。
+显式重译清内存后执行；成功且被接纳、无历史写入错误才可重新存入。
+保存设置、清历史和关闭helper清理，代际校验阻止清理前的在途请求事后重新填回。
+常规磁盘历史cache仍保留原行为。历史关闭不影响合格的短时内存复用。
 
 事件为accepted(seq0)→started(seq1)→delta→唯一终态；未启动worker的精确worker_start_failed仍为seq1确定失败。
 delta含text/submitted:true；completed含text/submitted/cached/kind/target_lang/summarize/history/history_error。
 cache命中submitted=false、history=unchanged；history=failed必须有固定storage错误码，其余必须null。
+可选timings仍只有有界数字，text/selection的memory_cache_hit为0/1，OCR/图片/动作不发送该字段。
+可选model_info只含安全标识符requested_model及可选resolved_model/reasoning_effort；
+后两项来自CLI thread/start返回，不推断auto别名，也不是云端服务实际模型的独立认证。
+诊断报告使用cli_resolved_model标签；未知明确标unknown，缓存只保留requested_model。
+20条内存记录可给已完成、已派发样本列n/min/median/P95，但按来源/模型/缓存/冷热等分组，
+不混算命中与真实请求。分布从dispatch起算，排除截图和用户选区等待，不等于模型纯计算时间。
 已产生delta后不允许终态submitted=false。最终文本可修正流式中间文本，不要求二者拼接相同。
 单delta的compact JSON字符串最多4096字节，累计与最终文本各最多24000字节，计UTF-8及转义；
 每请求实际完整响应envelope/序号/LF累计最多1MiB，单frame仍64KiB，超限不截断或写坏历史。

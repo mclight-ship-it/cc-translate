@@ -223,8 +223,13 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
         payload = dict(event["payload"])
         timings = payload.pop("timings")
         self.assertTrue(set(timings) <= translation.PROVIDER_TIMING_FIELDS |
-                        translation.PROVIDER_TIMING_FLAGS | {"helper_elapsed_ms", "cache_hit"})
+                        translation.PROVIDER_TIMING_FLAGS |
+                        {"helper_elapsed_ms", "cache_hit", "memory_cache_hit"})
         self.assertEqual(timings["cache_hit"], int(cached))
+        if expected["kind"] == "ocr":
+            self.assertNotIn("memory_cache_hit", timings)
+        else:
+            self.assertEqual(timings["memory_cache_hit"], 0)
         self.assertIn("helper_elapsed_ms", timings)
         for value in timings.values():
             self.assertIn(type(value), (int, float))
@@ -233,6 +238,7 @@ class TestTranslationIPCProcess(StateIPCProcessCase):
             "text": expected["output"], "submitted": not cached, "cached": cached,
             "kind": expected["kind"], "target_lang": expected["target_lang"],
             "summarize": expected["summarize"], "history": history, "history_error": None,
+            "model_info": {"requested_model": expected["model"]},
         })
 
     def assert_native_gone(self, *, descendant=False):
