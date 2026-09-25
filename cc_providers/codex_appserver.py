@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from .base import ProviderResult
+from .base import ProviderModelInfo, ProviderResult
 from .codex_catalog import CatalogProbeError, codex_version_supported
 from .codex_config import (
     CodexConfigError, child_environment, integration_overrides, read_native_config,
@@ -112,6 +112,7 @@ class CodexAppServerParser:
         self.responses = {}
         self.saw_delta = False
         self.last_was_notification = False
+        self.model_rerouted = False
 
     def feed(self, raw_line):
         self.last_was_notification = False
@@ -174,6 +175,8 @@ class CodexAppServerParser:
             self.error_detail = _sanitize_detail(str(error))
             return
         if method in _IGNORED_NOTIFICATIONS:
+            if method == "model/rerouted":
+                self.model_rerouted = True
             return
         raise CodexAppServerProtocolError(
             "unknown_appserver_event", method)
@@ -272,6 +275,7 @@ class CodexAppServerTransport:
         ]
         probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
         native = read_native_config(self.command, self.env, self.work_dir, **probe_options)
+        self._observe_native_config(native)
         config = native["config"]
         for override in _APP_SERVER_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
@@ -281,6 +285,9 @@ class CodexAppServerTransport:
             for override in self.catalog.overrides(request.model, native_config=native, **probe_options):
                 command.extend(("-c", override))
         return command
+
+    def _observe_native_config(self, native):
+        """Native adapters may retain non-sensitive provenance from this probe."""
 
     def ready_for(self, profile):
         with self._state_lock:
@@ -583,6 +590,11 @@ class CodexAppServerTransport:
             if not parser.thread_id:
                 raise CodexAppServerProtocolError(
                     "invalid_appserver_message", "thread/start returned no id")
+            # Official v2 ThreadStartResponse fields, not Thread metadata or
+            # requested config. Older servers/fixtures may omit either field.
+            model_info = ProviderModelInfo(
+                requested_model=request.model, resolved_model=thread_result.get("model"),
+                reasoning_effort=thread_result.get("reasoningEffort"))
             thread_start_ms = int(
                 (time.perf_counter() - thread_started_at) * 1000)
 
@@ -604,6 +616,8 @@ class CodexAppServerTransport:
                 turn_params["model"] = runtime_model
             if request.model == "gpt-5.4-mini":
                 turn_params["effort"] = "low"
+            if "effort" in turn_params and turn_params["effort"] != model_info.reasoning_effort:
+                model_info = ProviderModelInfo(model_info.requested_model, model_info.resolved_model)
             turn_started_at = time.perf_counter()
             turn_start_id = self._take_request_id()
             send("turn/start", turn_params, turn_start_id)
@@ -657,8 +671,11 @@ class CodexAppServerTransport:
                 return ProviderResult(
                     False, error_code="no_result", metrics=metrics())
             reusable = True
+            if parser.model_rerouted:
+                # The thread settings no longer confirm the completed turn.
+                model_info = ProviderModelInfo(requested_model=request.model)
             return ProviderResult(
-                True, text=parser.final_text.strip(), metrics=metrics())
+                True, text=parser.final_text.strip(), metrics=metrics(), model_info=model_info)
         except CodexAppServerProtocolError as exc:
             return ProviderResult(
                 False, error_code=exc.code,

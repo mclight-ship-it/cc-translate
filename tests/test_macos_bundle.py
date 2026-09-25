@@ -541,6 +541,7 @@ class MachORulesTests(ProjectDirectory):
                      "Resources/Core/cc_macos/config_store_fixture.py",
                      "Resources/Core/cc_macos/configuration.py",
                      "Resources/Core/cc_macos/history.py",
+                     "Resources/Core/cc_macos/translation_cache.py",
                      "Resources/Core/cc_macos/image.py",
                      "Resources/Core/cc_macos/image_fixture.py",
                      "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",
@@ -763,7 +764,8 @@ class MachORulesTests(ProjectDirectory):
     def test_audit_requires_unchanged_diagnostic_probes(self):
         app = self.synthetic_app()
         for name in ("dictionary_probe.py", "storage_fixture.py", "history_owner.py", "history_fixture.py",
-                     "file_owner.py", "config_owner.py", "config_store_fixture.py", "configuration.py", "history.py"):
+                     "file_owner.py", "config_owner.py", "config_store_fixture.py", "configuration.py", "history.py",
+                     "translation_cache.py"):
             with self.subTest(name=name):
                 path = app / "Contents/Resources/Core/cc_macos" / name
                 path.unlink()

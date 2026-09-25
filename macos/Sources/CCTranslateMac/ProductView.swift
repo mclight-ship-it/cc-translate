@@ -1864,6 +1864,7 @@ struct NativeResultText: NSViewRepresentable {
             ? NativeTextViewport(view: view, scroll: scroll) : nil
         let atBottom = view.bounds.height - scroll.contentView.bounds.maxY <= 28
         let continuing = !context.coordinator.source.isEmpty && text.hasPrefix(context.coordinator.source)
+        let preservesSummary = verbatimPrefix == nil && TranslationOutputProgress.inspect(text).hasSummary
         if !contentChanged {
             textScale.apply(to: storage, replacing: context.coordinator.textScale)
         } else if continuing && !rich && !context.coordinator.renderedRich {
@@ -1889,7 +1890,7 @@ struct NativeResultText: NSViewRepresentable {
             view.setSelectedRange(preservedSelection)
         }
         if let container = view.textContainer { view.layoutManager?.ensureLayout(for: container) }
-        if continuing && atBottom && selected.length == 0 {
+        if continuing && atBottom && selected.length == 0 && !preservesSummary {
             view.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
         } else if continuing {
             if let viewport {

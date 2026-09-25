@@ -628,6 +628,7 @@ def audit_bundle(app, lock, environment=None):
         "Resources/Core/cc_macos/config_store_fixture.py",
         "Resources/Core/cc_macos/configuration.py",
         "Resources/Core/cc_macos/history.py",
+        "Resources/Core/cc_macos/translation_cache.py",
         "Resources/Core/cc_macos/image.py",
         "Resources/Core/cc_macos/image_fixture.py",
         "Resources/Core/cacert.pem", "Resources/Licenses/certifi/LICENSE",

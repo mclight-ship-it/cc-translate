@@ -1,6 +1,9 @@
 """Explicit native translation service; no account, CLI or user-home discovery."""
 
 import json
+import hashlib
+from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 import math
 import sys
 import time
@@ -13,7 +16,10 @@ from cc_prompts import (
     PROVIDER_PROMPT_REVISIONS, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX, with_ocr_structure_hint,
     image_translation_prompt,
 )
-from cc_providers.base import CLAUDE_PROVIDER, CODEX_PROVIDER, PROVIDER_IDS, ProviderRequest, ProviderSelection
+from cc_providers.base import (
+    CLAUDE_PROVIDER, CODEX_PROVIDER, PROVIDER_IDS, ProviderModelInfo, ProviderRequest,
+    ProviderSelection,
+)
 from cc_providers.claude_darwin import DarwinClaudeProvider
 from cc_providers.codex_darwin import DarwinCodexProvider
 from cc_providers.codex_catalog import CatalogProbeError
@@ -25,6 +31,7 @@ from cc_summary import SUMMARY_MIN_CHARS, codex_summary_instruction, is_summariz
 from .configuration import ConfigurationError, ConfigurationSession
 from .history import MAX_HISTORY_ENTRIES
 from .image import ImageCancelled, ImageError, OwnedPNG, validate_image_request
+from .translation_cache import TranslationMemoryCache
 from .protocol import (
     MAX_TEXT_BYTES, MAX_RESULT_ACTION_TEXT_BYTES, MAX_STREAM_BYTES, ProtocolError,
     decode_json_document,
@@ -77,6 +84,49 @@ def provider_timings(metrics):
         if type(value) in (bool, int, float) and value in (0, 1):
             timings[key] = int(value)
     return timings
+
+
+def provider_model_info(requested_model, metadata=None):
+    info = ProviderModelInfo(requested_model=requested_model)
+    if info.requested_model is None:
+        return {}
+    payload = {"requested_model": info.requested_model}
+    if isinstance(metadata, ProviderModelInfo) and metadata.requested_model == info.requested_model:
+        info = ProviderModelInfo(info.requested_model, metadata.resolved_model, metadata.reasoning_effort)
+        for key in ("resolved_model", "reasoning_effort"):
+            value = getattr(info, key)
+            if value is not None:
+                payload[key] = value
+    return {"model_info": payload}
+
+
+def _memory_key(snapshot, identity):
+    if (type(identity) is not tuple or len(identity) != 2 or type(identity[0]) is not bytes
+            or len(identity[0]) != 32 or not isinstance(identity[1], ProviderModelInfo)):
+        return None
+    token, info = identity
+    if (info.requested_model != snapshot.request.model or info.resolved_model is None
+            or info.reasoning_effort is None):
+        return None
+
+    def plain(value):
+        if isinstance(value, Mapping):
+            return {key: plain(child) for key, child in value.items()}
+        if isinstance(value, tuple):
+            return [plain(child) for child in value]
+        return value
+
+    contract = (
+        "native-memory-v1", snapshot.input, snapshot.request.user_text, snapshot.request.task,
+        snapshot.selection.provider_id, snapshot.selection.model, snapshot.request.model,
+        info.resolved_model, info.reasoning_effort,
+        snapshot.request.system_prompt, snapshot.sig, plain(snapshot.config), snapshot.origin,
+        snapshot.content_class, snapshot.kind, snapshot.direction, snapshot.app_language,
+        snapshot.target_lang, snapshot.summarize, snapshot.dictionary, snapshot.stream_enabled,
+        snapshot.action, snapshot.request.timeout_seconds, MAX_OUTPUT_BYTES, MAX_DELTA_BYTES,
+    )
+    return hashlib.sha256(token + json.dumps(
+        contract, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
 def _with_elapsed(outcome, started):
@@ -284,6 +334,31 @@ class TranslationSession(ConfigurationSession):
         self._images = set()
         self._undrained_images = False
         self._warm_profile = None
+        self._memory_cache = TranslationMemoryCache()
+        self._memory_generation = 0
+        self._memory_closing = False
+
+    def _clear_memory_cache(self):
+        self._memory_generation += 1
+        self._memory_cache.clear()
+
+    def _perform(self, payload):
+        if payload.get("operation") == "config_save":
+            self._clear_memory_cache()
+        return super()._perform(payload)
+
+    def _perform_history(self, payload, request_id, sequence):
+        if payload.get("operation") == "history_clear":
+            self._clear_memory_cache()
+        return super()._perform_history(payload, request_id, sequence)
+
+    def _memory_scope(self, snapshot):
+        scope = getattr(self._provider, "translation_cache_scope", None)
+        if (self.provider_id != CODEX_PROVIDER or snapshot.origin not in ("text", "selection")
+                or snapshot.action != "translation" or not callable(scope) or self._memory_closing):
+            return nullcontext(None)
+        context = scope(snapshot.request.model)
+        return context if isinstance(context, AbstractContextManager) else nullcontext(None)
 
     def open(self):
         opened = False
@@ -320,15 +395,18 @@ class TranslationSession(ConfigurationSession):
     def _capture(self, payload):
         with self._operations_lock:
             config = self._translation_config()
-            snapshot = snapshot_for_translation(config, payload)
-            cached = None
-            if snapshot.origin != "ocr" and payload["use_cache"] and config[CFG.HISTORY_ENABLED]:
-                from .history import HistoryError
-                try:
-                    cached = self._history.find_cached(snapshot.input, snapshot.kind, snapshot.sig)
-                except HistoryError as error:
-                    raise ConfigurationError(error.code) from error
-            return snapshot, cached
+            return snapshot_for_translation(config, payload)
+
+    def _cached_history(self, snapshot, payload):
+        if snapshot.origin == "ocr" or not payload["use_cache"] or not snapshot.config[CFG.HISTORY_ENABLED]:
+            return None
+        from .history import HistoryError
+        if self._closed or self._history is None:
+            raise ConfigurationError("history_unavailable")
+        try:
+            return self._history.find_cached(snapshot.input, snapshot.kind, snapshot.sig)
+        except HistoryError as error:
+            raise ConfigurationError(error.code) from error
 
     def _record(self, snapshot, text, requested):
         if not requested:
@@ -349,8 +427,49 @@ class TranslationSession(ConfigurationSession):
 
     def translate(self, payload, cancel, on_delta, begin_finish):
         started = time.monotonic()
-        snapshot, cached = self._capture(payload)
+        with self._operations_lock:
+            generation = self._memory_generation
+        snapshot = self._capture(payload)
+        with self._operations_lock:
+            memory_eligible = snapshot.origin in ("text", "selection")
+            # A forced fresh translation invalidates even entries whose old
+            # runtime identity is no longer discoverable.
+            if memory_eligible and not payload["use_cache"]:
+                unchanged = generation == self._memory_generation
+                self._clear_memory_cache()
+                if unchanged:
+                    generation = self._memory_generation
+            if (memory_eligible and payload["use_cache"] and not cancel.is_set()
+                    and generation == self._memory_generation):
+                with self._memory_scope(snapshot) as identity:
+                    key = _memory_key(snapshot, identity)
+                    memory_text = self._memory_cache.get(key) if key is not None else None
+                    if memory_text is not None:
+                        with self._memory_scope(snapshot) as confirmed:
+                            if identity == confirmed and generation == self._memory_generation:
+                                outcome = self._execute(
+                                    snapshot, memory_text, payload["record_history"], cancel, on_delta, begin_finish)
+                                if outcome[0] == "completed":
+                                    outcome[1]["timings"]["memory_cache_hit"] = 1
+                                return _with_elapsed(outcome, started)
+                        self._memory_cache.discard(key)
+            cached = self._cached_history(snapshot, payload)
         outcome = self._execute(snapshot, cached, payload["record_history"], cancel, on_delta, begin_finish)
+        if memory_eligible and outcome[0] == "completed":
+            result = outcome[1]
+            result["timings"]["memory_cache_hit"] = 0
+            if (not result["cached"] and result["submitted"]
+                    and result["history"] != "failed" and result["history_error"] is None):
+                with self._operations_lock:
+                    if generation == self._memory_generation and not self._closed:
+                        with self._memory_scope(snapshot) as identity:
+                            key = _memory_key(snapshot, identity)
+                            if (key is not None and result.get("model_info") ==
+                                    provider_model_info(snapshot.request.model, identity[1]).get("model_info")):
+                                with self._memory_scope(snapshot) as confirmed:
+                                    if (identity == confirmed and generation == self._memory_generation
+                                            and not self._closed):
+                                        self._memory_cache.put(key, result["text"])
         if outcome[0] == "completed" and self.provider_id == CLAUDE_PROVIDER:
             with self._operations_lock:
                 self._warm_profile = (
@@ -473,6 +592,7 @@ class TranslationSession(ConfigurationSession):
             raise TranslationError("unsupported_provider")
         submitted, output, used_cache = False, cached, cached is not None
         timings = {}
+        model_info = provider_model_info(snapshot.request.model)
         if cached is None:
             output_size = 2
             def emit(text):
@@ -516,6 +636,7 @@ class TranslationSession(ConfigurationSession):
             if not result.ok:
                 raise TranslationError(provider_failure(result.error_code), bool(submitted))
             timings = provider_timings(result.metrics)
+            model_info = provider_model_info(snapshot.request.model, getattr(result, "model_info", None))
             output = result.text
         try:
             output_size = text_bytes(output) if type(output) is str else MAX_OUTPUT_BYTES + 1
@@ -535,9 +656,13 @@ class TranslationSession(ConfigurationSession):
             "kind": snapshot.kind, "target_lang": snapshot.target_lang, "summarize": snapshot.summarize,
             "history": status, "history_error": error,
             "timings": {**timings, "cache_hit": int(used_cache)},
+            **model_info,
         }
 
     def close(self):
+        with self._operations_lock:
+            self._memory_closing = True
+            self._clear_memory_cache()
         try:
             if self._provider is not None:
                 try:

@@ -20,7 +20,7 @@ from cc_macos.configuration import ConfigurationError
 from cc_macos.protocol import MAX_FRAME_BYTES, ProtocolError, encode_frame
 from cc_macos.server import Server
 from cc_prompts import image_translation_prompt
-from cc_providers.base import ProviderResult
+from cc_providers.base import ProviderModelInfo, ProviderResult
 from cc_providers.darwin_process import ProcessError
 
 if __package__:
@@ -252,6 +252,23 @@ class ImageServiceTests(_TranslationDirectory):
     def copies(self):
         return list((self.directory / "NativeWorkspace").glob(".cc-image-*"))
 
+    def test_image_completed_model_info_survives_cleanup_but_not_final_cancellation(self):
+        info = ProviderModelInfo("synthetic", "synthetic-resolved", "low")
+        for finish in (True, False):
+            with self.subTest(finish=finish), patch.object(self.provider, "stream", return_value=ProviderResult(
+                    True, OUTPUT, metrics=(("turn_submitted", True),), model_info=info)):
+                event, result = self.session.translate_image(
+                    request(self.source, record_history=False), threading.Event(), lambda _: None, lambda: finish)
+            if finish:
+                self.assertEqual(event, "completed")
+                self.assertEqual(result["model_info"], {
+                    "requested_model": "synthetic", "resolved_model": "synthetic-resolved",
+                    "reasoning_effort": "low"})
+            else:
+                self.assertEqual((event, result), ("cancelled", {"submitted": True}))
+            self.assertEqual(self.copies(), [])
+        self.assertEqual(self.history(), [])
+
     def test_image_helper_timing_includes_owned_copy_cleanup_and_final_history(self):
         clock = [10]
         release, record, stream = self.session._release_image, self.session._record, self.provider.stream
@@ -316,6 +333,7 @@ class ImageServiceTests(_TranslationDirectory):
         self.assertEqual(result["payload"], {
             "text": OUTPUT, "submitted": True, "cached": False, "kind": "ocr",
             "target_lang": None, "summarize": False, "history": "recorded", "history_error": None,
+            "model_info": {"requested_model": "synthetic"},
             "timings": result["payload"]["timings"]})
         entries = self.history()
         self.assertIsNone(entries[0]["input"])

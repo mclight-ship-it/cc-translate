@@ -39,6 +39,11 @@ final class CaptureModel: ObservableObject {
     private var automaticObservation: AnyCancellable?
     private var automaticSubmitting = false
     private var releasedCapture = false
+    private let latencyClock: () -> TimeInterval
+    private var timing: CaptureTimingSnapshot?
+    private var timingRecorded = false
+
+    private var timingNow: TimeInterval { automaticModel?.captureTimingNow ?? latencyClock() }
 
     var submittedIntent: UUID? { submitted ? translationIntent : nil }
     var busy: Bool { phase == .capturing || phase == .recognizing }
@@ -65,8 +70,18 @@ final class CaptureModel: ObservableObject {
 
     convenience init() { self.init(screen: ScreenProbe()) }
 
-    init(screen: ScreenProbe) {
+    init(screen: ScreenProbe, latencyClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.screen = screen
+        self.latencyClock = latencyClock
+        screen.onTimingEvent = { [weak self] event in
+            guard let self, self.phase != .cancelled, !self.releasedCapture else { return }
+            let now = self.timingNow
+            switch event {
+            case .framesReady: self.timing?.framesReady(now: now)
+            case .ocrStarted: self.timing?.mark("ocr_started_ms", now: now)
+            case .ocrFinished: self.timing?.mark("ocr_finished_ms", now: now)
+            }
+        }
         observation = screen.objectWillChange.sink { [weak self] in
             guard let self else { return }
             let generation = self.generation
@@ -105,6 +120,8 @@ final class CaptureModel: ObservableObject {
 
     private func beginCapture() {
         let generation = self.generation
+        timing = CaptureTimingSnapshot(now: timingNow)
+        timingRecorded = false
         phase = .capturing
         startingCapture = true
         screen.beginRegionCapture()
@@ -129,12 +146,15 @@ final class CaptureModel: ObservableObject {
                 try screen.prepareRegionSelection()
                 throw RegionCaptureError.invalidSelection
             }
+            timing?.beginSelection(now: timingNow)
+            timing?.completeSelection(now: timingNow)
             let selected = try screen.selectRegion(rectangle)
             guard selected.rect.width >= RegionSelectionState.minimumSize,
                   selected.rect.height >= RegionSelectionState.minimumSize else {
                 try screen.prepareRegionSelection()
                 throw RegionCaptureError.invalidSelection
             }
+            timing?.mark("selection_composed_ms", now: timingNow)
             if automaticallyTranslates && automaticMode == .image {
                 synchronize()
                 submitAutomatically()
@@ -163,6 +183,10 @@ final class CaptureModel: ObservableObject {
         generation = UUID()
         automaticAttempt = nil
         appliedRecognition = nil
+        if !screen.busy && screen.canConfirm {
+            timing?.restartOCR()
+            timingRecorded = false
+        }
         screen.confirmOCR()
         synchronize()
     }
@@ -183,6 +207,8 @@ final class CaptureModel: ObservableObject {
         selectionError = nil
         do {
             try screen.prepareRegionSelection()
+            timing?.beginSelection(now: timingNow)
+            timingRecorded = false
             synchronize()
         } catch let error as RegionCaptureError {
             failSelection(error)
@@ -229,7 +255,7 @@ final class CaptureModel: ObservableObject {
                 intent = model.translationIntentID
             }
         }
-        model.translate(origin: "ocr", useCache: false)
+        model.translate(origin: "ocr", useCache: false, captureTiming: timing)
         observation.cancel()
         guard let intent else { return }
         guard generation == self.generation, model.translationIntentID == intent else {
@@ -241,6 +267,7 @@ final class CaptureModel: ObservableObject {
         submittedText = reviewed
         submitted = true
         submittedImage = false
+        timingRecorded = true
     }
 
     func translateImage(using model: ProbeModel) {
@@ -255,7 +282,7 @@ final class CaptureModel: ObservableObject {
             return
         }
         let generation = self.generation
-        guard let intent = model.translateImage(image) else { return }
+        guard let intent = model.translateImage(image, captureTiming: timing) else { return }
         guard generation == self.generation else {
             if model.translationIntentID == intent { model.cancel() }
             return
@@ -265,9 +292,11 @@ final class CaptureModel: ObservableObject {
         submittedText = nil
         submittedImage = true
         submitted = true
+        timingRecorded = true
     }
 
     func cancel() {
+        recordCaptureOutcome(.cancelled)
         cancelTranslationIfOwned()
         generation = UUID()
         automaticallyTranslates = false
@@ -277,6 +306,7 @@ final class CaptureModel: ObservableObject {
         automaticObservation = nil
         automaticSubmitting = false
         releasedCapture = false
+        timing = nil
         appliedRecognition = nil
         screen.cancel()
         frames = []
@@ -307,6 +337,13 @@ final class CaptureModel: ObservableObject {
     private func failSelection(_ error: RegionCaptureError) {
         selectionError = error
         synchronize()
+        if !screen.frames.isEmpty { timing?.beginSelection(now: timingNow) }
+    }
+
+    private func recordCaptureOutcome(_ outcome: TranslationLatency.Outcome) {
+        guard !timingRecorded, let timing else { return }
+        timingRecorded = true
+        automaticModel?.recordCaptureLatency(timing, outcome: outcome)
     }
 
     private func discardSupersededAutomaticCapture() -> Bool {
@@ -331,10 +368,12 @@ final class CaptureModel: ObservableObject {
             appliedRecognition = nil
         }
         if failure != nil {
+            recordCaptureOutcome(.failed)
             phase = .failed
             return
         }
         if automaticallyTranslates && automaticAttempt == generation && !submitted {
+            recordCaptureOutcome(.failed)
             phase = .failed
             return
         }
@@ -356,8 +395,11 @@ final class CaptureModel: ObservableObject {
                 appliedRecognition = generation
             }
             phase = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .ready
+            if phase == .empty { recordCaptureOutcome(.failed) }
             if phase == .ready { submitAutomatically() }
-        case .failed: phase = .failed
+        case .failed:
+            recordCaptureOutcome(.failed)
+            phase = .failed
         }
     }
 
@@ -374,6 +416,7 @@ final class CaptureModel: ObservableObject {
         else { translate(using: model) }
         guard generation == self.generation else { return }
         guard submitted else {
+            recordCaptureOutcome(.failed)
             phase = .failed
             return
         }

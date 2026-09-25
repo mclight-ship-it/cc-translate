@@ -458,6 +458,41 @@ public enum PrewarmDocument {
     }
 }
 
+/// Provider-confirmed fields are optional; a requested alias is never its resolution.
+public struct TranslationModelInfo: Equatable {
+    public let requestedModel: String
+    public let resolvedModel: String?
+    public let reasoningEffort: String?
+
+    public init(_ value: JSONValue) throws {
+        guard let fields = value.object,
+              Set(fields.keys).isSubset(of: ["requested_model", "resolved_model", "reasoning_effort"]),
+              let requested = fields["requested_model"]?.string,
+              Self.isSafeIdentifier(requested) else { throw ProbeError.invalidPayload }
+        if let resolved = fields["resolved_model"] {
+            guard let model = resolved.string, Self.isSafeIdentifier(model),
+                  !["auto", "auto-fast"].contains(model) else { throw ProbeError.invalidPayload }
+        }
+        if let effort = fields["reasoning_effort"] {
+            guard let effort = effort.string,
+                  ["none", "minimal", "low", "medium", "high", "xhigh"].contains(effort) else {
+                throw ProbeError.invalidPayload
+            }
+        }
+        requestedModel = requested
+        resolvedModel = fields["resolved_model"]?.string
+        reasoningEffort = fields["reasoning_effort"]?.string
+    }
+
+    private static func isSafeIdentifier(_ value: String) -> Bool {
+        let denied = ["sk-", "sk_", "ghp_", "gho_", "github_pat_", "eyj", "akia", "asia"]
+        return (1...128).contains(value.utf8.count) && !value.contains("..") &&
+            !denied.contains(where: { value.lowercased().hasPrefix($0) }) &&
+            value.range(of: "\\A[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?(?::[A-Za-z0-9][A-Za-z0-9._-]*)?\\z",
+                        options: .regularExpression) != nil
+    }
+}
+
 public enum TranslationDocument {
     static let modelOperations: Set<String> = ["translate", "result_action", "translate_image"]
     static let targetLanguages: Set<String> = ["zh", "en", "ja", "ko", "fr", "de", "es"]
@@ -485,7 +520,7 @@ public enum TranslationDocument {
         "turn_start_ms", "first_result_ms", "turn_first_result_ms", "turn_total_ms",
         "version_check_ms", "helper_elapsed_ms"
     ]
-    static let timingFlags: Set<String> = ["version_cache_hit", "warm_process_hit", "cache_hit"]
+    static let timingFlags: Set<String> = ["version_cache_hit", "warm_process_hit", "cache_hit", "memory_cache_hit"]
     static let maxTimingMilliseconds: Double = 3_600_000
 
     static func validateTimings(_ value: JSONValue, cached: Bool) throws {
@@ -496,7 +531,8 @@ public enum TranslationDocument {
         for (key, value) in timings {
             if timingFlags.contains(key) {
                 guard let flag = value.integer, (0...1).contains(flag),
-                      key != "cache_hit" || flag == (cached ? 1 : 0) else { throw ProbeError.invalidPayload }
+                      key != "cache_hit" || flag == (cached ? 1 : 0),
+                      key != "memory_cache_hit" || flag == 0 || cached else { throw ProbeError.invalidPayload }
             } else {
                 guard let number = value.number, number.isFinite,
                       (0...maxTimingMilliseconds).contains(number) else { throw ProbeError.invalidPayload }
@@ -538,7 +574,7 @@ public enum TranslationDocument {
         let required: Set<String> = ["text", "submitted", "cached", "kind", "target_lang",
                                      "summarize", "history", "history_error"]
         guard required.isSubset(of: Set(payload.keys)),
-              Set(payload.keys).isSubset(of: required.union(["timings"])),
+              Set(payload.keys).isSubset(of: required.union(["timings", "model_info"])),
               let text = payload["text"]?.string, !text.trimmingCharacters(in: whitespace).isEmpty,
               let submitted = payload["submitted"]?.bool, !streamed || submitted,
               let cached = payload["cached"]?.bool,
@@ -554,6 +590,12 @@ public enum TranslationDocument {
         }
         if let timings = payload["timings"] {
             try validateTimings(timings, cached: cached)
+        }
+        if let value = payload["model_info"] {
+            let info = try TranslationModelInfo(value)
+            guard !cached || (info.resolvedModel == nil && info.reasoningEffort == nil) else {
+                throw ProbeError.invalidPayload
+            }
         }
         if history == "failed" {
             guard let code = payload["history_error"]?.string, storageFailureCodes.contains(code) else {

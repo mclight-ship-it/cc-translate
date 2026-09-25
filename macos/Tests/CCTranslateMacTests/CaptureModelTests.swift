@@ -124,6 +124,52 @@ enum CaptureProductFixture {
 
 final class CaptureModelTests: XCTestCase {
     @MainActor
+    func testReselectionSeparatesUserWaitFromCancelledOCRDrainAndIgnoresStaleFinish() async throws {
+        var time = 100.0
+        let model = try ProductTestHarness(latencyClock: { time })
+        defer { model.cleanUp() }
+        let helper = try model.ready()
+        let source = CaptureTestSource(image: try CaptureProductFixture.image())
+        let old = CaptureTestOCR(text: "Stale private OCR.", blocked: true)
+        let current = CaptureTestOCR(text: "Current private OCR.", blocked: true)
+        defer { old.gate?.signal(); current.gate?.signal() }
+        var jobs = 0
+        let screen = ScreenProbe(source: source, makeOCRJob: {
+            jobs += 1
+            return jobs == 1 ? old : current
+        }, notificationCenter: NotificationCenter())
+        let capture = CaptureModel(screen: screen, latencyClock: { time })
+        defer { capture.cancel() }
+        capture.start()
+        try await CaptureProductFixture.waitFor { capture.phase == .selecting }
+        time = 102
+        capture.select(source.layout[0].frame)
+        try await CaptureProductFixture.waitFor { old.image != nil }
+        time = 103
+        capture.reselect()
+        time = 115
+        capture.select(source.layout[0].frame)
+        XCTAssertEqual(jobs, 1, "New OCR waits for the cancelled worker, without recapturing.")
+        time = 116
+        old.gate?.signal()
+        try await CaptureProductFixture.waitFor { current.image != nil }
+        time = 116.3
+        current.gate?.signal()
+        try await CaptureProductFixture.waitFor { capture.phase == .ready }
+        capture.translate(using: model.model)
+        let sample = try XCTUnwrap(model.model.latency.current)
+        XCTAssertEqual(sample.started, 100)
+        XCTAssertEqual(sample.milliseconds["selection_completed_ms"], 15_000)
+        XCTAssertEqual(sample.milliseconds["user_selection_ms"], 14_000)
+        XCTAssertEqual(sample.milliseconds["ocr_started_ms"], 16_000)
+        XCTAssertEqual(try XCTUnwrap(sample.milliseconds["ocr_processing_ms"]), 300, accuracy: 0.001)
+        XCTAssertEqual(helper.translations.count, 1)
+        XCTAssertEqual(helper.translations.last?.text, "Current private OCR.")
+        XCTAssertEqual(source.requests.count, 1)
+        XCTAssertFalse(model.model.latency.report.contains("private"))
+    }
+
+    @MainActor
     func testConstructionAndLocalCaptureDoNotStartHelperReadClipboardOrRequestPermissionEarly() async throws {
         let fixture = try ProductTestHarness(savedCLI: false)
         defer { fixture.cleanUp() }

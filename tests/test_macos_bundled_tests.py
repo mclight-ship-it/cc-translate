@@ -140,7 +140,8 @@ class InventoryTests(unittest.TestCase):
             "test_config_rules", "test_config_store", "test_macos_configuration", "test_macos_history",
             "test_request_snapshot", "test_darwin_rpc_contract", "test_darwin_print_contract", "test_codex_darwin",
             "test_claude_jsonl", "test_claude_darwin",
-            "test_summary_rules", "test_macos_translation", "test_macos_prewarm", "test_macos_claude_translation", "test_macos_image",
+            "test_summary_rules", "test_macos_translation", "test_translation_memory_cache", "test_macos_translation_cache",
+            "test_macos_prewarm", "test_macos_claude_translation", "test_macos_image",
             "test_codex_version", "test_macos_dictionary"))
         self.assertNotIn("test_dictionary_portable", bundled_tests.CORE_TEST_MODULES,
                          "The Windows formatter test must not pull desktop facades into the bundle.")
@@ -174,7 +175,7 @@ class InventoryTests(unittest.TestCase):
             "cc_config", "cc_config_store", "cc_macos.file_owner",
             "cc_macos.config_owner", "cc_macos.config_store_fixture",
             "cc_macos.configuration", "cc_macos.server", "cc_macos.protocol", "cc_macos.history",
-            "cc_macos.translation", "cc_macos.translation_fixture",
+            "cc_macos.translation", "cc_macos.translation_cache", "cc_macos.translation_fixture",
             "cc_macos.image", "cc_macos.image_fixture", "cc_summary",
             "cc_dictionary_store", "cc_dictionary_lookup", "cc_dictionary_artifact_core",
             "cc_dictionary_presentation", "cc_macos.dictionary"))
@@ -185,7 +186,7 @@ class InventoryTests(unittest.TestCase):
             "cc_providers.claude_jsonl", "cc_providers.claude_darwin",
             "cc_result_rules", "cc_storage", "cc_macos.storage_fixture", "cc_history",
             "cc_config", "cc_config_store", "cc_macos.configuration", "cc_macos.server", "cc_macos.protocol",
-            "cc_macos.history", "cc_request", "cc_summary", "cc_macos.translation",
+            "cc_macos.history", "cc_request", "cc_summary", "cc_macos.translation", "cc_macos.translation_cache",
             "cc_macos.translation_fixture", "cc_macos.image", "cc_macos.image_fixture",
             "cc_macos.native_provider_fixture",
             "cc_dictionary_lookup", "cc_dictionary_artifact_core", "cc_dictionary_presentation",

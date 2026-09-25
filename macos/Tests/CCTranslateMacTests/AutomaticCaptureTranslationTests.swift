@@ -39,6 +39,135 @@ private final class AutomaticCaptureFixture {
 }
 
 final class AutomaticCaptureTranslationTests: XCTestCase {
+    @MainActor
+    func testLongSelectionTimingIsHandedOffOnceWithoutPrewarmOrOCRWaitConfusion() async throws {
+        var time = 100.0
+        let model = try ProductTestHarness(latencyClock: { time })
+        defer { model.cleanUp() }
+        let helper = try model.ready(capabilities: ["prewarm"])
+        let job = CaptureTestOCR(text: "Private captured sentence.", blocked: true)
+        defer { job.gate?.signal() }
+        let f = try AutomaticCaptureFixture(makeOCRJob: { job })
+        defer { f.capture.cancel() }
+        f.source.automatic = false
+        f.capture.startTranslation(using: model.model, mode: .text)
+        try await CaptureProductFixture.waitFor { f.source.continuation != nil }
+        XCTAssertNil(model.model.latency.current, "Capture/prewarm does not create a translation intent.")
+        time = 100.5
+        f.source.finishCapture()
+        try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
+        time = 120.5
+        f.select()
+        try await CaptureProductFixture.waitFor { job.image != nil }
+        f.capture.recognizeSelection()
+        XCTAssertNil(model.model.latency.current)
+        time = 120.8
+        job.gate?.signal()
+        try await CaptureProductFixture.waitFor { f.capture.submitted }
+        let sample = try XCTUnwrap(model.model.latency.current)
+        XCTAssertEqual(sample.started, 100)
+        XCTAssertEqual(sample.milliseconds["capture_start_ms"], 0)
+        XCTAssertEqual(sample.milliseconds["frames_ready_ms"], 500)
+        XCTAssertEqual(sample.milliseconds["selection_ready_ms"], 500)
+        XCTAssertEqual(sample.milliseconds["selection_completed_ms"], 20_500)
+        XCTAssertEqual(sample.milliseconds["user_selection_ms"], 20_000)
+        XCTAssertEqual(try XCTUnwrap(sample.milliseconds["ocr_processing_ms"]), 300, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(sample.milliseconds["dispatch_ms"]), 20_800, accuracy: 0.001)
+        XCTAssertEqual(helper.translations.count, 1)
+        f.capture.recognizeSelection()
+        try await f.flushNotifications()
+        XCTAssertEqual(helper.translations.count, 1)
+        XCTAssertFalse(model.model.latency.report.contains("Private"))
+    }
+
+    @MainActor
+    func testImageTimingIncludesPreparationButNeverOCRAndLatePreparationCannotMutateTrace() async throws {
+        var time = 100.0
+        let model = try ImageAppFixture(latencyClock: { time })
+        defer { model.cleanUp() }
+        model.factory.hold = true
+        let client = try model.ready()
+        var jobs = 0
+        let f = try AutomaticCaptureFixture(makeOCRJob: { jobs += 1; return CaptureTestOCR() })
+        defer { f.capture.cancel() }
+        try await f.start(using: model.model, mode: .image)
+        time = 121
+        f.select()
+        try await CaptureProductFixture.waitFor { !model.factory.continuations.isEmpty }
+        XCTAssertEqual(model.model.latency.current?.source, .image)
+        XCTAssertEqual(model.model.latency.current?.milliseconds["user_selection_ms"], 21_000)
+        XCTAssertEqual(model.model.latency.current?.milliseconds["image_attachment_started_ms"], 21_000)
+        time = 121.4
+        model.factory.finish()
+        try await CaptureProductFixture.waitFor { client.imageRequests.count == 1 }
+        XCTAssertEqual(try XCTUnwrap(model.model.latency.current?.milliseconds["image_attachment_ready_ms"]), 21_400, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(model.model.latency.current?.milliseconds["image_attachment_processing_ms"]), 400, accuracy: 0.001)
+        XCTAssertEqual(jobs, 0)
+        XCTAssertNil(model.model.latency.current?.milliseconds["ocr_started_ms"])
+        XCTAssertNil(model.model.latency.current?.milliseconds["ocr_processing_ms"])
+        model.complete(client, request: try XCTUnwrap(client.imageRequests.last))
+        try await CaptureProductFixture.waitFor { model.factory.attachments.first?.removed == true }
+        f.capture.cancel()
+        try await f.start(using: model.model, mode: .image)
+        time = 140
+        f.select()
+        try await CaptureProductFixture.waitFor { !model.factory.continuations.isEmpty }
+        time = 141
+        f.capture.cancel()
+        let count = model.model.latency.recent.count
+        time = 150
+        let late = model.factory.finish()
+        try await CaptureProductFixture.waitFor { late.removed }
+        XCTAssertNil(model.model.latency.current)
+        XCTAssertEqual(model.model.latency.recent.count, count)
+        XCTAssertEqual(model.model.latency.recent.last?.outcome, .cancelled)
+        XCTAssertNil(model.model.latency.recent.last?.milliseconds["image_attachment_ready_ms"])
+        XCTAssertEqual(client.imageRequests.count, 1)
+    }
+
+    @MainActor
+    func testCancelledCaptureIsSeparateAndCannotFinishUnrelatedTranslation() async throws {
+        var time = 100.0
+        let model = try ProductTestHarness(latencyClock: { time })
+        defer { model.cleanUp() }
+        let helper = try model.ready()
+        let f = try AutomaticCaptureFixture()
+        try await f.start(using: model.model)
+        time = 120
+        model.model.input = "An unrelated private sentence."
+        model.model.translate()
+        let intent = model.model.translationIntentID
+        f.capture.cancel()
+        f.capture.cancel()
+        XCTAssertEqual(model.model.latency.current?.intent, intent)
+        XCTAssertEqual(model.model.latency.recent.count, 1)
+        XCTAssertEqual(model.model.latency.recent.last?.source, .capture)
+        XCTAssertEqual(model.model.latency.recent.last?.outcome, .cancelled)
+        XCTAssertEqual(model.model.latency.recent.last?.milliseconds["user_selection_ms"], 20_000)
+        XCTAssertEqual(helper.translations.count, 1)
+        XCTAssertFalse(helper.messages.contains { $0.type == "cancel" })
+        model.model.cancel()
+    }
+
+    @MainActor
+    func testFailedCaptureIsRecordedOnceWithoutCreatingOrSubmittingTranslation() async throws {
+        let model = try ProductTestHarness(latencyClock: { 100 })
+        defer { model.cleanUp() }
+        let helper = try model.ready()
+        let f = try AutomaticCaptureFixture()
+        f.source.permission = false
+        f.capture.startTranslation(using: model.model, mode: .text)
+        XCTAssertEqual(f.capture.phase, .failed)
+        try await f.flushNotifications()
+        f.capture.cancel()
+        XCTAssertNil(model.model.latency.current)
+        XCTAssertEqual(model.model.latency.recent.count, 1)
+        XCTAssertEqual(model.model.latency.recent.last?.source, .capture)
+        XCTAssertEqual(model.model.latency.recent.last?.outcome, .failed)
+        XCTAssertNil(model.model.latency.recent.last?.milliseconds["ocr_started_ms"])
+        XCTAssertTrue(helper.translations.isEmpty)
+    }
+
     func testModePersistenceValuesAreStableAndContainOnlyTextAndImage() {
         XCTAssertEqual(CaptureTranslationMode.preferenceKey, "screenshotTranslationMode")
         XCTAssertEqual(CaptureTranslationMode.allCases.map(\.rawValue), ["text", "image"])

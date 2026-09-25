@@ -127,7 +127,7 @@ final class ImageAppFixture {
     var onMake: (() -> Void)?
     var model: ProbeModel { base.model }
 
-    init() throws {
+    init(latencyClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) throws {
         base = try ProductTestHarness(savedCLI: false)
         let factory = ImageTestFactory()
         self.factory = factory
@@ -150,7 +150,7 @@ final class ImageAppFixture {
                 CLICandidate(url: self.base.alternateExecutable, executable: true)
             ] : []
         }, writeClipboard: { [weak self] in self?.copied.append($0); return true },
-           homeDirectory: base.root, imageTranslation: resources)
+           homeDirectory: base.root, imageTranslation: resources, latencyClock: latencyClock)
     }
     @discardableResult
     func ready(config: [String: JSONValue] = ProductTestHarness.configuration(),

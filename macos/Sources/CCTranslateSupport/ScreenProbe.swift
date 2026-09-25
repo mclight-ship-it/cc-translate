@@ -70,8 +70,11 @@ public enum ScreenCapturePhase: Equatable {
     case idle, capturing, selecting, preview, recognizing, recognized, failed
 }
 
+public enum ScreenCaptureTimingEvent { case framesReady, ocrStarted, ocrFinished }
+
 @MainActor
 public final class ScreenProbe: ObservableObject {
+    public var onTimingEvent: ((ScreenCaptureTimingEvent) -> Void)?
     @Published public private(set) var preview: NSImage?
     @Published public private(set) var status = "No capture. Grant/capture is explicit."
     @Published public var text = ""
@@ -213,6 +216,7 @@ public final class ScreenProbe: ObservableObject {
                 pendingFrames.removeAll()
                 captureTask = nil
                 busy = false
+                onTimingEvent?(.framesReady)
                 phase = .selecting
                 status = "Frames retained. Select a region; preview and OCR reuse these pixels, not a new capture."
                 if mainDisplayOnly, let frame = frames.first {
@@ -304,6 +308,7 @@ public final class ScreenProbe: ObservableObject {
         ocrJob = job
         status = "Recognizing the retained preview frame locally..."
         ocrInFlight = true
+        onTimingEvent?(.ocrStarted)
         ocrTask = Task { [weak self] in
             defer {
                 self?.ocrInFlight = false
@@ -321,6 +326,7 @@ public final class ScreenProbe: ObservableObject {
                 }
                 guard let self, generation == self.generation, ocrGeneration == self.ocrGeneration,
                       !Task.isCancelled else { return }
+                onTimingEvent?(.ocrFinished)
                 try requireCurrentLayout()
                 ocrJob = nil
                 ocrTask = nil
@@ -333,6 +339,7 @@ public final class ScreenProbe: ObservableObject {
             } catch {
                 guard let self, generation == self.generation, ocrGeneration == self.ocrGeneration,
                       !Task.isCancelled else { return }
+                onTimingEvent?(.ocrFinished)
                 if error as? RegionCaptureError == .layoutChanged {
                     fail(.layoutChanged)
                     return

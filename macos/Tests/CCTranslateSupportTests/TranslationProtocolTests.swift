@@ -57,6 +57,90 @@ final class TranslationProtocolTests: XCTestCase {
         _ = try state.receive(event("t", 2, "completed", completion))
     }
 
+    func testOptionalModelProvenanceAcceptsOldCompletionsAndSafeUnknownModelIdentifiers() throws {
+        let variants: [JSONValue?] = [
+            nil,
+            .object(["requested_model": .string("auto-fast")]),
+            .object(["requested_model": .string("vendor/new-model:v2"),
+                     "resolved_model": .string("vendor/new-model-2026:v2"),
+                     "reasoning_effort": .string("minimal")]),
+            .object(["requested_model": .string(String(repeating: "a", count: 128)),
+                     "reasoning_effort": .string("none")])
+        ]
+        for info in variants {
+            var payload = completion
+            if let info { payload["model_info"] = info }
+            var state = try pending()
+            XCTAssertNoThrow(try state.receive(event("t", 2, "completed", payload)))
+        }
+        var cached = completion
+        cached["submitted"] = .bool(false)
+        cached["cached"] = .bool(true)
+        cached["history"] = .string("unchanged")
+        cached["model_info"] = .object(["requested_model": .string("auto")])
+        var state = try pending()
+        XCTAssertNoThrow(try state.receive(event("t", 2, "completed", cached)))
+        for key in ["resolved_model", "reasoning_effort"] {
+            cached["model_info"] = .object(["requested_model": .string("auto"),
+                                          key: .string(key == "resolved_model" ? "model-v2" : "low")])
+            try assertInvalidCompletion(cached)
+        }
+    }
+
+    func testOptionalMemoryCacheTimingFlagIsNumericAndRequiresCachedCompletionForHits() throws {
+        for (cached, memoryHit) in [(true, 1), (true, 0), (false, 0)] {
+            var payload = completion
+            payload["cached"] = .bool(cached)
+            payload["submitted"] = .bool(!cached)
+            payload["history"] = .string(cached ? "unchanged" : "recorded")
+            payload["timings"] = .object(["cache_hit": .integer(cached ? 1 : 0),
+                                          "memory_cache_hit": .integer(Int64(memoryHit))])
+            var state = try pending()
+            XCTAssertNoThrow(try state.receive(event("t", 2, "completed", payload)))
+        }
+        let invalid: [JSONValue] = [.integer(-1), .integer(2), .number(0.5), .bool(true), .null, .string("1")]
+        for value in invalid {
+            var payload = completion
+            payload["timings"] = .object(["memory_cache_hit": value])
+            try assertInvalidCompletion(payload)
+        }
+        var payload = completion
+        payload["timings"] = .object(["memory_cache_hit": .integer(1)])
+        try assertInvalidCompletion(payload)
+    }
+
+    func testModelProvenanceRejectsMalformedUnknownAndPrivateMetadata() throws {
+        let variants: [JSONValue] = [
+            .null, .string("model"), .array([]), .object([:]),
+            .object(["resolved_model": .string("model-v2")]),
+            .object(["requested_model": .bool(true)]),
+            .object(["requested_model": .string("auto"), "resolved_model": .null]),
+            .object(["requested_model": .string("auto"), "resolved_model": .string("auto-fast")]),
+            .object(["requested_model": .string("auto"), "reasoning_effort": .null]),
+            .object(["requested_model": .string("auto"), "reasoning_effort": .string("maximum")]),
+            .object(["requested_model": .string("auto"), "reasoning_effort": .integer(1)]),
+            .object(["requested_model": .string("auto"), "prompt": .string("Private input")])
+        ]
+        for info in variants {
+            var payload = completion
+            payload["model_info"] = info
+            try assertInvalidCompletion(payload)
+        }
+        for identifier in ["", String(repeating: "a", count: 129), "model name", "model\nprivate",
+                           "https://private.example", "/Users/private/model", "C:\\private\\model",
+                           "../model", "vendor/../model", "a/b/c", ".model", "模型",
+                           "sk-secret", "SK_secret", "ghp_secret", "github_pat_secret",
+                           "eyJpayload", "AKIAkey", "ASIAkey"] {
+            for key in ["requested_model", "resolved_model"] {
+                var fields: [String: JSONValue] = ["requested_model": .string("auto")]
+                fields[key] = .string(identifier)
+                var payload = completion
+                payload["model_info"] = .object(fields)
+                try assertInvalidCompletion(payload)
+            }
+        }
+    }
+
     func testTranslationHandshakeRequiresExactModeBackendAndSevenCapabilities() throws {
         var state = ProtocolState(mode: .translation)
         XCTAssertTrue(state.isBusiness)

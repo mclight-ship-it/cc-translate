@@ -11,6 +11,7 @@ import tempfile
 import sys
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -18,7 +19,7 @@ from cc_macos import native_provider_fixture
 from cc_macos.catalog_fixture import PAYLOAD, SyntheticCatalog
 from cc_macos.native_provider_fixture import NATIVE_CONFIG, TEXT, reply_messages
 from cc_providers import codex_appserver, codex_darwin as native
-from cc_providers.base import ProviderRequest, ProviderSelection
+from cc_providers.base import ProviderModelInfo, ProviderRequest, ProviderResult, ProviderSelection
 from cc_providers.codex_cli import build_codex_prompt
 from cc_providers.codex_config import CODEX_CONFIG_OVERRIDES, CodexConfigError
 from cc_providers.codex_catalog import CatalogProbeError
@@ -166,6 +167,7 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.assertEqual((result.error_code, result.error_detail, result.text), (code, "", ""))
         self.assertIs(dict(result.metrics)["turn_submitted"], submitted)
         self.assertNotIn("SYNTHETIC_PRIVATE", repr(result))
+        self.assertIsNone(result.model_info)
 
     def assert_no_activity(self):
         self.rpc.assert_not_called()
@@ -797,6 +799,243 @@ class TestDarwinCodexProvider(unittest.TestCase):
         self.assertEqual(len(self.processes), 2)
         self.assertEqual(self.processes[0].close_count, 1)
         self.assertEqual(self.methods(self.processes[1]).count("turn/start"), 1)
+
+    def model_responses(self, metadata, *, status="completed", rerouted=False):
+        def responses(proc, request):
+            messages = reply_messages(request, proc.cwd)
+            if request["method"] == "thread/start":
+                messages[0]["result"].update(metadata)
+            elif request["method"] == "turn/start":
+                messages[-1]["params"]["turn"]["status"] = status
+                if rerouted:
+                    messages.insert(1, {"method": "model/rerouted", "params": {
+                        "threadId": "synthetic-thread", "turnId": "synthetic-turn",
+                        "fromModel": "synthetic-resolved", "toModel": "SYNTHETIC_PRIVATE",
+                        "reason": "SYNTHETIC_PRIVATE"}})
+            return messages
+        self.responses = responses
+
+    def test_thread_response_confirms_model_not_requested_alias_for_stream_and_complete(self):
+        self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "low",
+                              "modelProvider": "SYNTHETIC_PRIVATE",
+                              "cwd": "SYNTHETIC_PRIVATE"})
+        provider = self.provider()
+        for streaming in (True, False):
+            with self.subTest(streaming=streaming):
+                request = self.request(model="auto-fast")
+                result = (provider.stream(request, lambda _: None) if streaming else provider.complete(request))
+                self.assertTrue(result.ok)
+                self.assertEqual(result.model_info, ProviderModelInfo("auto-fast", "synthetic-resolved", "low"))
+                self.assertTrue(all(type(value) in (int, bool) for _, value in result.metrics))
+                self.assertNotIn("SYNTHETIC_PRIVATE", repr(result))
+        self.assertEqual(len(self.processes), 1)
+        for call in self.processes[0].sent:
+            if call["method"] in ("thread/start", "turn/start"):
+                self.assertNotIn("model", call["params"])
+        self.assertIsNone(provider.warm_up("auto-fast").model_info)
+
+    def test_missing_malformed_metadata_never_reuses_previous_confirmation(self):
+        provider = self.provider()
+        self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "medium"})
+        self.assertEqual(provider.complete(self.request()).model_info.resolved_model, "synthetic-resolved")
+        for metadata, expected in (
+                ({}, ProviderModelInfo("synthetic")),
+                ({"model": None, "reasoningEffort": None}, ProviderModelInfo("synthetic")),
+                ({"model": [], "reasoningEffort": {}}, ProviderModelInfo("synthetic")),
+                ({"model": "sk-SYNTHETIC_PRIVATE", "reasoningEffort": "low\nSYNTHETIC_PRIVATE"},
+                 ProviderModelInfo("synthetic")),
+                ({"model": "model\nSYNTHETIC_PRIVATE", "reasoningEffort": "low"},
+                 ProviderModelInfo("synthetic", reasoning_effort="low")),
+                ({"model": "auto", "reasoningEffort": "unknown"}, ProviderModelInfo("synthetic")),
+                ({"model": "synthetic-resolved"}, ProviderModelInfo("synthetic", "synthetic-resolved")),
+                ({"resolved_model": "not-official", "reasoning_effort": "high"}, ProviderModelInfo("synthetic"))):
+            with self.subTest(metadata=metadata):
+                self.model_responses(metadata)
+                result = provider.complete(self.request())
+                self.assertTrue(result.ok)
+                self.assertEqual(result.model_info, expected)
+                self.assertNotIn("SYNTHETIC_PRIVATE", repr(result))
+        self.assertEqual(len(self.processes), 1)
+
+    def test_unconfirmed_turn_override_and_rerouting_do_not_claim_thread_effort(self):
+        provider = self.provider()
+        for effort, expected in (("high", None), ("low", "low"), (None, None)):
+            self.model_responses({"model": "synthetic-resolved", "reasoningEffort": effort})
+            result = provider.complete(self.request(model="gpt-5.4-mini"))
+            self.assertTrue(result.ok)
+            self.assertEqual(result.model_info, ProviderModelInfo("gpt-5.4-mini", "synthetic-resolved", expected))
+            turn = [r for r in self.processes[-1].sent if r["method"] == "turn/start"][-1]
+            self.assertEqual(turn["params"]["effort"], "low")
+        self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "low"}, rerouted=True)
+        result = provider.complete(self.request())
+        self.assertTrue(result.ok)
+        self.assertEqual(result.model_info, ProviderModelInfo("synthetic"))
+
+    def test_failed_interrupted_and_empty_turns_discard_confirmed_metadata(self):
+        for status, code in (("failed", "provider_failed"), ("interrupted", "cancelled")):
+            with self.subTest(status=status):
+                self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "high"}, status=status)
+                result = self.provider().complete(self.request())
+                self.assertFalse(result.ok)
+                self.assertIsNone(result.model_info)
+                if status == "interrupted":
+                    self.assertEqual(result.error_code, code)
+        self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "high"})
+        responses = self.responses
+        def no_text(proc, request):
+            messages = responses(proc, request)
+            if request["method"] == "turn/start":
+                messages[2]["params"]["item"]["text"] = ""
+            return messages
+        self.responses = no_text
+        self.assert_failure(self.provider().complete(self.request()), "no_result", True)
+
+    def test_adapter_discards_metadata_when_cancel_or_cleanup_overrides_transport_success(self):
+        for code in ("cancelled", "provider_cleanup_failed"):
+            with self.subTest(code=code):
+                provider, cancel = self.provider(), threading.Event()
+                def stream(*_args):
+                    if code == "cancelled":
+                        cancel.set()
+                    else:
+                        provider._transport.cleanup_failed.set()
+                    return ProviderResult(True, TEXT, metrics=(("turn_submitted", True),),
+                                          model_info=ProviderModelInfo("synthetic", "synthetic-resolved", "low"))
+                with patch.object(provider._transport, "stream", side_effect=stream):
+                    self.assert_failure(provider.complete(self.request(), cancel), code, True)
+                provider._transport.cleanup_failed.clear()
+
+    def test_legacy_transport_result_without_metadata_still_completes(self):
+        provider = self.provider()
+        legacy = SimpleNamespace(ok=True, text=TEXT, error_code="", metrics=(("turn_submitted", True),))
+        with patch.object(provider._transport, "stream", return_value=legacy):
+            result = provider.complete(self.request())
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, TEXT)
+        self.assertIsNone(result.model_info)
+
+    def cache_ready_provider(self, *, config=None, environment=None):
+        command = self.version_binary()
+        root = command.parent
+        self.home = str(root / "home")
+        self.work = str(root / "home" / "work")
+        Path(self.work).mkdir(parents=True)
+        account = Path(self.home) / ".codex"
+        account.mkdir()
+        (account / "auth.json").write_text('{"synthetic":"not-a-real-account"}', encoding="utf-8")
+        (account / "config.toml").write_text('model="synthetic"\n', encoding="utf-8")
+        self.environment["HOME"] = self.home
+        self.environment.update(environment or {})
+        self.config.return_value = config or {
+            "config": {"model_provider": "openai", "cli_auth_credentials_store": "file"}, "layers": [],
+        }
+        self.model_responses({"model": "synthetic-resolved", "reasoningEffort": "none"})
+        provider = self.provider()
+        self.assertTrue(provider.complete(self.request(model="auto-fast")).ok)
+        return provider, command, account
+
+    def test_cache_identity_binds_confirmed_auto_profile_to_resident_without_rpc_or_idle_renewal(self):
+        provider, command, account = self.cache_ready_provider()
+        calls = (self.capture.call_count, self.config.call_count, self.export.call_count,
+                 self.rpc.call_count, self.schedule.call_count, len(self.processes[-1].sent))
+        with provider.translation_cache_scope("auto-fast") as identity:
+            self.assertEqual(len(identity[0]), 32)
+            self.assertEqual(identity[1], ProviderModelInfo("auto-fast", "synthetic-resolved", "none"))
+        with provider.translation_cache_scope("auto-fast") as repeated:
+            self.assertEqual(repeated, identity)
+        self.assertEqual(calls, (self.capture.call_count, self.config.call_count, self.export.call_count,
+                                self.rpc.call_count, self.schedule.call_count, len(self.processes[-1].sent)))
+        with provider.translation_cache_scope("auto") as other:
+            self.assertIsNone(other)
+        self.assertNotIn("not-a-real-account", repr(identity))
+        provider._transport.stop_current()
+        with provider.translation_cache_scope("auto-fast") as gone:
+            self.assertIsNone(gone)
+        self.assertTrue(provider.complete(self.request(model="auto-fast")).ok)
+        with provider.translation_cache_scope("auto-fast") as restarted:
+            self.assertNotEqual(restarted[0], identity[0])
+
+    def test_cache_identity_fails_closed_on_cli_config_account_home_or_process_changes(self):
+        for change in ("command", "config", "auth", "missing_auth", "home", "account_home", "exit"):
+            with self.subTest(change=change):
+                provider, command, account = self.cache_ready_provider()
+                with provider.translation_cache_scope("auto-fast") as identity:
+                    self.assertIsNotNone(identity)
+                if change == "command":
+                    command.write_bytes(b"\xcf\xfa\xed\xfeReplacement executable")
+                elif change == "config":
+                    (account / "config.toml").write_text('model="different"\n', encoding="utf-8")
+                elif change == "auth":
+                    (account / "auth.json").write_text('{"synthetic":"different-account"}', encoding="utf-8")
+                elif change == "missing_auth":
+                    (account / "auth.json").unlink()
+                elif change == "home":
+                    Path(self.home).rename(Path(self.home).with_name("renamed-home"))
+                elif change == "account_home":
+                    account.rename(account.with_name("old-account"))
+                    account.mkdir()
+                    (account / "auth.json").write_text('{"synthetic":"not-a-real-account"}', encoding="utf-8")
+                    (account / "config.toml").write_text('model="synthetic"\n', encoding="utf-8")
+                else:
+                    self.processes[-1].closed = True
+                with provider.translation_cache_scope("auto-fast") as changed:
+                    self.assertIsNone(changed)
+
+    def test_cache_eligibility_excludes_custom_external_keyring_and_untracked_layers(self):
+        configs = (
+            {"model_provider": "custom"},
+            {"model_providers": {"openai": {"base_url": "https://invalid/SYNTHETIC_PRIVATE"}}},
+            {"cli_auth_credentials_store": "keyring"},
+            {"cli_auth_credentials_store": "auto"},
+            {"chatgpt_base_url": "https://invalid/SYNTHETIC_PRIVATE"},
+            {"experimental_auth": "SYNTHETIC_PRIVATE"},
+            {"profile": "custom"},
+            {"profiles": {"custom": {"model_provider": "custom"}}},
+            {"model_catalog_json": "SYNTHETIC_PRIVATE"},
+            {"projects": {"SYNTHETIC_PRIVATE": {"model_provider": "custom"}}},
+        )
+        for config in configs:
+            with self.subTest(config=config):
+                provider, _, _ = self.cache_ready_provider(config={"config": config, "layers": []})
+                with provider.translation_cache_scope("auto-fast") as identity:
+                    self.assertIsNone(identity)
+        for layer in ({"name": {"type": "project", "dotCodexFolder": "SYNTHETIC_PRIVATE"}},
+                      {"name": {"type": "mdm"}}, {"name": {"type": []}}, {},
+                      {"name": {"type": "user", "file": "SYNTHETIC_PRIVATE"}}):
+            provider, _, _ = self.cache_ready_provider(config={"config": {}, "layers": [layer]})
+            with provider.translation_cache_scope("auto-fast") as identity:
+                self.assertIsNone(identity)
+        provider, _, _ = self.cache_ready_provider(environment={"OPENAI_API_KEY": "SYNTHETIC_PRIVATE"})
+        with provider.translation_cache_scope("auto-fast") as identity:
+            self.assertIsNone(identity)
+
+    def test_cache_is_unavailable_during_operations_account_notifications_or_auth_rotation(self):
+        provider, _, account = self.cache_ready_provider()
+        provider._active_thread = threading.get_ident()
+        with provider.translation_cache_scope("auto-fast") as busy:
+            self.assertIsNone(busy)
+        provider._active_thread = None
+        responses = self.responses
+        def changed(proc, request):
+            messages = responses(proc, request)
+            if request["method"] == "turn/start":
+                messages.insert(1, {"method": "account/updated", "params": {"authMode": "chatgpt"}})
+            return messages
+        self.responses = changed
+        self.assertTrue(provider.complete(self.request(model="auto-fast")).ok)
+        with provider.translation_cache_scope("auto-fast") as notified:
+            self.assertIsNone(notified)
+        self.responses = responses
+        provider, _, account = self.cache_ready_provider()
+        def rotated(proc, request):
+            messages = responses(proc, request)
+            if request["method"] == "turn/start":
+                (account / "auth.json").write_text('{"synthetic":"rotated"}', encoding="utf-8")
+            return messages
+        self.responses = rotated
+        self.assertTrue(provider.complete(self.request(model="auto-fast")).ok)
+        with provider.translation_cache_scope("auto-fast") as rotated_identity:
+            self.assertIsNone(rotated_identity)
 
     def test_old_unreadable_and_prerelease_versions_never_start_a_turn(self):
         for version, code in (

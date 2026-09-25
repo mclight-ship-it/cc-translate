@@ -32,7 +32,20 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var nativeTranslation = false
     @Published private(set) var settingsReady = false
     @Published private(set) var settingsBusy = false
-    @Published private(set) var latency = TranslationLatency()
+    private(set) var latency = TranslationLatency() {
+        didSet {
+            guard !latencyNotificationPending else { return }
+            latencyNotificationPending = true
+            // Publish after value mutations commit, so observation cannot re-enter
+            // an inout timing update and overwrite a newer intent's measurements.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.latencyNotificationPending = false
+                self.objectWillChange.send()
+            }
+        }
+    }
+    private var latencyNotificationPending = false
     @Published private(set) var prewarmFailure: String?
     private var prewarmSupported = false
     private var prewarmRequested = false
@@ -431,6 +444,9 @@ final class ProbeModel: ObservableObject {
         imageObservation = self.imageTranslation.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         self.imageTranslation.onPrepared = { [weak self] intent in
             guard let self, self.draft?.imageIntent == intent, self.translationIntentID == intent else { return }
+            if self.latency.current?.intent == intent {
+                self.latency.mark("image_attachment_ready_ms", now: self.latencyClock())
+            }
             self.openProduct()
             self.resumeTranslation()
         }
@@ -861,7 +877,14 @@ final class ProbeModel: ObservableObject {
         request(["operation": .string("runtime_probe"), "https": .bool(https)])
     }
 
-    func translate(origin: String = "text", useCache: Bool = true, inResultPanel: Bool = false) {
+    var captureTimingNow: TimeInterval { latencyClock() }
+
+    func recordCaptureLatency(_ timing: CaptureTimingSnapshot, outcome: TranslationLatency.Outcome) {
+        latency.recordCapture(timing, provider: translationProvider, outcome: outcome, now: latencyClock())
+    }
+
+    func translate(origin: String = "text", useCache: Bool = true, inResultPanel: Bool = false,
+                   captureTiming: CaptureTimingSnapshot? = nil) {
         let trigger = origin == "selection" ? selectionTriggerTime : nil
         selectionTriggerTime = nil
         monitor.cancelPendingSelection()
@@ -874,7 +897,7 @@ final class ProbeModel: ObservableObject {
         translationIntentID = UUID()
         latency.begin(intent: translationIntentID, source: origin == "selection" ? .selection :
                         origin == "ocr" ? .ocr : .text, provider: translationProvider,
-                      trigger: trigger, now: latencyClock())
+                      trigger: trigger, now: latencyClock(), capture: captureTiming)
         cancelPrewarm()
         prewarmRequested = true
         draft = Draft(text: input, origin: origin, useCache: origin == "ocr" ? false : useCache,
@@ -897,7 +920,7 @@ final class ProbeModel: ObservableObject {
     }
 
     @discardableResult
-    func translateImage(_ image: CGImage) -> UUID? {
+    func translateImage(_ image: CGImage, captureTiming: CaptureTimingSnapshot? = nil) -> UUID? {
         monitor.cancelPendingSelection()
         guard !active, !preparing, !stopping, !imageTranslation.isShutDown else {
             productMessage = text("Finish or cancel the current request first.", "请先完成或取消当前请求。")
@@ -907,7 +930,8 @@ final class ProbeModel: ObservableObject {
         loadPresentation()
         let intent = UUID()
         translationIntentID = intent
-        latency.begin(intent: intent, source: .ocr, provider: translationProvider, trigger: nil, now: latencyClock())
+        latency.begin(intent: intent, source: .image, provider: translationProvider,
+                      trigger: nil, now: latencyClock(), capture: captureTiming)
         cancelPrewarm()
         prewarmRequested = true
         draft = Draft(text: "", origin: "ocr", useCache: false, direction: direction, model: modelProfile,
@@ -919,6 +943,7 @@ final class ProbeModel: ObservableObject {
         productPhase = .preparing
         productMessage = text("Preparing the selected image…", "正在准备所选图片…")
         guard draft?.imageIntent == intent, translationIntentID == intent else { return nil }
+        latency.mark("image_attachment_started_ms", now: latencyClock())
         imageTranslation.prepare(image, intent: intent)
         return intent
     }
@@ -975,6 +1000,7 @@ final class ProbeModel: ObservableObject {
         guard var requested = draft, connectionMode != .diagnostic, ready, settingsReady, !settingsBusy,
               !active, !stopping, !publishingImageRequest, !dictionary.committing,
               let connection = connection else { return }
+        let timingIntent = translationIntentID
         if let intent = requested.imageIntent, imageTranslation.attachment(for: intent) == nil { return }
         guard requested.provider == translationProvider else {
             failPreparation(text("The translation service changed. Translate again to use the current service.",
@@ -997,8 +1023,10 @@ final class ProbeModel: ObservableObject {
             active = true
             hideCurrentOutput = false
             productPhase = .preparing
-            latency.bind(id: id)
-            latency.mark("lookup_started_ms", now: latencyClock())
+            if latency.current?.intent == timingIntent {
+                latency.bind(id: id)
+                latency.mark("lookup_started_ms", now: latencyClock())
+            }
             productMessage = text("Checking the local dictionary…", "正在查询本地词典…")
             onTranslationStarted?()
             _ = connection.dictionary(.lookup(text: requested.text, appLanguage: requested.language,
@@ -1094,7 +1122,9 @@ final class ProbeModel: ObservableObject {
         pending.insert(id)
         active = true
         firstDeltaReceived = false
-        latency.dispatch(id: id, provider: requested.provider, now: latencyClock())
+        if latency.current?.intent == timingIntent {
+            latency.bind(id: id)
+        }
         discardBufferedDelta()
         hideCurrentOutput = false
         productPhase = .translating
@@ -1127,7 +1157,11 @@ final class ProbeModel: ObservableObject {
                     productPhase = .cancelled
                     productMessage = text("Cancelled", "已取消")
                 }
+                if latency.current?.requestID == id { latency.finish(.cancelled, now: latencyClock()) }
                 return
+            }
+            if latency.current?.requestID == id {
+                latency.dispatch(id: id, provider: requested.provider, now: latencyClock())
             }
             _ = connection.translateImage(imagePath: attachment.imagePath, imageBytes: attachment.imageBytes,
                                           imageSHA256: attachment.imageSHA256, appLanguage: requested.language,
@@ -1137,6 +1171,9 @@ final class ProbeModel: ObservableObject {
         }
         onTranslationStarted?()
         status = "Translation requested. Uses the selected native CLI; no automatic retry."
+        if latency.current?.requestID == id {
+            latency.dispatch(id: id, provider: requested.provider, now: latencyClock())
+        }
         if let action = requested.action {
             _ = connection.resultAction(action.action, text: requested.text, appLanguage: requested.language,
                                         targetLanguage: action.targetLanguage, id: id, timeout: 110)
@@ -2025,6 +2062,7 @@ final class ProbeModel: ObservableObject {
     }
 
     func cancel() {
+        latency.finish(.cancelled, now: latencyClock())
         cancelPreparationIntent()
         monitor.cancelPendingSelection()
         if draft != nil {
@@ -2148,12 +2186,23 @@ final class ProbeModel: ObservableObject {
             if let metrics = event.payload["timings"]?.object {
                 latency.providerMetrics(metrics, id: event.id)
             }
+            if event.type == "completed", let info = event.payload["model_info"] {
+                latency.providerModelInfo(info, id: event.id)
+            }
+            if event.type == "completed", let cached = event.payload["cached"]?.bool {
+                latency.completionCacheState(cached, id: event.id)
+            }
             active = pending.contains(event.id)
             switch event.type {
             case "accepted": status = nativeTranslation ? "Translation accepted." : "Accepted (P0 probe)."
             case "started": status = "Native request started; submission status is not yet known."
             case "delta":
                 if !hideCurrentOutput { bufferedDelta += event.payload["text"]?.string ?? "" }
+                if !hideCurrentOutput {
+                    let prefix = activeAction?.content.prefix.count ?? 0
+                    latency.observeOutput(String(output.dropFirst(prefix)) + bufferedDelta,
+                                          id: event.id, now: latencyClock())
+                }
                 let prefixBytes = activeAction?.content.prefix.utf8.count ?? 0
                 if output.utf8.count - prefixBytes + bufferedDelta.utf8.count > 65_536 {
                     error = .frameTooLarge
@@ -2176,6 +2225,9 @@ final class ProbeModel: ObservableObject {
             case "completed":
                 discardBufferedDelta()
                 if let text = event.payload["text"]?.string {
+                    if !hideCurrentOutput {
+                        latency.observeOutput(text, id: event.id, isFinal: true, now: latencyClock())
+                    }
                     if let action = activeAction {
                         if !hideCurrentOutput, action.id == event.id,
                            action.content.generation == resultGeneration {
@@ -2472,6 +2524,7 @@ final class ProbeModel: ObservableObject {
                 output = resultText
                 if latency.current?.requestID == event.id {
                     latency.mark("first_output_ms", now: latencyClock())
+                    latency.observeOutput(resultText, id: event.id, isFinal: true, now: latencyClock())
                     latency.finish(.completed, now: latencyClock())
                 }
                 primaryResult = resultText

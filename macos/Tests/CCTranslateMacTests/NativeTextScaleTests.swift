@@ -225,6 +225,83 @@ enum ScaleTestSupport {
     }
 }
 
+final class NativeSummaryReadingTests: XCTestCase {
+    @MainActor
+    func testSummaryRemainsVisibleWhileTranslationGrowsAndFinishesInEveryTargetLanguage() async throws {
+        let headings = [
+            ("Summary", "Translation"), ("\u{6458}\u{8981}", "\u{8bd1}\u{6587}"),
+            ("\u{8981}\u{7d04}", "\u{7ffb}\u{8a33}"), ("\u{c694}\u{c57d}", "\u{bc88}\u{c5ed}"),
+            ("R\u{e9}sum\u{e9}", "Traduction"), ("Zusammenfassung", "\u{dc}bersetzung"),
+            ("Resumen", "Traducci\u{f3}n")
+        ]
+        for (summary, translation) in headings {
+            let state = ScaleTextState("## \(summary)\n- Important point.\n")
+            state.streaming = true
+            let surface = ScaleTestHost(ScaleTextSurface(state: state), size: NSSize(width: 440, height: 250))
+            defer { surface.close() }
+            let view = try surface.text()
+            let scroll = try XCTUnwrap(view.enclosingScrollView)
+            state.text += "\n## \(translation)\n" + ScaleTestSupport.longText
+            try await surface.waitFor { view.string == state.text }
+            XCTAssertGreaterThan(view.bounds.height, scroll.contentView.bounds.height)
+            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1, summary)
+            state.streaming = false
+            try await surface.waitFor { !view.string.contains("## ") }
+            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1, summary)
+            XCTAssertTrue(try surface.text() === view)
+        }
+    }
+
+    @MainActor
+    func testManualScrollAndSelectionStayWhereTheReaderLeftThemAcrossSummaryDeltas() async throws {
+        let state = ScaleTextState("## Summary\n- Important point.\n\n## Translation\n" + ScaleTestSupport.longText)
+        state.streaming = true
+        let surface = ScaleTestHost(ScaleTextSurface(state: state), size: NSSize(width: 440, height: 250))
+        defer { surface.close() }
+        let view = try surface.text()
+        let scroll = try XCTUnwrap(view.enclosingScrollView)
+        view.scrollRangeToVisible(NSRange(location: view.string.utf16.count, length: 0))
+        let bottomOrigin = scroll.contentView.bounds.origin
+        XCTAssertGreaterThan(bottomOrigin.y, 0)
+        state.text += "\n" + ScaleTestSupport.longText
+        try await surface.waitFor { view.string == state.text }
+        XCTAssertEqual(scroll.contentView.bounds.minY, bottomOrigin.y, accuracy: 1)
+        let selected = (view.string as NSString).range(of: "Line 40")
+        view.setSelectedRange(selected)
+        view.scrollRangeToVisible(selected)
+        let readingOrigin = scroll.contentView.bounds.origin
+        state.text += "\nFinal paragraph."
+        try await surface.waitFor { view.string == state.text }
+        XCTAssertEqual(view.selectedRange(), selected)
+        XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
+        state.streaming = false
+        surface.flush()
+        XCTAssertEqual(view.selectedRange(), selected)
+        XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
+    }
+
+    @MainActor
+    func testOrdinaryStreamingStillFollowsTheTailAndNewResultResetsToTop() async throws {
+        let state = ScaleTextState("Ordinary translation.\n")
+        state.streaming = true
+        let surface = ScaleTestHost(ScaleTextSurface(state: state), size: NSSize(width: 440, height: 250))
+        defer { surface.close() }
+        let view = try surface.text()
+        let scroll = try XCTUnwrap(view.enclosingScrollView)
+        state.text += ScaleTestSupport.longText
+        try await surface.waitFor { view.string == state.text }
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+        state.text = "## Summary\n- A new request.\n\n## Translation\n" + ScaleTestSupport.longText
+        try await surface.waitFor { view.string == state.text }
+        XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1)
+        state.text = "A different ordinary request.\n"
+        try await surface.waitFor { view.string == state.text }
+        state.text += ScaleTestSupport.longText
+        try await surface.waitFor { view.string == state.text }
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+    }
+}
+
 final class NativeTextScaleRenderingTests: XCTestCase {
     @MainActor
     func testActualRichFontsKeepDefaultSizesAndTraitsAcrossEveryScaleAndRoundTrips() async throws {

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -19,7 +20,7 @@ from cc_prompts import (
     OCR_STRUCTURE_HINT, RESULT_ACTION_PROMPTS, SYSTEM_SUFFIX,
 )
 from cc_summary import codex_summary_instruction
-from cc_providers.base import ProviderResult
+from cc_providers.base import ProviderModelInfo, ProviderResult
 from cc_providers.codex_catalog import CatalogProbeError
 from cc_providers.codex_cli import build_codex_prompt
 from cc_providers.darwin_process import ProcessError
@@ -1170,6 +1171,7 @@ class OCRTranslationServiceTests(_TranslationDirectory):
                         "target_lang": None if is_dict or is_code else "zh", "summarize": False,
                         "history": "recorded", "history_error": None,
                         "timings": payload["timings"],
+                        "model_info": {"requested_model": "synthetic"},
                     })
                     entry = self.history()[0]
                     self.assertEqual((entry["input"], entry["output"], entry["kind"], entry["is_dict"], entry["is_code"]),
@@ -1333,6 +1335,85 @@ class OCRTranslationServiceTests(_TranslationDirectory):
         self.assertEqual(self.stdout.result("translate")["payload"], {"code": "invalid_config", "submitted": False})
         self.assertEqual(self.path.read_bytes(), b"{broken")
         self.assertEqual(self.provider.requests, [])
+
+
+class ModelInfoServiceTests(_TranslationDirectory):
+    def test_completed_text_ocr_and_all_actions_propagate_metadata_for_both_provider_paths(self):
+        info = ProviderModelInfo("synthetic", "synthetic-resolved", "low")
+        expected = {"requested_model": "synthetic", "resolved_model": "synthetic-resolved",
+                    "reasoning_effort": "low"}
+        for streaming in (False, True):
+            config = self.config | {CFG.CODEX_STREAMING_EXPERIMENTAL: streaming}
+            for operation, payload in (
+                    ("translate", request(use_cache=False, record_history=False)),
+                    ("translate", request(origin="ocr", use_cache=False, record_history=False)),
+                    *(("result_action", action_request(action)) for action in translation.RESULT_ACTIONS)):
+                with self.subTest(streaming=streaming, payload=payload), \
+                        patch.object(self.session, "_translation_config", return_value=config), \
+                        patch.object(self.provider, "stream" if streaming else "complete", return_value=ProviderResult(
+                            True, OUTPUT, metrics=(("total_ms", 12), ("turn_submitted", True)), model_info=info)):
+                    event, result = getattr(self.session, operation)(
+                        payload, threading.Event(), lambda _: None, lambda: True)
+                self.assertEqual(event, "completed")
+                self.assertEqual(result["model_info"], expected)
+                self.assertEqual(result["timings"]["total_ms"], 12)
+                self.assertTrue(all(type(value) is int for value in result["timings"].values()))
+                self.assertNotIn("model_info", result["timings"])
+        self.assertEqual(self.history(), [])
+
+    def test_cache_hit_retains_requested_profile_only_without_persisting_runtime_metadata(self):
+        info = ProviderModelInfo("synthetic", "synthetic-resolved", "low")
+        with patch.object(self.provider, "stream", return_value=ProviderResult(
+                True, OUTPUT, metrics=(("turn_submitted", True),), model_info=info)):
+            event, result = self.session.translate(request(), threading.Event(), lambda _: None, lambda: True)
+        self.assertEqual(event, "completed")
+        self.assertEqual(result["model_info"]["resolved_model"], "synthetic-resolved")
+        self.assertNotIn("model_info", self.history()[0])
+        with patch.object(self.provider, "stream", side_effect=AssertionError("cache called provider")):
+            event, result = self.session.translate(request(), threading.Event(), lambda _: None, lambda: True)
+        self.assertEqual(event, "completed")
+        self.assertTrue(result["cached"])
+        self.assertFalse(result["submitted"])
+        self.assertEqual(result["model_info"], {"requested_model": "synthetic"})
+
+    def test_legacy_missing_malformed_or_mismatched_metadata_never_claims_an_actual_model(self):
+        legacy = SimpleNamespace(ok=True, text=OUTPUT, error_code="", metrics=())
+        for result in (legacy, ProviderResult(True, OUTPUT),
+                       SimpleNamespace(**vars(legacy), model_info={"resolved_model": "SYNTHETIC_PRIVATE"}),
+                       ProviderResult(True, OUTPUT, model_info=ProviderModelInfo("other", "unrelated", "high"))):
+            with self.subTest(result=result), patch.object(self.provider, "stream", return_value=result):
+                event, payload = self.session.translate(
+                    request(use_cache=False, record_history=False), threading.Event(), lambda _: None, lambda: True)
+            self.assertEqual(event, "completed")
+            self.assertEqual(payload["model_info"], {"requested_model": "synthetic"})
+            self.assertNotIn("SYNTHETIC_PRIVATE", repr(payload))
+        for value in ("SYNTHETIC_PRIVATE text", "sk-SYNTHETIC_PRIVATE", "\ud800", "x" * 129):
+            self.assertEqual(translation.provider_model_info(value), {})
+        forged = ProviderModelInfo("synthetic")
+        object.__setattr__(forged, "resolved_model", "sk-SYNTHETIC_PRIVATE")
+        object.__setattr__(forged, "reasoning_effort", {"SYNTHETIC_PRIVATE": "high"})
+        self.assertEqual(translation.provider_model_info("synthetic", forged),
+                         {"model_info": {"requested_model": "synthetic"}})
+
+    def test_failed_cancelled_and_final_admission_rejection_have_no_model_info(self):
+        info = ProviderModelInfo("synthetic", "synthetic-resolved", "low")
+        for ok, code, finish, expected in (
+                (False, "cancelled", True, "cancelled"),
+                (False, "provider_failed", True, "failed"),
+                (True, "", False, "cancelled")):
+            with self.subTest(code=code, finish=finish), patch.object(
+                    self.provider, "stream", return_value=ProviderResult(
+                        ok, OUTPUT, error_code=code, metrics=(("turn_submitted", True),), model_info=info)):
+                if expected == "failed":
+                    with self.assertRaises(translation.TranslationError) as caught:
+                        self.session.translate(request(), threading.Event(), lambda _: None, lambda: finish)
+                    self.assertEqual(caught.exception.code, "provider_failed")
+                    self.assertNotIn("synthetic-resolved", str(caught.exception))
+                else:
+                    event, result = self.session.translate(
+                        request(), threading.Event(), lambda _: None, lambda: finish)
+                    self.assertEqual((event, result), ("cancelled", {"submitted": True}))
+        self.assertEqual(self.history(), [])
 
 
 class TranslationServiceTests(_TranslationDirectory):
@@ -1657,6 +1738,7 @@ class ResultActionServiceTests(_TranslationDirectory):
                     "target_lang": "ja" if action == "retranslate" else "zh" if action == "as_text" else None,
                     "summarize": False, "history": "disabled", "history_error": None,
                     "timings": events[-1]["payload"]["timings"],
+                    "model_info": {"requested_model": "synthetic"},
                 })
         self.assertEqual(len(self.provider.requests), 12)
         self.assertEqual(self.history(), [])

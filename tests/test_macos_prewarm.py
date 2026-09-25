@@ -447,8 +447,12 @@ class TranslationTimingTests(_TranslationDirectory):
             self.assertIs(type(timings["helper_elapsed_ms"]), int)
             self.assertGreaterEqual(timings["helper_elapsed_ms"], 0)
             self.assertLessEqual(timings["helper_elapsed_ms"], translation.MAX_TIMING_MS)
-            self.assertEqual(set(timings), {"helper_elapsed_ms", "cache_hit"} if cache else {
-                "helper_elapsed_ms", "cache_hit", "total_ms", "warm_process_hit", "version_cache_hit"})
+            expected = {"helper_elapsed_ms", "cache_hit"} if cache else {
+                "helper_elapsed_ms", "cache_hit", "total_ms", "warm_process_hit", "version_cache_hit"}
+            if id_ != "action":
+                expected.add("memory_cache_hit")
+                self.assertEqual(timings["memory_cache_hit"], 0)
+            self.assertEqual(set(timings), expected)
         self.assertNotIn(b"synthetic-private", self.stdout.getvalue())
 
     def test_helper_elapsed_spans_snapshot_provider_and_history_and_is_bounded(self):
@@ -469,7 +473,8 @@ class TranslationTimingTests(_TranslationDirectory):
                 patch.object(self.session, "_record", side_effect=history):
             event, result = self.session.translate(request(), threading.Event(), lambda text: None, lambda: True)
         self.assertEqual(event, "completed")
-        self.assertEqual(result["timings"], {"cache_hit": 0, "helper_elapsed_ms": 7000})
+        self.assertEqual(result["timings"], {"cache_hit": 0, "memory_cache_hit": 0, "helper_elapsed_ms": 7000})
         with patch.object(translation.time, "monotonic", side_effect=(0, 100_000)):
             _, result = self.session.translate(request(), threading.Event(), lambda text: None, lambda: True)
-        self.assertEqual(result["timings"], {"cache_hit": 1, "helper_elapsed_ms": translation.MAX_TIMING_MS})
+        self.assertEqual(result["timings"], {
+            "cache_hit": 1, "memory_cache_hit": 0, "helper_elapsed_ms": translation.MAX_TIMING_MS})

@@ -876,6 +876,36 @@ Foundation.Process harness 只复制原 support/C/集成测试，不包含 App t
 isolated 状态、SQLite 读写、真实 TLS、取消/EOF 及 bundle 不被写入。
 Windows 是原生编译外部门槛，不通过大规模写未经编译 UI 来掩盖。
 
+### GPT 模型与提示词的独立评估
+
+[评估工具](../tools/codex_translation_eval.py) 是开发仓库工具，不是应用运行时或默认引擎。
+要求 Python 3.11+；macOS CI 额外使用随包固定 Python 运行其离线测试，避免宿主 3.9 跳过而漏验。
+默认命令只输出 11 个原创中英案例的 17 请求计划，不发现或启动 CLI、不读账号、不提交模型请求：
+
+```sh
+python3 -B -m tools.codex_translation_eval --report eval-plan.json
+```
+
+只有在**已有官方 Codex 原生二进制及 ChatGPT 订阅登录**的专用评估环境中，才可显式运行：
+
+```sh
+python3 -B -m tools.codex_translation_eval --inspect --consent-chatgpt --codex /absolute/path/to/codex
+python3 -B -m tools.codex_translation_eval --live --consent-chatgpt --codex /absolute/path/to/codex \
+  --model gpt-EXACT-ID-FROM-INSPECT --report eval-results.json
+```
+
+路径和模型 ID 必须替换为实际值。报告只能新建在当前目录内，不覆盖已有证据。
+拒绝自定义路由、API/外部认证和相关环境覆盖；检查失败就停止，不自动更换账号、删除环境变量或重试。
+每次真实请求前复核配置、账号及当前目录。最多两个明确 GPT 模型、三轮重复、64 次请求；
+默认预算 24 次。不支持 `auto`、其他模型系列或付费 API。
+
+结果保留公开合成原文、完整 prompt、输出和阶段计时以供双语质量审阅；不收集私人选区。
+普通文本配对比较生产/精简 prompt，摘要、代码和词典分类只执行原有生产 prompt。
+`quality` 保持未评估，非空输出不等于质量合格；需要逐条检查否定、数字、术语、遗漏、代码与摘要顺序。
+串行请求各自启动冷 app-server，额外列出从 `turn/start` 起的时间；不是暖驻留或 UI 体感基准。
+CLI 返回的模型信息不是云端实际模型的独立证明，缺失项明确未知。
+只有真实速度与质量证据同时成立，才能另行决定是否更换生产默认。
+
 ### P0 App 的显式验收入口（步骤模板；原包用户报告见下，不代表最新包实机已验）
 
 1. 最新开发包Finder启动后仅应出现 `CC Dev` 菜单栏项目，不自动弹窗、申请权限或联网。

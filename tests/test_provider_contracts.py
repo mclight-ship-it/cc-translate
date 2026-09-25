@@ -50,6 +50,39 @@ class TestPortableProviderContracts(unittest.TestCase):
         self.assertEqual(result.text, "")
         self.assertEqual(result.error_code, "synthetic_failure")
         self.assertEqual(result.metrics, (("wall_ms", 1),))
+        self.assertIsNone(result.model_info)
+
+    def test_optional_model_info_preserves_positional_result_and_frozen_contract(self):
+        legacy = base.ProviderResult(True, "text", "", "", (("total_ms", 7),))
+        info = base.ProviderModelInfo("auto-fast", "gpt-5.4-mini", "low")
+        updated = replace(legacy, model_info=info)
+        self.assertEqual(updated.metrics, legacy.metrics)
+        self.assertIsNone(legacy.model_info)
+        self.assertEqual(updated.model_info, info)
+        with self.assertRaises(FrozenInstanceError):
+            info.resolved_model = "changed"
+
+    def test_model_info_omits_untrusted_values_without_truncating_or_normalizing(self):
+        for value in (None, True, 12, [], {}, "", "x" * 129, " synthetic ", "\ud800",
+                      "model\nSYNTHETIC_PRIVATE", "model\0secret", "你好", "../private",
+                      "/Users/private", r"C:\Users\private", "https://host/secret",
+                      "Bearer SYNTHETIC_PRIVATE", "sk-SYNTHETIC_PRIVATE",
+                      "ghp_SYNTHETIC_PRIVATE", "eyJhbGci.SYNTHETIC_PRIVATE.signature",
+                      '{"model":"synthetic","token":"SYNTHETIC_PRIVATE"}'):
+            with self.subTest(value=value):
+                info = base.ProviderModelInfo(value, value, value)
+                self.assertEqual(info, base.ProviderModelInfo())
+                self.assertNotIn("SYNTHETIC_PRIVATE", repr(info))
+        for value in ("auto-fast", "gpt-5.4-mini", "provider/Exact-ID:2026", "x" * 128):
+            self.assertEqual(base.ProviderModelInfo(value).requested_model, value)
+        for value in ("auto", "auto-fast"):
+            self.assertIsNone(base.ProviderModelInfo("auto", value).resolved_model)
+
+    def test_reasoning_effort_accepts_only_fixed_known_enum_values(self):
+        for effort in base.MODEL_REASONING_EFFORTS:
+            self.assertEqual(base.ProviderModelInfo(reasoning_effort=effort).reasoning_effort, effort)
+        for effort in ("LOW", "disabled", "future", "low private", True, [], {}):
+            self.assertIsNone(base.ProviderModelInfo(reasoning_effort=effort).reasoning_effort)
 
     def test_registry_keeps_existing_identity_and_errors(self):
         registry = ProviderRegistry()

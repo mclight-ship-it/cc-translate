@@ -1,6 +1,8 @@
 """Explicit native app-server provider with owned, bounded Darwin subprocesses."""
 
 from types import MappingProxyType
+from contextlib import contextmanager
+import hashlib
 import json
 import math
 import os
@@ -10,7 +12,7 @@ import threading
 import time
 
 from .base import (
-    CODEX_PROVIDER, ProviderCapabilities, ProviderRequest, ProviderResult, ProviderStatus,
+    CODEX_PROVIDER, ProviderCapabilities, ProviderModelInfo, ProviderRequest, ProviderResult, ProviderStatus,
 )
 from .codex_appserver import (
     CodexAppServerProtocolError, CodexAppServerTransport,
@@ -89,6 +91,116 @@ class _NativeTransport(CodexAppServerTransport):
         self.version_check_ms = None
         self.version_cache_hit = 0
         self.warm_process_hit = 0
+        self._cache_config_digest = None
+        self._cache_files_before = None
+        self._cache_process_token = None
+        self._cache_runtime_changed = False
+
+    def _cache_files(self):
+        home, codex_home = self.env["HOME"], self.env["CODEX_HOME"]
+        system = os.path.join(os.path.abspath(os.sep), "etc", "codex")
+        files = {
+            os.path.join(codex_home, name) for name in ("config.toml", "auth.json", "requirements.toml")
+        } | {os.path.join(system, name) for name in ("config.toml", "requirements.toml", "managed_config.toml")}
+        directory = self.work_dir
+        for _ in range(64):
+            files.add(os.path.join(directory, ".codex", "config.toml"))
+            if directory == home:
+                break
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                return None
+            directory = parent
+        else:
+            return None
+        files.add(os.path.join(os.path.dirname(__file__), "codex_instructions.txt"))
+        return (home, codex_home, self.work_dir), tuple(sorted(files))
+
+    def _cache_file_stamp(self):
+        """Stat only: never read credentials or invoke a CLI on a cache lookup."""
+        paths = self._cache_files()
+        if paths is None:
+            return None
+        try:
+            auth = os.stat(os.path.join(self.env["CODEX_HOME"], "auth.json"))
+            if not stat.S_ISREG(auth.st_mode):
+                return None
+            values = []
+            for directories, group in ((True, paths[0]), (False, paths[1])):
+                for path in group:
+                    try:
+                        link = os.lstat(path)
+                    except FileNotFoundError:
+                        if directories:
+                            return None
+                        values.append((path, None))
+                        continue
+                    try:
+                        info = os.stat(path)
+                    except FileNotFoundError:
+                        if directories:
+                            return None
+                        values.append((path, "dangling", link.st_dev, link.st_ino, link.st_mode,
+                                       link.st_mtime_ns, link.st_ctime_ns))
+                        continue
+                    if directories and not stat.S_ISDIR(info.st_mode):
+                        return None
+                    values.append((path, os.path.realpath(path), link.st_dev, link.st_ino, link.st_mode,
+                                   info.st_dev, info.st_ino, info.st_mode,
+                                   None if directories else (
+                                       link.st_mtime_ns, link.st_ctime_ns, info.st_size,
+                                       info.st_mtime_ns, info.st_ctime_ns)))
+            return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode()).digest()
+        except (OSError, ValueError):
+            return None
+
+    def _observe_native_config(self, native):
+        self._cache_config_digest = None
+        config = native.get("config", {})
+        if (config.get("model_provider") not in (None, "openai")
+                or config.get("model_providers")
+                or config.get("cli_auth_credentials_store") not in (None, "file")
+                or any(config.get(key) for key in (
+                    "chatgpt_base_url", "openai_base_url", "base_url", "experimental_auth",
+                    "profile", "profiles", "model_catalog_json"))
+                or any(self.env.get(key) for key in (
+                    "OPENAI_API_KEY", "CODEX_API_KEY", "AZURE_OPENAI_API_KEY",
+                    "OPENAI_BASE_URL", "CHATGPT_BASE_URL"))):
+            return
+        projects = config.get("projects", {})
+        if not isinstance(projects, dict) or any(
+                not isinstance(value, dict) or set(value) != {"trust_level"}
+                or value["trust_level"] not in ("trusted", "untrusted") for value in projects.values()):
+            return
+        known = {
+            "user": os.path.join(self.env["CODEX_HOME"], "config.toml"),
+            "system": os.path.join(os.path.abspath(os.sep), "etc", "codex", "config.toml"),
+        }
+        layers = native.get("layers")
+        if not isinstance(layers, list):
+            return
+        for layer in layers:
+            source = layer.get("name") if isinstance(layer, dict) else None
+            if not isinstance(source, dict):
+                return
+            kind = source.get("type")
+            if kind == "sessionFlags":
+                continue
+            if type(kind) is not str or kind not in known or source.get("file") != known[kind]:
+                return
+        if self._cache_files_before is None or self._cache_file_stamp() != self._cache_files_before:
+            return
+        self._cache_config_digest = hashlib.sha256(json.dumps(
+            [native, dict(self.env)], sort_keys=True, separators=(",", ":")).encode()).digest()
+
+    def cache_runtime_token(self):
+        if (self._cache_config_digest is None or self._cache_runtime_changed
+                or self._cache_process_token is None or self._process_version_identity is None
+                or self._executable_identity() != self._process_version_identity
+                or self._cache_file_stamp() != self._cache_files_before):
+            return None
+        return hashlib.sha256(
+            self._cache_process_token + self._cache_config_digest + self._cache_files_before).digest()
 
     def ready_for(self, profile):
         ready = super().ready_for(profile)
@@ -201,6 +313,10 @@ class _NativeTransport(CodexAppServerTransport):
             self._verified_process = None
 
     def _start_process(self, request, *, cancel_event=None):
+        self._cache_config_digest = None
+        self._cache_files_before = self._cache_file_stamp()
+        self._cache_process_token = None
+        self._cache_runtime_changed = False
         identity = self._operation_version_identity
         if self.version_cache_hit and identity is not None and not identity[-1]:
             # The verified resident can exit between the reuse check and spawn.
@@ -217,6 +333,7 @@ class _NativeTransport(CodexAppServerTransport):
                 raise ProcessError("appserver_executable_changed")
             proc = RpcProcess(command, self.env, self.work_dir)
             self._proc = proc
+            self._cache_process_token = os.urandom(32)
             self._process_version_identity = identity
             self._profile = request.model
             self._pending_rpc.clear()
@@ -231,6 +348,7 @@ class _NativeTransport(CodexAppServerTransport):
                 self._bound_operation = None
                 self._process_version_identity = None
                 self._verified_process = None
+                self._cache_process_token = None
         try:
             proc.close()
         except ProcessError:
@@ -367,6 +485,8 @@ class _NativeTransport(CodexAppServerTransport):
                     if key in params and not isinstance(params[key], dict):
                         raise CodexAppServerProtocolError("invalid_appserver_message")
             method = message["method"]
+            if method in ("account/updated", "model/rerouted"):
+                self._cache_runtime_changed = True
             if method in ("item/agentMessage/delta", "item/started", "item/completed",
                           "turn/completed"):
                 if (not params or self._thread_id is None or self._turn_id is None
@@ -435,6 +555,29 @@ class DarwinCodexProvider:
         self._foreground_waiters = 0
         self._active_thread = None
         self._fatal = None
+        self._cache_confirmation = None
+
+    @contextmanager
+    def translation_cache_scope(self, requested_model):
+        """Pin one confirmed resident without renewing its idle lease."""
+        acquired = self._operation_lock.acquire(blocking=False)
+        try:
+            identity = None
+            if (acquired and self._active_thread is None and not self._closing.is_set()
+                    and not self._fatal and not self._transport.cleanup_failed.is_set()
+                    and self._cache_confirmation is not None):
+                proc, info = self._cache_confirmation
+                with self._transport._state_lock:
+                    if (proc is self._transport._proc and proc is not None and proc.is_running()
+                            and self._transport._profile == requested_model
+                            and info.requested_model == requested_model):
+                        token = self._transport.cache_runtime_token()
+                        if token is not None:
+                            identity = (token, info)
+            yield identity
+        finally:
+            if acquired:
+                self._operation_lock.release()
 
     @staticmethod
     def _request(request):
@@ -555,6 +698,8 @@ class DarwinCodexProvider:
                 return ProviderResult(False, error_code=code, metrics=(("turn_submitted", False),))
             self._active_thread = threading.get_ident()
             entered = True
+            if on_delta is not None:
+                self._cache_confirmation = None
             self._transport.operation = operation
             self._transport._operation_version_identity = None
             self._transport._requested_profile = request.model
@@ -594,10 +739,16 @@ class DarwinCodexProvider:
             code = self._failure_code(operation) or result.error_code
             if result.ok and not code:
                 self._transport._remember_verified_process()
+                info = getattr(result, "model_info", None)
+                if (on_delta is not None and isinstance(info, ProviderModelInfo)
+                        and info.requested_model == request.model and info.resolved_model is not None):
+                    self._cache_confirmation = (self._transport._proc, info)
             return ProviderResult(
                 result.ok and not code,
                 text=result.text if result.ok and not code else "",
-                error_code=code or "", metrics=tuple(values.items()))
+                error_code=code or "", metrics=tuple(values.items()),
+                model_info=getattr(result, "model_info", None)
+                if result.ok and not code and on_delta is not None else None)
         finally:
             if entered:
                 self._active_thread = None
