@@ -39,7 +39,7 @@ Developer ID/公证为未选择的可选增强。下文 2026-09-12 的唯一付�
 ## 翻译延迟优化（2026-09-24，工程验收通过）
 
 用户授权逐项实现性能调查中的优化；该轮安装包为 **0.1.0/build206**，
-当前推荐包见下方[build219 提前预热](#native-translation-preparation)。
+当前推荐包见下方[build223 可读计时与重复翻译复用](#native-translation-observability)。
 不调用用户真实账号/模型，不以无模型探针冒充真实翻译速度。
 
 - [x] Codex 成功版本检查按可执行文件身份缓存；保留取消、升级失效及进程组清理。
@@ -186,10 +186,13 @@ Claude 使用一次性空闲进程，最近成功文本任务仅保留无用户�
 
 <a id="native-translation-observability"></a>
 
-### build219 后续优化：可读结果计时与重复请求（2026-09-25，实施中）
+### build223：可读结果计时与重复请求（2026-09-25，工程验收完成）
 
 用户授权按优先级实施值得做的优化，不改摘要优先、不新增付费 API。
-当前已交付包仍为 build219；下列改动须等原生与同包验证完成后才能作为新包推荐。
+源码 `1112a6c6e982935456ab8797dd155c7b83550cc6`，
+[run36144091850](https://github.com/mclight-ship-it/cc-translate/actions/runs/36144091850)
+已完成原生与同包验证；当前推荐 **0.1.0/build223**，
+[在线App下载](https://github.com/mclight-ship-it/cc-translate/actions/runs/36144091850/artifacts/10869524888)。
 
 - 补齐截图取帧、用户选区、OCR、图片附件准备与模型等待的独立计时，
   不把用户框选耗时算成模型生成速度；取消/重选/迟到回调不污染其他请求。
@@ -204,6 +207,28 @@ Claude 使用一次性空闲进程，最近成功文本任务仅保留无用户�
   普通无摘要结果仍保留原有跟随末尾行为。
 - 截图已在框选/OCR前预热，图片模式不运行 OCR，重选复用已取得像素；
   本轮不凭猜测改成快速 OCR、缩小小字图片、缩短 PDF 等待或并发抓取所有屏幕。
+
+| 最终验证 | build223结果 |
+|---|---|
+| 正常push门槛 | 隐私扫描、编译及2241项Python全过，无绕过hook |
+| producer | macOS15.7.9/24G830，arm64；Xcode16.4/Swift6.1.2/SDK15.5 |
+| 原生 | 1105项，23构包前可选skip、零失败；新摘要阅读3项、结构识别、截图/模型/分组计时通过 |
+| portable / 评估工具 | 1248项与固定Python下64项分别通过；评估工具实际模型调用0 |
+| 同包15/14/26 | 各260进程、889核心、21Foundation；零失败/skip；HTTPS/SQLite和前后资源审计通过 |
+| 额外runtime | 两系统各About1、Vision4、关联复制12、只读worker12、主动粘贴46通过 |
+| 实际consumer系统 | macOS14.8.9/23J631（Xcode16.2）及26.6.2/25G83（Xcode26.6）；未重构App |
+| 独立交付核验 | ZIP大小/SHA/CRC、0.1.0/build223、最低macOS14、可执行权限及Python symlink通过；新增核心源码与提交Git blob逐字节相同 |
+
+归档 **22,662,666 bytes**，SHA-256
+`50e5010fdac1ca042a7c79096c647689c39146d9ebffa443a61707a5033448ca`；
+tree SHA `44d83da86d9b8637d3c369ebff4ec58c0c46781d0e9633a207986555387e0e0d`，
+56源码文件核验；两份runtime报告确认相同archive/tree/source及bundle_unchanged。
+[原生日志](https://github.com/mclight-ship-it/cc-translate/actions/runs/36144091850/artifacts/10869936229)、
+[macOS14报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/36144091850/artifacts/10871301103)、
+[macOS26报告](https://github.com/mclight-ship-it/cc-translate/actions/runs/36144091850/artifacts/10870802819)。
+官方Codex0.146.0/0.154.0无账号/模型准备分别约857/775ms，驻留复用0.41/0.55ms；
+只是准备探针，不能冒充本轮模型翻译收益。开发包未Developer ID签名/公证，
+不把云端控件、合成进程与同包系统测试称作用户机器的真实浏览器/TCC验收。
 
 **真实模型评估的环境限制：**本机通过既有官方 CLI 的只读配置接口，确认当前合并配置
 使用自定义 provider、显式地址及外部认证。没有发送模型请求，没有更换账号/路由，
@@ -230,7 +255,7 @@ build221进程260项已通过；后置Swift/helper的共同完成断言还需同
 [build222](https://github.com/mclight-ship-it/cc-translate/actions/runs/36139760249)
 原生1105项（23可选skip）零失败、进程260项通过；后置Swift/helper还发现一条图片fixture
 使用组合Unicode模型ID，测试必须明确预期其诊断model_info被省略，而非拒绝该真实模型ID。
-已补齐这条精确预期；执行模型ID仍原样传递，生产行为未修改。未通过完整门槛前不替换下载。
+已补齐这条精确预期；执行模型ID仍原样传递，生产行为未修改。最终build223完整门槛通过后才替换下载。
 
 ### 用户确认的提速边界与第二轮预热检查（2026-09-24）
 
@@ -665,7 +690,7 @@ P5固定样本和短时空闲测量已验证，设备交互、长稳和正式发
 
 当前直接复用已验证的helper/provider，不改模型请求安全性或发布范围。
 完整P0权限矩阵及旧Windows稳定性追踪仍分别保留，不冻结独立可做的产品功能。
-最新推荐包现为[252e07f：Mac 0.1.0/build219，首次复制/截图/唤醒提前预热](#native-translation-preparation)，
+最新推荐包现为[1112a6c：Mac 0.1.0/build223，可读计时/重复翻译复用/摘要阅读保护](#native-translation-observability)，
 已完成完整App同包三系统及六个临时签名升级场景；设备集中验收和正式发行仍另列。
 
 <a id="native-pearl-ui"></a>
