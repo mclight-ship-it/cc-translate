@@ -127,7 +127,7 @@ final class TranslationProtocolTests: XCTestCase {
             try assertInvalidCompletion(payload)
         }
         for identifier in ["", String(repeating: "a", count: 129), "model name", "model\nprivate",
-                           "https://private.example", "/Users/private/model", "C:\\private\\model",
+                           "https://private.example", "/tmp/synthetic-model", "C:\\private\\model",
                            "../model", "vendor/../model", "a/b/c", ".model", "模型",
                            "sk-secret", "SK_secret", "ghp_secret", "github_pat_secret",
                            "eyJpayload", "AKIAkey", "ASIAkey"] {

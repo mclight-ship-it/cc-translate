@@ -35,7 +35,7 @@ SAFE_CONFIG = {
                 "version": "fixture-version", "config": {"model_provider": "openai"},
                 "disabledReason": None}],
 }
-SAFE_ACCOUNT = {"account": {"type": "chatgpt", "email": "do-not-report@example.invalid", "planType": "plus"},
+SAFE_ACCOUNT = {"account": {"type": "chatgpt", "email": "synthetic-account-do-not-report", "planType": "plus"},
                 "requiresOpenaiAuth": True}
 CATALOG = {"data": [{"id": MODEL, "model": MODEL, "isHidden": False}], "nextCursor": None}
 

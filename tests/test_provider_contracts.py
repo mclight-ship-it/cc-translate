@@ -65,7 +65,7 @@ class TestPortableProviderContracts(unittest.TestCase):
     def test_model_info_omits_untrusted_values_without_truncating_or_normalizing(self):
         for value in (None, True, 12, [], {}, "", "x" * 129, " synthetic ", "\ud800",
                       "model\nSYNTHETIC_PRIVATE", "model\0secret", "你好", "../private",
-                      "/Users/private", r"C:\Users\private", "https://host/secret",
+                      "/tmp/synthetic-model", r"C:\synthetic\model", "https://host/secret",
                       "Bearer SYNTHETIC_PRIVATE", "sk-SYNTHETIC_PRIVATE",
                       "ghp_SYNTHETIC_PRIVATE", "eyJhbGci.SYNTHETIC_PRIVATE.signature",
                       '{"model":"synthetic","token":"SYNTHETIC_PRIVATE"}'):
