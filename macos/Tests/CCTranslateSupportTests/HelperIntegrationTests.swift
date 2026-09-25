@@ -441,7 +441,8 @@ extension HelperIntegrationTests {
         if let model, ["synthetic", "provider/Exact-ID:2026", "gpt-5.4-mini"].contains(model) {
             expected["model_info"] = .object(["requested_model": .string(model)])
         } else {
-            XCTAssertTrue(model == "model-e\u{301}" || model == String(repeating: "m", count: 256),
+            XCTAssertTrue(model == "model-e\u{301}" || model == "provider/Exact-Image-e\u{301}" ||
+                          model == String(repeating: "m", count: 256),
                           "New fixtures need an explicit metadata expectation.", file: file, line: line)
         }
         XCTAssertEqual(payload, expected, file: file, line: line)
