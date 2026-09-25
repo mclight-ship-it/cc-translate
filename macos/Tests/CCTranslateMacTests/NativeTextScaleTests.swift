@@ -138,7 +138,8 @@ private struct ScaleTextSurface: View {
     @ObservedObject var state: ScaleTextState
     var body: some View {
         NativeResultText(text: state.text, formatted: true, streaming: state.streaming,
-                         label: "Synthetic result", verbatimPrefix: state.prefix, textScale: state.scale)
+                         label: state.streaming ? "Synthetic streaming result" : "Synthetic result",
+                         verbatimPrefix: state.prefix, textScale: state.scale)
     }
 }
 
@@ -275,7 +276,9 @@ final class NativeSummaryReadingTests: XCTestCase {
         XCTAssertEqual(view.selectedRange(), selected)
         XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
         state.streaming = false
-        try await surface.waitFor { !view.string.contains("## ") }
+        try await surface.waitFor { view.accessibilityLabel() == "Synthetic result" }
+        // Completion deliberately defers Markdown conversion while text is selected.
+        XCTAssertEqual(view.string, state.text)
         XCTAssertEqual(view.selectedRange(), selected)
         XCTAssertEqual(scroll.contentView.bounds.minY, readingOrigin.y, accuracy: 1)
     }

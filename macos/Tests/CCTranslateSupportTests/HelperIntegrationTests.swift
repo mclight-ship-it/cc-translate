@@ -422,15 +422,29 @@ extension HelperIntegrationTests {
                              file: file, line: line)
             XCTAssertEqual(timingValue.object?["cache_hit"], .integer(cached ? 1 : 0),
                            file: file, line: line)
+            if context.request["operation"] == .string("translate") &&
+                context.request["origin"] != .string("ocr") {
+                XCTAssertEqual(timingValue.object?["memory_cache_hit"], .integer(0), file: file, line: line)
+            } else {
+                XCTAssertNil(timingValue.object?["memory_cache_hit"], file: file, line: line)
+            }
             XCTAssertNotNil(timingValue.object?["helper_elapsed_ms"]?.number, file: file, line: line)
         }
-        XCTAssertEqual(payload, [
+        var expected: [String: JSONValue] = [
             "text": context.expected["output"]!,
             "submitted": .bool(!cached), "cached": .bool(cached),
             "kind": context.expected["kind"]!, "target_lang": context.expected["target_lang"]!,
             "summarize": context.expected["summarize"]!,
             "history": .string(history), "history_error": .null
-        ], file: file, line: line)
+        ]
+        let model = context.expected["model"]?.string
+        if let model, ["synthetic", "provider/Exact-ID:2026", "gpt-5.4-mini"].contains(model) {
+            expected["model_info"] = .object(["requested_model": .string(model)])
+        } else {
+            XCTAssertTrue(model == "model-e\u{301}" || model == String(repeating: "m", count: 256),
+                          "New fixtures need an explicit metadata expectation.", file: file, line: line)
+        }
+        XCTAssertEqual(payload, expected, file: file, line: line)
         let events = session.events.filter { $0.id == id }
         XCTAssertEqual(events.map(\.sequence), (0..<events.count).map { Int64($0) }, file: file, line: line)
         XCTAssertEqual(Array(events.prefix(2)).map(\.type), ["accepted", "started"], file: file, line: line)
