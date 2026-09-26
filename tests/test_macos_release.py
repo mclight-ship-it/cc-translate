@@ -65,7 +65,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         original = plistlib.loads((bundle.ROOT / "macos/Resources/Info.plist").read_bytes())
         source = deepcopy(original)
         source.update(NSAppTransportSecurity={"NSAllowsArbitraryLoads": True},
-                      BuilderPath="/Users/runner/work/secret", SUEnableAutomaticChecks=True)
+                      BuilderPath="/Users/example/work/secret", SUEnableAutomaticChecks=True)
         info = release.release_info(source, "0.1.0", KEY)
         self.assertEqual(info["CFBundleIdentifier"], release.BUNDLE_ID)
         self.assertEqual(info["CFBundleIdentifier"], original["CFBundleIdentifier"])
@@ -192,7 +192,7 @@ class ReleasePayloadTests(ReleaseDirectory):
     def test_python_build_metadata_is_allowlisted_not_merely_path_replaced(self):
         path = self.root / "_sysconfigdata__darwin_darwin.py"
         path.write_text("build_time_vars = {'SOABI': 'cpython-312-darwin', 'EXT_SUFFIX': '.so', "
-                        "'CFLAGS': '-g /Users/runner/build', 'srcdir': '/install/src', "
+                        "'CFLAGS': '-g /Users/example/build', 'srcdir': '/install/src', "
                         "'Py_DEBUG': 0, 'LIBDIR': '/install/lib'}\n")
         release.sanitize_sysconfig(path)
         text = path.read_text()
@@ -217,10 +217,10 @@ class ReleasePayloadTests(ReleaseDirectory):
         (app / "internal-todo.md").write_text("must not ship")
         licenses = contents / "Resources/Licenses/Python"
         licenses.mkdir(parents=True)
-        (licenses / "PYTHON.json").write_text('{"build":"/Users/runner/build"}')
+        (licenses / "PYTHON.json").write_text('{"build":"/Users/example/build"}')
         bundle.write_json(contents / "Resources/source-manifest.json", {
             "toolchain": {"xcode": "Xcode 16.4", "sdk": "15.5", "architecture": "arm64",
-                          "directory": "/Users/runner/work"},
+                          "directory": "/Users/example/work"},
             "excluded_runtime_members": ["private-build-notes"], "lock": {"private": "/install"},
         })
         release.minimize(app, "0.1.0", KEY, "b" * 40)
@@ -237,8 +237,8 @@ class ReleasePayloadTests(ReleaseDirectory):
         self.assertTrue(manifest["resource_hashes"])
 
     def test_builder_path_detection_does_not_confuse_public_documentation_urls(self):
-        for value in (b'"/Users/someone/work/main.swift"', b'"/private/tmp/python.c"',
-                      b'"/install/lib/python3.12"', b'"/home/runner/work"'):
+        for value in (b'"/Users/person/work/main.swift"', b'"/private/tmp/python.c"',
+                      b'"/install/lib/python3.12"', b'"/home/example/work"'):
             self.assertIsNotNone(release.BUILDER_PATH.search(value))
         self.assertIsNone(release.BUILDER_PATH.search(
             b"https://www.ibm.com/knowledgecenter/en/ssw_aix_72/install/binary_compatability.html"))
