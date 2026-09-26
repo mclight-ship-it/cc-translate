@@ -10,6 +10,7 @@ private final class DockApplicationFixture {
     let product: ProductTestHarness
     let source: CaptureTestSource
     let ocr = CaptureTestOCR(blocked: true)
+    let screen: ScreenProbe
     let capture: CaptureModel
     let login = LoginItemTestService()
     let application: AppDelegate
@@ -25,8 +26,8 @@ private final class DockApplicationFixture {
         product = try ProductTestHarness(savedCLI: false)
         source = CaptureTestSource(image: try CaptureProductFixture.image())
         let ocr = self.ocr
-        capture = CaptureModel(screen: ScreenProbe(source: source, makeOCRJob: { ocr },
-                                                   notificationCenter: NotificationCenter()))
+        screen = ScreenProbe(source: source, makeOCRJob: { ocr }, notificationCenter: NotificationCenter())
+        capture = CaptureModel(screen: screen)
         application = AppDelegate(model: product.model, capture: capture,
                                   diagnostics: NativePresentationTestSupport.offline(product.preferences, persists: false),
                                   loginItems: LoginItemModel(service: login))
@@ -322,54 +323,93 @@ final class DockApplicationTests: XCTestCase {
     }
 
     @MainActor
-    func testRecoveryRoutesReachNativeSettingsControlsWithoutChangingCaptureModeOrSubmitting() async throws {
-        let f = try DockApplicationFixture()
-        defer { f.cleanUp() }
-        f.launch()
-        f.product.canLocateCLI = true
-        let helper = try f.product.ready()
-        f.application.showSettings(pane: .appearance)
-        let window = try XCTUnwrap(f.application.settingsPanel)
-        let root = try XCTUnwrap(window.contentView)
-        f.application.showCaptureSettings()
-        try await CaptureProductFixture.waitFor {
-            root.layoutSubtreeIfNeeded()
-            return InputLimitNativeViews.views(NSSegmentedControl.self, in: root).contains {
-                $0.segmentCount == 2 && $0.label(forSegment: 1) == "Send image" &&
-                    !RenderedGeometry.visibleRect($0).isEmpty
+    func testRecoveryRoutesReachNativeSettingsControlsWithoutChangingCaptureModeOrSubmitting() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                XCTAssertTrue(NSApp.isRunning)
+                XCTAssertTrue(NSApp.delegate === f.application)
+                f.product.canLocateCLI = true
+                let helper = try f.product.ready()
+                f.application.showSettings(pane: .appearance)
+                let window = try XCTUnwrap(f.application.settingsPanel)
+                let root = try XCTUnwrap(window.contentView)
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    NSApp.isActive && window.isKeyWindow && NSApp.activationPolicy() == .regular
+                }
+                f.application.showCaptureSettings()
+                try await CaptureProductFixture.waitFor {
+                    root.layoutSubtreeIfNeeded()
+                    return InputLimitNativeViews.views(NSSegmentedControl.self, in: root).contains {
+                        $0.segmentCount == 2 && $0.label(forSegment: 1) == "Send image" &&
+                            !RenderedGeometry.visibleRect($0).isEmpty
+                    }
+                }
+                XCTAssertTrue(f.application.settingsPanel === window)
+                XCTAssertEqual(f.product.model.captureTranslationMode, .text)
+                XCTAssertEqual(f.capture.phase, .idle)
+                f.application.showSettings(pane: .more)
+                f.product.model.onConfigurationRequired?()
+                try await CaptureProductFixture.waitFor {
+                    root.layoutSubtreeIfNeeded()
+                    return InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: root).contains {
+                        $0.identifier?.rawValue == "provider-installation-details" && $0.isAccessibilityExpanded() &&
+                            !RenderedGeometry.visibleRect($0).isEmpty
+                    }
+                }
+                XCTAssertTrue(f.application.settingsPanel === window)
+                XCTAssertTrue(helper.translations.isEmpty)
+                XCTAssertTrue(helper.configurationSaves.isEmpty)
+                XCTAssertEqual(f.source.requests.count, 0)
+                // Make the saved capture source different from the recovery destination.
+                f.application.showResult(reposition: true)
+                let sourceWindow = try XCTUnwrap(f.application.resultPanel)
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    NSApp.isActive && sourceWindow.isKeyWindow
+                }
+                f.application.navigate(to: .capture)
+                try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
+                f.capture.select(f.source.layout[0].frame)
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    f.capture.phase == .recognizing && f.application.capturePanel?.isKeyWindow == true &&
+                        f.ocr.image != nil && NSApp.isActive
+                }
+                let ocrWork = try XCTUnwrap(f.screen.ocrTask)
+                f.application.showCaptureSettings()
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    f.capture.phase == .cancelled && f.application.capturePanel == nil &&
+                        NSApp.isActive && window.isKeyWindow
+                }
+                let lostFocus = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+                ) { _ in
+                    XCTFail("Late capture cleanup must not take keyboard focus away from Settings.")
+                }
+                defer { NotificationCenter.default.removeObserver(lostFocus) }
+                f.ocr.gate?.signal()
+                await ocrWork.value
+                f.capture.objectWillChange.send()
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.main.async { continuation.resume() }
+                }
+                XCTAssertTrue(window.isKeyWindow,
+                    "Cancelling the owned capture must not later restore its source over Settings. " +
+                        DockApplicationTestProcess.lifecycle)
+                XCTAssertTrue(NSApp.isActive)
+                XCTAssertTrue(sourceWindow.isVisible)
+                XCTAssertFalse(sourceWindow.isKeyWindow)
+                XCTAssertEqual(f.capture.phase, .cancelled)
+                XCTAssertNil(f.application.capturePanel)
+                XCTAssertNil(f.capture.preview)
+                XCTAssertTrue(f.capture.frames.isEmpty)
+                XCTAssertTrue(f.capture.text.isEmpty)
+                XCTAssertGreaterThan(f.ocr.cancelCount, 0)
+                XCTAssertEqual(f.product.model.captureTranslationMode, .text)
+                XCTAssertTrue(helper.translations.isEmpty)
+                XCTAssertTrue(helper.configurationSaves.isEmpty)
+                XCTAssertEqual(f.source.requests.count, 1,
+                               "Recovery must not restart capture or upload the cancelled screenshot.")
             }
         }
-        XCTAssertTrue(f.application.settingsPanel === window)
-        XCTAssertEqual(f.product.model.captureTranslationMode, .text)
-        XCTAssertEqual(f.capture.phase, .idle)
-        f.application.showSettings(pane: .more)
-        f.product.model.onConfigurationRequired?()
-        try await CaptureProductFixture.waitFor {
-            root.layoutSubtreeIfNeeded()
-            return InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: root).contains {
-                $0.identifier?.rawValue == "provider-installation-details" && $0.isAccessibilityExpanded() &&
-                    !RenderedGeometry.visibleRect($0).isEmpty
-            }
-        }
-        XCTAssertTrue(f.application.settingsPanel === window)
-        XCTAssertTrue(helper.translations.isEmpty)
-        XCTAssertTrue(helper.configurationSaves.isEmpty)
-        XCTAssertEqual(f.source.requests.count, 0)
-        f.application.navigate(to: .capture)
-        try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
-        f.capture.select(f.source.layout[0].frame)
-        try await CaptureProductFixture.waitFor {
-            f.capture.phase == .recognizing && f.application.capturePanel?.isVisible == true
-        }
-        f.application.showCaptureSettings()
-        try await CaptureProductFixture.waitFor { f.capture.phase == .cancelled && f.application.capturePanel == nil }
-        f.ocr.gate?.signal()
-        try await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertTrue(window.isKeyWindow, "Cancelling the owned capture must not later restore its source over Settings.")
-        XCTAssertEqual(f.product.model.captureTranslationMode, .text)
-        XCTAssertTrue(helper.translations.isEmpty)
-        XCTAssertTrue(helper.configurationSaves.isEmpty)
-        XCTAssertEqual(f.source.requests.count, 1, "Recovery must not restart capture or upload the cancelled screenshot.")
     }
 
     @MainActor

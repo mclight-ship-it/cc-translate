@@ -51,8 +51,13 @@ jobs:
         run: python3 -B tools/macos/release.py --version "$RELEASE_VERSION" --acknowledge-ad-hoc
       - name: Native application and updater regression tests
         shell: bash
+        env:
+          CC_TRANSLATE_DOCK_TEST_APP: ${{ github.workspace }}/tools/macos/.build/formal-release/CC Translate.app
+          CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/formal-release/ui-screenshots
         run: |
           set -euo pipefail
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 \
+            --product CCClipboardTestProducer
           /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
             2>&1 | tee tools/macos/.build/formal-release/native-tests.log
       - name: Retain verified assets and CI provenance for the publication job
@@ -74,6 +79,7 @@ jobs:
           path: |
             tools/macos/.build/formal-release/payload-audit.json
             tools/macos/.build/formal-release/native-tests.log
+            tools/macos/.build/formal-release/ui-screenshots/
             tools/macos/.build/formal-release/upgrade-test/evidence.json
             tools/macos/.build/formal-release/upgrade-test/*/result.json
 

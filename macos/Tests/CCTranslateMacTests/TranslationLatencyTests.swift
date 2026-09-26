@@ -84,11 +84,25 @@ final class TranslationLatencyTests: XCTestCase {
         time = 110
         fixture.model.input = "Replacement source sentence."
         fixture.model.translate()
-        let second = try XCTUnwrap(helper.translations.last)
         XCTAssertEqual(fixture.model.translationElapsedSeconds, 0)
+        XCTAssertEqual(helper.translations.count, 1, "Replacement dispatch waits for the original request's terminal event.")
+        let cancellation = try XCTUnwrap(helper.messages.last)
+        XCTAssertEqual(cancellation.type, "cancel")
+        XCTAssertEqual(cancellation.payload["request_id"], .string(first.id))
+        time = 111
+        helper.event("completed", id: cancellation.id)
+        XCTAssertEqual(helper.translations.count, 1, "A cancellation acknowledgement is not the original terminal event.")
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 1)
         time = 112
         helper.event("cancelled", id: first.id)
+        XCTAssertEqual(helper.translations.count, 2)
+        let second = try XCTUnwrap(helper.translations.last)
+        XCTAssertNotEqual(second.id, first.id)
+        XCTAssertEqual(second.text, "Replacement source sentence.")
+        helper.event("delta", id: first.id, payload: ["text": .string("Late obsolete output")])
         XCTAssertEqual(fixture.model.translationElapsedSeconds, 2)
+        XCTAssertEqual(fixture.model.output, "")
+        XCTAssertNil(fixture.model.completedTranslationTiming)
         helper.event("completed", id: second.id, payload: [
             "text": .string("Completed translation."), "cached": .bool(false),
             "kind": .string("text"), "history": .string("disabled")

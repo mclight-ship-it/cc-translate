@@ -11,11 +11,14 @@ final class RecoveryRenderingTests: XCTestCase {
             var time = 100.0
             let fixture = try ProductTestHarness(latencyClock: { time })
             defer { fixture.cleanUp() }
-            let helper = try fixture.ready()
+            let appLanguage = language == "zh" ? "zh_CN" : "en_US"
+            let helper = try fixture.ready(configuration: ProductTestHarness.configuration(language: appLanguage))
             fixture.model.interfaceLanguage = language
             fixture.model.input = "First complete source sentence."
             fixture.model.translate()
             let first = try XCTUnwrap(helper.translations.last)
+            XCTAssertEqual(first.language, appLanguage)
+            XCTAssertTrue(helper.configurationSaves.isEmpty)
             time = 101
             helper.event("delta", id: first.id, payload: ["text": .string("## Summary\nA summary.")])
             time = 102
@@ -78,8 +81,13 @@ final class RecoveryRenderingTests: XCTestCase {
                 size: NSSize(width: 760, height: 500))
             defer { surface.close() }
             navigation.openCaptureSettings()
-            try await surface.waitFor {
-                InputLimitNativeViews.views(NSSegmentedControl.self, in: surface.host).contains {
+            XCTAssertEqual(try XCTUnwrap(navigation.request).destination, .capture)
+            try await surface.waitFor(diagnostics: {
+                "pane=\(navigation.pane), pending=\(String(describing: navigation.request))"
+            }) {
+                // Native controls can appear before the one-shot scroll task resumes after yielding.
+                guard navigation.request == nil else { return false }
+                return InputLimitNativeViews.views(NSSegmentedControl.self, in: surface.host).contains {
                     guard $0.segmentCount == 2,
                           $0.label(forSegment: 1) == fixture.model.text("Send image", "发送图片") else { return false }
                     let frame = RenderedGeometry.frame($0)
