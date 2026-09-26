@@ -45,7 +45,9 @@ class TrayMixin:
         icon. Reads config live so a change in Settings takes effect without
         rebuilding the tray menu. Unknown/legacy values fall back to Settings."""
         action = self.cfg.get(CFG.TRAY_CLICK_ACTION, "settings")
-        if action == "history":
+        if action == "recall_result":
+            self.root.after(0, self._reshow_last_result)
+        elif action == "history":
             self.open_history()
         elif action == "screenshot":
             self.root.after(0, self._ocr_from_menu)
