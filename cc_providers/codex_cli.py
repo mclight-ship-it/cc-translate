@@ -6,6 +6,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from glob import glob
@@ -17,7 +18,7 @@ from .base import (
     ProviderStatus,
 )
 from .codex_jsonl import CodexJsonlParser, CodexProtocolError
-from .codex_catalog import CodexModelCatalog
+from .codex_catalog import CatalogProbeError, CodexModelCatalog
 from .codex_config import (
     CODEX_CONFIG_OVERRIDES as _CODEX_CONFIG_OVERRIDES,
     CodexConfigError, child_environment, integration_overrides, read_native_config,
@@ -144,7 +145,8 @@ class CodexCliProvider:
         warm_sessions=False,
     )
 
-    def __init__(self, command=_AUTO_COMMAND, work_dir=None):
+    def __init__(self, command=_AUTO_COMMAND, work_dir=None, *,
+                 catalog_cache_dir=None, catalog_log_error=None):
         self.command = (
             find_codex_cmd() if command is _AUTO_COMMAND else command)
         self.env = child_environment()
@@ -158,7 +160,8 @@ class CodexCliProvider:
         self._appserver_warm_inflight = set()
         self._shutdown = False
         self._catalog = CodexModelCatalog(
-            self.command, self.env, work_dir=self.work_dir)
+            self.command, self.env, cache_dir=catalog_cache_dir,
+            work_dir=self.work_dir, log_error=catalog_log_error)
 
     def diagnose(self):
         if not self.command:
@@ -239,7 +242,7 @@ class CodexCliProvider:
             error_detail=_sanitize_detail(output),
         )
 
-    def build_command(self, request):
+    def build_command(self, request, *, cancel_event=None):
         if not self.command:
             raise FileNotFoundError("Codex CLI is not installed")
         command = [
@@ -255,7 +258,8 @@ class CodexCliProvider:
             "-C",
             self.work_dir,
         ]
-        native = read_native_config(self.command, self.env, self.work_dir)
+        probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+        native = read_native_config(self.command, self.env, self.work_dir, **probe_options)
         config = native["config"]
         for override in _CODEX_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
@@ -264,7 +268,7 @@ class CodexCliProvider:
             command.extend(("-m", runtime_model))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
-        for override in self._catalog.overrides(request.model, native_config=native):
+        for override in self._catalog.overrides(request.model, native_config=native, **probe_options):
             command.extend(("-c", override))
         for image_path in request.image_paths:
             command.extend(("-i", image_path))
@@ -283,8 +287,9 @@ class CodexCliProvider:
                 error_detail=_sanitize_detail(str(exc)))
 
         try:
-            command = self.build_command(request)
-        except CodexConfigError as exc:
+            probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+            command = self.build_command(request, **probe_options)
+        except (CodexConfigError, CatalogProbeError) as exc:
             return ProviderResult(False, error_code=str(exc))
         flags = _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
         try:

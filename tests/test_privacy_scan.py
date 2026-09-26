@@ -1,4 +1,5 @@
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -11,6 +12,42 @@ _SPEC.loader.exec_module(privacy_scan)
 
 
 class TestPrivacyScan(unittest.TestCase):
+    def test_new_branch_uses_advertised_remote_common_ancestor(self):
+        published = "1" * 40
+        ancestor = "2" * 40
+        with mock.patch.object(privacy_scan, "_git",
+                               side_effect=[published + "\tHEAD\n", ancestor + "\n"]) as git:
+            self.assertEqual(privacy_scan.published_base("origin", "local-head"), ancestor)
+        self.assertEqual(git.call_args_list, [
+            mock.call("ls-remote", "--", "origin", "HEAD"),
+            mock.call("merge-base", "local-head", published),
+        ])
+
+    def test_empty_remote_still_scans_whole_tree(self):
+        with mock.patch.object(privacy_scan, "_git", side_effect=["", "empty-tree\n"]) as git:
+            self.assertEqual(privacy_scan.published_base("origin", "local-head"), "empty-tree")
+        git.assert_called_with("hash-object", "-t", "tree", "--stdin")
+
+    def test_invalid_remote_advertisement_is_not_a_scan_exemption(self):
+        for advertisement in ("invalid HEAD\n", "1" * 40 + " other\n",
+                              ("1" * 40 + " HEAD\n") * 2):
+            with mock.patch.object(privacy_scan, "_git", return_value=advertisement):
+                with self.assertRaises(RuntimeError):
+                    privacy_scan.published_base("origin", "local-head")
+
+    def test_missing_remote_ancestor_blocks_push(self):
+        with mock.patch.object(privacy_scan, "_git", side_effect=[
+            "1" * 40 + "\tHEAD\n", RuntimeError("Fetch the published commit first")
+        ]), mock.patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(privacy_scan.main(
+                ["privacy_scan.py", "--new-branch-base", "origin", "local-head"]), 2)
+
+    def test_remote_lookup_failure_does_not_fall_back_to_local_refs(self):
+        with mock.patch.object(privacy_scan, "_git", side_effect=RuntimeError("lookup failed")) as git:
+            with self.assertRaises(RuntimeError):
+                privacy_scan.published_base("origin", "local-head")
+        self.assertEqual(git.call_count, 1)
+
     def test_blocks_current_home_path(self):
         home = Path("C:" + "\\Users\\" + "LocalOwner")
         line = "output=" + str(home / "project" / "result.txt")

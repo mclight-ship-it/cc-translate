@@ -103,23 +103,31 @@ class WarmMixin:
                         pass
         threading.Thread(target=_work, daemon=True).start()
 
-    def _take_warm(self, profile, expected_key=None):
+    def _take_warm(self, profile, expected_key=None, *, expected_prompt=None):
         """Return one ready warm process for this profile, removing it from the
         pool, or None if none is ready. Evicts any stale-config processes it
         finds and triggers a refill so the pool stays topped up."""
         if not self._warm_enabled:
             return None
-        spec = self._warm_profile_spec(profile)
-        if spec is None:
-            return None
-        key = expected_key or spec[0]
+        if expected_key is not None and expected_prompt is not None:
+            if profile not in self.WARM_PROFILES:
+                return None
+            key = expected_key
+        else:
+            spec = self._warm_profile_spec(profile)
+            if spec is None:
+                return None
+            key = expected_key or spec[0]
         chosen = None
         discard = []
         with self._warm_lock:
             keep = []
             for w in self._warm_pool.get(profile, ()):
-                if chosen is None and w.usable(key):
+                prompt_matches = expected_prompt is None or w.system_prompt == expected_prompt
+                if chosen is None and w.usable(key) and prompt_matches:
                     chosen = w                       # take exactly one usable
+                elif expected_prompt is not None and w.ready and w.key == key and not prompt_matches:
+                    discard.append(w)
                 elif expected_key is None and w.ready and w.key != key:
                     discard.append(w)                # stale config: evict
                 else:

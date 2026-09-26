@@ -1,12 +1,45 @@
 """Shared data contracts for model providers."""
 
 from dataclasses import dataclass
+import re
 from typing import Optional, Protocol, Tuple
 
 
 CLAUDE_PROVIDER = "claude_cli"
 CODEX_PROVIDER = "codex_cli"
 PROVIDER_IDS = (CLAUDE_PROVIDER, CODEX_PROVIDER)
+MODEL_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_MODEL_IDENTIFIER = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?"
+    r"(?::[A-Za-z0-9][A-Za-z0-9._-]*)?")
+
+
+def safe_model_identifier(value: object) -> Optional[str]:
+    """Omit untrusted display text, paths, URLs and credential-shaped values."""
+    if (type(value) is not str or not 1 <= len(value) <= 128
+            or _MODEL_IDENTIFIER.fullmatch(value) is None
+            or value.lower().startswith((
+                "sk-", "sk_", "ghp_", "gho_", "github_pat_", "eyj", "akia", "asia"))
+            or ".." in value):
+        return None
+    return value
+
+
+@dataclass(frozen=True)
+class ProviderModelInfo:
+    """Requested profile and independently confirmed, optional runtime settings."""
+
+    requested_model: Optional[str] = None
+    resolved_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "requested_model", safe_model_identifier(self.requested_model))
+        resolved = safe_model_identifier(self.resolved_model)
+        object.__setattr__(self, "resolved_model", None if resolved in ("auto", "auto-fast") else resolved)
+        effort = self.reasoning_effort
+        object.__setattr__(self, "reasoning_effort",
+                           effort if type(effort) is str and effort in MODEL_REASONING_EFFORTS else None)
 
 
 @dataclass(frozen=True)
@@ -34,6 +67,7 @@ class ProviderResult:
     error_code: str = ""
     error_detail: str = ""
     metrics: Tuple[Tuple[str, int], ...] = ()
+    model_info: Optional[ProviderModelInfo] = None
 
 
 @dataclass(frozen=True)

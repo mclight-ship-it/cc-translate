@@ -6,11 +6,12 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
-from .base import ProviderResult
-from .codex_catalog import SUPPORTED_CODEX_VERSIONS
+from .base import ProviderModelInfo, ProviderResult
+from .codex_catalog import CatalogProbeError, codex_version_supported
 from .codex_config import (
     CodexConfigError, child_environment, integration_overrides, read_native_config,
 )
@@ -35,7 +36,6 @@ _SAFE_ITEM_TYPES = {
     "plan",
     "contextCompaction",
 }
-_SUPPORTED_CODEX_VERSIONS = SUPPORTED_CODEX_VERSIONS
 _VERSION_CACHE_MAX_ENTRIES = 8
 _version_cache = {}
 _version_cache_lock = threading.Lock()
@@ -112,6 +112,7 @@ class CodexAppServerParser:
         self.responses = {}
         self.saw_delta = False
         self.last_was_notification = False
+        self.model_rerouted = False
 
     def feed(self, raw_line):
         self.last_was_notification = False
@@ -174,6 +175,8 @@ class CodexAppServerParser:
             self.error_detail = _sanitize_detail(str(error))
             return
         if method in _IGNORED_NOTIFICATIONS:
+            if method == "model/rerouted":
+                self.model_rerouted = True
             return
         raise CodexAppServerProtocolError(
             "unknown_appserver_event", method)
@@ -262,7 +265,7 @@ class CodexAppServerTransport:
         self._idle_generation = 0
         self._closed = False
 
-    def build_command(self, request):
+    def build_command(self, request, *, cancel_event=None):
         command = [
             self.command,
             "app-server",
@@ -270,16 +273,21 @@ class CodexAppServerTransport:
             "stdio://",
             "--strict-config",
         ]
-        native = read_native_config(self.command, self.env, self.work_dir)
+        probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+        native = read_native_config(self.command, self.env, self.work_dir, **probe_options)
+        self._observe_native_config(native)
         config = native["config"]
         for override in _APP_SERVER_CONFIG_OVERRIDES + integration_overrides(config):
             command.extend(("-c", override))
         for override in _MODEL_CONFIG_OVERRIDES.get(request.model, ()):
             command.extend(("-c", override))
         if self.catalog is not None:
-            for override in self.catalog.overrides(request.model, native_config=native):
+            for override in self.catalog.overrides(request.model, native_config=native, **probe_options):
                 command.extend(("-c", override))
         return command
+
+    def _observe_native_config(self, native):
+        """Native adapters may retain non-sensitive provenance from this probe."""
 
     def ready_for(self, profile):
         with self._state_lock:
@@ -290,12 +298,15 @@ class CodexAppServerTransport:
                 and self._process_running(self._proc)
             )
 
+    def _version_supported(self, cancel_event=None):
+        return _supported_appserver_version(self.command, self.env)
+
     def warm_up(self, request):
         """Initialize and validate a process without starting a model turn."""
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command, self.env):
+        if not self._version_supported(self._prewarm_cancel_event):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -345,7 +356,8 @@ class CodexAppServerTransport:
             self._cancel_idle_timer()
             if proc is not None:
                 self._stop_process(proc)
-            proc = self._start_process(request)
+            probe_options = {"cancel_event": self._prewarm_cancel_event} if sys.platform == "darwin" else {}
+            proc = self._start_process(request, **probe_options)
             started_process = True
             output_queue = self._output_queue
 
@@ -388,7 +400,7 @@ class CodexAppServerTransport:
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
-        except CodexConfigError as exc:
+        except (CodexConfigError, CatalogProbeError) as exc:
             return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
@@ -396,17 +408,19 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)),
                 metrics=metrics())
         finally:
-            if reusable and started_process:
-                self._schedule_idle_shutdown(max_seconds=30)
-            elif started_process and proc is not None:
-                self._stop_process(proc)
-            self._stream_lock.release()
+            try:
+                if reusable and started_process:
+                    self._schedule_idle_shutdown(max_seconds=30)
+                elif started_process and proc is not None:
+                    self._stop_process(proc)
+            finally:
+                self._stream_lock.release()
 
     def stream(self, request, on_delta, cancel_event=None):
         started_at = time.perf_counter()
         if not self.command:
             return ProviderResult(False, error_code="cli_not_installed")
-        if not _supported_appserver_version(self.command, self.env):
+        if not self._version_supported(cancel_event):
             return ProviderResult(
                 False, error_code="appserver_version_unsupported")
         try:
@@ -496,7 +510,8 @@ class CodexAppServerTransport:
                     self._stop_process(proc)
                 spawn_started_at = time.perf_counter()
                 try:
-                    proc = self._start_process(request)
+                    probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
+                    proc = self._start_process(request, **probe_options)
                 except OSError as exc:
                     return ProviderResult(
                         False, error_code="cli_unavailable",
@@ -575,6 +590,11 @@ class CodexAppServerTransport:
             if not parser.thread_id:
                 raise CodexAppServerProtocolError(
                     "invalid_appserver_message", "thread/start returned no id")
+            # Official v2 ThreadStartResponse fields, not Thread metadata or
+            # requested config. Older servers/fixtures may omit either field.
+            model_info = ProviderModelInfo(
+                requested_model=request.model, resolved_model=thread_result.get("model"),
+                reasoning_effort=thread_result.get("reasoningEffort"))
             thread_start_ms = int(
                 (time.perf_counter() - thread_started_at) * 1000)
 
@@ -590,10 +610,14 @@ class CodexAppServerTransport:
                     "networkAccess": False,
                 },
             }
+            if request.task == "image":
+                turn_params["input"].extend({"type": "localImage", "path": path} for path in request.image_paths)
             if runtime_model and runtime_model != "auto":
                 turn_params["model"] = runtime_model
             if request.model == "gpt-5.4-mini":
                 turn_params["effort"] = "low"
+            if "effort" in turn_params and turn_params["effort"] != model_info.reasoning_effort:
+                model_info = ProviderModelInfo(model_info.requested_model, model_info.resolved_model)
             turn_started_at = time.perf_counter()
             turn_start_id = self._take_request_id()
             send("turn/start", turn_params, turn_start_id)
@@ -647,14 +671,17 @@ class CodexAppServerTransport:
                 return ProviderResult(
                     False, error_code="no_result", metrics=metrics())
             reusable = True
+            if parser.model_rerouted:
+                # The thread settings no longer confirm the completed turn.
+                model_info = ProviderModelInfo(requested_model=request.model)
             return ProviderResult(
-                True, text=parser.final_text.strip(), metrics=metrics())
+                True, text=parser.final_text.strip(), metrics=metrics(), model_info=model_info)
         except CodexAppServerProtocolError as exc:
             return ProviderResult(
                 False, error_code=exc.code,
                 error_detail=_sanitize_detail(exc.detail),
                 metrics=metrics())
-        except CodexConfigError as exc:
+        except (CodexConfigError, CatalogProbeError) as exc:
             return ProviderResult(False, error_code=str(exc), metrics=metrics())
         except (OSError, ValueError) as exc:
             return ProviderResult(
@@ -662,11 +689,13 @@ class CodexAppServerTransport:
                 error_detail=_sanitize_detail(str(exc)),
                 metrics=metrics())
         finally:
-            if reusable:
-                self._schedule_idle_shutdown()
-            elif proc is not None:
-                self._stop_process(proc)
-            self._stream_lock.release()
+            try:
+                if reusable:
+                    self._schedule_idle_shutdown()
+                elif proc is not None:
+                    self._stop_process(proc)
+            finally:
+                self._stream_lock.release()
 
     def shutdown(self):
         """Terminate the persistent process and reject future requests."""
@@ -678,12 +707,13 @@ class CodexAppServerTransport:
         if proc is not None:
             self._stop_process(proc)
 
-    def _start_process(self, request):
+    def _start_process(self, request, *, cancel_event=None):
         with self._state_lock:
             if self._closed:
                 raise OSError("app-server transport is shut down")
+            probe_options = {"cancel_event": cancel_event} if sys.platform == "darwin" else {}
             proc = subprocess.Popen(
-                self.build_command(request),
+                self.build_command(request, **probe_options),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -764,14 +794,15 @@ class CodexAppServerTransport:
         if timer is not None:
             timer.cancel()
 
-    def _schedule_idle_shutdown(self, max_seconds=None):
+    def _schedule_idle_shutdown(self, max_seconds=None, *, expected_generation=None):
         idle_seconds = self.idle_timeout_seconds
         if max_seconds is not None:
             idle_seconds = min(idle_seconds, max_seconds)
         if idle_seconds <= 0:
             return
         with self._state_lock:
-            if self._closed or self._proc is None:
+            if (self._closed or self._proc is None
+                    or expected_generation is not None and expected_generation != self._idle_generation):
                 return
             self._idle_generation += 1
             generation = self._idle_generation
@@ -918,8 +949,7 @@ def _clear_appserver_version_cache():
 
 
 def appserver_version_supported(version_text):
-    match = re.search(r"\b(\d+\.\d+\.\d+)\b", version_text or "")
-    return bool(match and match.group(1) in _SUPPORTED_CODEX_VERSIONS)
+    return codex_version_supported(version_text)
 
 
 def _validate_hook_preflight(result, work_dir):

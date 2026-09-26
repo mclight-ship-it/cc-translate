@@ -1,0 +1,110 @@
+name: macOS formal release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable Mac version (MAJOR.MINOR.PATCH; independent of Windows)
+        type: string
+        required: true
+        default: "0.1.0"
+      acknowledge_ad_hoc:
+        description: Acknowledge no Developer ID/notarization and no guaranteed TCC continuity
+        type: boolean
+        required: true
+        default: false
+      publish:
+        description: Publish verified assets and atomically advance the Mac feed (default branch only)
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-formal-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: ${{ inputs.acknowledge_ad_hoc }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Offline packaging and update contracts
+        run: >-
+          python3 -B -m unittest -v tests.test_macos_bundle tests.test_macos_updates
+          tests.test_macos_update_fixture tests.test_macos_release
+      - name: Clean build, minimize, seal, audit, sign and actually install the final archive
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          MACOS_SPARKLE_PUBLIC_KEY: ${{ vars.MACOS_SPARKLE_PUBLIC_KEY }}
+          MACOS_SPARKLE_PRIVATE_KEY: ${{ secrets.MACOS_SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B tools/macos/release.py --version "$RELEASE_VERSION" --acknowledge-ad-hoc
+      - name: Native application and updater regression tests
+        shell: bash
+        env:
+          CC_TRANSLATE_DOCK_TEST_APP: ${{ github.workspace }}/tools/macos/.build/formal-release/CC Translate.app
+          CC_TRANSLATE_UI_SCREENSHOTS_DIR: ${{ github.workspace }}/tools/macos/.build/formal-release/ui-screenshots
+        run: |
+          set -euo pipefail
+          /usr/bin/xcrun swift build --package-path macos --triple arm64-apple-macosx14.0 \
+            --product CCClipboardTestProducer
+          /usr/bin/xcrun swift test --package-path macos --triple arm64-apple-macosx14.0 \
+            2>&1 | tee tools/macos/.build/formal-release/native-tests.log
+      - name: Retain verified assets and CI provenance for the publication job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-release-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            tools/macos/.build/formal-release/assets/*
+            tools/macos/.build/formal-release/release-state.json
+      - name: Retain validation evidence separately, never as release assets
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-release-validation-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: ignore
+          path: |
+            tools/macos/.build/formal-release/payload-audit.json
+            tools/macos/.build/formal-release/native-tests.log
+            tools/macos/.build/formal-release/ui-screenshots/
+            tools/macos/.build/formal-release/upgrade-test/evidence.json
+            tools/macos/.build/formal-release/upgrade-test/*/result.json
+
+  publish:
+    needs: validate
+    if: ${{ inputs.publish && github.ref_name == github.event.repository.default_branch }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-release-${{ github.run_id }}
+          path: tools/macos/.build/validated-release
+      - name: Verify artifact, publish immutable assets, then atomically promote the HTTPS feed
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          MACOS_SPARKLE_PUBLIC_KEY: ${{ vars.MACOS_SPARKLE_PUBLIC_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -B tools/macos/release_publish.py --version "$RELEASE_VERSION"
+          --directory tools/macos/.build/validated-release

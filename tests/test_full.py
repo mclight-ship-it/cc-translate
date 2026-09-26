@@ -101,6 +101,7 @@ class TestModuleImports(unittest.TestCase):
 class TestCFGConstants(unittest.TestCase):
     _EXPECTED_KEYS = {
         "MODEL", "MODEL_PROVIDER", "CLAUDE_MODEL", "CODEX_MODEL",
+        "CODEX_MODEL_DEFAULT_MIGRATED",
         "CODEX_STREAMING_EXPERIMENTAL",
         "DOUBLE_PRESS_WINDOW", "FONT_SIZE", "DIRECTION",
         "MAX_CHARS", "THEME", "POPUP_LAYOUT",
@@ -388,6 +389,31 @@ class TestConfigPersistence(unittest.TestCase):
         self.assertEqual(cfg[tr.CFG.CLAUDE_MODEL], "opus")
         self.assertEqual(cfg[tr.CFG.MODEL], "opus")
 
+    def test_codex_default_migrates_once_then_explicit_mini_survives_windows_reload(self):
+        with open(self._path, "w", encoding="utf-8") as stream:
+            json.dump({tr.CFG.CODEX_MODEL: "gpt-5.4-mini"}, stream)
+        self._patch_config_path(self._path)
+
+        cfg = tr.load_config()
+        self.assertEqual(cfg.codex_model, "auto-fast")
+        with open(self._path, encoding="utf-8") as stream:
+            saved = json.load(stream)
+        self.assertEqual(saved[tr.CFG.CODEX_MODEL], "auto-fast")
+        self.assertIs(saved[tr.CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+
+        cfg[tr.CFG.CODEX_MODEL] = "gpt-5.4-mini"
+        tr.save_config(tr.Config(cfg))
+        with open(self._path, "rb") as stream:
+            before = stream.read()
+        with unittest.mock.patch.object(tr, "save_config") as writer:
+            for _ in range(2):
+                loaded = tr.load_config()
+                self.assertEqual(loaded.codex_model, "gpt-5.4-mini")
+                self.assertIs(loaded[tr.CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+            writer.assert_not_called()
+        with open(self._path, "rb") as stream:
+            self.assertEqual(stream.read(), before)
+
 
 class TestConfigWrapper(unittest.TestCase):
     """The Config wrapper must stay a drop-in dict while adding coercion and
@@ -489,6 +515,13 @@ class TestConfigWrapper(unittest.TestCase):
         })
 
         self.assertEqual(cfg[tr.CFG.CODEX_MODEL], "auto-fast")
+        self.assertIs(cfg[tr.CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
+
+    def test_explicit_mini_in_normalized_config_is_not_migrated_again(self):
+        cfg = tr.Config()
+        cfg[tr.CFG.CODEX_MODEL] = "gpt-5.4-mini"
+        self.assertEqual(tr.Config(cfg).codex_model, "gpt-5.4-mini")
+        self.assertIs(tr.Config(cfg)[tr.CFG.CODEX_MODEL_DEFAULT_MIGRATED], True)
 
 
 # ============================================================

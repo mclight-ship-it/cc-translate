@@ -28,3 +28,14 @@ desktop.ini
 
 # Local-only VS Code protection (not synced to other machines)
 .vscode/
+
+# Isolated macOS development build products (never release artifacts)
+/macos/.build/
+/macos/.swiftpm/
+/tools/macos/.staging/
+/tools/macos/.build/
+
+# Maintainer-only work logs; public instructions live in docs/MACOS*.md.
+/docs/MACOS_DEVELOPMENT.md
+/docs/MACOS_TODO.md
+/docs/ROADMAP.md

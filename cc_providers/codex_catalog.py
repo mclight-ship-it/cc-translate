@@ -1,11 +1,14 @@
 """App-owned, version-checked snapshots of Codex's effective model metadata."""
 
 import hashlib
+from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -14,7 +17,76 @@ import tomllib
 from .codex_config import CODEX_CONFIG_OVERRIDES
 
 
-SUPPORTED_CODEX_VERSIONS = {"0.146.0"}
+MINIMUM_CODEX_VERSION = (0, 146, 0)
+_VERSION_COMPONENT = r"(?:0|[1-9][0-9]{0,8})"
+_VERSION_IDENTIFIER = r"[0-9A-Za-z-]+"
+_VERSION_PATTERN = re.compile(
+    r"codex-cli[ \t]+(" + _VERSION_COMPONENT + r")\.("
+    + _VERSION_COMPONENT + r")\.(" + _VERSION_COMPONENT + r")"
+    r"(?:-(" + _VERSION_IDENTIFIER + r"(?:\." + _VERSION_IDENTIFIER + r")*))?"
+    r"(?:\+(" + _VERSION_IDENTIFIER + r"(?:\." + _VERSION_IDENTIFIER + r")*))?",
+    re.ASCII,
+)
+
+
+@dataclass(frozen=True)
+class CodexVersion:
+    components: tuple[int, int, int]
+    prerelease: bool
+
+    @property
+    def text(self):
+        return ".".join(str(part) for part in self.components)
+
+    @property
+    def supported(self):
+        return not self.prerelease and self.components >= MINIMUM_CODEX_VERSION
+
+
+def parse_codex_version(output):
+    """Extract one identified version line, never an incidental warning version."""
+    if isinstance(output, bytes):
+        if len(output) > 8192:
+            return None
+        try:
+            output = output.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(output, str) or len(output) > 8192:
+        return None
+    try:
+        if len(output.encode("utf-8")) > 8192:
+            return None
+    except UnicodeEncodeError:
+        return None
+    candidates = [line.strip() for line in output.splitlines()
+                  if line.strip().startswith("codex-cli")]
+    if len(candidates) != 1:
+        return None
+    match = _VERSION_PATTERN.fullmatch(candidates[0])
+    if match is None:
+        return None
+    prerelease = match.group(4)
+    if prerelease is not None and any(
+            part.isdigit() and len(part) > 1 and part.startswith("0")
+            for part in prerelease.split(".")):
+        return None
+    return CodexVersion(tuple(int(match.group(index)) for index in (1, 2, 3)),
+                        prerelease is not None)
+
+
+def codex_version_supported(output):
+    version = parse_codex_version(output)
+    return version is not None and version.supported
+
+
+def _cached_version_supported(value):
+    if not isinstance(value, str):
+        return False
+    version = parse_codex_version("codex-cli " + value)
+    return version is not None and version.supported and version.text == value
+
+
 _MAX_AGE_SECONDS = 24 * 60 * 60
 _RETRY_SECONDS = 60
 _MAX_BYTES = 8 * 1024 * 1024
@@ -22,6 +94,35 @@ _MAX_BYTES = 8 * 1024 * 1024
 
 class CatalogError(ValueError):
     pass
+
+
+class CatalogProbeError(RuntimeError):
+    """Fatal supervision failure; never fall back to another discovery/turn."""
+
+
+def catalog_models(payload):
+    """Project effective metadata without interpreting provider capabilities or entitlements."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise CatalogError("invalid_catalog_shape")
+    models, seen = [], set()
+    for entry in payload["models"]:
+        if not isinstance(entry, dict):
+            raise CatalogError("invalid_catalog_models")
+        slug = entry.get("slug")
+        if not isinstance(slug, str) or not slug.strip() or "\0" in slug:
+            raise CatalogError("invalid_catalog_models")
+        name, description = entry.get("display_name"), entry.get("description")
+        name = name if isinstance(name, str) and name else slug
+        description = description if isinstance(description, str) else ""
+        try:
+            for value in (slug, name, description):
+                value.encode("utf-8")
+        except UnicodeError:
+            raise CatalogError("invalid_catalog_models") from None
+        if slug not in seen:
+            seen.add(slug)
+            models.append({"id": slug, "name": name, "description": description})
+    return models
 
 
 def _models(payload):
@@ -58,10 +159,22 @@ def _atomic_write(path, content):
 
 
 class CodexModelCatalog:
-    def __init__(self, command, env=None, cache_dir=None, work_dir=None):
+    def __init__(self, command, env=None, cache_dir=None, work_dir=None, *, log_error=None,
+                 user_home=None):
+        if log_error is not None and not callable(log_error):
+            raise TypeError("log_error must be callable")
         self.command = command
         self.env = env
         self.work_dir = work_dir
+        self._user_home = Path(user_home) if user_home is not None else None
+        if self._user_home is not None:
+            if (not self._user_home.is_absolute() or work_dir is None
+                    or not Path(work_dir).is_absolute()
+                    or ".." in self._user_home.parts or ".." in Path(work_dir).parts
+                    or not Path(work_dir).is_relative_to(self._user_home)
+                    or env is None or Path(env.get("HOME", "")) != self._user_home
+                    or cache_dir is None or not Path(cache_dir).is_absolute()):
+                raise ValueError("explicit_catalog_home_required")
         self.cache_dir = Path(cache_dir or os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             "CC Translate", "codex-catalogs"))
@@ -69,9 +182,13 @@ class CodexModelCatalog:
         self._failure_until = 0
         self._validated = None
         self.status = "not_checked"
+        self._log_error = log_error
+        self._probe_cancel = None
 
     def _warn(self, code):
-        from cc_core import log_error
+        log_error = self._log_error
+        if log_error is None:
+            from cc_core import log_error
 
         if self.status != code:
             log_error("codex_catalog", CatalogError(
@@ -82,6 +199,14 @@ class CodexModelCatalog:
         args = list(args)
         for override in CODEX_CONFIG_OVERRIDES:
             args.extend(("-c", override))
+        if sys.platform == "darwin":
+            from .darwin_process import capture_output, ProcessError
+            try:
+                return capture_output(
+                    [self.command, *args], self.env, self.work_dir,
+                    cancel_event=self._probe_cancel, timeout=8, max_bytes=_MAX_BYTES)
+            except ProcessError as error:
+                raise CatalogProbeError("catalog_" + str(error)) from None
         completed = subprocess.run(
             [self.command, *args], capture_output=True, timeout=8,
             env=self.env, cwd=self.work_dir,
@@ -93,8 +218,39 @@ class CodexModelCatalog:
             raise CatalogError("catalog_output_too_large")
         return completed.stdout
 
-    def overrides(self, model="auto", *, ignore_user_config=False, native_config=None):
+    @staticmethod
+    def _check_cancel(cancel_event):
+        if cancel_event is not None and cancel_event.is_set():
+            raise CatalogProbeError("catalog_probe_cancelled")
+
+    @contextmanager
+    def _probe_scope(self, cancel_event):
+        if sys.platform == "darwin":
+            deadline = time.monotonic() + 8
+            while True:
+                self._check_cancel(cancel_event)
+                if time.monotonic() >= deadline:
+                    raise CatalogProbeError("catalog_probe_timeout")
+                if self._lock.acquire(timeout=0.05):
+                    break
+        else:
+            self._lock.acquire()
+        try:
+            # All resolution, including nested _run/_validate calls, owns this
+            # lock. The per-request event must never leak to a later request.
+            self._probe_cancel = cancel_event
+            self._check_cancel(cancel_event)
+            yield
+            self._check_cancel(cancel_event)
+        finally:
+            self._probe_cancel = None
+            self._lock.release()
+
+    def overrides(self, model="auto", *, ignore_user_config=False, native_config=None, cancel_event=None):
         """Resolve only before process startup, never retry a submitted turn."""
+        if cancel_event is not None and sys.platform != "darwin":
+            raise CatalogProbeError("catalog_cancel_unsupported")
+        self._check_cancel(cancel_event)
         environment = self.env if self.env is not None else os.environ
         if environment.get("CC_TRANSLATE_CODEX_CATALOG", "").lower() == "off":
             self.status = "disabled"
@@ -110,7 +266,7 @@ class CodexModelCatalog:
                         and routing.intersection(layer.get("config") or {})):
                     self._warn("layered_config_not_managed")
                     return ()
-        with self._lock:
+        with self._probe_scope(cancel_event):
             if time.monotonic() < self._failure_until:
                 return ()
             try:
@@ -121,8 +277,20 @@ class CodexModelCatalog:
                 self._failure_until = time.monotonic() + _RETRY_SECONDS
                 return ()
 
+    def discover(self, *, cancel_event=None):
+        """Explicit read-only export; no version probe, override, cache or retry policy."""
+        if cancel_event is not None and sys.platform != "darwin":
+            raise CatalogProbeError("catalog_cancel_unsupported")
+        with self._probe_scope(cancel_event):
+            try:
+                payload = json.loads(self._run(["debug", "models"]))
+            except (json.JSONDecodeError, UnicodeError, RecursionError):
+                raise CatalogError("invalid_catalog_json") from None
+            return catalog_models(payload)
+
     def _resolve(self, model, environment):
-        home = Path(environment.get("CODEX_HOME") or Path.home() / ".codex")
+        home = Path(environment.get("CODEX_HOME") or (
+            self._user_home if self._user_home is not None else Path.home()) / ".codex")
         config_path = home / "config.toml"
         if not config_path.is_file():
             self.status = "native"
@@ -147,7 +315,10 @@ class CodexModelCatalog:
             return ()
         cwd = Path(self.work_dir) if self.work_dir else Path.cwd()
         for directory in (cwd, *cwd.parents):
-            if directory == Path.home():
+            if self._user_home is not None:
+                if directory == self._user_home:
+                    break
+            elif directory == Path.home():
                 continue
             if (directory / ".codex" / "config.toml").is_file():
                 self._warn("project_config_not_managed")
@@ -179,7 +350,7 @@ class CodexModelCatalog:
                 catalog_path = directory / ("models-" + state["sha256"] + ".json")
                 content = _read(catalog_path)
                 if (state["identity"] == identity
-                        and state["version"] in SUPPORTED_CODEX_VERSIONS
+                        and _cached_version_supported(state["version"])
                         and 0 <= now - state["created_at"] < _MAX_AGE_SECONDS
                         and hashlib.sha256(content).hexdigest() == state["sha256"]):
                     payload = json.loads(content)
@@ -187,10 +358,14 @@ class CodexModelCatalog:
             except (ValueError, KeyError, TypeError, OSError):
                 self._warn("invalid_cached_catalog")
         if payload is None:
-            version_text = self._run(["--version"]).decode("utf-8").strip()
-            version = version_text.removeprefix("codex-cli ")
-            if version not in SUPPORTED_CODEX_VERSIONS:
+            detected = parse_codex_version(self._run(["--version"]))
+            if detected is None:
+                raise CatalogError("unreadable_catalog_version")
+            if detected.prerelease:
+                raise CatalogError("prerelease_catalog_version")
+            if not detected.supported:
                 raise CatalogError("unsupported_catalog_version")
+            version = detected.text
             # Export effective metadata, not an account entitlement list or a
             # hand-written capability table. This may refresh native discovery.
             payload = json.loads(self._run(["debug", "models"]))

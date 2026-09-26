@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "bundle_identifier": "dev.cc-translate.macos.probe",
+  "feed_url": "https://raw.githubusercontent.com/mclight-ship-it/cc-translate/macos-updates/appcast.xml",
+  "public_ed25519_key": "1pjSwxyxn3K0SyCUdWxuh9fVQ9IqPCcLGreVjWSadTk="
+}

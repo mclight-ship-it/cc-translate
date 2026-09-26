@@ -26,16 +26,17 @@ class TestCodexCatalog(unittest.TestCase):
             'model = "sol"\nmodel_provider = "custom"\n', encoding="utf-8")
         self.env = {"CODEX_HOME": str(self.home)}
         self.cache = self.root / "cache"
-        self.manager = CodexModelCatalog(str(self.binary), self.env, self.cache)
+        self.log = Mock()
+        self.manager = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
         self.payload = {"models": [
             {"slug": "sol", "priority": 2, "base_instructions": "keep exactly"},
             {"slug": "mini", "priority": 9, "visibility": "hide"},
         ]}
         self.calls = []
+        self.version_output = b"codex-cli 0.146.0"
         self.run = patch("cc_providers.codex_catalog.subprocess.run",
                          side_effect=self.fake_run).start()
         self.addCleanup(patch.stopall)
-        self.log = patch("cc_core.log_error").start()
         patch("cc_providers.codex_catalog.Path.cwd", return_value=self.root).start()
         for module in ("codex_cli", "codex_appserver"):
             patch("cc_providers." + module + ".read_native_config",
@@ -47,7 +48,7 @@ class TestCodexCatalog(unittest.TestCase):
         self.assertTrue(kwargs["capture_output"])
         self.assertLessEqual(kwargs["timeout"], 8)
         if "--version" in args:
-            output = b"codex-cli 0.146.0"
+            output = self.version_output
         else:
             output = json.dumps(self.payload).encode()
         return subprocess.CompletedProcess(args, 0, output, b"")
@@ -68,7 +69,7 @@ class TestCodexCatalog(unittest.TestCase):
 
     def test_new_manager_validates_cached_catalog_with_local_cli(self):
         first = self.manager.overrides()
-        other = CodexModelCatalog(str(self.binary), self.env, self.cache)
+        other = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
         self.assertEqual(other.overrides(), first)
         self.assertEqual(len(self.calls), 4)
         self.assertIn("-c", self.calls[-1])
@@ -101,11 +102,52 @@ class TestCodexCatalog(unittest.TestCase):
     def test_unsupported_version_uses_native_without_exporting(self):
         self.run.side_effect = None
         self.run.return_value = subprocess.CompletedProcess(
-            [], 0, b"codex-cli 99.0.0", b"")
+            [], 0, b"codex-cli 0.145.0", b"")
         self.assertEqual(self.manager.overrides(), ())
         self.assertEqual(self.manager.status, "unsupported_catalog_version")
         self.assertEqual(self.run.call_count, 1)
         self.assertTrue(self.log.called)
+
+    def test_newer_version_exports_and_reopens_validated_catalog(self):
+        for version in (b"codex-cli 0.147.0", b"codex-cli 1.0.0+build"):
+            with self.subTest(version=version):
+                self.binary.write_bytes(version)
+                self.version_output = version
+                first = self.manager.overrides()
+                self.assertTrue(first)
+                self.assertEqual(json.loads(self.catalog_path(first).read_bytes()), self.payload)
+                other = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
+                before = len(self.calls)
+                self.assertEqual(other.overrides(), first)
+                self.assertEqual(len(self.calls) - before, 1, "Cache must still be revalidated.")
+                self.assertEqual(other.status, "ready")
+        self.assertFalse(self.log.called)
+
+    def test_unreadable_and_prerelease_versions_have_distinct_status(self):
+        for version, code in ((b"\xff", "unreadable_catalog_version"),
+                              (b"warning 0.146.0", "unreadable_catalog_version"),
+                              (b"codex-cli 0.147.0-rc.1", "prerelease_catalog_version")):
+            with self.subTest(version=version):
+                manager = CodexModelCatalog(str(self.binary), self.env, self.cache, log_error=self.log)
+                self.version_output = version
+                before = len(self.calls)
+                self.assertEqual(manager.overrides(), ())
+                self.assertEqual(manager.status, code)
+                self.assertEqual(len(self.calls) - before, 1)
+                self.assertFalse(list(self.cache.rglob("state.json")))
+
+    def test_cached_version_requires_canonical_supported_numeric_text(self):
+        first = self.manager.overrides()
+        path = self.catalog_path(first).parent / "state.json"
+        for invalid in ("0.145.0", "0.147.0-rc.1", "0.147.0\nprivate warning", None):
+            with self.subTest(version=invalid):
+                state = json.loads(path.read_bytes())
+                state["version"] = invalid
+                path.write_text(json.dumps(state), encoding="utf-8")
+                before = len(self.calls)
+                self.assertEqual(self.manager.overrides(), first)
+                self.assertEqual(len(self.calls) - before, 3)
+                self.assertEqual(json.loads(path.read_bytes())["version"], "0.146.0")
 
     def test_unknown_model_is_not_silently_replaced(self):
         self.assertEqual(self.manager.overrides("new-model"), ())
@@ -233,9 +275,13 @@ class TestCodexCatalog(unittest.TestCase):
                 self.assertEqual(self.manager.overrides(), ())
 
     def test_exec_and_stream_startup_preserve_route_and_safety(self):
-        with patch.dict(os.environ, {"CC_TRANSLATE_CODEX_HOME": str(self.home)}):
-            provider = CodexCliProvider(str(self.binary), str(self.root))
-        provider._catalog = self.manager
+        with patch.dict(os.environ, self.env, clear=True):
+            provider = CodexCliProvider(
+                str(self.binary), str(self.root),
+                catalog_cache_dir=self.cache, catalog_log_error=self.log)
+        manager = provider._catalog
+        self.assertEqual(manager.cache_dir, self.cache)
+        self.assertEqual(manager.work_dir, str(self.root))
         request = ProviderRequest(task="text", model="auto-fast",
                                   system_prompt="Translate.", user_text="hello")
         command = provider.build_command(request)
@@ -243,10 +289,10 @@ class TestCodexCatalog(unittest.TestCase):
         self.assertNotIn("--ignore-user-config", command)
         self.assertIn("--ephemeral", command)
         self.assertIn('model_reasoning_effort="none"', command)
-        override = self.manager.overrides()[0]
+        override = manager.overrides()[0]
         self.assertIn(override, command)
         transport = CodexAppServerTransport(
-            str(self.binary), str(self.root), catalog=self.manager)
+            str(self.binary), str(self.root), catalog=manager)
         stream_command = transport.build_command(request)
         self.assertIn(override, stream_command)
         self.assertIn("features.shell_tool=false", stream_command)

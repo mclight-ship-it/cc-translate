@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import queue
 import subprocess
+import sys
 import threading
 import time
 
@@ -79,9 +80,18 @@ CODEX_CONFIG_OVERRIDES = (
 ))
 
 
-def child_environment():
-    env = dict(os.environ)
+def child_environment(*, environment=None):
+    env = dict(os.environ if environment is None else environment)
     value = env.get("CC_TRANSLATE_CODEX_HOME", "").strip()
+    if environment is not None:
+        # Explicit callers resolve home syntax before binding, never against
+        # this process's ambient account or working directory.
+        selected = value or env.get("CODEX_HOME")
+        if selected:
+            if not os.path.isabs(selected):
+                raise CodexConfigError("codex_home_invalid")
+            env["CODEX_HOME"] = os.path.normpath(selected)
+        return env
     if value:
         # Do not silently select another account when an explicit home is bad.
         env["CODEX_HOME"] = os.path.abspath(
@@ -100,12 +110,17 @@ def validate_home(env):
             raise CodexConfigError("codex_home_config_missing")
 
 
-def read_native_config(command, env, work_dir):
+def read_native_config(command, env, work_dir, *, cancel_event=None):
     """Read Codex's merged layers without starting a thread, auth helper or MCP.
 
     The native loader owns precedence and validation. Never log its response:
     provider definitions may contain credentials.
     """
+    if cancel_event is not None:
+        if sys.platform != "darwin":
+            raise CodexConfigError("config_cancel_unsupported")
+        if cancel_event.is_set():
+            raise CodexConfigError("config_probe_cancelled")
     validate_home(env)
     try:
         os.makedirs(work_dir, exist_ok=True)
@@ -114,6 +129,9 @@ def read_native_config(command, env, work_dir):
     args = [command, "app-server", "--strict-config"]
     for override in CODEX_CONFIG_OVERRIDES:
         args.extend(("-c", override))
+    if sys.platform == "darwin":
+        from .codex_config_darwin import read_config
+        return read_config(args, env, work_dir, cancel_event=cancel_event)
     messages = queue.Queue()
     try:
         proc = subprocess.Popen(

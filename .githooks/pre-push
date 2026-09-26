@@ -35,7 +35,7 @@ CHANGED_FILES=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO_SHA" ] && continue
     if [ "$remote_sha" = "$ZERO_SHA" ]; then
-        base="$(git hash-object -t tree /dev/null)"
+        base="$("$PYTHON" .githooks/privacy_scan.py --new-branch-base "$2" "$local_sha")"
     else
         base="$remote_sha"
     fi

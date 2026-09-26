@@ -32,6 +32,11 @@ from cc_core import (
 from cc_dictionary_cache import DictionaryAiCacheError
 from cc_dictionary_format import format_dictionary_result
 
+
+def _dictionary_supplement_payload(src, base):
+    return "<query>%s</query>\n<local_result>%s</local_result>" % (
+        html.escape(src), html.escape(base))
+
 # Optional v2 renderer (needs Pillow). Guarded so a missing Pillow never breaks
 # the result actions; every v2 path also gates on getattr(win, "_v2", False).
 try:
@@ -161,24 +166,29 @@ class ResultActionsMixin:
         selection = self._provider_selection()
         cache_signature = self._ai_dictionary_supplement_signature()
         cancel_event = getattr(self, "_provider_cancel_event", None)
+        snapshot = self._request_snapshot(
+            _dictionary_supplement_payload(src, base),
+            DICTIONARY_SUPPLEMENT_PROMPT, selection, source_text=src,
+            kind="dict", sig=cache_signature, action="dictionary_supplement")
         threading.Thread(
             target=self._do_ai_dictionary_supplement,
             args=(src, job_id, win, base, selection, cancel_event,
-                  cache_signature),
+                  cache_signature, snapshot),
             daemon=True,
         ).start()
 
     def _do_ai_dictionary_supplement(
             self, src, job_id, expected_win, base, selection, cancel_event,
-            cache_signature):
-        payload = (
-            "<query>%s</query>\n<local_result>%s</local_result>" % (
-                html.escape(src), html.escape(base))
-        )
+            cache_signature, snapshot=None):
+        payload = _dictionary_supplement_payload(src, base)
+        if snapshot is not None:
+            src, cache_signature = snapshot.input, snapshot.sig
+            payload = snapshot.request.user_text
         try:
             ok, result = self._call_model(
                 payload, DICTIONARY_SUPPLEMENT_PROMPT,
-                selection, cancel_event)
+                selection, cancel_event,
+                **({"snapshot": snapshot} if snapshot is not None else {}))
         except Exception as exc:
             log_error("ai_dictionary_supplement", exc)
             ok, result = False, ""
@@ -490,15 +500,21 @@ class ResultActionsMixin:
             language=self._language_display_name(code, names[0], names[1]))
         win = self.popup
         self._set_result_actions_busy(win, True)
+        selection = self._provider_selection()
+        snapshot = self._request_snapshot(
+            src, prompt + SYSTEM_SUFFIX, selection, source_text=src, action="retranslate",
+            direction=f"to_{code}")
         threading.Thread(
             target=self._do_retranslate,
             args=(src, prompt + SYSTEM_SUFFIX, label,
-                  self._provider_selection(), win), daemon=True).start()
+                  selection, win, snapshot), daemon=True).start()
 
     def _do_retranslate(self, src, prompt, label, selection=None,
-                        expected_win=None):
+                        expected_win=None, snapshot=None):
         try:
-            ok, result = self._call_model(src, prompt, selection)
+            ok, result = self._call_model(
+                src, prompt, selection,
+                **({"snapshot": snapshot} if snapshot is not None else {}))
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(
@@ -611,16 +627,21 @@ class ResultActionsMixin:
             return
         label = i18n.get(item[0])
         self._set_result_actions_busy(win, True)
+        selection = self._provider_selection()
+        snapshot = self._request_snapshot(
+            primary, item[1], selection, source_text=primary, action="rewrite:" + mode)
         threading.Thread(target=self._do_transform_result,
-                         args=(mode, primary, label, self._provider_selection(),
-                               win),
+                         args=(mode, primary, label, selection, win, snapshot),
                          daemon=True).start()
 
     def _do_transform_result(self, mode, current, label, selection=None,
-                             expected_win=None):
-        prompt = RESULT_ACTION_PROMPTS.get(mode, ("", ""))[1]
+                             expected_win=None, snapshot=None):
+        prompt = snapshot.request.system_prompt if snapshot is not None else (
+            RESULT_ACTION_PROMPTS.get(mode, ("", ""))[1])
         try:
-            ok, result = self._call_model(current, prompt, selection)
+            ok, result = self._call_model(
+                current, prompt, selection,
+                **({"snapshot": snapshot} if snapshot is not None else {}))
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(
@@ -659,16 +680,21 @@ class ResultActionsMixin:
         self._result_primary_text(win)
         base = win._text.get("1.0", "end-1c")
         src = self._last_input or base
+        selection = self._provider_selection()
+        snapshot = self._request_snapshot(
+            src, CODE_EXPLAIN_APPEND_PROMPT, selection, source_text=src,
+            content_class="mixed", action="explain_code")
         threading.Thread(
             target=self._do_explain_code,
-            args=(src, base, self._provider_selection(), win),
+            args=(src, base, selection, win, snapshot),
             daemon=True).start()
 
     def _do_explain_code(self, src, base, selection=None,
-                         expected_win=None):
+                         expected_win=None, snapshot=None):
         try:
             ok, explanation = self._call_model(
-                src, CODE_EXPLAIN_APPEND_PROMPT, selection)
+                src, CODE_EXPLAIN_APPEND_PROMPT, selection,
+                **({"snapshot": snapshot} if snapshot is not None else {}))
         except Exception as e:
             ok, explanation = False, i18n.get("error.unexpected").format(error=e)
         self.root.after(

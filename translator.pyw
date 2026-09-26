@@ -24,6 +24,7 @@ import uuid
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
@@ -52,11 +53,27 @@ from cc_update import (
 )
 import cc_update as _cc_update
 import cc_ocr
+from cc_classify import (
+    CODE_RATIO_PURE, CODE_RATIO_MIXED, classify_selection, code_ratio,
+    _looks_like_code_line, _block_code_line_indexes, _assignment_looks_like_code,
+)
 from cc_dictionary import LocalDictionary
 from cc_dictionary_artifact import DictionaryArtifactManager
 from cc_dictionary_cache import DictionaryAiCache
 from cc_dictionary_format import FORMATTER_VERSION, format_dictionary_result
 from cc_dictionary_metrics import DictionaryMetrics
+from cc_result_rules import history_kind, local_cache_signature, provider_cache_signature
+from cc_summary import (
+    STREAM_MIN_CHARS, SUMMARY_MIN_CHARS, SUMMARY_HEADINGS,
+    is_summarizable_prose, summary_headings, summary_instruction,
+    codex_summary_instruction,
+    _LIST_MARKER_RE, _CONFIG_KV_LINE_RE, _CONFIG_ASSIGN_LINE_RE,
+)
+from cc_request import RequestSnapshot
+from cc_prompts import with_ocr_structure_hint
+from cc_storage import atomic_write_json as _atomic_write_json
+from cc_history import HistoryRepository, read_history as _read_history, filter_history_entries, history_entry_kind
+from cc_config import Config, plan_config_migration
 from cc_plain_paste import (
     PlainPasteHotkey, convert_clipboard_to_plain_text, send_ctrl_v,
     shortcut_keys_released,
@@ -72,7 +89,7 @@ from cc_core import (
     POPUP_CORNER_RADIUS, V2_CORNER_RADIUS,
     QUICK_INPUT_WINDOW_W, QUICK_INPUT_WINDOW_H,
     log_perf, log_error,
-    CFG, DEFAULT_CONFIG, STREAM_MIN_CHARS, CODEX_STREAM_MIN_CHARS,
+    CFG, DEFAULT_CONFIG, CODEX_STREAM_MIN_CHARS,
     PROVIDER_PROMPT_REVISIONS, codex_request_model,
     UI_V2_ENV, ui_v2_enabled,
     LANGUAGES, DIRECTION_MODES, DIRECTION_LABELS_ZH, DIRECTION_LABELS_EN,
@@ -310,541 +327,10 @@ HISTORY_FILTER_LABELS = HISTORY_FILTER_LABELS_ZH.copy()
 # (is_single_word lives in cc_core.py, re-exported via the cc_core import above)
 
 
-# ---- Code detection (local, instant — never calls the model) ---------------
-# Regexes that signal a line is program source rather than prose.
-_CODE_KEYWORD_RE = re.compile(
-    r"\b(?:def|class|function|const|let|var|import|from|export|return|"
-    r"public|private|protected|static|void|int|float|double|bool|boolean|"
-    r"string|struct|enum|interface|namespace|package|func|fn|impl|trait|"
-    r"async|await|yield|lambda|require|include|typedef|template|typename|"
-    r"if|elif|else|for|while|switch|case|foreach|try|catch|except|finally|"
-    r"throw|throws|new|delete|null|nil|None|True|False|true|false|"
-    r"println|printf|console\.log|System\.out)\b")
-_CODE_CALL_RE = re.compile(r"[A-Za-z_]\w*\(")             # foo(  bar(
-_CODE_OPERATOR_RE = re.compile(r"(?:=>|->|::|\+\+|--|==|!=|<=|>=|&&|\|\||"
-                               r"\+=|-=|\*=|/=|:=)")
-_CODE_CAMEL_RE = re.compile(r"\b[a-z]+[A-Z]\w*\b")          # getUserById
-_CODE_SNAKE_RE = re.compile(r"\b[a-z]+_[a-z]\w*\b")         # user_name
-_CODE_SYMBOLS = set("{}[]();<>=+-*/%&|^~")
-_CODE_NON_PAREN_SYMBOLS = _CODE_SYMBOLS - set("()")
-_PY_DECL_RE = re.compile(
-    r"^(?:async\s+)?(?:def|class)\s+[A-Za-z_]\w*"
-    r"(?:\s*\([^)]*\))?\s*(?:->\s*[^:]+)?\s*:")
-_PY_CONTROL_RE = re.compile(
-    r"^(?:(?:async\s+)?(?:with|for)|if|elif|else|while|try|except|finally|"
-    r"match|case)\b.*:\s*(?:#.*)?$")
-_PY_IMPORT_RE = re.compile(
-    r"^(?:from\s+[\w.]+\s+import\s+.+|import\s+[\w.]+(?:\s+as\s+\w+)?"
-    r"(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)$")
-_PY_DECORATOR_RE = re.compile(
-    r"^@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\(.*\))?$")
-_PY_STATEMENT_RE = re.compile(
-    r"^(?:return|yield|raise|assert|pass|break|continue|del|global|nonlocal)\b")
-_PY_ANNOTATION_RE = re.compile(
-    r"^[A-Za-z_]\w*\s*:\s*[\w.\[\], |]+(?:\s*=\s*.+)?$")
-_ASSIGNMENT_RE = re.compile(
-    r"^(?P<lhs>(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\]]+\])?"
-    r"(?:\s*:\s*[\w.\[\], |]+)?|"
-    r"(?:[A-Za-z_]\w*\s*,\s*)+[A-Za-z_]\w*))"
-    r"\s*(?:(?<![<>=!])=(?!=|>)|:=|\+=|-=|\*=|/=|//=|%=|\|=|&=)"
-    r"\s*(?P<rhs>\S.*)$")
-_BARE_CALL_RE = re.compile(
-    r"^(?:await\s+)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
-    r"\s*\(.*\)\s*;?$")
-_JSON_MEMBER_RE = re.compile(r'^"[^"]+"\s*:\s*.+,?$')
-_INLINE_JSON_RE = re.compile(r"^[\[{]\s*(?:\"[^\"]+\"\s*:|[\"'\d\-])")
-_YAML_MEMBER_RE = re.compile(
-    r"^(?P<indent>\s*)(?P<list>-\s+)?"
-    r"(?P<key>[A-Za-z_][\w.-]*)\s*:\s*(?P<value>.*)$")
-_CONFIG_SECTION_RE = re.compile(r"^\[[A-Za-z_][\w .-]*\]$")
-_CONFIG_ASSIGN_RE = re.compile(r"^[A-Za-z_][\w.-]*\s*=\s*\S.*$")
-_STANDALONE_DELIMITER_RE = re.compile(r"^[\[\]{}()]$")
-_REGEX_PREFIX_RE = re.compile(r"^(?:regex|regexp|pattern)\s*:\s*\S", re.I)
-
-
-def _assignment_looks_like_code(match):
-    """Reject title-cased prose equations while accepting normal assignments."""
-    lhs = match.group("lhs").split(":", 1)[0].strip()
-    rhs = match.group("rhs").strip()
-    first_name = re.match(r"[A-Za-z_]\w*", lhs)
-    name = first_name.group(0) if first_name else ""
-    if (name[:1].islower() or "_" in name or name.isupper()
-            or "," in lhs or "." in lhs or "[" in lhs):
-        return True
-    return bool(
-        rhs[:1] in "\"'[{("
-        or re.fullmatch(r"(?:None|True|False|null|true|false|-?\d+(?:\.\d+)?)", rhs)
-        or _CODE_CALL_RE.search(rhs)
-        or _CODE_OPERATOR_RE.search(rhs))
-
-
-def _looks_like_code_line(line):
-    """Heuristic: does a single line look like source code (vs natural prose)?
-    A line rich in CJK is treated as prose regardless of stray symbols."""
-    s = line.strip()
-    if not s:
-        return None   # blank line: neutral, excluded from the ratio
-    cjk = sum(1 for c in s if ord(c) > 0x2E7F)
-    letters = sum(1 for c in s if c.isalpha())
-    # Lines that are mostly Chinese/Japanese are prose, not code.
-    if cjk and cjk >= max(2, letters * 0.5):
-        return False
-
-    if (_STANDALONE_DELIMITER_RE.fullmatch(s)
-            or _PY_DECL_RE.match(s)
-            or _PY_CONTROL_RE.match(s)
-            or _PY_IMPORT_RE.match(s)
-            or _PY_DECORATOR_RE.match(s)
-            or _PY_STATEMENT_RE.match(s)
-            or _BARE_CALL_RE.match(s)
-            or _JSON_MEMBER_RE.match(s)
-            or _INLINE_JSON_RE.match(s)
-            or _CONFIG_SECTION_RE.match(s)
-            or _REGEX_PREFIX_RE.match(s)):
-        return True
-    assignment = _ASSIGNMENT_RE.match(s)
-    if assignment and _assignment_looks_like_code(assignment):
-        return True
-
-    score = 0
-    if _CODE_KEYWORD_RE.search(s):
-        score += 1
-    if _CODE_CALL_RE.search(s):
-        score += 1
-    if _CODE_OPERATOR_RE.search(s):
-        score += 1
-    if _CODE_CAMEL_RE.search(s) or _CODE_SNAKE_RE.search(s):
-        score += 1
-    # Structural cues: ends with an opener/terminator, or is heavily indented.
-    if s[-1] in "{};:," or s.endswith("=>"):
-        score += 1
-    if line[:1] in (" ", "\t") and (len(line) - len(line.lstrip())) >= 2:
-        score += 1
-    # Symbol density: lots of punctuation is a strong code signal.
-    sym = sum(1 for c in s if c in _CODE_NON_PAREN_SYMBOLS)
-    if len(s) and sym / len(s) >= 0.12:
-        score += 1
-
-    words = re.findall(r"[A-Za-z]+", s)
-    if (len(words) >= 4 and not s.endswith(("{", "}", ";", ":", ","))
-            and sym / len(s) < 0.12):
-        return False
-    structural = bool(
-        _CODE_OPERATOR_RE.search(s)
-        or s[-1] in "{};:,"
-        or sym)
-    if len(words) >= 3 and not structural:
-        return False
-    return score >= 2
-
-
-def _block_code_line_indexes(lines):
-    """Infer code lines that only become meaningful in a surrounding block."""
-    nonblank = [(index, line) for index, line in enumerate(lines)
-                if line.strip()]
-    if not nonblank:
-        return set()
-
-    inferred = set()
-    yaml_members = []
-    config_assignments = []
-    python_anchor = False
-
-    for index, line in nonblank:
-        s = line.strip()
-        assignment = _ASSIGNMENT_RE.match(s)
-        if (_PY_DECL_RE.match(s) or _PY_CONTROL_RE.match(s)
-                or _PY_IMPORT_RE.match(s) or _PY_DECORATOR_RE.match(s)
-                or _PY_STATEMENT_RE.match(s)
-                or (assignment and _assignment_looks_like_code(assignment))):
-            python_anchor = True
-            inferred.add(index)
-        yaml = _YAML_MEMBER_RE.match(line)
-        if yaml:
-            yaml_members.append((index, yaml))
-        if _CONFIG_ASSIGN_RE.match(s):
-            config_assignments.append(index)
-        if _CONFIG_SECTION_RE.match(s) or _JSON_MEMBER_RE.match(s):
-            inferred.add(index)
-
-    machine_yaml_members = [
-        (index, match) for index, match in yaml_members
-        if match.group("key")[:1].islower()
-        or any(char in match.group("key") for char in "_.-")
-    ]
-    yaml_is_structured = (
-        len(yaml_members) >= 2
-        and len(machine_yaml_members) >= 2
-        and (
-            len(yaml_members) >= 3
-            or any(match.group("indent") or match.group("list")
-                   or not match.group("value").strip()
-                   for _, match in yaml_members)
-        )
-    )
-    if yaml_is_structured:
-        inferred.update(index for index, _ in yaml_members)
-    if len(config_assignments) >= 2:
-        inferred.update(config_assignments)
-
-    first = nonblank[0][1].strip()
-    last = nonblank[-1][1].strip()
-    container_block = (
-        (first == "{" and last == "}")
-        or (first == "[" and last == "]")
-        or (first == "(" and last == ")")
-    )
-    if container_block:
-        for index, line in nonblank:
-            s = line.strip()
-            if (_STANDALONE_DELIMITER_RE.fullmatch(s)
-                    or _JSON_MEMBER_RE.match(s)
-                    or re.match(
-                        r"^(?:[\"'].*[\"']|-?\d+(?:\.\d+)?|"
-                        r"true|false|null|True|False|None),?$", s)):
-                inferred.add(index)
-
-    if python_anchor:
-        in_docstring = False
-        container_closer = None
-        for index, line in nonblank:
-            s = line.strip()
-            assignment = _ASSIGNMENT_RE.match(s)
-            if container_closer:
-                inferred.add(index)
-                if s.rstrip(",") == container_closer:
-                    container_closer = None
-            elif assignment and assignment.group("rhs") in ("[", "{", "("):
-                inferred.add(index)
-                container_closer = {"[": "]", "{": "}", "(": ")"}[
-                    assignment.group("rhs")]
-            triple_count = s.count('"""') + s.count("'''")
-            if in_docstring or triple_count:
-                inferred.add(index)
-            if triple_count % 2:
-                in_docstring = not in_docstring
-            if line[:1].isspace() and (
-                    s.startswith("#")
-                    or _PY_ANNOTATION_RE.match(s)
-                    or _STANDALONE_DELIMITER_RE.fullmatch(s)
-                    or re.match(
-                        r"^(?:[\"'].*[\"']|-?\d+(?:\.\d+)?|"
-                        r"True|False|None),?$", s)):
-                inferred.add(index)
-
-    return inferred
-
-
-def code_ratio(text):
-    """Fraction (0.0–1.0) of non-blank lines that look like source code."""
-    verdicts = [_looks_like_code_line(ln) for ln in text.split("\n")]
-    considered = [v for v in verdicts if v is not None]
-    if not considered:
-        return 0.0
-    return sum(1 for v in considered if v) / len(considered)
-
-
-# Classification thresholds (see design): mostly-code vs mixed vs prose.
-CODE_RATIO_PURE = 0.85     # ≥ this → treat the whole selection as code
-CODE_RATIO_MIXED = 0.15    # ≥ this (and < PURE) → prose+code mixed
-
-
-def classify_selection(text):
-    """Return 'code', 'mixed', or 'text' from a fast local heuristic. Never
-    calls the model, so it adds no latency to the translation path."""
-    t = (text or "").strip()
-    if not t:
-        return "text"
-    lines = t.split("\n")
-    verdicts = [_looks_like_code_line(line) for line in lines]
-    considered = [verdict for verdict in verdicts if verdict is not None]
-    if not considered:
-        return "text"
-    code_lines = {
-        index for index, verdict in enumerate(verdicts) if verdict is True}
-    block_lines = _block_code_line_indexes(lines)
-    effective_ratio = len(code_lines | block_lines) / len(considered)
-    if effective_ratio >= CODE_RATIO_PURE:
-        return "code"
-    if effective_ratio >= CODE_RATIO_MIXED:
-        return "mixed"
-    return "text"
-
-
-# Text at/above this length streams (progressive render) rather than one-shot,
-# and is also the minimum length for the long-text summary feature. Unified so
-# "long enough to stream" and "long enough to summarize" mean the same thing.
-SUMMARY_MIN_CHARS = STREAM_MIN_CHARS
-
 # Hard cap on a single cold streaming round-trip. Mirrors cc_warm's
 # WARM_SEND_TIMEOUT_S so a hung Claude CLI can't wedge the translation thread
 # (or leak a child process) forever.
 STREAM_SEND_TIMEOUT_S = 90
-
-_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
-_CONFIG_KV_LINE_RE = re.compile(
-    r"^\s*(?:-\s*)?[a-z0-9_.-]{2,40}\s*:\s*(?:\S.*)?$")
-_CONFIG_ASSIGN_LINE_RE = re.compile(
-    r"^\s*[A-Za-z_][A-Za-z0-9_.-]{1,40}\s*=\s*\S+")
-
-
-def is_summarizable_prose(text):
-    """True if `text` is long-form natural-language prose worth summarizing.
-
-    Excludes content where a leading summary adds little value: bullet/numbered
-    lists, config/data blobs (JSON/XML/YAML-like), and URL/path dumps. Assumes
-    the caller has already confirmed the text is long enough and is neither a
-    single-word lookup nor source code."""
-    t = (text or "").strip()
-    if not t:
-        return False
-    lines = [ln for ln in t.split("\n") if ln.strip()]
-    if not lines:
-        return False
-
-    # URL / path dump: most whitespace-separated tokens are links or paths.
-    tokens = t.split()
-    if tokens:
-        linkish = sum(
-            1 for w in tokens
-            if w.startswith(("http://", "https://", "www."))
-            or ("/" in w and len(w) > 8) or ("\\" in w and len(w) > 8))
-        if linkish / len(tokens) >= 0.5:
-            return False
-
-    # Mostly a list: a leading summary would just restate the list.
-    if len(lines) >= 3:
-        bullets = sum(1 for ln in lines if _LIST_MARKER_RE.match(ln))
-        if bullets / len(lines) >= 0.8:
-            return False
-
-    # YAML / INI / env-style key-value blocks are data/config, not prose.
-    if len(lines) >= 4:
-        kvish = sum(
-            1 for ln in lines
-            if _CONFIG_KV_LINE_RE.match(ln) or _CONFIG_ASSIGN_LINE_RE.match(ln))
-        if kvish / len(lines) >= 0.5:
-            return False
-
-    # Config / data blob: high density of structural punctuation that prose
-    # (which leans on letters, spaces, commas and periods) never reaches.
-    struct = sum(1 for c in t if c in '{}[]":;=<>|')
-    if struct / len(t) >= 0.08:
-        return False
-
-    # Require some sentence structure so short label-like blobs don't qualify:
-    # a sentence terminator anywhere, or at least two prose lines/paragraphs.
-    has_terminator = any(c in t for c in ".!?。！？…")
-    if not has_terminator and len(lines) < 2:
-        return False
-    return True
-
-
-# Section headings for the long-text summary, in each SUPPORTED TARGET
-# language. The summary is written in the language the text is translated
-# INTO, so the heading must match that language too — never the app's UI
-# language. Unknown targets fall back to English.
-SUMMARY_HEADINGS = {
-    "zh": ("摘要", "译文"),
-    "en": ("Summary", "Translation"),
-    "ja": ("要約", "翻訳"),
-    "ko": ("요약", "번역"),
-    "fr": ("Résumé", "Traduction"),
-    "de": ("Zusammenfassung", "Übersetzung"),
-    "es": ("Resumen", "Traducción"),
-}
-
-
-def summary_headings(target_lang):
-    """(summary_heading, translation_heading) for the summary sections, in the
-    TARGET language (the language being translated INTO), so a zh->en summary
-    reads 'Summary'/'Translation' and an en->zh summary reads '摘要'/'译文'.
-    ``target_lang`` is a LANGUAGES code (see resolve_target_lang)."""
-    return SUMMARY_HEADINGS.get(target_lang, SUMMARY_HEADINGS["en"])
-
-
-def summary_instruction(target_lang):
-    """Instruction appended to the translate prompt when the long-text summary
-    feature is active. Asks the model to emit a short summary first, then the
-    full translation, using two Markdown headings the renderer already styles.
-
-    The summary MUST be in the target language (the language being translated
-    INTO), the same language as the translation — otherwise the two halves come
-    out in different languages (e.g. a Chinese summary above an English
-    translation). Naming the concrete target language explicitly makes smaller
-    models comply far more reliably than a generic 'the target language'."""
-    sm, tr = summary_headings(target_lang)
-    lang_name = LANGUAGES.get(target_lang, (None, "the target language"))[1]
-    return (
-        " IMPORTANT OUTPUT FORMAT: because the text is long, structure your "
-        "ENTIRE response as exactly two Markdown sections. FIRST, a line with "
-        f"the heading `## {sm}` followed by a brief summary of 3-5 short lines "
-        f"capturing the key points. THEN, a line with the heading `## {tr}` "
-        "followed by the full translation. Use level-2 `##` headings with "
-        f"exactly those two heading texts. CRITICAL: write EVERYTHING — the "
-        f"heading words, the summary, AND the translation — in {lang_name}. The "
-        f"summary must be in {lang_name}, the SAME language as the translation, "
-        "never in the source language.")
-
-
-def codex_summary_instruction(target_lang):
-    """Compact, benchmarked long-text contract for Codex only."""
-    sm, tr = summary_headings(target_lang)
-    lang_name = LANGUAGES.get(target_lang, (None, "the target language"))[1]
-    return (
-        f"Translate to {lang_name}. Start with `## {sm}` and 3-5 short `- ` "
-        f"bullets, then `## {tr}` and the complete translation. Preserve code "
-        "and identifiers exactly. Output only those sections."
-    )
-
-
-
-class Config(dict):
-    """Typed, self-validating view over the user config.
-
-    Subclasses ``dict`` so every existing access pattern keeps working
-    unchanged — ``cfg[key]``, ``cfg.get(key)``, ``cfg[key] = v`` and
-    ``json.dump(cfg, ...)`` all behave exactly as before. On top of that it:
-
-      * merges ``DEFAULT_CONFIG`` so every known key is always present, and
-      * coerces each known key to the type of its default (a config file that
-        somehow holds a wrong-typed value can't crash the UI downstream), and
-      * exposes typed read-only properties for the hot keys so new code can
-        say ``cfg.model`` instead of ``cfg.get(CFG.MODEL, ...)`` with a
-        literal fallback repeated at every call site.
-
-    Unknown keys are preserved untouched for forward-compatibility."""
-
-    def __init__(self, data=None):
-        raw = dict(data or {})
-        super().__init__(DEFAULT_CONFIG)
-        if data:
-            self.update(data)
-        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
-            # Settings used to serialize the internal dark-launch default
-            # (ui_v2=false) into ordinary user configs even though users had no
-            # UI control for it. Move every pre-release config to the production
-            # v2 default once; the marker lets a subsequent explicit false keep
-            # selecting legacy.
-            self[CFG.UI_V2] = True
-            self[CFG.UI_V2_DEFAULT_MIGRATED] = True
-        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
-            # Earlier releases serialized both Labs features as false by
-            # default. Promote existing configs once, then preserve any later
-            # explicit opt-out.
-            self[CFG.SUMMARY_ENABLED] = True
-            self[CFG.CLIPBOARD_PROTECTION_ENABLED] = True
-            self[CFG.LABS_DEFAULTS_MIGRATED] = True
-        if CFG.MODEL_PROVIDER not in raw:
-            # Configs from before provider selection existed contain only the
-            # legacy Claude "model" key. Preserve that explicit old choice;
-            # genuinely new/partial configs use the current GPT default.
-            self[CFG.MODEL_PROVIDER] = (
-                "claude_cli" if CFG.MODEL in raw
-                else DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
-        if CFG.CLAUDE_MODEL not in raw:
-            self[CFG.CLAUDE_MODEL] = raw.get(
-                CFG.MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
-        if CFG.CODEX_MODEL not in raw:
-            self[CFG.CODEX_MODEL] = DEFAULT_CONFIG[CFG.CODEX_MODEL]
-        elif self[CFG.CODEX_MODEL] == "gpt-5.4-mini":
-            # The former standalone mini option is now an internal branch of
-            # smart routing, so migrate saved selections to the complete mode.
-            self[CFG.CODEX_MODEL] = "auto-fast"
-        # Keep the old key synchronized for one downgrade-compatible release.
-        self[CFG.MODEL] = self[CFG.CLAUDE_MODEL]
-        self._coerce()
-
-    def _coerce(self):
-        """Force every known key to the type of its default; on mismatch that
-        can't be coerced, fall back to the default rather than keep a value
-        that would break a downstream widget."""
-        for key, default in DEFAULT_CONFIG.items():
-            if key not in self:
-                self[key] = default
-                continue
-            value = self[key]
-            try:
-                if isinstance(default, bool):
-                    # bool is a subclass of int, so test it before int.
-                    if isinstance(value, bool):
-                        continue
-                    if isinstance(value, (int, float)):
-                        self[key] = bool(value)
-                    elif isinstance(value, str):
-                        self[key] = value.strip().lower() in ("1", "true", "yes", "on")
-                    else:
-                        self[key] = default
-                elif isinstance(default, int):
-                    self[key] = int(value)
-                elif isinstance(default, float):
-                    self[key] = float(value)
-                elif isinstance(default, str):
-                    self[key] = value if isinstance(value, str) else str(value)
-            except (TypeError, ValueError):
-                self[key] = default
-
-    # ---- Typed accessors (optional convenience; the dict API still works) ----
-    @property
-    def model(self):
-        return self.get(CFG.MODEL, DEFAULT_CONFIG[CFG.MODEL])
-
-    @property
-    def model_provider(self):
-        return self.get(CFG.MODEL_PROVIDER, DEFAULT_CONFIG[CFG.MODEL_PROVIDER])
-
-    @property
-    def claude_model(self):
-        return self.get(CFG.CLAUDE_MODEL, DEFAULT_CONFIG[CFG.CLAUDE_MODEL])
-
-    @property
-    def codex_model(self):
-        return self.get(CFG.CODEX_MODEL, DEFAULT_CONFIG[CFG.CODEX_MODEL])
-
-    @property
-    def direction(self):
-        return self.get(CFG.DIRECTION, DEFAULT_CONFIG[CFG.DIRECTION])
-
-    @property
-    def theme(self):
-        return self.get(CFG.THEME, DEFAULT_CONFIG[CFG.THEME])
-
-    @property
-    def font_size(self):
-        return self.get(CFG.FONT_SIZE, DEFAULT_CONFIG[CFG.FONT_SIZE])
-
-    @property
-    def max_chars(self):
-        return self.get(CFG.MAX_CHARS, DEFAULT_CONFIG[CFG.MAX_CHARS])
-
-    @property
-    def double_press_window(self):
-        return self.get(CFG.DOUBLE_PRESS_WINDOW,
-                        DEFAULT_CONFIG[CFG.DOUBLE_PRESS_WINDOW])
-
-    @property
-    def popup_layout(self):
-        return self.get(CFG.POPUP_LAYOUT, DEFAULT_CONFIG[CFG.POPUP_LAYOUT])
-
-    @property
-    def language(self):
-        return self.get(CFG.LANGUAGE)
-
-    @property
-    def history_enabled(self):
-        return self.get(CFG.HISTORY_ENABLED, DEFAULT_CONFIG[CFG.HISTORY_ENABLED])
-
-    @property
-    def history_limit(self):
-        return self.get(CFG.HISTORY_LIMIT, DEFAULT_CONFIG[CFG.HISTORY_LIMIT])
-
-    @property
-    def ocr_engine(self):
-        return self.get(CFG.OCR_ENGINE, DEFAULT_CONFIG[CFG.OCR_ENGINE])
-
-    @property
-    def summary_enabled(self):
-        return self.get(CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED])
 
 
 def load_config() -> "Config":
@@ -853,27 +339,7 @@ def load_config() -> "Config":
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f)
         cfg = Config(raw)
-        migrated = dict(raw)
-        config_changed = False
-        if CFG.UI_V2_DEFAULT_MIGRATED not in raw:
-            migrated[CFG.UI_V2] = cfg[CFG.UI_V2]
-            migrated[CFG.UI_V2_DEFAULT_MIGRATED] = cfg[
-                CFG.UI_V2_DEFAULT_MIGRATED]
-            config_changed = True
-        if CFG.LABS_DEFAULTS_MIGRATED not in raw:
-            migrated[CFG.SUMMARY_ENABLED] = cfg[CFG.SUMMARY_ENABLED]
-            migrated[CFG.CLIPBOARD_PROTECTION_ENABLED] = cfg[
-                CFG.CLIPBOARD_PROTECTION_ENABLED]
-            migrated[CFG.LABS_DEFAULTS_MIGRATED] = cfg[
-                CFG.LABS_DEFAULTS_MIGRATED]
-            config_changed = True
-        if not cfg[CFG.CODEX_STREAMING_EXPERIMENTAL]:
-            # Streaming no longer has a user-facing opt-out. Upgrade saved
-            # "off" values so existing users do not get stuck on a hidden
-            # setting after the control is removed.
-            cfg[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
-            migrated[CFG.CODEX_STREAMING_EXPERIMENTAL] = True
-            config_changed = True
+        config_changed, migrated = plan_config_migration(raw, cfg)
         if config_changed:
             save_config(migrated)
     except FileNotFoundError:
@@ -881,29 +347,6 @@ def load_config() -> "Config":
     except Exception as e:
         log_error("load_config", e)
     return cfg
-
-
-def _atomic_write_json(path: str, data: Any) -> None:
-    """Write JSON to ``path`` atomically.
-
-    Dumps to a uniquely-named temp file in the same directory, flushes+fsyncs it,
-    then ``os.replace()``s it over the target. Because the swap is atomic, a
-    crash or hard ``os._exit`` mid-write can never leave a truncated/corrupt
-    file — readers always see either the old complete file or the new one."""
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        raise
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
@@ -920,16 +363,21 @@ CODEX_STREAM_RETRY_ERRORS = frozenset({
     "unknown_appserver_event",
 })
 
-# Serialises the read-modify-write in add_history so concurrent translation
-# workers (each may append a result) can't interleave and lose entries.
-_HISTORY_LOCK = threading.Lock()
+# All history operations share ownership, including clear racing an append.
+# Reentrant because add/cache retain the public load_history injection seam.
+_HISTORY_LOCK = threading.RLock()
+
+
+def _history_repository(reader=None, writer=None):
+    path = HISTORY_PATH
+    if reader is None:
+        reader = lambda: _read_history(path, strict=False)
+    return HistoryRepository(path, lock=_HISTORY_LOCK, reader=reader, writer=writer)
 
 
 def load_history() -> List[Dict[str, Any]]:
     try:
-        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
+        return _history_repository().load()
     except FileNotFoundError:
         return []
     except Exception as e:
@@ -937,32 +385,18 @@ def load_history() -> List[Dict[str, Any]]:
         return []
 
 
+def _write_history(path, entries):
+    try:
+        _atomic_write_json(path, entries)
+    except Exception as e:
+        log_error("add_history", e)
+
+
 def add_history(input_text: str, output_text: str, is_dict: bool, limit: int,
                 is_code: bool = False, kind: Optional[str] = None,
                 sig: Optional[str] = None) -> None:
-    if kind not in ("text", "dict", "code", "ocr"):
-        if is_code:
-            kind = "code"
-        elif is_dict:
-            kind = "dict"
-        else:
-            kind = "text"
-    with _HISTORY_LOCK:
-        entries = load_history()
-        entries.insert(0, {
-            "ts": time.strftime("%Y-%m-%d %H:%M"),
-            "input": input_text or "",
-            "output": output_text or "",
-            "is_dict": bool(is_dict),
-            "is_code": bool(is_code),
-            "kind": kind,
-            "sig": sig or "",
-        })
-        del entries[max(1, int(limit)):]
-        try:
-            _atomic_write_json(HISTORY_PATH, entries)
-        except Exception as e:
-            log_error("add_history", e)
+    _history_repository(reader=load_history, writer=_write_history).add(
+        input_text, output_text, is_dict, limit, is_code=is_code, kind=kind, sig=sig)
 
 
 def find_cached_translation(text: str, kind: str, sig: str):
@@ -974,40 +408,18 @@ def find_cached_translation(text: str, kind: str, sig: str):
     to the current direction/model/summary/language. Lets the app skip a
     re-translation of something the user already translated.
     """
-    if not text or not text.strip():
-        return None
-    if kind not in ("text", "dict", "code"):
-        return None
-    key = text.strip()
-    for entry in load_history():
-        if (entry.get("kind") == kind
-                and (entry.get("sig") or "") == (sig or "")
-                and (entry.get("input") or "").strip() == key):
-            out = (entry.get("output") or "").strip()
-            if out:
-                return out
-    return None
+    return _history_repository(reader=load_history).find_cached(text, kind, sig)
 
 
 def clear_history() -> None:
     try:
-        if os.path.exists(HISTORY_PATH):
-            os.remove(HISTORY_PATH)
+        with _HISTORY_LOCK:
+            if os.path.exists(HISTORY_PATH):
+                _history_repository().clear()
     except Exception as e:
         # One-shot user action ("clear history"): if it fails the user gets no
         # visible feedback, so leave a trace instead of swallowing silently.
         log_error("clear_history", e)
-
-
-def history_entry_kind(entry):
-    kind = (entry or {}).get("kind")
-    if kind in ("text", "dict", "code", "ocr"):
-        return kind
-    if (entry or {}).get("is_code"):
-        return "code"
-    if (entry or {}).get("is_dict"):
-        return "dict"
-    return "text"
 
 
 def history_entry_tag(entry):
@@ -1025,26 +437,6 @@ def history_entry_preview(entry, limit=24):
         text = (entry.get("output") or "").strip()
     text = " ".join(text.split())
     return (text[:limit] if text else i18n.get("history.preview_empty"))
-
-
-def filter_history_entries(entries, query="", kind="all"):
-    if kind not in ("all", "text", "dict", "code", "ocr"):
-        kind = "all"
-    query = " ".join((query or "").split()).casefold()
-    out = []
-    for entry in entries or []:
-        if kind != "all" and history_entry_kind(entry) != kind:
-            continue
-        if query:
-            hay = "\n".join([
-                entry.get("input", "") or "",
-                entry.get("output", "") or "",
-                entry.get("ts", "") or "",
-            ]).casefold()
-            if query not in hay:
-                continue
-        out.append(entry)
-    return out
 
 
 # Diagnostics helpers live in diagnostics.py (pure, GUI-free, unit-tested).
@@ -1343,15 +735,23 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return i18n.get("error.no_result")
 
     def _call_model(self, text, system_prompt, selection=None,
-                    cancel_event=None, task="text"):
+                    cancel_event=None, task="text", *, snapshot=None):
+        if snapshot is not None:
+            selection = snapshot.selection
+            text = snapshot.request.user_text
+            system_prompt = snapshot.request.system_prompt
+            task = snapshot.request.task
         selection = selection or self._provider_selection()
         if selection.provider_id == CLAUDE_PROVIDER:
+            if snapshot is not None:
+                return self._call_claude(
+                    text, system_prompt, request=snapshot.request)
             return self._call_claude(
                 text, system_prompt, model=selection.model)
         if selection.provider_id != CODEX_PROVIDER:
             return False, i18n.get("error.unknown_provider").format(
                 provider=selection.provider_id)
-        request = ProviderRequest(
+        request = snapshot.request if snapshot is not None else ProviderRequest(
             task=task,
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
@@ -1373,15 +773,22 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return True, result.text
         return False, self._provider_error_text(result)
 
-    def _call_model_image(self, img_path, selection=None, cancel_event=None):
+    def _call_model_image(self, img_path, selection=None, cancel_event=None,
+                          *, snapshot=None):
+        if snapshot is not None:
+            selection = snapshot.selection
+            img_path = snapshot.request.image_paths[0]
         selection = selection or self._provider_selection()
         if selection.provider_id == CLAUDE_PROVIDER:
+            if snapshot is not None:
+                return self._call_claude_vision(
+                    img_path, request=snapshot.request)
             return self._call_claude_vision(
                 img_path, model=selection.model)
         if selection.provider_id != CODEX_PROVIDER:
             return False, i18n.get("error.unknown_provider").format(
                 provider=selection.provider_id)
-        request = ProviderRequest(
+        request = snapshot.request if snapshot is not None else ProviderRequest(
             task="image",
             model=selection.model,
             system_prompt=OCR_VISION_PROMPT,
@@ -2014,10 +1421,47 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         threading.Thread(target=self._do_translate, args=(text, job_id, meta),
                          daemon=True).start()
 
-    def _history_meta(self) -> Dict[str, Any]:
+    def _request_snapshot(
+            self, text, system_prompt, selection=None, *, source_text,
+            origin="text", content_class="text", kind=None, sig="",
+            summarize=False, task="text", image_paths=(), timeout_seconds=60.0,
+            action="translation", direction=None):
+        """Capture on the dispatching thread; cancellation and UI stay outside."""
+        selection = selection or self._provider_selection()
+        cfg = getattr(self, "cfg", DEFAULT_CONFIG)
+        app_language = cfg.get(CFG.LANGUAGE) or i18n.get_language()
+        direction = cfg.get(CFG.DIRECTION, "auto") if direction is None else direction
+        model = selection.model
+        if selection.provider_id == CLAUDE_PROVIDER:
+            model = model or cfg[CFG.MODEL]
+        elif selection.provider_id == CODEX_PROVIDER and not image_paths:
+            model = codex_request_model(model, len(text))
+        return RequestSnapshot(
+            request=ProviderRequest(
+                task=task, model=model, system_prompt=system_prompt,
+                user_text=text, image_paths=tuple(image_paths),
+                timeout_seconds=timeout_seconds),
+            selection=selection, config=cfg, input=source_text, origin=origin,
+            content_class=content_class,
+            kind=kind if kind is not None else history_kind(
+                origin, content_class, source_text, word_test=is_single_word),
+            sig=sig, direction=direction, app_language=app_language,
+            target_lang=None if (
+                image_paths or action not in ("translation", "retranslate")
+                or (action == "translation" and (
+                    content_class == "code" or is_single_word(source_text or "")))
+            ) else resolve_target_lang(direction, app_language, source_text or ""),
+            summarize=bool(summarize), dictionary=is_single_word(source_text or ""),
+            stream_enabled=bool(cfg.get(
+                CFG.CODEX_STREAMING_EXPERIMENTAL,
+                DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])),
+            action=action,
+        )
+
+    def _history_meta(self):
         """Capture the per-job history fields from the current self._last_*
-        state. Must be called on the main thread at request start; the returned
-        dict is then owned by that job's worker thread."""
+        state. Must be called on the main thread at request start. The read-only
+        view keeps mutable cancellation/UI handles outside the execution snapshot."""
         selection = self._provider_selection()
         text = self._last_input or ""
         summarize = self._should_summarize(text)
@@ -2029,20 +1473,23 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             target_lang = resolve_target_lang(
                 mode, app_language, text)
             system_prompt = codex_summary_instruction(target_lang)
-        return {
-            "input": self._last_input,
-            "origin": self._last_origin,
-            "is_code": self._last_class == "code",
-            "kind": self._history_kind(),
-            "sig": self._cache_signature(),
+        snapshot = self._request_snapshot(
+            text, system_prompt, selection, source_text=self._last_input,
+            origin=self._last_origin, content_class=self._last_class,
+            kind=self._history_kind(), sig=self._cache_signature(),
+            summarize=summarize, task=task)
+        return MappingProxyType({
+            **snapshot.history_metadata,
             "provider": selection.provider_id,
             "model": selection.model,
-            "direction": self.cfg.get(CFG.DIRECTION, "auto"),
+            "direction": snapshot.direction,
             "summarize": summarize,
             "task": task,
             "system_prompt": system_prompt,
             "cancel_event": getattr(self, "_provider_cancel_event", None),
-        }
+            "stream_session": getattr(self, "_ss", None),
+            "snapshot": snapshot,
+        })
 
     def _animate_loading(self, step):
         """Spin the accent indicator through LOADING_SPINNER frames."""
@@ -2103,9 +1550,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             return DICTIONARY_PROMPT
         mode = self.cfg.get(CFG.DIRECTION, "auto")
         app_language = self.cfg.get(CFG.LANGUAGE) or i18n.get_language()
-        base_prompt = direction_prompt(mode, app_language)
-        if self._last_origin == "ocr":
-            base_prompt += OCR_STRUCTURE_HINT
+        base_prompt = with_ocr_structure_hint(direction_prompt(mode, app_language), self._last_origin)
         if self._should_summarize(text):
             # Summary + translation must share ONE language: the language this
             # text is translated INTO, not the app UI language. In auto mode
@@ -2127,13 +1572,14 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         return i18n.get("result.title")
 
     def _history_kind(self):
-        if self._last_origin == "ocr":
-            return "ocr"
-        if self._last_class == "code":
-            return "code"
-        if self._last_input and is_single_word(self._last_input):
-            return "dict"
-        return "text"
+        # Higher-priority routes must not read lower-priority UI state.
+        origin = self._last_origin
+        if origin == "ocr":
+            return history_kind(origin, None, None)
+        content_class = self._last_class
+        if content_class == "code":
+            return history_kind(origin, content_class, None)
+        return history_kind(origin, content_class, self._last_input, word_test=is_single_word)
 
     def _cache_signature(self, route=None) -> str:
         """A compact fingerprint of the settings that change a translation's
@@ -2148,23 +1594,19 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             dictionary_version = (
                 dictionary.cache_version if dictionary is not None
                 else "unavailable")
-            return "|".join((
-                "local-dictionary", dictionary_version, FORMATTER_VERSION))
+            return local_cache_signature(dictionary_version, FORMATTER_VERSION)
         selection = self._provider_selection()
-        fields = [
-            selection.provider_id,
-            str(selection.model or "auto"),
-            str(self.cfg.get(CFG.DIRECTION, "auto")),
-            "sum1" if self.cfg.get(
-                CFG.SUMMARY_ENABLED,
-                DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]) else "sum0",
-            str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language()),
-        ]
+        # Preserve coercion/error order before looking up the prompt revision.
+        provider_id = selection.provider_id
+        model = str(selection.model or "auto")
+        direction = str(self.cfg.get(CFG.DIRECTION, "auto"))
+        summary_enabled = bool(self.cfg.get(
+            CFG.SUMMARY_ENABLED, DEFAULT_CONFIG[CFG.SUMMARY_ENABLED]))
+        language = str(self.cfg.get(CFG.LANGUAGE) or i18n.get_language())
         prompt_revision = PROVIDER_PROMPT_REVISIONS.get(
             selection.provider_id, "")
-        if prompt_revision:
-            fields.append(prompt_revision)
-        return "|".join(fields)
+        return provider_cache_signature(
+            provider_id, model, direction, summary_enabled, language, prompt_revision)
 
     def _remember_result(self, ok, title, text):
         self._last_result_ok = bool(ok)
@@ -2175,6 +1617,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         self._refresh_tray_menu()
 
     def _do_translate(self, text, job_id, meta):
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         provider_id = meta.get("provider", CLAUDE_PROVIDER)
         if provider_id != CLAUDE_PROVIDER:
             self._do_provider_translate(text, job_id, meta)
@@ -2182,15 +1627,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         # Long, non-dictionary text streams so the translation appears
         # progressively; short text uses the simpler one-shot path.
         t0 = time.perf_counter()
-        ss = self._ss   # bind this job's session; a newer job swaps self._ss
-        dictionary = is_single_word(text)
-        is_code = bool(meta.get(
-            "is_code", self._last_class == "code"))
+        ss = meta["stream_session"] if snapshot is not None else self._ss
+        dictionary = snapshot.dictionary if snapshot is not None else is_single_word(text)
+        is_code = (snapshot.content_class == "code" if snapshot is not None else
+                   bool(meta.get("is_code", self._last_class == "code")))
         # Summary mode needs a different system prompt than the warm process was
         # spawned with, so it must skip the warm fast-path and take the cold
         # streaming path (which rebuilds the prompt via _system_prompt_for).
-        summarize = bool(meta.get(
-            "summarize", self._should_summarize(text)))
+        summarize = (snapshot.summarize if snapshot is not None else
+                     bool(meta.get("summarize", self._should_summarize(text))))
 
         # Fast path: a pre-warmed process already has the CLI initialised and
         # the right system prompt loaded, so we skip the ~2s cold startup.
@@ -2227,11 +1672,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                         "ok": True,
                     })
                     return   # streaming handled display + history
-            ok, result = self._call_claude(
-                text,
-                meta.get("system_prompt"),
-                model=meta.get("model"),
-            )
+            if snapshot is not None:
+                ok, result = self._call_claude(
+                    text, snapshot.request.system_prompt, request=snapshot.request)
+            else:
+                ok, result = self._call_claude(
+                    text, meta.get("system_prompt"), model=meta.get("model"))
         except Exception as e:
             ok, result = False, i18n.get("error.unexpected").format(error=e)
             log_error("translate", e)
@@ -2250,16 +1696,20 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 ok, result, job_id, record=False))
 
     def _do_provider_translate(self, text, job_id, meta):
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         selection = ProviderSelection(
             provider_id=meta.get("provider", ""),
             model=meta.get("model"),
         )
         cancel_event = meta.get("cancel_event")
         t0 = time.perf_counter()
-        dictionary = is_single_word(text)
-        stream_enabled = self.cfg.get(
-            CFG.CODEX_STREAMING_EXPERIMENTAL,
-            DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL])
+        dictionary = snapshot.dictionary if snapshot is not None else is_single_word(text)
+        stream_enabled = (snapshot.stream_enabled if snapshot is not None else
+                          self.cfg.get(
+                              CFG.CODEX_STREAMING_EXPERIMENTAL,
+                              DEFAULT_CONFIG[CFG.CODEX_STREAMING_EXPERIMENTAL]))
         fast_profile = selection.model == "auto-fast"
         stream_eligible = (
             selection.provider_id == CODEX_PROVIDER
@@ -2277,7 +1727,9 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         if stream_eligible:
             try:
                 stream_handled = self._stream_codex(
-                    text, job_id, self._ss, meta, selection)
+                    text, job_id,
+                    meta["stream_session"] if snapshot is not None else self._ss,
+                    meta, selection)
                 if stream_handled:
                     route = dict(getattr(
                         self, "_last_provider_route", {}) or {})
@@ -2318,10 +1770,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         try:
             ok, result = self._call_model(
                 text,
-                meta.get("system_prompt") or self._system_prompt_for(text),
+                snapshot.request.system_prompt if snapshot is not None else (
+                    meta.get("system_prompt") or self._system_prompt_for(text)),
                 selection,
                 cancel_event,
                 task=meta.get("task", "text"),
+                **({"snapshot": snapshot} if snapshot is not None else {}),
             )
         except Exception as exc:
             ok = False
@@ -2393,9 +1847,12 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         ``codex exec``. Once a turn is submitted or any output arrives, a failure
         is surfaced rather than issuing a duplicate model request.
         """
-        system_prompt = (
+        snapshot = meta.get("snapshot")
+        system_prompt = snapshot.request.system_prompt if snapshot is not None else (
             meta.get("system_prompt") or self._system_prompt_for(text))
-        request = ProviderRequest(
+        if snapshot is not None:
+            text = snapshot.request.user_text
+        request = snapshot.with_timeout(90.0) if snapshot is not None else ProviderRequest(
             task=meta.get("task", "text"),
             model=codex_request_model(selection.model, len(text)),
             system_prompt=system_prompt,
@@ -2585,12 +2042,18 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         deltas through the same display pipeline as _stream_claude. Returns True
         on success, or False to fall back to the cold path. The warm process is
         consumed and a replacement for the same profile is spawned afterwards."""
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
         if profile == "dictionary":
             expected_key = ("dictionary", meta.get("model"))
         else:
             expected_key = (
                 "translate", meta.get("model"), meta.get("direction"))
-        warm = self._take_warm(profile, expected_key=expected_key)
+        warm = self._take_warm(
+            profile, expected_key=expected_key,
+            **({"expected_prompt": snapshot.request.system_prompt}
+               if snapshot is not None else {}))
         if warm is None:
             return False
         ss.popup_ready = False
@@ -2645,9 +2108,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
         child process is always cleaned up, and only a non-error terminal
         `result` event (or, failing that, accumulated deltas) counts as success
         — a mid-stream abort no longer passes truncated text off as a result."""
-        system_prompt = (
-            meta.get("system_prompt") or self._system_prompt_for(text))
-        model = meta.get("model") or self.cfg[CFG.MODEL]
+        snapshot = meta.get("snapshot")
+        if snapshot is not None:
+            text = snapshot.request.user_text
+            system_prompt = snapshot.request.system_prompt
+            model = snapshot.request.model
+        else:
+            system_prompt = (
+                meta.get("system_prompt") or self._system_prompt_for(text))
+            model = meta.get("model") or self.cfg[CFG.MODEL]
         payload = f"<text>\n{text}\n</text>"
         ss.popup_ready = False
         t0 = time.perf_counter()
@@ -2854,10 +2323,15 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             log_error("stream_finalize", e)
 
     def _call_claude(self, text: str, system_prompt: Optional[str] = None,
-                     *, model: Optional[str] = None) -> Tuple[bool, str]:
-        if system_prompt is None:
-            system_prompt = self._system_prompt_for(text)
-        model = model or self.cfg[CFG.MODEL]
+                     *, model: Optional[str] = None,
+                     request=None) -> Tuple[bool, str]:
+        if request is not None:
+            text, system_prompt, model = (
+                request.user_text, request.system_prompt, request.model)
+        else:
+            if system_prompt is None:
+                system_prompt = self._system_prompt_for(text)
+            model = model or self.cfg[CFG.MODEL]
         # Wrap the selection in tags so a bare word isn't mistaken for an
         # instruction (fixes short inputs returning "请提供要翻译的文本").
         payload = f"<text>\n{text}\n</text>"
@@ -2876,7 +2350,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                  "--no-session-persistence"],
                 input=payload,
                 capture_output=True, text=True, encoding="utf-8",
-                timeout=60,
+                timeout=request.timeout_seconds if request is not None else 60,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if proc.stdout:
@@ -2939,7 +2413,7 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
                 return None
         return None
 
-    def _show_result(self, ok, result, job_id=None, record=True):
+    def _show_result(self, ok, result, job_id=None, record=True, *, history_meta=None):
         if job_id is not None and not self._job_is_current(job_id):
             return
         self._stop_animation()
@@ -2954,7 +2428,11 @@ class TranslatorApp(WarmMixin, UpdateMixin, TrayMixin, AboutMixin,
             self._maybe_add_as_text_button(self.popup)
             self._maybe_add_ai_dictionary_button(self.popup)
             self._maybe_add_result_actions_button(self.popup)
-        if record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
+        if record and ok and history_meta is not None:
+            self._record_history(
+                job_id, history_meta, result,
+                is_dict=is_single_word(history_meta["input"]))
+        elif record and ok and self.cfg.get(CFG.HISTORY_ENABLED, True) and (
                 self._last_input or self._last_origin == "ocr"):
             add_history(self._last_input or "", result,
                         is_single_word(self._last_input),

@@ -168,7 +168,8 @@ class TestLocalDictionaryRouting(unittest.TestCase):
         app._set_popup_text = mock.Mock()
         app._remember_result = mock.Mock()
         app._result_title = mock.Mock(return_value="Dictionary")
-        app._provider_selection = mock.Mock(return_value="provider")
+        app._provider_selection = mock.Mock(
+            return_value=tr.ProviderSelection("codex_cli", "auto-fast"))
         app._ai_dictionary_supplement_signature = mock.Mock(
             return_value="supplement-sig")
         with mock.patch.object(tr.threading, "Thread") as thread:

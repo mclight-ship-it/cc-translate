@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cc_dictionary_store import SCHEMA_VERSION  # noqa: E402
+from cc_dictionary_store import SCHEMA, SCHEMA_VERSION  # noqa: E402
 
 
 BUILDER_VERSION = "builder-v3"
@@ -130,61 +130,6 @@ SOURCES = (
         "f7a48b2b545acfaa77b2d607ae28747404ce02baefee16396c5d2d7a8ef34b5e",
         "Unicode Unihan", "17.0.0", "Unicode License v3"),
 )
-
-
-SCHEMA = """
-PRAGMA foreign_keys = ON;
-CREATE TABLE metadata (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-CREATE TABLE sources (
-    id TEXT PRIMARY KEY,
-    label TEXT NOT NULL,
-    version TEXT NOT NULL,
-    license TEXT NOT NULL,
-    url TEXT NOT NULL,
-    sha256 TEXT NOT NULL
-);
-CREATE TABLE entries (
-    id INTEGER PRIMARY KEY,
-    headword TEXT NOT NULL,
-    headword_norm TEXT NOT NULL,
-    language TEXT NOT NULL,
-    pronunciation TEXT,
-    part_of_speech TEXT,
-    source_id TEXT NOT NULL REFERENCES sources(id),
-    provenance TEXT NOT NULL,
-    priority INTEGER NOT NULL
-);
-CREATE TABLE senses (
-    id INTEGER PRIMARY KEY,
-    entry_id INTEGER NOT NULL REFERENCES entries(id),
-    ordinal INTEGER NOT NULL,
-    definition TEXT NOT NULL,
-    source_id TEXT NOT NULL REFERENCES sources(id),
-    provenance TEXT NOT NULL
-);
-CREATE TABLE forms (
-    form_norm TEXT NOT NULL,
-    entry_id INTEGER NOT NULL REFERENCES entries(id),
-    form TEXT NOT NULL,
-    provenance TEXT NOT NULL,
-    PRIMARY KEY (form_norm, entry_id, form)
-);
-CREATE TABLE aliases (
-    alias_norm TEXT NOT NULL,
-    entry_id INTEGER NOT NULL REFERENCES entries(id),
-    alias TEXT NOT NULL,
-    alias_type TEXT NOT NULL,
-    provenance TEXT NOT NULL,
-    PRIMARY KEY (alias_norm, entry_id, alias, alias_type)
-);
-CREATE INDEX entries_headword_norm ON entries(headword_norm, priority);
-CREATE INDEX senses_entry_id ON senses(entry_id, ordinal);
-CREATE INDEX forms_form_norm ON forms(form_norm);
-CREATE INDEX aliases_alias_norm ON aliases(alias_norm);
-"""
 
 
 def normalize(text: str) -> str:

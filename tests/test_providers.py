@@ -67,6 +67,30 @@ class _NativeConfigMock(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
 
+class TestAppServerCleanupLock(unittest.TestCase):
+    def test_failed_cleanup_releases_stream_lock_for_warm_and_foreground(self):
+        request = ProviderRequest("text", "auto", "synthetic instruction", "synthetic text")
+        with tempfile.TemporaryDirectory() as directory:
+            for warm in (False, True):
+                with self.subTest(warm=warm):
+                    transport = CodexAppServerTransport("synthetic", directory, env={})
+                    with unittest.mock.patch.object(transport, "_version_supported", return_value=True), \
+                            unittest.mock.patch.object(transport, "_start_process", return_value=object()), \
+                            unittest.mock.patch.object(transport, "_send"), \
+                            unittest.mock.patch.object(transport, "_next_message", return_value=("eof", None)), \
+                            unittest.mock.patch.object(transport, "_stop_process",
+                                                       side_effect=RuntimeError("synthetic cleanup")):
+                        with self.assertRaisesRegex(RuntimeError, "synthetic cleanup"):
+                            if warm:
+                                transport.warm_up(request)
+                            else:
+                                transport.stream(request, lambda _value: None)
+                    acquired = transport._stream_lock.acquire(blocking=False)
+                    self.assertTrue(acquired)
+                    if acquired:
+                        transport._stream_lock.release()
+
+
 class TestCodexJsonl(unittest.TestCase):
     def test_extracts_completed_agent_message(self):
         output = "\n".join((
@@ -579,7 +603,7 @@ class TestCodexAppServerTransport(_NativeConfigMock):
         self.assertIn('model_verbosity="low"', command)
         self.assertNotIn("auto-fast", command)
 
-    def test_version_gate_accepts_only_pinned_protocol_version(self):
+    def test_version_gate_accepts_minimum_and_newer_protocol_candidates(self):
         self.addCleanup(_clear_appserver_version_cache)
         _clear_appserver_version_cache()
         supported = unittest.mock.Mock(
@@ -596,9 +620,10 @@ class TestCodexAppServerTransport(_NativeConfigMock):
         with unittest.mock.patch(
                 "cc_providers.codex_appserver.subprocess.run",
                 return_value=future):
-            self.assertFalse(_supported_appserver_version("codex.exe"))
+            self.assertTrue(_supported_appserver_version("codex.exe"))
         self.assertTrue(appserver_version_supported("codex-cli 0.146.0"))
-        self.assertFalse(appserver_version_supported("codex-cli 0.147.0"))
+        self.assertTrue(appserver_version_supported("codex-cli 0.147.0"))
+        self.assertFalse(appserver_version_supported("codex-cli 0.145.0"))
         self.assertFalse(appserver_version_supported(""))
 
     def test_version_gate_retries_transient_probe_failures(self):
