@@ -670,6 +670,13 @@ def audit_bundle(app, lock, environment=None):
         need(digest(target) == expected, "bundled source/license content changed")
     ca = contents / "Resources/Core/cacert.pem"
     need(digest(ca) == provenance["certificate_sha256"], "bundle CA changed")
+    return audit_macho(app, lock, environment)
+
+
+def audit_macho(app, lock, environment=None):
+    """Shared relocation/architecture gate; release resource policy is separate."""
+    contents = app / "Contents"
+    framework = contents / "Frameworks/Sparkle.framework"
     files, inventory = [], []
     for path in sorted(app.rglob("*")):
         relative = path.relative_to(app).as_posix()
@@ -814,7 +821,7 @@ def copy_support_image(contents):
     shutil.copy2(SUPPORT_IMAGE_SOURCE, destination)
 
 
-def build(lock, offline=False, build_number=None):
+def build(lock, offline=False, build_number=None, release_source_maps=False):
     environment, toolchain = require_macos()
     info = package_info(plistlib.loads((ROOT / "macos/Resources/Info.plist").read_bytes()), lock, build_number)
     # Never update an existing (possibly signed) bundle, even on a second build.
@@ -826,6 +833,15 @@ def build(lock, offline=False, build_number=None):
     args = ["/usr/bin/xcrun", "swift", "build", "--package-path", ROOT / "macos",
             "--configuration", "release", "--triple", "arm64-apple-macosx14.0",
             "--product", "CCTranslateMac"]
+    if release_source_maps:
+        # Keep development builds unchanged. Map both #filePath and DWARF in a
+        # fresh release build; stripping alone cannot remove Swift string literals.
+        args[3:3] = [
+            "-Xswiftc", "-file-prefix-map", "-Xswiftc", str(ROOT) + "=.",
+            "-Xswiftc", "-debug-prefix-map", "-Xswiftc", str(ROOT) + "=.",
+            "-Xcc", "-ffile-prefix-map=" + str(ROOT) + "=.",
+            "-Xcc", "-fdebug-prefix-map=" + str(ROOT) + "=.",
+        ]
     subprocess.run([str(a) for a in args], env=environment, check=True)
     binary_directory = Path(run([*args, "--show-bin-path"], environment))
     binary = binary_directory / "CCTranslateMac"

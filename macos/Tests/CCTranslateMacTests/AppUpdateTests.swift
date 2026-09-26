@@ -32,6 +32,39 @@ final class AppUpdateTestService: AppUpdateServing {
 }
 
 final class AppUpdateTests: XCTestCase {
+    func testFormalReleaseChannelRejectsRepointingUnsafeSettingsAndMissingKeys() {
+        let release: [String: Any] = [
+            "CCReleaseChannel": "stable",
+            "CFBundleIdentifier": "dev.cc-translate.macos.probe",
+            "SUFeedURL": AppUpdateChannel.releaseFeed,
+            "SUPublicEDKey": Data(repeating: 65, count: 32).base64EncodedString(),
+            "SUEnableAutomaticChecks": false, "SUAutomaticallyUpdate": false,
+            "SUSendProfileInfo": false, "SUVerifyUpdateBeforeExtraction": true
+        ]
+        XCTAssertEqual(AppUpdateChannel(info: release), .configured)
+        let mutations: [(String, Any)] = [
+            ("CCReleaseChannel", "preview"),
+            ("CFBundleIdentifier", "changed.cc-translate.identity"),
+            ("SUFeedURL", "https://example.invalid/appcast.xml"),
+            ("SUFeedURL", AppUpdateChannel.releaseFeed + "?override=true"),
+            ("SUFeedURL", AppUpdateChannel.releaseFeed + "#fragment"),
+            ("SUPublicEDKey", Data(repeating: 0, count: 32).base64EncodedString()),
+            ("SUEnableAutomaticChecks", true), ("SUAutomaticallyUpdate", true),
+            ("SUSendProfileInfo", true), ("SUVerifyUpdateBeforeExtraction", false),
+            ("NSAppTransportSecurity", ["NSAllowsArbitraryLoads": true])
+        ]
+        for (key, value) in mutations {
+            var modified = release
+            modified[key] = value
+            XCTAssertEqual(AppUpdateChannel(info: modified), .invalid, key)
+        }
+        for key in ["SUPublicEDKey", "SUFeedURL", "SUVerifyUpdateBeforeExtraction"] {
+            var modified = release
+            modified.removeValue(forKey: key)
+            XCTAssertEqual(AppUpdateChannel(info: modified), .invalid, key)
+        }
+    }
+
     @MainActor
     func testChannelRequiresAnHTTPSFeedAndPublicKeyWithoutRestrictingTranslation() throws {
         XCTAssertEqual(AppUpdateChannel(info: [:]), .unconfigured)

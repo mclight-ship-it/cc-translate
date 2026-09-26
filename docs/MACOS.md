@@ -63,15 +63,22 @@ subscription sign-in.
 ## Everyday use
 
 - Select text in another app and press **Command+C twice** to translate it.
+- The translation result becomes the active window. **Command+W** closes the
+  active CC Translate window rather than the source document behind it.
 - When a selection cannot be read, use the quick-input window to type or paste
   text. Some PDF viewers and protected fields do not expose readable selections.
 - In the main window, enter text and choose **Translate**, or press
   **Command+Return**.
 - Long-text summaries appear before the full translation when enabled. Reading
   position and selected text are preserved as the remaining output arrives.
+- The result shows elapsed waiting time. After completion, expand **Timing
+  details** for recorded milestones; these measure the app's request pipeline,
+  not server-only latency.
 - Use screenshot translation for images or inaccessible text. Text recognition
   runs locally. Image mode sends the selected image to the configured model
   service; it is not an offline alternative.
+- If text recognition fails or finds no text, **Open capture settings** opens
+  the relevant setting without automatically switching mode or sending an image.
 - Download the optional local dictionary from Settings. Its data and source
   licenses remain separate from model-generated results.
 - History and settings are stored locally. Updating the app is not an uninstall.

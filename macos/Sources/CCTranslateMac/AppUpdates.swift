@@ -4,6 +4,8 @@ import Sparkle
 
 enum AppUpdateChannel: Equatable {
     case unconfigured, invalid, configured
+    static let releaseFeed = "https://raw.githubusercontent.com/mclight-ship-it/cc-translate/macos-updates/appcast.xml"
+    static let downloads = "https://github.com/mclight-ship-it/cc-translate/releases/latest"
 
     init(info: [String: Any]) {
         guard info["SUFeedURL"] != nil || info["SUPublicEDKey"] != nil else {
@@ -13,10 +15,25 @@ enum AppUpdateChannel: Equatable {
         guard let feed = info["SUFeedURL"] as? String,
               let url = URLComponents(string: feed), url.scheme?.lowercased() == "https",
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
+              url.port == nil, url.query == nil, url.fragment == nil,
               let key = info["SUPublicEDKey"] as? String,
-              let bytes = Data(base64Encoded: key), bytes.count == 32 else {
+              let bytes = Data(base64Encoded: key), bytes.count == 32,
+              bytes.base64EncodedString() == key, bytes.contains(where: { $0 != 0 }) else {
             self = .invalid
             return
+        }
+        if info["CCReleaseChannel"] != nil {
+            guard info["CCReleaseChannel"] as? String == "stable",
+                  info["CFBundleIdentifier"] as? String == "dev.cc-translate.macos.probe",
+                  feed == Self.releaseFeed,
+                  info["SUVerifyUpdateBeforeExtraction"] as? Bool == true,
+                  info["SUEnableAutomaticChecks"] as? Bool == false,
+                  info["SUAutomaticallyUpdate"] as? Bool == false,
+                  info["SUSendProfileInfo"] as? Bool == false,
+                  info["NSAppTransportSecurity"] == nil else {
+                self = .invalid
+                return
+            }
         }
         self = .configured
     }
@@ -85,7 +102,7 @@ final class AppUpdateModel: ObservableObject {
     init(info: [String: Any] = Bundle.main.infoDictionary ?? [:],
          factory: @escaping @MainActor () -> any AppUpdateServing = { SparkleUpdateService() },
          openDownloads: @escaping @MainActor () -> Bool = {
-             guard let url = URL(string: "https://github.com/mclight-ship-it/cc-translate/blob/agents/cc-translate-macos-native/docs/MACOS_DEVELOPMENT.md#native-translation-user-check") else { return false }
+             guard let url = URL(string: AppUpdateChannel.downloads) else { return false }
              return NSWorkspace.shared.open(url)
          }) {
         channel = AppUpdateChannel(info: info)

@@ -37,7 +37,7 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
     return processes;
 }
 
-@interface FixtureDriver : NSObject <SPUUserDriver>
+@interface FixtureDriver : NSObject <SPUUserDriver, SPUUpdaterDelegate>
 @property(nonatomic, strong) NSURL *applicationURL;
 @property(nonatomic, strong) NSURL *reportURL;
 @property(nonatomic, copy) NSString *scenario;
@@ -51,6 +51,9 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
 @property(nonatomic) BOOL finishing;
 @property(nonatomic) BOOL forcedCleanup;
 @property(nonatomic) BOOL succeeded;
+#ifdef CC_RELEASE_UPDATE_TEST
+@property(nonatomic, copy) NSString *testFeedURL;
+#endif
 @end
 
 @implementation FixtureDriver
@@ -92,8 +95,15 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
 - (void)begin {
     NSBundle *host = [NSBundle bundleWithURL:self.applicationURL];
     self.identifier = host.bundleIdentifier;
+#ifdef CC_RELEASE_UPDATE_TEST
+    NSURL *feed = [NSURL URLWithString:self.testFeedURL];
+    if (![self.identifier isEqual:@"dev.cc-translate.macos.probe"] ||
+        ![feed.scheme isEqual:@"http"] || ![feed.host isEqual:@"127.0.0.1"] ||
+        !feed.port || [NSRunningApplication runningApplicationsWithBundleIdentifier:self.identifier].count) {
+#else
     if (![self.identifier hasPrefix:@"dev.cc-translate.update-fixture."] ||
         ![host.infoDictionary[@"CFBundleVersion"] isEqual:@"1"]) {
+#endif
         self.outcome = @"invalid-fixture";
         [self finish];
         return;
@@ -162,7 +172,7 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
     if (self.finishing) { return; }
     // The host, not this external driver, must be terminated and relaunched.
     self.updater = [[SPUUpdater alloc] initWithHostBundle:host applicationBundle:host
-                                             userDriver:self delegate:nil];
+                                             userDriver:self delegate:self];
     NSError *error = nil;
     if (![self.updater startUpdater:&error]) {
         [self showUpdaterError:error acknowledgement:^{}];
@@ -170,6 +180,12 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
     }
     [self.updater checkForUpdates];
 }
+
+#ifdef CC_RELEASE_UPDATE_TEST
+- (NSString *)feedURLStringForUpdater:(SPUUpdater *)updater {
+    return self.testFeedURL;
+}
+#endif
 
 - (void)sampleIdleForHost:(NSBundle *)host start:(NSTimeInterval)start {
     if (self.finishing) { return; }
@@ -361,13 +377,20 @@ static NSDictionary *OwnedResourceSnapshot(pid_t root, NSError **error) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+#ifdef CC_RELEASE_UPDATE_TEST
+        if (argc != 5) { return 2; }
+#else
         if (argc != 4) { return 2; }
+#endif
         NSApplication *application = [NSApplication sharedApplication];
         [application setActivationPolicy:NSApplicationActivationPolicyAccessory];
         FixtureDriver *driver = [FixtureDriver new];
         driver.applicationURL = [NSURL fileURLWithPath:@(argv[1]) isDirectory:YES].URLByResolvingSymlinksInPath;
         driver.scenario = @(argv[2]);
         driver.reportURL = [NSURL fileURLWithPath:@(argv[3])];
+#ifdef CC_RELEASE_UPDATE_TEST
+        driver.testFeedURL = @(argv[4]);
+#endif
         driver.events = [NSMutableArray array];
         driver.report = [NSMutableDictionary dictionary];
         driver.report[@"owned_pids"] = [NSMutableArray array];
