@@ -55,7 +55,8 @@ python -m unittest tests.test_macos_protocol tests.test_macos_bundle
 ```
 
 原生 XCTest、真实 HTTPS、GUI/TCC 和签名包必须另在 Mac 验证，不能用这些测试替代。
-环境、命令及未通过的门槛见 [macOS 验收清单](../docs/MACOS_TODO.md)。
+用户安装和更新说明见 [macOS 指南](../docs/MACOS.zh.md)；自动化命令和执行环境以
+[macOS 工作流](../.github/workflows/macos-p0.yml)为准。测试数据不能替代真实账号或系统授权验收。
 
 同制品矩阵控制层：`python -B -m unittest tests.test_macos_runtime tests.test_macos_bundled_tests tests.test_macos_bundle tests.test_macos_protocol`。
 这些离线负例不执行 Mac 二进制。Mac15 producer 与 Mac14/26 consumer 共用

@@ -2,7 +2,22 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **Required before use:** CC Translate needs at least one working model CLI: the official Codex CLI (ChatGPT sign-in, API key, or compatible custom provider), or Claude Code (subscription or compatible local proxy). OpenAI GPT smart routing is the default.
+> **For model translation:** use a working Codex CLI or Claude Code installation. Subscription sign-in does not require a separate API key. The optional local dictionary works offline without a model account.
+
+## Download and install
+
+| Platform | Installation | Updates |
+| --- | --- | --- |
+| **macOS 14+, Apple Silicon (M1 or later)** | [Mac release downloads](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true) · [Mac installation and usage guide](docs/MACOS.md) | In-app **Check for Updates** using signed Sparkle update archives |
+| **Windows** | Use the installation instructions below | Existing Git-based in-app updater |
+
+The Mac app has a native translation workspace, selection translation with
+double-tap **Command+C**, screenshot translation, a local dictionary, history,
+and settings. Mac downloads currently have **no Apple Developer ID signature or
+notarization**; read the [first-launch and permission limitations](docs/MACOS.md#first-launch-and-permissions).
+Intel Macs are not supported by this release.
+
+The sections below describe the **Windows** version unless noted otherwise.
 
 A select-and-translate app focused on **high-quality translation**: **double-tap Ctrl+C** to translate the currently selected text, shown in a popup near the cursor. It combines an offline local dictionary with parallel Claude Code and OpenAI GPT (through the official Codex CLI) providers. ChatGPT or Claude subscription sign-in needs no separate API key; API-key and compatible custom-provider configurations are also supported.
 
@@ -281,3 +296,11 @@ See [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md): hand that file's contents to 
   credentials, and sensitive local-data files, then runs change-scoped tests. Any failure
   blocks the push.
 - **Enable it once after a fresh clone**: `git config core.hooksPath .githooks`.
+
+## Application license
+
+An application-code license has not yet been selected. A public repository is
+not by itself an open-source license. Third-party runtime components and optional
+dictionary data retain their own licenses; see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)
+and the notices included in the Mac app. No MIT, Apache, or other application
+license is implied by those notices.

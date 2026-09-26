@@ -2,7 +2,21 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> ⚠️ **使用前必看（必需）**：CC Translate 至少需要一个可用的模型 CLI：官方 Codex CLI（ChatGPT 登录、API key 或兼容的自定义 provider），或 Claude Code（订阅或兼容本地代理）。默认使用 OpenAI GPT 智能路由。
+> **模型翻译需要**可用的 Codex CLI 或 Claude Code。通过订阅账号登录不需要另配 API key。可选本地词典可离线使用，不需要模型账号。
+
+## 下载与安装
+
+| 平台 | 安装 | 更新 |
+| --- | --- | --- |
+| **macOS 14 及以上，Apple Silicon（M1 或更新）** | [Mac 正式版本下载](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true) · [Mac 安装与使用指南](docs/MACOS.zh.md) | App 内“检查更新”，通过 Sparkle 校验签名后安装 |
+| **Windows** | 使用下方安装说明 | 保留现有基于 Git 的 App 内更新 |
+
+Mac 版提供原生翻译工作区、双击 **Command+C** 划词翻译、截图翻译、
+本地词典、历史记录和设置。当前 Mac 下载包**尚无 Apple Developer ID
+签名和公证**，首次打开和更新后的权限可能需要确认，详见
+[首次启动与权限说明](docs/MACOS.zh.md#首次启动与权限)。本次不提供 Intel Mac 安装包。
+
+下方界面和功能说明除特别标注外，描述的是 **Windows 版**。
 
 这是一个主打**高质量翻译**的划词翻译 App：**双击 Ctrl+C** 翻译当前选中的文字，弹窗显示译文。它结合离线本地词典，以及 Claude Code 与 OpenAI GPT（通过官方 Codex CLI）两套平行 provider。使用 ChatGPT 或 Claude 订阅登录时无需另配 API key，也支持 API key 和兼容的自定义 provider。
 
@@ -254,3 +268,10 @@ python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_brand
 - 仓库自带 pre-push 钩子：先检查新增内容中的本机用户路径、凭据和敏感本地数据文件，
   再按改动范围运行测试；任一步失败都会阻止推送。
 - **新 clone 后启用一次**：`git config core.hooksPath .githooks`。
+
+## 应用代码许可证
+
+应用代码的许可证尚未选定。公开仓库本身不等于采用了开源许可证。
+第三方运行时组件及可选词典数据保留各自的许可证，详见
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) 和 Mac App 内附带的许可声明；
+这些声明不代表应用代码已采用 MIT、Apache 或其他许可证。
