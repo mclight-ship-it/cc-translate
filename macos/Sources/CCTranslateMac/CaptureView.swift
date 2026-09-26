@@ -7,6 +7,7 @@ struct CaptureStatusView: View {
     @ObservedObject var capture: CaptureModel
     @ObservedObject var model: ProbeModel
     var captureAgain: () -> Void
+    var showCaptureSettings: () -> Void
     var close: () -> Void
 
     var body: some View {
@@ -25,6 +26,10 @@ struct CaptureStatusView: View {
             }
             Spacer(minLength: 0)
             HStack {
+                if capture.offersCaptureSettings {
+                    Button(model.text("Capture settings", "截图设置"), action: showCaptureSettings)
+                        .accessibilityIdentifier("automatic-capture-settings")
+                }
                 Spacer()
                 if !capture.busy {
                     Button(model.text("Capture again", "重新截图"), action: captureAgain)

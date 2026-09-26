@@ -40,6 +40,7 @@ struct TranslatorView: View {
     var showSettings: () -> Void
     var showCapture: () -> Void
     var embedded: Bool = false
+    var showInstallationSettings: (() -> Void)? = nil
     @State private var editorFocused = false
 
     private var busy: Bool { model.preparing || model.active }
@@ -54,10 +55,13 @@ struct TranslatorView: View {
             if model.needsCLI {
                 HStack(spacing: 10) {
                     Image(systemName: "terminal").accessibilityHidden(true)
-                    Text(model.text("The local dictionary works offline. Choose \(model.translationProvider.displayName) for model translation.",
-                                    "本地词典可离线使用。模型翻译需要选择 \(model.translationProvider.displayName)。"))
+                    Text(model.missingCLIMessage)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button(model.text("Open Settings", "打开设置"), action: showSettings)
+                    Button(model.text("Installation settings", "安装位置设置"),
+                           action: showInstallationSettings ?? showSettings)
+                        .fixedSize()
+                        .accessibilityIdentifier("missing-cli-installation-settings")
                 }
                 .font(.callout)
                 .padding(12)
@@ -265,6 +269,7 @@ struct TranslationResultView: View {
             ContentSizedStatusScrollView(maximumHeight: compact ? 90 : 140) {
                 VStack(alignment: .leading, spacing: 8) {
                     phaseStatus
+                    TranslationElapsedView(model: model)
                     ImageCleanupView(model: model)
                     if !model.resultHasOriginalInput && !model.output.isEmpty {
                         Text(model.resultKind == "ocr"
@@ -1206,9 +1211,32 @@ enum SettingsPane: String, CaseIterable {
 
 @MainActor
 final class SettingsNavigation: ObservableObject {
+    enum Destination: String {
+        case installation, capture
+
+        var pane: SettingsPane { self == .installation ? .translation : .shortcuts }
+    }
+    struct Request: Equatable {
+        let id = UUID()
+        let destination: Destination
+    }
+
     @Published var pane: SettingsPane
+    @Published private(set) var request: Request?
 
     init(pane: SettingsPane = .translation) { self.pane = pane }
+
+    func openInstallationSettings() { open(.installation) }
+    func openCaptureSettings() { open(.capture) }
+
+    func finish(_ handled: Request) {
+        if request == handled { request = nil }
+    }
+
+    private func open(_ destination: Destination) {
+        pane = destination.pane
+        request = Request(destination: destination)
+    }
 }
 
 @MainActor
@@ -1254,7 +1282,18 @@ struct TranslationSettingsView: View {
             }
             .padding(.horizontal, PearlTheme.pagePadding)
             .padding(.vertical, PearlTheme.spacing)
-            settingsForm
+            ScrollViewReader { scroll in
+                settingsForm
+                    .task(id: navigation.request?.id) {
+                        guard let request = navigation.request, navigation.pane == request.destination.pane else { return }
+                        if request.destination == .installation { installationExpanded = true }
+                        await Task.yield()
+                        guard !Task.isCancelled, navigation.request == request,
+                              navigation.pane == request.destination.pane else { return }
+                        scroll.scrollTo(request.destination, anchor: .top)
+                        navigation.finish(request)
+                    }
+            }
         }
         .disabled(model.defaultsPhase.busy)
         .frame(minWidth: 530, minHeight: 460)
@@ -1262,7 +1301,7 @@ struct TranslationSettingsView: View {
         .preferredColorScheme(model.preferredColorScheme)
         .onAppear {
             model.refreshDictionary()
-            installationExpanded = model.selectedCLI.isEmpty
+            installationExpanded = model.selectedCLI.isEmpty || navigation.request?.destination == .installation
         }
         .onChange(of: model.interfaceLanguage) { _, _ in model.persistPresentation() }
         .onChange(of: model.appearance) { _, _ in model.persistPresentation() }
@@ -1286,10 +1325,12 @@ struct TranslationSettingsView: View {
             case .translation:
                 translationSection
                 providerSection
+                    .id(SettingsNavigation.Destination.installation)
                 DictionarySettingsSection(model: model, dictionary: model.dictionary)
             case .shortcuts:
                 shortcutSection
                 CaptureShortcutSettingsSection(model: model, shortcut: model.captureShortcut)
+                    .id(SettingsNavigation.Destination.capture)
                 PlainPasteSettingsSection(model: model, paste: model.plainPaste)
             case .appearance:
                 generalSection

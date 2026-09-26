@@ -743,7 +743,10 @@ private final class WorkspaceJourneyFixture {
         application.submitQuickInput() // A queued action arriving after the window closed.
         XCTAssertEqual(product.model.translationIntentID, intent)
         try await finishTranslation(text: text)
-        XCTAssertTrue(application.resultPanel?.isVisible == true)
+        let result = try XCTUnwrap(application.resultPanel)
+        XCTAssertTrue(result.isVisible)
+        XCTAssertTrue(result.isKeyWindow, "Quick translation transfers keyboard commands to its result window.")
+        XCTAssertTrue(result.isMainWindow)
         let reopened = try await openQuick()
         XCTAssertTrue(reopened === panel)
         XCTAssertTrue(try nativeEditor(in: reopened) === editor)
@@ -1190,6 +1193,9 @@ final class WorkspaceUserJourneyTests: XCTestCase {
             let close = try XCTUnwrap(firstQuickClose)
             XCTAssertTrue(close.resultVisible, "The result must be visible before the quick panel starts closing.")
             XCTAssertEqual(close.policy, .regular, "Submitting quick input must not temporarily remove Dock identity.")
+            try await CaptureProductFixture.waitFor {
+                NSApp.isActive && app.resultPanel?.isKeyWindow == true && app.resultPanel?.isMainWindow == true
+            }
             helper.event("completed", id: request.id, payload: ScaleTestSupport.result("Synthetic cold-start result."))
             try await CaptureProductFixture.waitFor {
                 !product.model.active && product.model.output == "Synthetic cold-start result." &&

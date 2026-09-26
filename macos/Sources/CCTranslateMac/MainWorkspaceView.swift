@@ -29,7 +29,11 @@ struct MainWorkspaceView: View {
         case .translator:
             return AnyView(TranslatorView(model: model,
                 showHistory: { navigate(.history) }, showSettings: { navigate(.settings) },
-                showCapture: { navigate(.capture) }, embedded: true))
+                showCapture: { navigate(.capture) }, embedded: true,
+                showInstallationSettings: {
+                    settingsNavigation.openInstallationSettings()
+                    navigate(.settings)
+                }))
         case .history:
             return AnyView(TranslationHistoryView(model: model, useEntry: { navigate(.translator) }))
         case .dictionary:

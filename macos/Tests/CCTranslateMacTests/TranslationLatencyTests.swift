@@ -4,6 +4,110 @@ import XCTest
 
 @MainActor
 final class TranslationLatencyTests: XCTestCase {
+    func testElapsedTimeExcludesCaptureSelectionAndIgnoresStaleOrInvalidSamples() {
+        var trace = TranslationLatency()
+        let first = UUID()
+        var capture = CaptureTimingSnapshot(now: 100)
+        capture.framesReady(now: 101)
+        capture.completeSelection(now: 121)
+        trace.begin(intent: first, source: .ocr, provider: .codex, trigger: nil, now: 122, capture: capture)
+        XCTAssertEqual(trace.elapsedSeconds(for: first, now: 122), 0)
+        XCTAssertEqual(trace.elapsedSeconds(for: first, now: 125.9), 3)
+        XCTAssertNil(trace.elapsedSeconds(for: first, now: 121))
+        XCTAssertNil(trace.elapsedSeconds(for: first, now: .infinity))
+        XCTAssertNil(trace.elapsedSeconds(for: first, now: .nan))
+        XCTAssertNil(trace.elapsedSeconds(for: UUID(), now: 126))
+        let second = UUID()
+        trace.begin(intent: second, source: .text, provider: .codex, trigger: nil, now: 130)
+        XCTAssertNil(trace.elapsedSeconds(for: first, now: 131))
+        XCTAssertEqual(trace.elapsedSeconds(for: second, now: 131), 1)
+        trace.finish(.cancelled, now: 132)
+        XCTAssertNil(trace.elapsedSeconds(for: second, now: 140))
+    }
+
+    func testCompletionTimingUsesOnlyObservedStagesFromMatchingFinishedIntent() throws {
+        var trace = TranslationLatency()
+        let first = UUID()
+        var capture = CaptureTimingSnapshot(now: 100)
+        capture.framesReady(now: 101)
+        capture.completeSelection(now: 120)
+        trace.begin(intent: first, source: .ocr, provider: .codex, trigger: nil, now: 121, capture: capture)
+        trace.dispatch(id: "first", now: 122)
+        trace.observeOutput("## Summary\n", id: "first", now: 123)
+        XCTAssertNil(trace.completedTiming(for: first))
+        trace.observeOutput("## Summary\nA summary.", id: "first", now: 124)
+        trace.observeOutput("## Summary\nA summary.\n## Translation\nA translation.", id: "first", now: 126)
+        trace.finish(.completed, now: 130)
+        let timing = try XCTUnwrap(trace.completedTiming(for: first))
+        XCTAssertEqual(timing.intent, first)
+        XCTAssertEqual(timing.firstReadableText, 3)
+        XCTAssertEqual(timing.summaryComplete, 5)
+        XCTAssertEqual(timing.total, 9, "Do not include time spent selecting a screenshot.")
+        XCTAssertNil(trace.completedTiming(for: UUID()))
+
+        let second = UUID()
+        trace.begin(intent: second, source: .text, provider: .claude, trigger: nil, now: 140)
+        trace.dispatch(id: "second", now: 140)
+        XCTAssertNil(trace.completedTiming(for: first), "Hide previous details while a replacement is active.")
+        trace.observeOutput("Late result", id: "first", now: 142)
+        trace.finish(.completed, now: 145)
+        let replacement = try XCTUnwrap(trace.completedTiming(for: second))
+        XCTAssertNil(replacement.firstReadableText, "Do not borrow the preceding request's observed milestones.")
+        XCTAssertNil(replacement.summaryComplete)
+        XCTAssertEqual(replacement.total, 5)
+        for outcome in [TranslationLatency.Outcome.cancelled, .failed, .superseded] {
+            let intent = UUID()
+            trace.begin(intent: intent, source: .text, provider: .codex, trigger: nil, now: 150)
+            trace.finish(outcome, now: 151)
+            XCTAssertNil(trace.completedTiming(for: intent))
+        }
+        trace.recordCapture(capture, provider: .codex, outcome: .completed, now: 160)
+        XCTAssertNil(trace.completedTiming(for: capture.id))
+    }
+
+    func testElapsedFeedbackTracksPreparationSummaryReplacementAndTerminalEvents() throws {
+        var time = 100.0
+        let fixture = try ProductTestHarness(latencyClock: { time })
+        defer { fixture.cleanUp() }
+        XCTAssertNil(fixture.model.translationElapsedSeconds)
+        fixture.model.input = "First source sentence."
+        fixture.model.translate()
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 0)
+        time = 104
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 4)
+        let helper = try fixture.ready()
+        let first = try XCTUnwrap(helper.translations.last)
+        helper.event("delta", id: first.id, payload: ["text": .string("Summary arrives first.")])
+        XCTAssertEqual(fixture.model.output, "Summary arrives first.", "The timer must not delay streaming output.")
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 4)
+
+        time = 110
+        fixture.model.input = "Replacement source sentence."
+        fixture.model.translate()
+        let second = try XCTUnwrap(helper.translations.last)
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 0)
+        time = 112
+        helper.event("cancelled", id: first.id)
+        XCTAssertEqual(fixture.model.translationElapsedSeconds, 2)
+        helper.event("completed", id: second.id, payload: [
+            "text": .string("Completed translation."), "cached": .bool(false),
+            "kind": .string("text"), "history": .string("disabled")
+        ])
+        XCTAssertNil(fixture.model.translationElapsedSeconds)
+        XCTAssertNotNil(fixture.model.completedTranslationTiming)
+
+        fixture.model.input = "Cancelled source sentence."
+        fixture.model.translate()
+        XCTAssertNotNil(fixture.model.translationElapsedSeconds)
+        XCTAssertNil(fixture.model.completedTranslationTiming)
+        fixture.model.cancel()
+        XCTAssertNil(fixture.model.translationElapsedSeconds)
+        XCTAssertNil(fixture.model.completedTranslationTiming)
+        fixture.model.clearTranslation()
+        XCTAssertNil(fixture.model.translationElapsedSeconds)
+        XCTAssertNil(fixture.model.completedTranslationTiming)
+    }
+
     private func prewarms(_ helper: ProductTestHelper) -> [ClientMessage] {
         helper.messages.filter { $0.payload["operation"] == .string("prewarm") }
     }
@@ -235,6 +339,10 @@ final class TranslationLatencyTests: XCTestCase {
         let sample = try XCTUnwrap(fixture.model.latency.recent.last)
         XCTAssertEqual(try XCTUnwrap(sample.milliseconds["first_meaningful_output_ms"]), 300, accuracy: 0.001)
         XCTAssertEqual(try XCTUnwrap(sample.milliseconds["summary_completed_ms"]), 500, accuracy: 0.001)
+        let timing = try XCTUnwrap(fixture.model.completedTranslationTiming)
+        XCTAssertEqual(try XCTUnwrap(timing.firstReadableText), 0.3, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(timing.summaryComplete), 0.5, accuracy: 0.001)
+        XCTAssertEqual(timing.total, 1)
         XCTAssertFalse(fixture.model.latency.report.contains("Private"))
         XCTAssertFalse(fixture.model.latency.report.contains(fixture.model.input))
     }

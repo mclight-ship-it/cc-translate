@@ -879,6 +879,21 @@ final class ProbeModel: ObservableObject {
 
     var captureTimingNow: TimeInterval { latencyClock() }
 
+    var translationElapsedSeconds: Int? {
+        guard preparing || active else { return nil }
+        return latency.elapsedSeconds(for: translationIntentID, now: latencyClock())
+    }
+
+    var completedTranslationTiming: TranslationLatency.Completion? {
+        guard productPhase == .completed, !preparing, !active else { return nil }
+        return latency.completedTiming(for: translationIntentID)
+    }
+
+    var missingCLIMessage: String {
+        text("\(translationProvider.displayName) is selected, but its executable is missing or not configured. Check its installation for model translation. The local dictionary can still work offline.",
+             "已选择 \(translationProvider.displayName)，但其可执行文件缺失或尚未配置。请检查安装位置以使用模型翻译。本地词典仍可离线使用。")
+    }
+
     func recordCaptureLatency(_ timing: CaptureTimingSnapshot, outcome: TranslationLatency.Outcome) {
         latency.recordCapture(timing, provider: translationProvider, outcome: outcome, now: latencyClock())
     }
@@ -1189,6 +1204,28 @@ final class ProbeModel: ObservableObject {
         draft = nil
         productPhase = .failed
         productMessage = message
+    }
+
+    func settingsFailureMessage(code: String) -> String {
+        let reason: String
+        switch code {
+        case "config_in_use":
+            reason = text("Settings are in use by another process. Close other CC Translate instances.",
+                          "设置正被其他进程使用。请关闭其他 CC Translate 实例。")
+        case "config_unavailable":
+            reason = text("The settings file is unavailable. Check access to the app's configuration folder.",
+                          "设置文件不可用。请检查应用配置文件夹的访问权限。")
+        case "invalid_config":
+            reason = text("Settings have an invalid format. Check the configuration file.",
+                          "设置格式无效。请检查配置文件。")
+        case "config_io_failed":
+            reason = text("Settings could not be read or saved. Check disk space and access to the configuration folder.",
+                          "无法读取或保存设置。请检查磁盘空间和配置文件夹的访问权限。")
+        default:
+            reason = text("The settings operation did not finish.", "设置操作未完成。")
+        }
+        return reason + text(" Reload settings before trying again. No automatic retry.",
+                             " 请重新加载设置后再试。不会自动重试。")
     }
 
     private func resumeDeferredCLIConnection() {
@@ -2720,7 +2757,7 @@ final class ProbeModel: ObservableObject {
                 if catalogPreparation { modelCatalog.fail(.connection) }
                 if (!pasteSave || !active) && !catalogPreparation &&
                     (!(summaryOperation || historyLimitOperation || inputLimitOperation || copyIntervalOperation) ||
-                     (!active && draft != nil)) { failPreparation(status) }
+                     (!active && draft != nil)) { failPreparation(settingsFailureMessage(code: event.safeFailureCode)) }
                 if historyRead == nil && historyClearID == nil && queuedHistory != nil {
                     failHistory(text("History settings could not be loaded: \(event.safeFailureCode). Refresh to try again.",
                                      "无法加载历史记录设置：\(event.safeFailureCode)。请刷新重试。"))

@@ -169,6 +169,210 @@ private enum DockApplicationTestProcess {
 
 final class DockApplicationTests: XCTestCase {
     @MainActor
+    private func closeWithCommandW() throws {
+        let menu = try XCTUnwrap(NSApp.mainMenu)
+        let close = try XCTUnwrap(menu.items.compactMap(\.submenu).flatMap(\.items).first {
+            $0.action == #selector(NSWindow.performClose(_:))
+        })
+        XCTAssertNil(close.target, "Close must follow AppKit's current key-window responder chain.")
+        XCTAssertEqual(close.keyEquivalent, "w")
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
+            context: nil, characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13))
+        XCTAssertTrue(menu.performKeyEquivalent(with: event))
+    }
+
+    @MainActor
+    func testSelectionResultActivatesAndCommandWClosesResultNotSourceEditor() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                let helper = try f.product.ready()
+                try NativeRenderEvidence.record(
+                    "RESULT FOCUS: isolated AppKit event loop, synthetic source NSTextView and selection/helper data; " +
+                    "real key/main window activation and native menu Cmd+W dispatch, not physical keys or external AX.")
+                let source = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 520, height: 280),
+                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                source.isReleasedWhenClosed = false
+                let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 280))
+                editor.string = "A synthetic source selection must survive translating."
+                source.contentView = editor
+                source.makeKeyAndOrderFront(nil)
+                XCTAssertTrue(source.makeFirstResponder(editor))
+                let selection = NSRange(location: 12, length: 16)
+                editor.setSelectedRange(selection)
+                defer {
+                    source.orderOut(nil)
+                    source.close()
+                }
+                NSApp.deactivate()
+                f.application.handleSelection(.present("Synthetic selected sentence."))
+                let result = try XCTUnwrap(f.application.resultPanel)
+                try await CaptureProductFixture.waitFor(diagnostics: { DockApplicationTestProcess.lifecycle }) {
+                    NSApp.isActive && result.isKeyWindow && result.isMainWindow
+                }
+                XCTAssertTrue(NSApp.mainWindow === result)
+                XCTAssertEqual(NSApp.activationPolicy(), .regular)
+                XCTAssertEqual(editor.selectedRange(), selection)
+                XCTAssertTrue(source.firstResponder === editor)
+                XCTAssertEqual(helper.translations.count, 1)
+                let request = try XCTUnwrap(helper.translations.last)
+                try self.closeWithCommandW()
+                XCTAssertFalse(result.isVisible)
+                XCTAssertTrue(source.isVisible, "Cmd+W must not reach the source window behind the result.")
+                XCTAssertEqual(editor.selectedRange(), selection)
+                XCTAssertTrue(helper.messages.contains {
+                    $0.type == "cancel" && $0.payload["request_id"] == .string(request.id)
+                })
+                helper.event("completed", id: request.id, payload: ScaleTestSupport.result("Late answer"))
+                try await CaptureProductFixture.waitFor { !f.product.model.active }
+                f.product.model.onTranslationStarted?()
+                XCTAssertFalse(result.isVisible)
+                XCTAssertTrue(source.isVisible)
+                XCTAssertEqual(editor.selectedRange(), selection)
+            }
+        }
+    }
+
+    @MainActor
+    func testResultRefreshCannotTakeKeyWindowAndCommandWTracksCurrentCCWindow() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                let helper = try f.product.ready()
+                f.application.handleSelection(.present("Synthetic selected sentence."))
+                let result = try XCTUnwrap(f.application.resultPanel)
+                try await CaptureProductFixture.waitFor { NSApp.isActive && result.isKeyWindow }
+                f.application.showSettings()
+                let settings = try XCTUnwrap(f.application.settingsPanel)
+                try await CaptureProductFixture.waitFor { settings.isKeyWindow }
+                let request = try XCTUnwrap(helper.translations.last)
+                helper.event("delta", id: request.id, payload: ["text": .string("Partial"), "submitted": .bool(true)])
+                try await CaptureProductFixture.waitFor { f.product.model.output == "Partial" }
+                f.product.model.onTranslationStarted?()
+                XCTAssertTrue(settings.isKeyWindow, "Repeated start/stream events are not new presentation intents.")
+                try self.closeWithCommandW()
+                XCTAssertFalse(settings.isVisible)
+                XCTAssertTrue(result.isVisible, "Close targets the active CC window, not a hard-coded result window.")
+                XCTAssertFalse(helper.messages.contains { $0.type == "cancel" })
+                f.reopen()
+                try await CaptureProductFixture.waitFor { result.isKeyWindow }
+                try self.closeWithCommandW()
+                XCTAssertFalse(result.isVisible)
+                XCTAssertTrue(helper.messages.contains {
+                    $0.type == "cancel" && $0.payload["request_id"] == .string(request.id)
+                })
+            }
+        }
+    }
+
+    @MainActor
+    func testHiddenPreparingSelectionCannotReactivateAfterAnotherWindowIsOpened() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                f.application.handleSelection(.present("Synthetic cold selected sentence."))
+                let result = try XCTUnwrap(f.application.resultPanel)
+                try await CaptureProductFixture.waitFor { NSApp.isActive && result.isKeyWindow }
+                XCTAssertTrue(f.product.model.preparing)
+                NSApp.hide(nil)
+                try await CaptureProductFixture.waitFor { NSApp.isHidden }
+                f.application.showSettings()
+                let settings = try XCTUnwrap(f.application.settingsPanel)
+                try await CaptureProductFixture.waitFor { !NSApp.isHidden && settings.isKeyWindow }
+                let helper = try f.product.ready()
+                try await CaptureProductFixture.waitFor { helper.translations.count == 1 }
+                XCTAssertTrue(settings.isKeyWindow, "Deferred CLI readiness must not override an earlier Hide.")
+                let request = try XCTUnwrap(helper.translations.last)
+                helper.event("completed", id: request.id, payload: ScaleTestSupport.result("Delayed answer"))
+                try await CaptureProductFixture.waitFor { !f.product.model.active }
+                XCTAssertTrue(settings.isKeyWindow)
+                f.application.handleSelection(.present("A genuinely new selected sentence."))
+                try await CaptureProductFixture.waitFor { result.isKeyWindow }
+                XCTAssertEqual(helper.translations.count, 2)
+            }
+        }
+    }
+
+    @MainActor
+    func testCommandWClosesPreparingResultWithoutDispatchingWhenHelperBecomesReady() throws {
+        try DockApplicationTestProcess.isolated(#function) {
+            try DockApplicationTestProcess.running { f in
+                f.product.canLocateCLI = true
+                f.application.handleSelection(.present("Synthetic selection cancelled during preparation."))
+                let result = try XCTUnwrap(f.application.resultPanel)
+                try await CaptureProductFixture.waitFor { NSApp.isActive && result.isKeyWindow }
+                XCTAssertTrue(f.product.model.preparing)
+                try self.closeWithCommandW()
+                XCTAssertFalse(result.isVisible)
+                XCTAssertFalse(f.product.model.preparing)
+                try f.product.ready()
+                f.product.model.onTranslationStarted?()
+                f.product.model.onTranslationResult?("Stale completion")
+                f.product.model.onConfigurationRequired?()
+                XCTAssertFalse(result.isVisible)
+                XCTAssertNil(f.application.inputPanel, "Late configuration failures must not open Settings after Close.")
+                XCTAssertTrue(f.product.helpers.allSatisfy { $0.translations.isEmpty })
+                f.application.handleSelection(.present("A new request after closing preparation."))
+                try await CaptureProductFixture.waitFor { result.isKeyWindow }
+                XCTAssertEqual(f.product.helpers.flatMap(\.translations).count, 1)
+            }
+        }
+    }
+
+    @MainActor
+    func testRecoveryRoutesReachNativeSettingsControlsWithoutChangingCaptureModeOrSubmitting() async throws {
+        let f = try DockApplicationFixture()
+        defer { f.cleanUp() }
+        f.launch()
+        f.product.canLocateCLI = true
+        let helper = try f.product.ready()
+        f.application.showSettings(pane: .appearance)
+        let window = try XCTUnwrap(f.application.settingsPanel)
+        let root = try XCTUnwrap(window.contentView)
+        f.application.showCaptureSettings()
+        try await CaptureProductFixture.waitFor {
+            root.layoutSubtreeIfNeeded()
+            return InputLimitNativeViews.views(NSSegmentedControl.self, in: root).contains {
+                $0.segmentCount == 2 && $0.label(forSegment: 1) == "Send image" &&
+                    !RenderedGeometry.visibleRect($0).isEmpty
+            }
+        }
+        XCTAssertTrue(f.application.settingsPanel === window)
+        XCTAssertEqual(f.product.model.captureTranslationMode, .text)
+        XCTAssertEqual(f.capture.phase, .idle)
+        f.application.showSettings(pane: .more)
+        f.product.model.onConfigurationRequired?()
+        try await CaptureProductFixture.waitFor {
+            root.layoutSubtreeIfNeeded()
+            return InputLimitNativeViews.views(NativeSettingsDisclosureButton.self, in: root).contains {
+                $0.identifier?.rawValue == "provider-installation-details" && $0.isAccessibilityExpanded() &&
+                    !RenderedGeometry.visibleRect($0).isEmpty
+            }
+        }
+        XCTAssertTrue(f.application.settingsPanel === window)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.configurationSaves.isEmpty)
+        XCTAssertEqual(f.source.requests.count, 0)
+        f.application.navigate(to: .capture)
+        try await CaptureProductFixture.waitFor { f.capture.phase == .selecting }
+        f.capture.select(f.source.layout[0].frame)
+        try await CaptureProductFixture.waitFor {
+            f.capture.phase == .recognizing && f.application.capturePanel?.isVisible == true
+        }
+        f.application.showCaptureSettings()
+        try await CaptureProductFixture.waitFor { f.capture.phase == .cancelled && f.application.capturePanel == nil }
+        f.ocr.gate?.signal()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertTrue(window.isKeyWindow, "Cancelling the owned capture must not later restore its source over Settings.")
+        XCTAssertEqual(f.product.model.captureTranslationMode, .text)
+        XCTAssertTrue(helper.translations.isEmpty)
+        XCTAssertTrue(helper.configurationSaves.isEmpty)
+        XCTAssertEqual(f.source.requests.count, 1, "Recovery must not restart capture or upload the cancelled screenshot.")
+    }
+
+    @MainActor
     func testNormalLaunchStaysInMenuBarWithoutWindowOrBusinessWork() throws {
         try DockApplicationTestProcess.isolated(#function) {
             let f = try DockApplicationFixture(regularApplication: true)

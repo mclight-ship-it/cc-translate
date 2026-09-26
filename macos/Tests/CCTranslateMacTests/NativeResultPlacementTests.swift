@@ -160,7 +160,7 @@ final class NativeResultPlacementModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRealNonactivatingResultPanelAppliesPreferenceButDoesNotJumpOnStreamingUpdate() async throws {
+    func testActivatingResultWindowAppliesPreferenceButDoesNotJumpOnStreamingUpdate() async throws {
         _ = NSApplication.shared
         let focus = NativeTestWindowFocus()
         let f = try ProductTestHarness(savedCLI: false)
@@ -174,7 +174,12 @@ final class NativeResultPlacementModelTests: XCTestCase {
         application.showResult(reposition: true)
         let panel = try XCTUnwrap(application.resultPanel)
         defer { focus.close(panel) }
-        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertFalse(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertTrue(panel.canBecomeKey)
+        XCTAssertTrue(panel.canBecomeMain)
+        XCTAssertTrue(panel.styleMask.contains(.miniaturizable))
+        XCTAssertFalse(panel.becomesKeyOnlyIfNeeded)
+        XCTAssertFalse(panel.isFloatingPanel)
         XCTAssertTrue(panel.delegate === application)
         XCTAssertTrue(panel.isVisible)
         let screen = try XCTUnwrap(panel.screen)
@@ -191,6 +196,7 @@ final class NativeResultPlacementModelTests: XCTestCase {
         f.model.resultPlacement = .remembered
         application.showResult()
         XCTAssertEqual(panel.frame, moved)
+        XCTAssertFalse(panel.isVisible, "An ordinary result refresh must not reopen a dismissed window.")
         XCTAssertTrue(f.helpers.isEmpty)
         XCTAssertEqual(f.runtimeRequests, 0)
         XCTAssertEqual(source.permissionCalls, 0)
@@ -284,6 +290,8 @@ final class NativeResultPlacementModelTests: XCTestCase {
         helper.event("delta", id: request.id, payload: ["text": .string("Late partial"), "submitted": .bool(true)])
         try await CaptureProductFixture.waitFor { f.model.output == "Late partial" }
         XCTAssertFalse(panel.isVisible)
+        f.model.onTranslationStarted?()
+        XCTAssertFalse(panel.isVisible, "A delayed start for the cancelled intent must not reopen its window.")
         f.model.onSelection?(.absent)
         let quick = try XCTUnwrap(application.quickInputPanel)
         XCTAssertTrue(quick.isVisible)

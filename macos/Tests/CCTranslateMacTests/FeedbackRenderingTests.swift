@@ -22,7 +22,8 @@ extension ProductRenderingTests {
             try await CaptureProductFixture.waitFor { capture.phase == .selecting }
             capture.select(source.layout[0].frame)
             try await CaptureProductFixture.waitFor { capture.phase == .recognizing && ocr.image != nil }
-            let content = CaptureStatusView(capture: capture, model: f.model, captureAgain: {}, close: { capture.cancel() })
+            let content = CaptureStatusView(capture: capture, model: f.model, captureAgain: {},
+                                            showCaptureSettings: {}, close: { capture.cancel() })
             _ = try render(content, named: "automatic-capture-progress-\(language)",
                            size: NSSize(width: 520, height: 190), scheme: scheme, inspect: { host in
                 XCTAssertTrue(InputLimitNativeViews.views(NSTextView.self, in: host).allSatisfy { !$0.isEditable })
@@ -37,6 +38,7 @@ extension ProductRenderingTests {
                            size: NSSize(width: 420, height: 170), scheme: scheme, inspect: { host in
                 XCTAssertTrue(InputLimitNativeViews.views(NSTextView.self, in: host).allSatisfy { !$0.isEditable })
                 for (identifier, label) in [
+                    ("automatic-capture-settings", f.model.text("Capture settings", "截图设置")),
                     ("automatic-capture-retry", f.model.text("Capture again", "重新截图")),
                     ("automatic-capture-close", f.model.text("Close", "关闭"))
                 ] {

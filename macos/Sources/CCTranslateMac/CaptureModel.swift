@@ -47,6 +47,10 @@ final class CaptureModel: ObservableObject {
 
     var submittedIntent: UUID? { submitted ? translationIntent : nil }
     var busy: Bool { phase == .capturing || phase == .recognizing }
+    var offersCaptureSettings: Bool {
+        automaticallyTranslates && automaticMode == .text && !busy && !submitted &&
+            (phase == .empty || failure == .ocrFailed)
+    }
     var submitting: Bool {
         submitted && translationIntent == translationModel?.translationIntentID &&
             (translationModel?.active == true || translationModel?.preparing == true)
@@ -470,8 +474,8 @@ final class CaptureModel: ObservableObject {
                                   "无法合成保留的截图区域。请重选区域或重新截图。")
             case .ocrFailed:
                 if automaticallyTranslates {
-                    return model.text("Text recognition failed. Capture again or choose Image in Settings. Nothing was sent.",
-                                      "文字识别失败。请重新截图或在设置中选择图片模式。未发送任何内容。")
+                    return model.text("Text recognition failed. Capture again or open capture settings to review image mode. Nothing was sent.",
+                                      "文字识别失败。请重新截图，或打开截图设置查看图片模式。未发送任何内容。")
                 }
                 return model.text("Local text recognition failed. Retry local OCR, select another region, or type the text.",
                                   "本地文字识别失败。请重试识别、重选区域，或手动输入文字。")
@@ -490,8 +494,8 @@ final class CaptureModel: ObservableObject {
             return model.text("Review and edit the recognized text. Nothing has been sent automatically.", "请确认并编辑识别文字。未自动发送任何内容。")
         case .empty:
             if automaticallyTranslates {
-                return model.text("No readable text found. Capture again or choose Image in Settings. Nothing was sent.",
-                                  "未识别到文字。请重新截图或在设置中选择图片模式。未发送任何内容。")
+                return model.text("No readable text found. Capture again or open capture settings to review image mode. Nothing was sent.",
+                                  "未识别到文字。请重新截图，或打开截图设置查看图片模式。未发送任何内容。")
             }
             return model.text("No readable text. Select another region, or type the text below.", "没有可读文字。请重选区域，或在下方输入文字。")
         case .failed: return model.text("The local operation failed. Retry explicitly.", "本地操作失败，请手动重试。")

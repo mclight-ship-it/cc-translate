@@ -479,6 +479,7 @@ final class AutomaticCaptureTranslationTests: XCTestCase {
             XCTAssertEqual(f.capture.phase, .failed)
             XCTAssertEqual(f.capture.failure, .permissionDenied)
             XCTAssertTrue(f.capture.message(using: model.model).contains("permission"))
+            XCTAssertFalse(f.capture.offersCaptureSettings)
             XCTAssertEqual(f.source.permissionCalls, 1)
             XCTAssertEqual(f.source.layoutCalls, 0)
             XCTAssertTrue(f.source.requests.isEmpty)
@@ -504,6 +505,7 @@ final class AutomaticCaptureTranslationTests: XCTestCase {
             try await f.flushNotifications()
             XCTAssertEqual(f.capture.phase, fails ? .failed : .empty)
             XCTAssertEqual(f.capture.failure, fails ? .ocrFailed : nil)
+            XCTAssertTrue(f.capture.offersCaptureSettings)
             XCTAssertFalse(f.capture.submitted)
             XCTAssertNotNil(f.capture.preview)
             XCTAssertEqual(f.capture.frames.count, 1)
@@ -512,6 +514,8 @@ final class AutomaticCaptureTranslationTests: XCTestCase {
             XCTAssertTrue(f.capture.message(using: model.model).contains("Nothing was sent."))
             XCTAssertEqual(f.source.requests.count, 1)
             XCTAssertEqual(f.source.permissionCalls, 1)
+            f.capture.cancel()
+            XCTAssertFalse(f.capture.offersCaptureSettings)
         }
     }
 

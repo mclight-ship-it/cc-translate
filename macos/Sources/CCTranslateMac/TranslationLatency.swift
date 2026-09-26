@@ -71,6 +71,12 @@ struct TranslationLatency {
         var cached: Bool?
         var outcome: Outcome?
     }
+    struct Completion: Equatable {
+        let intent: UUID
+        let firstReadableText: TimeInterval?
+        let summaryComplete: TimeInterval?
+        let total: TimeInterval
+    }
 
     private(set) var current: Sample?
     private(set) var recent: [Sample] = []
@@ -81,6 +87,31 @@ struct TranslationLatency {
         "turn_first_result_ms", "turn_total_ms", "version_check_ms", "version_cache_hit",
         "warm_process_hit", "cache_hit", "memory_cache_hit"
     ]
+
+    func elapsedSeconds(for intent: UUID, now: TimeInterval) -> Int? {
+        guard let sample = current, sample.intent == intent, sample.outcome == nil else { return nil }
+        // The capture trace may start long before submission while the user selects a region.
+        let start = sample.started + (sample.milliseconds["input_ready_ms"] ?? 0) / 1_000
+        let elapsed = now - start
+        guard elapsed.isFinite, elapsed >= 0, elapsed < Double(Int.max) else { return nil }
+        return Int(elapsed.rounded(.down))
+    }
+
+    func completedTiming(for intent: UUID) -> Completion? {
+        guard current == nil, let sample = recent.last(where: { $0.intent == intent }),
+              sample.outcome == .completed, sample.source != .capture,
+              let start = sample.milliseconds["input_ready_ms"], start.isFinite, start >= 0,
+              let finish = sample.milliseconds["finished_ms"], finish.isFinite, finish >= start else { return nil }
+        func seconds(_ stage: String) -> TimeInterval? {
+            guard let value = sample.milliseconds[stage], value.isFinite,
+                  value >= start, value <= finish else { return nil }
+            return (value - start) / 1_000
+        }
+        return Completion(intent: intent,
+                          firstReadableText: seconds("first_meaningful_output_ms"),
+                          summaryComplete: seconds("summary_completed_ms"),
+                          total: (finish - start) / 1_000)
+    }
 
     mutating func begin(intent: UUID, source: Source, provider: TranslationProvider,
                         trigger: TimeInterval?, now: TimeInterval, capture: CaptureTimingSnapshot? = nil) {
