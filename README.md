@@ -299,8 +299,9 @@ See [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md): hand that file's contents to 
 
 ## Application license
 
-An application-code license has not yet been selected. A public repository is
-not by itself an open-source license. Third-party runtime components and optional
-dictionary data retain their own licenses; see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)
-and the notices included in the Mac app. No MIT, Apache, or other application
-license is implied by those notices.
+CC Translate application code, including the Windows and Mac apps and shared
+core, is licensed under the [Apache License 2.0](LICENSE).
+
+Third-party runtime components and optional dictionary data retain their own
+licenses; see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) and the notices included
+in the Mac app. The application license does not replace those licenses.

@@ -85,6 +85,9 @@ App 不会代建模型账号、复制凭据或更改账号计费路径。现有 
 
 ## 许可证
 
-应用代码的许可证尚未选定，不表示已采用某种宽松许可证。
-App 内附带 Python、Sparkle 等第三方组件的许可声明；可选词典数据单独授权，
-详见 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES)。
+CC Translate 应用代码（包括 Mac 应用和共享核心）采用
+[Apache License 2.0](../LICENSE)。
+
+App 内附带的 Python、Sparkle 等第三方组件保留各自的许可证及许可声明；
+可选词典数据单独授权，详见 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES)。
+应用代码许可证不会替代这些第三方许可证。

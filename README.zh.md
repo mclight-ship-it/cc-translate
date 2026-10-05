@@ -271,7 +271,9 @@ python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_brand
 
 ## 应用代码许可证
 
-应用代码的许可证尚未选定。公开仓库本身不等于采用了开源许可证。
+CC Translate 应用代码（包括 Windows、Mac 应用和共享核心）采用
+[Apache License 2.0](LICENSE)。
+
 第三方运行时组件及可选词典数据保留各自的许可证，详见
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) 和 Mac App 内附带的许可声明；
-这些声明不代表应用代码已采用 MIT、Apache 或其他许可证。
+应用代码许可证不会替代这些第三方许可证。

@@ -109,7 +109,10 @@ problem, but do not post account files or private source text.
 
 ## Licenses
 
-The application-code license is not yet selected. No permissive application
-license is implied. Bundled Python, Sparkle and other third-party components
-retain their own notices inside the app. Optional dictionary data is separately
-licensed; see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES).
+CC Translate application code is licensed under the
+[Apache License 2.0](../LICENSE), including the Mac app and shared core.
+
+Bundled Python, Sparkle and other third-party components retain their own
+licenses and notices inside the app. Optional dictionary data is separately
+licensed; see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES). The application
+license does not replace these third-party licenses.
