@@ -22,7 +22,7 @@ Public API used by translator.pyw:
 
   LEGACY_STARTUP_VBS  — path checked on first run to migrate old launchers
   SCRIPT_PATH         — absolute path to translator.pyw (used by _spawn_relauncher)
-  PYTHONW             — pythonw.exe in the active environment
+  PYTHONW             — pythonw.exe in the base Python installation
   LAUNCHER_PATH       — locally generated, Task Manager-branded Python host
 """
 
@@ -56,7 +56,8 @@ STARTUP_LNK = os.path.join(STARTUP_DIR, f"{APP_NAME}.lnk")
 STARTMENU_LNK = os.path.join(PROGRAMS_DIR, f"{APP_NAME}.lnk")
 LEGACY_STARTUP_VBS = os.path.join(STARTUP_DIR, "QuickTranslate.vbs")
 SCRIPT_PATH = os.path.join(APP_DIR, "translator.pyw")
-PYTHONW = os.path.join(sys.prefix, "pythonw.exe")
+# The branded host has its own pyvenv.cfg; use the original runtime for repairs.
+PYTHONW = os.path.join(sys.base_prefix, "pythonw.exe")
 LAUNCHER_DIR = DATA_DIR
 
 # Start Menu / Startup shortcut icon. The Start Menu doesn't adapt to the

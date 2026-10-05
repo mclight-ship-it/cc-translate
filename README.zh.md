@@ -253,6 +253,8 @@ python -c "import cc_update,subprocess; subprocess.Popen([cc_update.ensure_brand
 首次运行会在本地生成一个很小的品牌启动器，并在开始菜单创建
 **CC Translate** 图标。应用仍直接运行当前源码目录，但 Windows 任务管理器会显示
 **CC Translate**，不再显示通用的 **Python**。后续直接从开始菜单启动即可。
+启动器会在本地保存匹配的 Python DLL，并关联已安装的 Python 运行时，
+不再依赖启动进程的 PATH 中恰好包含 Python。请保留该 Python 安装及其依赖。
 
 ## 开机自启（可选）
 

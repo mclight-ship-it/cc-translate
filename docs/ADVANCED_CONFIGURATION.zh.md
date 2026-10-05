@@ -164,8 +164,11 @@ $env:CC_TRANSLATE_DRYRUN = "1"
 
 - 找不到 CLI 时，确认其 `.cmd` 启动器位于 npm 全局 bin；常见路径为
   `%APPDATA%\npm`。
+- 若旧版 Windows 启动器提示缺少 `python3xx.dll`，更新源码后，使用已安装的
+  Python 重新执行[手动安装](#手动安装)中的最后一条 Python 命令，即可修复
+  启动器本地 DLL 和运行时关联，不修改系统 PATH、设置或历史。
+  不要从第三方网站单独下载 DLL；原 Python 安装及其依赖仍须保留。
 - 双击 `Ctrl+C` 没反应时，确认 CC Translate 正在托盘运行且没有暂停翻译。
 - 设置中的诊断会显示 provider、流式、词典与近期本地性能状态，不会提交测试模型
   请求。
 - 卸载请使用**设置 → 卸载 CC Translate**。共享运行时和 provider CLI 会保留。
-

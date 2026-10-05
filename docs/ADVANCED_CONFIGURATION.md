@@ -184,10 +184,15 @@ $env:CC_TRANSLATE_DRYRUN = "1"
 
 - If a CLI is not found, verify its `.cmd` launcher is in the npm global bin
   directory, commonly `%APPDATA%\npm`.
+- If an older Windows launcher reports a missing `python3xx.dll`, update the
+  checkout and rerun the final Python command in [Manual installation](#manual-installation)
+  using the installed Python interpreter. It repairs the launcher's local DLLs
+  and runtime binding without changing system PATH, settings, or history.
+  Do not download individual DLLs from third-party sites; the original Python
+  installation and its packages are still required.
 - If double-tap `Ctrl+C` does nothing, confirm CC Translate is running in the
   tray and translation is not paused.
 - Diagnostics in Settings reports provider, streaming, dictionary, and recent
   local performance state without sending a test model request.
 - To uninstall, use **Settings → Uninstall CC Translate**. Shared runtimes and
   provider CLIs are intentionally retained.
-

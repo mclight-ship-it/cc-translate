@@ -280,6 +280,9 @@ The first run creates a small local branded launcher plus a **CC Translate**
 icon in the Start Menu. The app still runs directly from this source checkout,
 but Windows Task Manager shows **CC Translate** instead of the generic
 **Python** process name. Afterwards, launch it straight from the Start Menu.
+The launcher keeps matching Python DLLs locally and links to the installed
+Python runtime, so startup does not depend on Python being in the caller's PATH.
+Keep that Python installation and its dependencies installed.
 
 ## Launch on startup (optional)
 
