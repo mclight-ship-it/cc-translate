@@ -280,8 +280,9 @@ The first run creates a small local branded launcher plus a **CC Translate**
 icon in the Start Menu. The app still runs directly from this source checkout,
 but Windows Task Manager shows **CC Translate** instead of the generic
 **Python** process name. Afterwards, launch it straight from the Start Menu.
-The launcher keeps matching Python DLLs locally and links to the installed
-Python runtime, so startup does not depend on Python being in the caller's PATH.
+The native launcher loads the selected Python runtime directly, so startup does
+not depend on Python being in the caller's PATH. It preserves the original
+interpreter or virtual environment rather than creating a separate one.
 Keep that Python installation and its dependencies installed.
 
 ## Launch on startup (optional)
@@ -295,6 +296,10 @@ See [INSTALL_FOR_LLM.md](docs/INSTALL_FOR_LLM.md): hand that file's contents to 
 ## Development / testing
 
 - Run the tests: `python -m unittest discover -s tests` (standard library, no extra dependencies).
+- Windows x86/x64 launcher templates are shipped with the source checkout.
+  Maintainers can rebuild them with `.\tools\windows\build_host.ps1` using Visual
+  Studio C++ build tools; end users do not need a compiler. Other architectures
+  fall back to the original Python interpreter without the branded host.
 - The repo ships a pre-push hook that checks newly added content for local user paths,
   credentials, and sensitive local-data files, then runs change-scoped tests. Any failure
   blocks the push.

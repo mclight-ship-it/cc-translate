@@ -17,6 +17,7 @@ import struct
 import sys
 import tempfile
 import time
+import venv
 
 from tests._tr import tr
 
@@ -137,10 +138,10 @@ class TestBrandedLauncher(unittest.TestCase):
         env["PATH"] = os.path.join(os.environ["SystemRoot"], "System32")
         return env
 
-    def _run_launcher(self, launcher, code):
+    def _run_launcher(self, launcher, code, flags=()):
         with self._without_error_dialogs():
             return subprocess.run(
-                [launcher, "-B", "-c", code],
+                [launcher, "-B", *flags, "-c", code],
                 env=self._isolated_environment(),
                 cwd=os.environ["SystemRoot"],
                 timeout=15, check=False, capture_output=True,
@@ -218,7 +219,8 @@ class TestBrandedLauncher(unittest.TestCase):
                 "import PIL,pythoncom,win32api;"
                 f"sys.path.insert(0, {tr.APP_DIR!r});"
                 "import cc_update;"
-                "result={'base_prefix':sys.base_prefix,"
+                "result={'prefix':sys.prefix,'base_prefix':sys.base_prefix,"
+                "'base_executable':sys._base_executable,"
                 "'executable':sys.executable,'pythonw':cc_update.PYTHONW,"
                 "'tcl':tkinter.Tcl().eval('info patchlevel')};"
                 "sqlite3.connect(':memory:').close();"
@@ -232,40 +234,180 @@ class TestBrandedLauncher(unittest.TestCase):
                 os.path.normcase(result["base_prefix"]),
                 os.path.normcase(sys.base_prefix))
             self.assertEqual(
-                os.path.normcase(result["executable"]), os.path.normcase(launcher))
+                os.path.normcase(result["prefix"]), os.path.normcase(sys.prefix))
+            self.assertEqual(result["executable"], tr._cc_update.PYTHONW)
+            self.assertTrue(os.path.isfile(result["base_executable"]))
             self.assertEqual(result["pythonw"], tr._cc_update.PYTHONW)
             self.assertTrue(result["tcl"])
 
     @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
-    def test_repairs_legacy_launcher_without_replacing_its_identity(self):
+    def test_migrates_legacy_launcher_at_stable_path(self):
         import cc_launcher
         with tempfile.TemporaryDirectory() as tmp:
             launcher = os.path.join(tmp, "CCTranslate.exe")
             shutil.copy2(tr._cc_update.PYTHONW, launcher)
             cc_launcher.set_version_resource(launcher, "4.11.253")
             cc_launcher.set_icon_resources(launcher, tr._cc_update.ICON_PATH)
-            with open(launcher, "rb") as source:
-                original = source.read()
             failed = self._run_launcher(launcher, "pass")
             self.assertEqual(failed.returncode & 0xFFFFFFFF, 0xC0000135)
+            with open(os.path.join(tmp, "pyvenv.cfg"), "w", encoding="utf-8") as target:
+                target.write(
+                    f"home = {sys.base_prefix}\ninclude-system-site-packages = true\n")
+            with open(os.path.join(tmp, "vcruntime140.dll"), "wb") as target:
+                target.write(b"previous runtime copy")
             self.assertEqual(
                 cc_launcher.ensure_branded_launcher(
                     tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH),
                 launcher)
-            with open(launcher, "rb") as source:
-                self.assertEqual(source.read(), original)
+            self.assertEqual(cc_launcher.read_file_description(launcher), "CC Translate")
+            self.assertFalse(os.path.exists(os.path.join(tmp, "pyvenv.cfg")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "vcruntime140.dll")))
+            retired = [name for name in os.listdir(tmp) if name.startswith("retired-python-")]
+            self.assertEqual(len(retired), 1)
+            with open(os.path.join(tmp, retired[0], "vcruntime140.dll"), "rb") as source:
+                self.assertEqual(source.read(), b"previous runtime copy")
             self.assertEqual(self._run_launcher(launcher, "pass").returncode, 0)
-            os.remove(os.path.join(tmp, "python3.dll"))
-            python_dll = next(
-                name for name in cc_launcher._pe_identity(launcher)[1]
-                if name.startswith("python") and name.endswith(".dll"))
-            with open(os.path.join(tmp, python_dll), "wb") as target:
-                target.write(b"damaged runtime")
-            with open(os.path.join(tmp, "pyvenv.cfg"), "w", encoding="utf-8") as target:
-                target.write("home = missing\n")
+            _, library, _ = cc_launcher._python_runtime(tr._cc_update.PYTHONW)
+            with open(os.path.join(tmp, os.path.basename(library)), "wb") as target:
+                target.write(b"obsolete app-local DLL must not be loaded")
+            with open(launcher + ".runtime", "w", encoding="utf-8") as target:
+                target.write("damaged configuration\n")
+            failed = self._run_launcher(launcher, "pass")
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn(b"Invalid runtime configuration", failed.stderr)
             cc_launcher.ensure_branded_launcher(
                 tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
-            self.assertTrue(os.path.isfile(os.path.join(tmp, "python3.dll")))
+            self.assertEqual(self._run_launcher(launcher, "pass").returncode, 0)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_multiprocessing_and_process_pool_preserve_original_python_semantics(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
+            code = (
+                "import multiprocessing,os;"
+                "from concurrent.futures import ProcessPoolExecutor;"
+                "p=multiprocessing.get_context('spawn').Process(target=os.getpid);"
+                "p.start();p.join(10);assert p.exitcode == 0;"
+                "pool=ProcessPoolExecutor(max_workers=1);"
+                "assert pool.submit(abs,-7).result(10) == 7;pool.shutdown()")
+            completed = self._run_launcher(launcher, code)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_python_path_initialization_matches_original_interpreter(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
+            code = (
+                "import json,os,sys;"
+                "print(json.dumps([sys.executable,sys._base_executable,"
+                "sys.prefix,sys.base_prefix,sys.exec_prefix,sys.path,"
+                "sys.flags.isolated,sys.flags.no_site,"
+                "os.environ.get('__PYVENV_LAUNCHER__')]))")
+            for flags in ((), ("-I",), ("-S",)):
+                with self.subTest(flags=flags):
+                    expected = self._run_launcher(tr._cc_update.PYTHONW, code, flags)
+                    actual = self._run_launcher(launcher, code, flags)
+                    self.assertEqual(expected.returncode, 0, expected.stderr)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_native_templates_only_depend_on_windows_system_libraries(self):
+        import cc_launcher
+        for architecture, machine in (("x86", 0x14C), ("x64", 0x8664)):
+            with self.subTest(architecture=architecture):
+                template = os.path.join(
+                    tr.APP_DIR, "data", "windows", f"cc-python-host-{architecture}.exe")
+                actual_machine, imports, _ = cc_launcher._pe_identity(template)
+                self.assertEqual(actual_machine, machine)
+                self.assertTrue(set(imports) <= {"kernel32.dll", "shell32.dll", "user32.dll"})
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_arguments_match_original_python_in_normal_environment(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
+            args = [
+                "-B", "-c", "import json,sys;print(json.dumps(sys.argv))",
+                "", "with spaces", "O'Brien", 'two""quotes', "trailing\\",
+                '"quoted"', "\u4e2d\u6587",
+            ]
+            with self._without_error_dialogs():
+                expected = subprocess.run(
+                    [tr._cc_update.PYTHONW, *args], cwd=tmp, timeout=15,
+                    capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                actual = subprocess.run(
+                    [launcher, *args], cwd=tmp, timeout=15,
+                    capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(expected.returncode, 0, expected.stderr)
+            self.assertEqual(actual.returncode, 0, actual.stderr)
+            self.assertEqual(actual.stdout, expected.stdout)
+
+    def test_unsupported_host_architecture_reports_failure_for_python_fallback(self):
+        import cc_launcher
+        cc = tr._cc_update
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(cc, "LAUNCHER_DIR", tmp), \
+                unittest.mock.patch.object(cc, "_log") as log, \
+                unittest.mock.patch.object(
+                    cc_launcher, "_python_runtime",
+                    return_value=(0xAA64, "python.dll", "pythonw.exe")):
+            self.assertIsNone(cc.ensure_branded_launcher())
+            self.assertEqual(log.call_args.args[0], "ensure_branded_launcher")
+            self.assertIsInstance(log.call_args.args[1], OSError)
+            self.assertEqual(os.listdir(tmp), [])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_real_venv_keeps_its_packages_and_interpreter_identity(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory(prefix="CC \u6d4b\u8bd5 ' ") as tmp:
+            environment = os.path.join(tmp, "environment")
+            venv.EnvBuilder(with_pip=False).create(environment)
+            pythonw = os.path.join(environment, "Scripts", "pythonw.exe")
+            package = os.path.join(environment, "Lib", "site-packages", "cc_venv_probe.py")
+            with open(package, "w", encoding="utf-8") as target:
+                target.write("VALUE = 42\n")
+            launcher = cc_launcher.ensure_branded_launcher(
+                pythonw, os.path.join(tmp, "host"), "5.7.1", tr._cc_update.ICON_PATH)
+            code = (
+                "import os,sys,multiprocessing,cc_venv_probe;"
+                f"assert os.path.normcase(sys.prefix) == os.path.normcase({environment!r});"
+                f"assert os.path.normcase(sys.executable) == os.path.normcase({pythonw!r});"
+                "assert cc_venv_probe.VALUE == 42;"
+                f"sys.path.insert(0,{tr.APP_DIR!r});import cc_launcher;"
+                f"assert cc_launcher.current_pythonw() == {pythonw!r};"
+                "p=multiprocessing.get_context('spawn').Process(target=os.getpid);"
+                "p.start();p.join(10);assert p.exitcode == 0")
+            completed = self._run_launcher(launcher, code)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            identity = (
+                "import json,os,sys;"
+                "print(json.dumps([sys.executable,sys._base_executable,sys.prefix,"
+                "sys.base_prefix,sys.path,os.environ.get('__PYVENV_LAUNCHER__')]))")
+            for flags in ((), ("-I",), ("-S",)):
+                with self.subTest(flags=flags):
+                    expected = self._run_launcher(pythonw, identity, flags)
+                    actual = self._run_launcher(launcher, identity, flags)
+                    self.assertEqual(expected.returncode, 0, expected.stderr)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertEqual(actual.stdout, expected.stdout)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")
+    def test_missing_configuration_fails_without_a_loader_dialog(self):
+        import cc_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
+            os.remove(launcher + ".runtime")
+            completed = self._run_launcher(launcher, "pass")
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn(b"Cannot read the runtime configuration", completed.stderr)
+            cc_launcher.ensure_branded_launcher(
+                tr._cc_update.PYTHONW, tmp, "5.7.1", tr._cc_update.ICON_PATH)
             self.assertEqual(self._run_launcher(launcher, "pass").returncode, 0)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows launcher only")

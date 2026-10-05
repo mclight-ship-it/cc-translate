@@ -186,8 +186,10 @@ $env:CC_TRANSLATE_DRYRUN = "1"
   directory, commonly `%APPDATA%\npm`.
 - If an older Windows launcher reports a missing `python3xx.dll`, update the
   checkout and rerun the final Python command in [Manual installation](#manual-installation)
-  using the installed Python interpreter. It repairs the launcher's local DLLs
-  and runtime binding without changing system PATH, settings, or history.
+  using the installed Python interpreter. It repairs the native launcher's
+  runtime configuration without changing system PATH, settings, or history.
+  A real virtual environment keeps its own interpreter and installed packages;
+  no application-local virtual environment is created.
   Do not download individual DLLs from third-party sites; the original Python
   installation and its packages are still required.
 - If double-tap `Ctrl+C` does nothing, confirm CC Translate is running in the

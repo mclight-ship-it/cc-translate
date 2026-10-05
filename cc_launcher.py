@@ -1,19 +1,18 @@
 """Build the small branded Windows launcher used to host CC Translate.
 
-CC Translate remains a source-based Python app.  The launcher is a local copy of
-the active ``pythonw.exe`` with its VERSIONINFO and icon resources replaced, so
-Task Manager shows the app identity instead of the interpreter's generic Python
-name and icon.
-
-The copied host needs app-local runtime DLLs before any Python code can run.
-A pyvenv.cfg binds its standard library and packages to the source installation.
+CC Translate remains a source-based Python app. A small native host loads the
+real Python DLL, retaining the original interpreter/venv identity while Windows
+sees the CC Translate executable. No DLL copies, artificial venv or PATH edits
+are needed.
 """
 
 import ctypes
 from ctypes import wintypes
+import hashlib
 import os
 import shutil
 import struct
+import sys
 import tempfile
 
 
@@ -323,7 +322,7 @@ def cleanup_old_launchers(launcher_dir, current):
 
 
 def _pe_identity(executable):
-    """Read the machine and imported DLLs without loading the executable."""
+    """Read machine, imports and executable-code digest without loading a PE."""
     with open(executable, "rb") as source:
         data = source.read()
 
@@ -346,10 +345,16 @@ def _pe_identity(executable):
         raise ValueError("unsupported Windows executable header")
     import_rva, import_size = unpack("<II", optional + directories + 8)
     sections = []
+    code = hashlib.sha256()
     for index in range(section_count):
         section = optional + optional_size + index * 40
         _, rva, raw_size, raw_offset = unpack("<IIII", section + 8)
+        flags, = unpack("<I", section + 36)
+        if raw_offset + raw_size > len(data):
+            raise ValueError("truncated Windows section")
         sections.append((rva, raw_size, raw_offset))
+        if flags & 0x20:
+            code.update(data[raw_offset:raw_offset + raw_size])
 
     def file_offset(rva):
         for start, size, offset in sections:
@@ -363,7 +368,7 @@ def _pe_identity(executable):
     for index in range(import_size // 20):
         descriptor = unpack("<IIIII", file_offset(import_rva + index * 20))
         if not any(descriptor):
-            return machine, tuple(sorted(imports))
+            return machine, tuple(sorted(imports)), code.hexdigest()
         name_offset = file_offset(descriptor[3])
         end = data.find(b"\0", name_offset)
         if end < 0:
@@ -396,36 +401,66 @@ def _write_if_changed(path, data):
             os.remove(temporary)
 
 
-def _ensure_runtime(pythonw, launcher_dir, imports):
+def current_pythonw():
+    """Use the active interpreter, including Scripts/pythonw.exe in a real venv."""
+    candidate = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if os.path.isfile(candidate):
+        return candidate
+    # Migrate the old renamed-python host, which has no adjacent pythonw.exe.
+    return os.path.join(sys.base_prefix, "pythonw.exe")
+
+
+def _python_runtime(pythonw):
+    identity = _pe_identity(pythonw)
     home = os.path.dirname(os.path.abspath(pythonw))
-    if "\r" in home or "\n" in home:
-        raise ValueError("Python installation path cannot contain newlines")
-    python_dlls = [name for name in imports
+    python_dlls = [name for name in identity[1]
                    if name.startswith("python") and name.endswith(".dll")]
     if not python_dlls:
-        raise ValueError("launcher requires a Python installation's pythonw.exe")
+        configuration = os.path.join(os.path.dirname(home), "pyvenv.cfg")
+        base = ""
+        with open(configuration, encoding="utf-8") as source:
+            for line in source:
+                key, separator, value = line.partition("=")
+                if separator and key.strip().lower() == "home":
+                    base = value.strip()
+                    break
+        if not os.path.isabs(base):
+            raise ValueError("virtual environment has no absolute Python home")
+        base_identity = _pe_identity(os.path.join(base, "pythonw.exe"))
+        if base_identity[0] != identity[0]:
+            raise ValueError("virtual environment and base Python architectures differ")
+        home = base
+        python_dlls = [name for name in base_identity[1]
+                       if name.startswith("python") and name.endswith(".dll")]
+    if len(python_dlls) != 1:
+        raise ValueError("cannot identify the Python runtime DLL")
+    library = os.path.join(home, python_dlls[0])
+    if not os.path.isfile(library):
+        raise FileNotFoundError(f"Python runtime dependency is missing: {library}")
+    return identity[0], library, os.path.join(home, "pythonw.exe")
 
-    runtime = {}
-    for name in os.listdir(home):
-        lower = name.lower()
-        if (lower.startswith(("python", "vcruntime"))
-                and lower.endswith(".dll")):
-            with open(os.path.join(home, name), "rb") as source:
-                runtime[lower] = source.read()
-    for name in python_dlls:
-        if name not in runtime:
-            raise FileNotFoundError(
-                f"Python runtime dependency is missing: {os.path.join(home, name)}")
 
-    os.makedirs(launcher_dir, exist_ok=True)
-    configuration = (
-        f"home = {home}\n"
-        "include-system-site-packages = true\n"
-    )
-    _write_if_changed(
-        os.path.join(launcher_dir, "pyvenv.cfg"), configuration.encode("utf-8"))
-    for name, payload in runtime.items():
-        _write_if_changed(os.path.join(launcher_dir, name), payload)
+def _retire_legacy_binding(launcher_dir, library):
+    path = os.path.join(launcher_dir, "pyvenv.cfg")
+    try:
+        with open(path, encoding="utf-8") as source:
+            content = source.read()
+    except FileNotFoundError:
+        return
+    expected = (
+        f"home = {os.path.dirname(library)}\n"
+        "include-system-site-packages = true\n")
+    if content == expected:
+        # Keep a rollback copy, but remove old DLLs from Windows' app-directory
+        # search path so a later Python upgrade cannot pick up stale runtimes.
+        retired = tempfile.mkdtemp(prefix="retired-python-", dir=launcher_dir)
+        for name in os.listdir(launcher_dir):
+            lower = name.lower()
+            if (lower.startswith(("python", "vcruntime"))
+                    and lower.endswith(".dll")):
+                os.replace(os.path.join(launcher_dir, name),
+                           os.path.join(retired, name))
+        os.replace(path, os.path.join(retired, "pyvenv.cfg"))
 
 
 def ensure_branded_launcher(pythonw, launcher_dir, version, icon_path=None):
@@ -438,22 +473,36 @@ def ensure_branded_launcher(pythonw, launcher_dir, version, icon_path=None):
     """
     if icon_path is None:
         icon_path = _default_icon_path()
+    pythonw = os.path.abspath(pythonw)
     launcher_dir = os.path.abspath(launcher_dir)
     launcher = os.path.join(launcher_dir, launcher_filename())
-    identity = _pe_identity(pythonw)
-    # Repair companions even when the stable executable already exists or is
-    # running. Identical DLLs must not be replaced while Windows has them loaded.
-    _ensure_runtime(pythonw, launcher_dir, identity[1])
+    machine, library, base_pythonw = _python_runtime(pythonw)
+    architecture = {0x14C: "x86", 0x8664: "x64"}.get(machine)
+    if architecture is None:
+        raise OSError("no native branded host for this architecture; use the original Python")
+    template = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "data", "windows",
+        f"cc-python-host-{architecture}.exe")
+    identity = _pe_identity(template)
+    if identity[0] != machine:
+        raise ValueError("native host and Python architectures differ")
+    if any(character in path for path in (pythonw, library, base_pythonw)
+           for character in "\r\n"):
+        raise ValueError("Python runtime paths cannot contain newlines")
+    os.makedirs(launcher_dir, exist_ok=True)
+    configuration = f"CC Translate Python host 1\n{pythonw}\n{library}\n{base_pythonw}\n"
+    _write_if_changed(launcher + ".runtime", configuration.encode("utf-8"))
     if (os.path.isfile(launcher)
             and read_file_description(launcher) == FILE_DESCRIPTION
             and _pe_identity(launcher) == identity
             and (not icon_path or launcher_has_icon(launcher, icon_path))):
+        _retire_legacy_binding(launcher_dir, library)
         return launcher
 
     os.makedirs(launcher_dir, exist_ok=True)
     temp_path = f"{launcher}.{os.getpid()}.tmp"
     try:
-        shutil.copy2(pythonw, temp_path)
+        shutil.copy2(template, temp_path)
         set_version_resource(temp_path, version)
         if icon_path:
             set_icon_resources(temp_path, icon_path)
@@ -462,6 +511,7 @@ def ensure_branded_launcher(pythonw, launcher_dir, version, icon_path=None):
         if icon_path and not launcher_has_icon(temp_path, icon_path):
             raise OSError("branded launcher icon verification failed")
         os.replace(temp_path, launcher)
+        _retire_legacy_binding(launcher_dir, library)
     finally:
         try:
             if os.path.exists(temp_path):

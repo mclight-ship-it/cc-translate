@@ -140,3 +140,18 @@ Copyright (c) 1991-2026 Unicode, Inc. Unihan kDefinition and kMandarin values
 provide the single-Han-character fallback. Explicit kSimplifiedVariant and
 kTraditionalVariant relationships are indexed as aliases. No definition,
 reading, or variant is inferred.
+
+Windows native Python host
+--------------------------
+
+The x86/x64 hosts in data/windows/ are built from
+tools/windows/python_host.c using Microsoft Visual C++. They statically link
+redistributable Microsoft C/C++ runtime code, which remains subject to
+Microsoft's applicable license terms rather than the application's Apache-2.0
+license. Rebuilding requires a licensed Visual Studio C++ toolchain.
+
+Redistribution guidance:
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+
+The user's Python interpreter, packages, and their license notices remain in
+the original Python installation; they are not included in these host binaries.

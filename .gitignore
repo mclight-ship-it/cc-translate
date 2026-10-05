@@ -34,6 +34,7 @@ desktop.ini
 /macos/.swiftpm/
 /tools/macos/.staging/
 /tools/macos/.build/
+/tools/windows/.build/
 
 # Maintainer-only work logs; public instructions live in docs/MACOS*.md.
 /docs/MACOS_DEVELOPMENT.md
