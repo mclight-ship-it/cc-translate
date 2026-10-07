@@ -1599,6 +1599,46 @@ class TestDarwinCodexProvider(unittest.TestCase):
                 self.malformed_response(
                     {"method": method, "params": {}, "emittedAtMs": 1789560000000}, code)
 
+    def test_skills_changed_allows_prewarm_idle_reuse_and_inflight_notifications(self):
+        event = {"method": "skills/changed", "params": {}, "emittedAtMs": 1789560000000}
+        def responses(proc, request):
+            replies = reply_messages(request, proc.cwd)
+            if request["method"] in ("initialize", "hooks/list", "thread/start", "turn/start"):
+                return [part for reply in replies for part in (event, reply)]
+            return replies
+        self.responses = responses
+        provider = self.provider()
+        self.assertTrue(provider.warm_up("synthetic").ok)
+        process = self.processes[0]
+        self.assertEqual(self.methods(process), ["initialize", "initialized", "hooks/list"])
+        for _ in range(2):
+            process.messages.append(event)
+            deltas = []
+            result = provider.stream(self.request(), deltas.append)
+            self.assertTrue(result.ok, result.error_code)
+            self.assertEqual((result.text, deltas), (TEXT, [TEXT]))
+            self.assertIs(dict(result.metrics)["turn_submitted"], True)
+            self.assertEqual(dict(result.metrics)["spawn_ms"], 0)
+            self.assertFalse(process.closed)
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.methods(process), [
+            "initialize", "initialized", "hooks/list",
+            "hooks/list", "thread/start", "turn/start",
+            "hooks/list", "thread/start", "turn/start",
+        ])
+
+    def test_skills_changed_does_not_bypass_native_validation(self):
+        event = {"method": "skills/changed", "params": {}}
+        for identifier in (99, 0, None):
+            with self.subTest(identifier=identifier):
+                self.malformed_response({**event, "id": identifier}, "unsafe_tool_event")
+        for params in (None, [], "", False, 0, {"action": "synthetic"}):
+            with self.subTest(params=params):
+                self.malformed_response({**event, "params": params})
+        for extra in ({"result": {}}, {"error": {}}, {"emittedAtMs": True}):
+            with self.subTest(extra=extra):
+                self.malformed_response({**event, **extra})
+
     def test_notification_timestamp_accepts_nullable_signed_i64_without_affecting_stream(self):
         for timestamp in (None, -(2 ** 63), -1, 0, 1789560000000, 2 ** 63 - 1):
             def responses(proc, request):

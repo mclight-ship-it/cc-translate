@@ -442,6 +442,48 @@ class TestCodexAppServerParser(unittest.TestCase):
                 CodexAppServerProtocolError, "future/event"):
             self._feed("future/event", {})
 
+    def test_skills_changed_is_metadata_before_and_during_a_turn(self):
+        for bound in (False, True):
+            with self.subTest(bound=bound):
+                parser = CodexAppServerParser(self.deltas.append)
+                if bound:
+                    parser.thread_id = "thread-1"
+                    parser.turn_id = "turn-1"
+                    parser.final_text = "existing result"
+                before = vars(parser).copy()
+                parser.feed(json.dumps({
+                    "method": "skills/changed", "params": {},
+                    "emittedAtMs": 1789560000000,
+                }))
+                self.assertEqual(
+                    vars(parser), {**before, "last_was_notification": True})
+                self.assertEqual(self.deltas, [])
+
+    def test_skills_changed_does_not_allow_server_requests(self):
+        for identifier in (99, 0, None):
+            with self.subTest(identifier=identifier):
+                with self.assertRaises(CodexAppServerProtocolError) as caught:
+                    self.parser.feed(json.dumps({
+                        "id": identifier, "method": "skills/changed", "params": {},
+                    }))
+                self.assertEqual(caught.exception.code, "unsafe_tool_event")
+
+    def test_skills_changed_rejects_unrecognized_payloads(self):
+        for params in (None, [], "", False, 0, {"action": "synthetic"}):
+            with self.subTest(params=params):
+                with self.assertRaises(CodexAppServerProtocolError) as caught:
+                    self._feed("skills/changed", params)
+                self.assertEqual(caught.exception.code, "invalid_appserver_message")
+
+    def test_skills_changed_cannot_smuggle_response_or_unknown_fields(self):
+        for extra in ({"result": {}}, {"error": {}}, {"action": "synthetic"}):
+            with self.subTest(extra=extra):
+                with self.assertRaises(CodexAppServerProtocolError) as caught:
+                    self.parser.feed(json.dumps({
+                        "method": "skills/changed", "params": {}, **extra,
+                    }))
+                self.assertEqual(caught.exception.code, "invalid_appserver_message")
+
     def test_rejects_cross_turn_delta(self):
         with self.assertRaisesRegex(
                 CodexAppServerProtocolError, "turn id changed"):
@@ -1027,6 +1069,77 @@ class TestCodexAppServerTransport(_NativeConfigMock):
             "hooks/list", "thread/start", "turn/start"])
         self.assertEqual(dict(result.metrics)["initialize_ms"], 0)
         self.assertEqual(schedule.call_args_list[-1], unittest.mock.call())
+
+    def test_skills_changed_preserves_reused_process_at_every_stream_stage(self):
+        for position in range(7):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as work_dir:
+                messages = self._success_messages(work_dir, 1, 2, 3, 4, "one")
+                second_messages = self._success_messages(work_dir, None, 5, 6, 7, "two")
+                second_messages.insert(position, {
+                    "method": "skills/changed", "params": {},
+                    "emittedAtMs": 1789560000000,
+                })
+                messages.extend(second_messages)
+                messages.extend(self._success_messages(work_dir, None, 8, 9, 10, "three"))
+                process = _FakeProcess("\n".join(json.dumps(message) for message in messages))
+                request = ProviderRequest(
+                    task="translate", model="auto-fast", system_prompt="Translate.",
+                    user_text="hello", timeout_seconds=5)
+                transport = CodexAppServerTransport(
+                    "codex.exe", work_dir, idle_timeout_seconds=0)
+                deltas = []
+                with unittest.mock.patch(
+                        "cc_providers.codex_appserver._supported_appserver_version",
+                        return_value=True), unittest.mock.patch(
+                        "cc_providers.codex_appserver.subprocess.Popen",
+                        return_value=process) as popen:
+                    try:
+                        first = transport.stream(request, lambda delta: None)
+                        second = transport.stream(request, deltas.append)
+                        third = transport.stream(request, lambda delta: None)
+                        self.assertTrue(first.ok, first.error_code)
+                        self.assertTrue(second.ok, second.error_code)
+                        self.assertTrue(third.ok, third.error_code)
+                        self.assertEqual(second.text, "final-two")
+                        self.assertEqual(third.text, "final-three")
+                        self.assertEqual(deltas, ["partial-two"])
+                        self.assertIs(transport._proc, process)
+                        self.assertEqual(dict(second.metrics)["spawn_ms"], 0)
+                        self.assertIs(dict(second.metrics)["turn_submitted"], True)
+                        popen.assert_called_once()
+                        methods = [json.loads(line)["method"]
+                                   for line in process.stdin.getvalue().splitlines()]
+                        self.assertEqual(methods, [
+                            "initialize", "initialized", "hooks/list", "thread/start", "turn/start",
+                            "hooks/list", "thread/start", "turn/start",
+                            "hooks/list", "thread/start", "turn/start",
+                        ])
+                    finally:
+                        transport.shutdown()
+
+    def test_skills_changed_during_prewarm_does_not_submit_a_turn(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            event = {"method": "skills/changed", "params": {}}
+            messages = [event, {"id": 1, "result": {}}, event, {
+                "id": 2, "result": {"data": [{"cwd": work_dir, "hooks": [], "errors": []}]},
+            }]
+            process = _FakeProcess("\n".join(json.dumps(message) for message in messages))
+            transport = CodexAppServerTransport("codex.exe", work_dir, idle_timeout_seconds=0)
+            with unittest.mock.patch(
+                    "cc_providers.codex_appserver._supported_appserver_version",
+                    return_value=True), unittest.mock.patch(
+                    "cc_providers.codex_appserver.subprocess.Popen", return_value=process):
+                try:
+                    result = transport.warm_up(ProviderRequest(
+                        task="warm_up", model="auto-fast", system_prompt="", user_text="",
+                        timeout_seconds=5))
+                    self.assertTrue(result.ok, result.error_code)
+                    self.assertIs(transport._proc, process)
+                    self.assertEqual(
+                        [json.loads(line)["method"] for line in process.stdin.getvalue().splitlines()],
+                        ["initialize", "initialized", "hooks/list"])
+                finally:
+                    transport.shutdown()
 
     def test_stream_preempts_slow_warm_up(self):
         with tempfile.TemporaryDirectory() as work_dir:

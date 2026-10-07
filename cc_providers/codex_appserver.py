@@ -142,6 +142,17 @@ class CodexAppServerParser:
                 "invalid_appserver_message", "missing method")
         self.last_was_notification = True
 
+        if method == "skills/changed":
+            if "id" in message:
+                raise CodexAppServerProtocolError(
+                    "unsafe_tool_event", f"server request: {method}")
+            if (message.get("params") != {}
+                    or not set(message) <= {"method", "params", "jsonrpc", "emittedAtMs"}):
+                raise CodexAppServerProtocolError(
+                    "invalid_appserver_message", "invalid skills/changed notification")
+            # Codex invalidates its own skills cache; translation caches no skill metadata.
+            return
+
         params = message.get("params") or {}
         if method in ("hook/started", "hook/completed"):
             self._handle_hook(method, params)
