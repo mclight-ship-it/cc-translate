@@ -25,9 +25,10 @@ enum StatusItemIcon {
 
     static func configure(_ button: NSStatusBarButton, bundle: Bundle = .main) {
         let image = load(bundle: bundle)
-        button.image = image
-        button.imagePosition = image == nil ? .noImage : .imageOnly
         button.title = image == nil ? "CC" : ""
+        button.image = image
+        // AppKit adjusts the cell layout when title or image changes.
+        button.imagePosition = image == nil ? .noImage : .imageOnly
         button.toolTip = "CC Translate"
         button.setAccessibilityLabel("CC Translate")
     }
