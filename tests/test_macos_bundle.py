@@ -167,6 +167,49 @@ class ApplicationIconTests(ProjectDirectory):
         self.assertEqual((contents / "Resources" / bundle.ICON_NAME).read_bytes(), self.icon_bytes())
         self.assertFalse((self.root / "CCTranslate.iconset").exists())
 
+    def test_menu_bar_uses_templates_and_preserves_the_colored_application_logo(self):
+        sources = bundle.ROOT / "macos/Sources/CCTranslateMac"
+        application = (sources / "Application.swift").read_text(encoding="utf-8")
+        icon = (sources / "StatusItemIcon.swift").read_text(encoding="utf-8")
+        self.assertIn("StatusItemIcon.configure(button)", application)
+        self.assertNotIn('item.button?.title = "CC"', application)
+        for name in bundle.STATUS_ICON_SIZES:
+            self.assertIn('"' + Path(name).stem + '"', icon)
+        self.assertEqual(bundle.ICON_NAME, "CCTranslate.icns")
+        self.assertIn("image.isTemplate = true", icon)
+        self.assertIn('button.setAccessibilityLabel("CC Translate")', icon)
+
+    def test_menu_templates_are_copied_without_reencoding(self):
+        contents = self.root / "App.app/Contents"
+        bundle.copy_status_icons(contents)
+        bundle.validate_status_icons(contents / "Resources")
+        for name in bundle.STATUS_ICON_SIZES:
+            self.assertEqual((contents / "Resources" / name).read_bytes(),
+                             (bundle.STATUS_ICON_SOURCE / name).read_bytes())
+
+    def test_missing_corrupt_or_changed_template_is_rejected(self):
+        for name in bundle.STATUS_ICON_SIZES:
+            for fault in ("missing", "corrupt", "changed"):
+                with self.subTest(name=name, fault=fault):
+                    contents = self.root / "App.app/Contents"
+                    bundle.copy_status_icons(contents)
+                    path = contents / "Resources" / name
+                    if fault == "missing":
+                        path.unlink()
+                    elif fault == "corrupt":
+                        path.write_bytes(b"not a PNG")
+                    else:
+                        path.write_bytes(path.read_bytes() + b"changed")
+                    with self.assertRaises(bundle.BundleError):
+                        bundle.validate_status_icons(contents / "Resources")
+
+    def test_linked_templates_are_rejected(self):
+        contents = self.root / "App.app/Contents"
+        bundle.copy_status_icons(contents)
+        with patch.object(Path, "is_symlink", return_value=True):
+            with self.assertRaisesRegex(bundle.BundleError, "linked"):
+                bundle.validate_status_icons(contents / "Resources")
+
     def test_native_tool_failure_is_not_silenced_and_staging_is_cleaned(self):
         error = subprocess.CalledProcessError(1, "sips")
         with patch.object(bundle, "BUILD", self.root), patch.object(bundle, "run", side_effect=error):
@@ -551,12 +594,14 @@ class MachORulesTests(ProjectDirectory):
                       for name in lock["required_runtime_licenses"]]
         resources += ["Resources/Core/" + name for name in SHARED_CORE_FILES]
         resources += ["Resources/Core/cc_providers/" + name for name in PROVIDER_FILES]
+        resources += ["Resources/" + name for name in bundle.STATUS_ICON_SIZES]
         for name in binaries + resources:
             path = contents / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"\xcf\xfa\xed\xfeSYNTHETIC" if name in binaries else b"synthetic fixture")
             path.chmod(0o755 if name in binaries else 0o644)
         (contents / "Resources" / bundle.ICON_NAME).write_bytes(ApplicationIconTests.icon_bytes())
+        bundle.copy_status_icons(contents)
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         bundle.write_json(contents / "Resources/source-manifest.json", {
             "lock": lock, "certificate_sha256": bundle.digest(contents / "Resources/Core/cacert.pem"),
@@ -570,6 +615,25 @@ class MachORulesTests(ProjectDirectory):
             "resource_hashes": {name: bundle.digest(contents / name) for name in resources},
         })
         return app
+
+    def test_menu_templates_are_required_and_covered_by_bundle_inventory(self):
+        for name in bundle.STATUS_ICON_SIZES:
+            for fault in ("missing", "unrecorded", "changed"):
+                with self.subTest(name=name, fault=fault):
+                    app = self.synthetic_app()
+                    path = app / "Contents/Resources" / name
+                    manifest = app / "Contents/Resources/source-manifest.json"
+                    if fault == "missing":
+                        path.unlink()
+                    elif fault == "changed":
+                        path.write_bytes(b"not the template")
+                    else:
+                        metadata = json.loads(manifest.read_bytes())
+                        del metadata["resource_hashes"]["Resources/" + name]
+                        bundle.write_json(manifest, metadata)
+                    with self.assertRaises(bundle.BundleError):
+                        bundle.audit_bundle(app, bundle.load_lock())
+                    shutil.rmtree(app)
 
     def test_author_support_image_is_required_and_covered_by_bundle_inventory(self):
         for fault in ("missing", "unrecorded", "changed"):

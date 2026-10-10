@@ -8,7 +8,7 @@
 
 | 平台 | 安装 | 更新 |
 | --- | --- | --- |
-| **macOS 14 及以上，Apple Silicon（M1 或更新）** | [Mac 正式版本下载](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true) · [Mac 安装与使用指南](docs/MACOS.zh.md) | App 内“检查更新”，通过 Sparkle 校验签名后安装 |
+| **macOS 14 及以上，Apple Silicon（M1 或更新）** | [Mac 正式版本下载](https://github.com/mclight-ship-it/cc-translate/releases/latest) · [Mac 安装与使用指南](docs/MACOS.zh.md) | App 内“检查更新”，通过 Sparkle 校验签名后安装 |
 | **Windows** | 使用下方安装说明 | 保留现有基于 Git 的 App 内更新 |
 
 Mac 版提供原生翻译工作区、双击 **Command+C** 划词翻译、截图翻译、

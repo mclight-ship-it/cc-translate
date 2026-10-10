@@ -13,7 +13,7 @@
 
 ## Install
 
-1. Open [Mac releases](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true).
+1. Open [Mac releases](https://github.com/mclight-ship-it/cc-translate/releases/latest).
 2. Download the Apple Silicon application ZIP under **Assets**, not GitHub's
    automatically generated **Source code** archive.
 3. Quit any older CC Translate copy. Unzip the download and move the app to

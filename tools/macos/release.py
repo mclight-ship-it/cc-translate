@@ -251,7 +251,7 @@ def keep_release_path(relative):
     prefix = "Contents/Resources/"
     if relative.startswith(prefix):
         name = relative.removeprefix(prefix)
-        if name in (bundle.ICON_NAME, bundle.SUPPORT_IMAGE_NAME, "source-manifest.json"):
+        if name in (bundle.ICON_NAME, bundle.SUPPORT_IMAGE_NAME, "source-manifest.json", *bundle.STATUS_ICON_SIZES):
             return True
         if name.startswith("Core/"):
             return name.removeprefix("Core/") in CORE_FILES
@@ -398,6 +398,7 @@ def audit_payload(app, version, key, allowed, environment):
     for relative in CORE_FILES:
         need((app / "Contents/Resources/Core" / relative).is_file(), "required product module missing")
     bundle.validate_icon(app / "Contents/Resources" / bundle.ICON_NAME)
+    bundle.validate_status_icons(app / "Contents/Resources")
     validate_core_imports(app / "Contents/Resources/Core")
     report = bundle.audit_macho(app, bundle.load_lock(), environment)
     report.update(development_only=False,

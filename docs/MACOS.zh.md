@@ -12,7 +12,7 @@
 
 ## 安装
 
-1. 打开 [Mac 正式版本页面](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true)。
+1. 打开 [Mac 正式版本页面](https://github.com/mclight-ship-it/cc-translate/releases/latest)。
 2. 在 **Assets** 中下载 Apple Silicon 应用 ZIP，不要下载 GitHub 自动生成的
    **Source code** 源码压缩包。
 3. 退出旧版 CC Translate，解压下载文件，将 App 移入“应用程序”，已有旧版时替换。

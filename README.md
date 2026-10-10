@@ -8,7 +8,7 @@
 
 | Platform | Installation | Updates |
 | --- | --- | --- |
-| **macOS 14+, Apple Silicon (M1 or later)** | [Mac release downloads](https://github.com/mclight-ship-it/cc-translate/releases?q=macos-v&expanded=true) · [Mac installation and usage guide](docs/MACOS.md) | In-app **Check for Updates** using signed Sparkle update archives |
+| **macOS 14+, Apple Silicon (M1 or later)** | [Mac release downloads](https://github.com/mclight-ship-it/cc-translate/releases/latest) · [Mac installation and usage guide](docs/MACOS.md) | In-app **Check for Updates** using signed Sparkle update archives |
 | **Windows** | Use the installation instructions below | Existing Git-based in-app updater |
 
 The Mac app has a native translation workspace, selection translation with

@@ -856,5 +856,11 @@ final class DockApplicationTests: XCTestCase {
         let image = try XCTUnwrap(NSImage(contentsOf: icon))
         XCTAssertTrue(image.isValid)
         XCTAssertTrue(image.representations.contains { $0.pixelsWide >= 256 && $0.pixelsHigh >= 256 })
+        let menuImage = try XCTUnwrap(StatusItemIcon.load(bundle: app))
+        XCTAssertTrue(menuImage.isValid)
+        XCTAssertTrue(menuImage.isTemplate)
+        XCTAssertEqual(menuImage.size, NSSize(width: 18, height: 18))
+        XCTAssertEqual(menuImage.representations.map(\.pixelsWide).sorted(), [18, 36])
+        XCTAssertEqual(menuImage.accessibilityDescription, "CC Translate")
     }
 }

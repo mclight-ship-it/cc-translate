@@ -164,6 +164,9 @@ class ReleasePayloadTests(ReleaseDirectory):
                 release.pinned_public_key(KEY)
 
     def test_allowlist_keeps_product_diagnostics_but_removes_unused_fixtures(self):
+        for name in bundle.STATUS_ICON_SIZES:
+            self.assertTrue(release.keep_release_path("Contents/Resources/" + name))
+        self.assertFalse(release.keep_release_path("Contents/Resources/CCTranslateStatusTemplate-3x.png"))
         for name in ("probes.py", "config_fixture.py", "catalog_fixture.py",
                      "catalog_process_fixture.py", "dictionary_probe.py"):
             self.assertTrue(release.keep_release_path("Contents/Resources/Core/cc_macos/" + name))
@@ -207,6 +210,7 @@ class ReleasePayloadTests(ReleaseDirectory):
         core = contents / "Resources/Core"
         bundle.copy_core_sources(core)
         (core / "cacert.pem").write_bytes(b"certificate")
+        bundle.copy_status_icons(contents)
         template = plistlib.loads((bundle.ROOT / "macos/Resources/Info.plist").read_bytes())
         (contents / "Info.plist").write_bytes(plistlib.dumps(template))
         python = contents / "Resources/python/lib/python3.12"
@@ -235,6 +239,10 @@ class ReleasePayloadTests(ReleaseDirectory):
         self.assertNotIn("directory", manifest["toolchain"])
         self.assertEqual(set(manifest["lock"]), {"python_version"})
         self.assertTrue(manifest["resource_hashes"])
+        bundle.validate_status_icons(contents / "Resources")
+        for name in bundle.STATUS_ICON_SIZES:
+            self.assertEqual(manifest["resource_hashes"]["Resources/" + name],
+                             bundle.digest(bundle.STATUS_ICON_SOURCE / name))
 
     def test_builder_path_detection_does_not_confuse_public_documentation_urls(self):
         for value in (b'"/Users/person/work/main.swift"', b'"/private/tmp/python.c"',

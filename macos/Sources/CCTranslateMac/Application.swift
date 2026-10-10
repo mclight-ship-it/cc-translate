@@ -171,8 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.loadPresentation()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "CC"
-        item.button?.toolTip = "CC Translate"
+        if let button = item.button { StatusItemIcon.configure(button) }
         statusItem = item
         configureMenus()
         model.onSelection = { [weak self] result in

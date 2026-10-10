@@ -31,6 +31,8 @@ BUILD = HERE / ".build"
 APP = BUILD / "CCTranslateMac-P0.app"
 ICON_NAME = "CCTranslate.icns"
 ICON_SOURCE = ROOT / "assets/icon-dark.png"
+STATUS_ICON_SOURCE = ROOT / "assets/macos"
+STATUS_ICON_SIZES = {"CCTranslateStatusTemplate.png": 18, "CCTranslateStatusTemplate-2x.png": 36}
 SUPPORT_IMAGE_NAME = "support-author.png"
 SUPPORT_IMAGE_SOURCE = ROOT / "assets" / SUPPORT_IMAGE_NAME
 LOCK = HERE / "runtime-lock.json"
@@ -636,10 +638,12 @@ def audit_bundle(app, lock, environment=None):
         "Resources/Licenses/Python/PYTHON.json", "Resources/Licenses/Sparkle/LICENSE",
     ]
     required += ["Resources/Core/" + name for name in SHARED_CORE_MODULES]
+    required += ["Resources/" + name for name in STATUS_ICON_SIZES]
     required += ["Resources/Core/cc_providers/" + name for name in PROVIDER_CORE_FILES]
     required += ["Resources/Licenses/Python/licenses/" + name for name in lock["required_runtime_licenses"]]
     need(all((contents / path).is_file() for path in required), "missing bundle resources/licenses")
     validate_icon(contents / "Resources" / ICON_NAME)
+    validate_status_icons(contents / "Resources")
     need(os.access(contents / "MacOS/CCTranslateMac", os.X_OK) and
          os.access(contents / "Resources/python/bin/python3", os.X_OK), "non-executable bundle entry")
     provenance = json.loads((contents / "Resources/source-manifest.json").read_bytes())
@@ -812,6 +816,25 @@ def build_icon(contents, environment):
         shutil.rmtree(iconset)
 
 
+def validate_status_icons(resources):
+    for name, pixels in STATUS_ICON_SIZES.items():
+        path = resources / name
+        need(path.is_file() and not path.is_symlink(), "menu bar template missing or linked")
+        data = path.read_bytes()
+        need(len(data) >= 33 and data[:8] == b"\x89PNG\r\n\x1a\n" and
+             data[12:16] == b"IHDR" and struct.unpack(">II", data[16:24]) == (pixels, pixels) and
+             data[24:29] == b"\x08\x06\x00\x00\x00", "invalid menu bar template PNG")
+        need(data == (STATUS_ICON_SOURCE / name).read_bytes(), "menu bar template differs from source")
+
+
+def copy_status_icons(contents):
+    validate_status_icons(STATUS_ICON_SOURCE)
+    resources = contents / "Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    for name in STATUS_ICON_SIZES:
+        shutil.copy2(STATUS_ICON_SOURCE / name, resources / name)
+
+
 def copy_support_image(contents):
     """Keep the Windows author's original local QR image byte-for-byte."""
     need(SUPPORT_IMAGE_SOURCE.is_file() and not SUPPORT_IMAGE_SOURCE.is_symlink(),
@@ -851,6 +874,7 @@ def build(lock, offline=False, build_number=None, release_source_maps=False):
     shutil.copy2(binary, contents / "MacOS/CCTranslateMac")
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     build_icon(contents, environment)
+    copy_status_icons(contents)
     copy_support_image(contents)
     embed_sparkle(contents, sparkle, sparkle_license)
     # A Python installation includes non-bundle directories such as python3.12.
